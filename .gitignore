@@ -24,6 +24,9 @@ build/
 **/dist/
 **/client/dist/
 out/
+# Allow shell/build/ — it holds static Electron icon source assets, not build output
+!shell/build/
+!shell/build/**
 
 # ── Electron-builder artifacts ────────────────────────────────────────────────
 *.exe
