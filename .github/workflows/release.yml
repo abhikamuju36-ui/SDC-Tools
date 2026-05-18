@@ -68,26 +68,17 @@ jobs:
           cache: "npm"
           cache-dependency-path: package-lock.json
 
-      # ── Install sub-app production deps ──────────────────────────────────
-      - name: Install SDC_Scheduler deps
-        working-directory: SDC_Scheduler
+      # ── Install all workspace member deps in one shot ────────────────────
+      # SDC_Scheduler, state_logic_builder, Assembilies library main,
+      # Build_Readiness_Report are all npm workspace members → single root
+      # npm ci reads the root package-lock.json and installs everything.
+      - name: Install all workspace deps (root)
         run: npm ci --omit=dev
 
-      - name: Install state_logic_builder deps
-        working-directory: state_logic_builder
-        run: npm ci --omit=dev
-
+      # Calendar is NOT in the workspace → needs its own install step
       - name: Install Calendar deps
         working-directory: "SDC Centrailzed calender/server"
-        run: npm ci --omit=dev
-
-      - name: Install Assemblies Library deps
-        working-directory: "Assembilies library main"
-        run: npm ci --omit=dev
-
-      - name: Install Build Readiness deps
-        working-directory: Build_Readiness_Report
-        run: npm ci --omit=dev
+        run: npm install --omit=dev
 
       # ── Build frontends that need a compile step ──────────────────────────
       - name: Build State Logic Builder frontend
@@ -99,13 +90,7 @@ jobs:
         run: npm run build --if-present
 
       # ── Shell: build launcher UI & package installer ──────────────────────
-      - name: Install shell deps
-        working-directory: shell
-        run: npm install
-
-      # No native module rebuild needed — Assemblies Library now uses Azure SQL
-      # (mssql is pure JS). Remove this step if you see it in older versions.
-
+      # Shell deps already installed by root npm ci above (it's a workspace member).
       - name: Build Vite launcher UI
         working-directory: shell
         run: npm run build
