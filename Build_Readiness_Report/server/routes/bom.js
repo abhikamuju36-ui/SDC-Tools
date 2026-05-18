@@ -1,10 +1,13 @@
 const express = require('express');
-const router = express.Router();
-const eto = require('../services/eto');
-const demo = require('../services/demoData');
+const router  = express.Router();
+const azure   = require('../azureDb');
+const azureData = require('../services/azureData');
+const demo    = require('../services/demoData');
 const { buildTree, buildNestedTree } = require('../lib/bomTree');
 
-function db() { return demo.isDemoMode() ? demo : eto; }
+function db() {
+  return azure.isAvailable() ? azureData : demo;
+}
 
 // GET /api/bom/:projectId/specs
 router.get('/:projectId/specs', async (req, res) => {
@@ -29,13 +32,14 @@ router.get('/:projectId/specs', async (req, res) => {
 router.get('/:projectId/:specId/tree', async (req, res) => {
   try {
     const projectId = parseInt(req.params.projectId, 10);
-    const specId = parseInt(req.params.specId, 10);
+    const specId    = parseInt(req.params.specId, 10);
     if (isNaN(projectId) || projectId <= 0) return res.status(400).json({ error: 'Invalid project ID' });
-    if (isNaN(specId) || specId <= 0) return res.status(400).json({ error: 'Invalid spec ID' });
+    if (isNaN(specId)    || specId    <= 0) return res.status(400).json({ error: 'Invalid spec ID' });
 
+    const src = db();
     const [topNode, bomRows] = await Promise.all([
-      db().getTopNode(projectId, specId),
-      db().getBomRows(projectId, specId),
+      src.getTopNode(projectId, specId),
+      src.getBomRows(projectId, specId),
     ]);
 
     if (!topNode) {
@@ -56,13 +60,26 @@ router.get('/:projectId/:specId/tree', async (req, res) => {
 router.get('/:projectId/:specId/flat', async (req, res) => {
   try {
     const projectId = parseInt(req.params.projectId, 10);
-    const specId = parseInt(req.params.specId, 10);
+    const specId    = parseInt(req.params.specId, 10);
     if (isNaN(projectId) || projectId <= 0) return res.status(400).json({ error: 'Invalid project ID' });
-    if (isNaN(specId) || specId <= 0) return res.status(400).json({ error: 'Invalid spec ID' });
+    if (isNaN(specId)    || specId    <= 0) return res.status(400).json({ error: 'Invalid spec ID' });
     const bomRows = await db().getBomRows(projectId, specId);
     res.json({ rows: bomRows });
   } catch (err) {
     console.error('Error fetching BOM rows:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// GET /api/bom/projects — list all projects in Azure SQL
+router.get('/projects', async (req, res) => {
+  try {
+    if (!azure.isAvailable()) {
+      return res.json({ projects: demo.getCachedProjects().map(id => ({ ProjectID: id })) });
+    }
+    const projects = await azureData.listProjects();
+    res.json({ projects });
+  } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
