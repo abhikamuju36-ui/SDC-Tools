@@ -1,12 +1,13 @@
 import AppCard from './AppCard'
 
-export default function AppGrid({ apps, onOpen, onRetry, onShowLogs }) {
+export default function AppGrid({ apps, lastOpened, onOpen, onRetry, onShowLogs }) {
   return (
     <div className="app-grid" role="list">
       {apps.map(app => (
         <AppCard
           key={app.id}
           app={app}
+          lastOpened={lastOpened}
           onOpen={onOpen}
           onRetry={onRetry}
           onShowLogs={onShowLogs}

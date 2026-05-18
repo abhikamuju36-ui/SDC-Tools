@@ -1,6 +1,6 @@
-export default function StatusBar({ apps, runningCount }) {
-  const total  = apps.length
-  const allUp  = runningCount === total && total > 0
+export default function StatusBar({ apps, runningCount, email }) {
+  const total = apps.length
+  const allUp = runningCount === total && total > 0
 
   return (
     <footer className="status-bar">
@@ -18,15 +18,21 @@ export default function StatusBar({ apps, runningCount }) {
           {total === 0
             ? 'No services configured'
             : allUp
-            ? `All ${total} running`
+            ? `${total} / ${total} running`
             : `${runningCount} / ${total} running`}
         </span>
       </div>
 
       <div className="status-bar-right">
         <span className="sb-host">SDC-ENG-01</span>
+        {email && (
+          <>
+            <span className="sb-sep">·</span>
+            <span className="sb-host">{email}</span>
+          </>
+        )}
         <span className="sb-sep">·</span>
-        <span className="sb-brand">Steven Douglas Corp.</span>
+        <span className="sb-build">Build #421</span>
       </div>
     </footer>
   )

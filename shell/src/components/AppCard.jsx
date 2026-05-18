@@ -2,15 +2,38 @@ import AppLogo from './AppLogos'
 
 const SHORTCUT_INDEX = { assemblies: 1, readiness: 2, scheduler: 3, statelogic: 4, calendar: 5 }
 
-export default function AppCard({ app, onOpen, onRetry, onShowLogs }) {
-  const { id, name, description, status, color, port } = app
+/** Returns true if a hex color is light enough to need dark text */
+function isLight(hex) {
+  if (!hex || hex[0] !== '#') return false
+  const r = parseInt(hex.slice(1, 3), 16)
+  const g = parseInt(hex.slice(3, 5), 16)
+  const b = parseInt(hex.slice(5, 7), 16)
+  return (0.299 * r + 0.587 * g + 0.114 * b) / 255 > 0.62
+}
 
-  const statusLabels = {
-    starting: 'Starting…',
-    running:  'Ready',
-    error:    'Error',
-    stopped:  'Stopped',
-  }
+function timeAgo(ts) {
+  if (!ts) return null
+  const diff = Date.now() - ts
+  const m = Math.floor(diff / 60000)
+  const h = Math.floor(m / 60)
+  const d = Math.floor(h / 24)
+  if (m < 1) return 'just now'
+  if (m < 60) return `${m}m ago`
+  if (h < 24) return `${h} h ago`
+  if (d === 1) return 'Yesterday'
+  return `${d} d ago`
+}
+
+export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs }) {
+  const { id, name, description, status, color, port } = app
+  const shortcut  = SHORTCUT_INDEX[id]
+  const openedAgo = timeAgo(lastOpened?.[id])
+
+  const statusLabels = { starting: 'Starting…', running: 'Running', error: 'Error', stopped: 'Stopped' }
+
+  const btnStyle = color
+    ? { background: color, color: isLight(color) ? '#1a1a1a' : '#ffffff', borderColor: 'transparent' }
+    : {}
 
   const handleKeyDown = (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && status === 'running') {
@@ -18,8 +41,6 @@ export default function AppCard({ app, onOpen, onRetry, onShowLogs }) {
       onOpen(id)
     }
   }
-
-  const shortcut = SHORTCUT_INDEX[id]
 
   return (
     <div
@@ -32,25 +53,31 @@ export default function AppCard({ app, onOpen, onRetry, onShowLogs }) {
     >
       <div className="card-accent" />
       <div className="card-body">
+
+        {/* Icon + name + shortcut row */}
         <div className="card-top">
           <div className="card-logo" aria-hidden="true">
-            <AppLogo appId={id} size={48} />
+            <AppLogo appId={id} size={44} />
           </div>
           <div className="card-info">
             <h2 className="card-name">{name}</h2>
-            {description && <p className="card-desc">{description}</p>}
+            {shortcut && (
+              <span className="card-shortcut">Ctrl + {shortcut}</span>
+            )}
           </div>
         </div>
 
+        {/* Description */}
+        {description && <p className="card-desc">{description}</p>}
+
+        {/* Port + last opened */}
         <div className="card-meta">
-          {port && (
-            <span className="card-port">localhost:{port}</span>
-          )}
-          {shortcut && (
-            <span className="card-shortcut">Ctrl + {shortcut}</span>
-          )}
+          {port && <span className="card-port">localhost:{port}</span>}
+          {port && openedAgo && <span className="card-meta-sep">·</span>}
+          {openedAgo && <span className="card-last-opened">Last opened {openedAgo}</span>}
         </div>
 
+        {/* Footer */}
         <div className="card-footer">
           <div className={`status-pill status-${status}`}>
             <span className="status-dot" aria-hidden="true" />
@@ -77,6 +104,7 @@ export default function AppCard({ app, onOpen, onRetry, onShowLogs }) {
             )}
             <button
               className="btn btn-open"
+              style={status === 'running' ? btnStyle : {}}
               disabled={status !== 'running'}
               onClick={() => onOpen(id)}
               aria-label={status === 'running' ? `Open ${name}` : `${name} is not ready`}
