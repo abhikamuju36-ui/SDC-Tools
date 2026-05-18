@@ -13,6 +13,7 @@ node_modules/
 *.db
 *.db-shm
 *.db-wal
+*.sqlite
 sessions.db
 
 # ── Build outputs ─────────────────────────────────────────────────────────────
@@ -55,6 +56,16 @@ Thumbs.db
 # ── Backup files ──────────────────────────────────────────────────────────────
 backups/
 *.bak
+
+# ── Scratch / one-time scripts ────────────────────────────────────────────────
+scratch/
+**/scratch/
+
+# ── Sensitive documents (employee lists, contracts, patents) ──────────────────
+*Employee List*
+*employee list*
+Patent/
+**/Patent/
 
 # ── Misc binaries & zips ──────────────────────────────────────────────────────
 *.zip
