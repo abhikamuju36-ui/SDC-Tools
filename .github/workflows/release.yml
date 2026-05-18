@@ -66,7 +66,7 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
-          cache-dependency-path: shell/package-lock.json
+          cache-dependency-path: package-lock.json
 
       # ── Install sub-app production deps ──────────────────────────────────
       - name: Install SDC_Scheduler deps
@@ -101,7 +101,7 @@ jobs:
       # ── Shell: build launcher UI & package installer ──────────────────────
       - name: Install shell deps
         working-directory: shell
-        run: npm ci
+        run: npm install
 
       # No native module rebuild needed — Assemblies Library now uses Azure SQL
       # (mssql is pure JS). Remove this step if you see it in older versions.
