@@ -71,9 +71,11 @@ jobs:
       # ── Install all workspace member deps in one shot ────────────────────
       # SDC_Scheduler, state_logic_builder, Assembilies library main,
       # Build_Readiness_Report are all npm workspace members → single root
-      # npm ci reads the root package-lock.json and installs everything.
+      # npm ci reads the root package-lock.json and installs everything,
+      # INCLUDING devDependencies (vite, @vitejs/plugin-react, etc.) so the
+      # frontend build steps below can compile the React apps.
       - name: Install all workspace deps (root)
-        run: npm ci --omit=dev
+        run: npm ci
 
       # Calendar is NOT in the workspace → needs its own install step
       - name: Install Calendar deps
