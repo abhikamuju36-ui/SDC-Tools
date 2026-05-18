@@ -1,0 +1,609 @@
+/**
+ * DeviceSidebar - Left panel showing the device library for the active state machine.
+ * Allows dragging device actions onto the canvas or adding new devices.
+ * Subjects can be drag-reordered within the sidebar.
+ */
+
+import { useState, useRef, useCallback, useEffect, useMemo } from 'react';
+import { DEVICE_TYPES, DEVICE_CATEGORIES } from '../lib/deviceTypes.js';
+import { useDiagramStore } from '../store/useDiagramStore.js';
+import { DeviceIcon } from './DeviceIcons.jsx';
+import { SignalModal } from './modals/SignalModal.jsx';
+import { APP_VERSION, CHANGELOG } from '../lib/version.js';
+
+// ── Part Tracking Section ──────────────────────────────────────────────────────
+
+function PartTrackingSection() {
+  const store = useDiagramStore();
+  const fields = store.project?.partTracking?.fields ?? [];
+  const [collapsed, setCollapsed] = useState(true);
+  const [editingId, setEditingId] = useState(null);
+  const [editValue, setEditValue] = useState('');
+  const [addingNew, setAddingNew] = useState(false);
+  const [newName, setNewName] = useState('');
+  const inputRef = useRef(null);
+  const newInputRef = useRef(null);
+
+  useEffect(() => {
+    if (editingId && inputRef.current) inputRef.current.focus();
+  }, [editingId]);
+
+  useEffect(() => {
+    if (addingNew && newInputRef.current) newInputRef.current.focus();
+  }, [addingNew]);
+
+  function startEdit(field) {
+    setEditingId(field.id);
+    setEditValue(field.name);
+  }
+
+  function commitEdit() {
+    if (editingId && editValue.trim()) {
+      const cleanName = editValue.trim().replace(/[^a-zA-Z0-9_]/g, '');
+      if (cleanName) {
+        store.updateTrackingField(editingId, { name: cleanName });
+      }
+    }
+    setEditingId(null);
+    setEditValue('');
+  }
+
+  function handleAdd() {
+    setAddingNew(true);
+    setNewName('');
+  }
+
+  function commitAdd() {
+    const cleanName = newName.trim().replace(/[^a-zA-Z0-9_]/g, '');
+    if (cleanName) {
+      store.addTrackingField({ name: cleanName });
+    }
+    setAddingNew(false);
+    setNewName('');
+  }
+
+  return (
+    <div className="part-tracking-section">
+      <div className="device-sidebar__section-header" onClick={() => setCollapsed(!collapsed)} style={{ cursor: 'pointer' }}>
+        <span>{collapsed ? '▸' : '▾'} Part Tracking</span>
+        {!collapsed && (
+          <button
+            className="btn btn--xs btn--ghost"
+            onClick={(e) => { e.stopPropagation(); handleAdd(); }}
+            title="Add a new tracking field"
+          >
+            + Add
+          </button>
+        )}
+      </div>
+
+      {!collapsed && (
+        <div className="part-tracking-section__list">
+          {fields.length === 0 && !addingNew && (
+            <div className="device-sidebar__empty" style={{ padding: '6px 10px', fontSize: 11 }}>
+              <p>No tracking fields yet.</p>
+            </div>
+          )}
+
+          {fields.map(f => (
+            <div key={f.id} className="pt-field-row">
+              {editingId === f.id ? (
+                <input
+                  ref={inputRef}
+                  className="pt-field-row__input"
+                  value={editValue}
+                  onChange={e => setEditValue(e.target.value)}
+                  onBlur={commitEdit}
+                  onKeyDown={e => { if (e.key === 'Enter') commitEdit(); if (e.key === 'Escape') setEditingId(null); }}
+                />
+              ) : (
+                <span
+                  className="pt-field-row__name"
+                  onClick={() => startEdit(f)}
+                  title="Click to rename"
+                >{f.name}</span>
+              )}
+              <span className="pt-field-row__type">{f.dataType === 'boolean' ? 'BOOL' : f.dataType}</span>
+              <button
+                className="icon-btn icon-btn--sm icon-btn--danger"
+                title="Delete field"
+                onClick={() => {
+                  if (confirm(`Delete tracking field "${f.name}"?`)) {
+                    store.deleteTrackingField(f.id);
+                  }
+                }}
+              >✕</button>
+            </div>
+          ))}
+
+          {addingNew && (
+            <div className="pt-field-row">
+              <input
+                ref={newInputRef}
+                className="pt-field-row__input"
+                placeholder="FieldName"
+                value={newName}
+                onChange={e => setNewName(e.target.value)}
+                onBlur={commitAdd}
+                onKeyDown={e => { if (e.key === 'Enter') commitAdd(); if (e.key === 'Escape') setAddingNew(false); }}
+              />
+              <span className="pt-field-row__type">BOOL</span>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Signals Section ────────────────────────────────────────────────────────────
+
+const SIGNAL_TYPE_BADGES = {
+  position: { label: 'POS', color: '#f59e0b', bg: '#78350f', textColor: '#fcd34d' },
+  state:     { label: 'STATE', color: '#0072B5', bg: '#1e3a5f', textColor: '#93c5fd' },
+  partTracking: { label: 'PT', color: '#5a9a48', bg: '#1a3a1a', textColor: '#86efac' },
+  condition: { label: 'COND', color: '#6b7280', bg: '#1f2937', textColor: '#d1d5db' },
+};
+
+function SignalsSection() {
+  const store = useDiagramStore();
+  const signals = store.project?.signals ?? [];
+  const [collapsed, setCollapsed] = useState(true);
+  const [editingSignal, setEditingSignal] = useState(null); // null=closed, undefined=new, object=edit
+  const [showModal, setShowModal] = useState(false);
+
+  function openNew() { setEditingSignal(undefined); setShowModal(true); }
+  function openEdit(sig) { setEditingSignal(sig); setShowModal(true); }
+  function closeModal() { setShowModal(false); setEditingSignal(null); }
+
+  return (
+    <>
+      <div className="part-tracking-section">
+        <div className="device-sidebar__section-header" onClick={() => setCollapsed(!collapsed)} style={{ cursor: 'pointer' }}>
+          <span>{collapsed ? '▸' : '▾'} Signals</span>
+          {!collapsed && (
+            <button
+              className="btn btn--xs btn--ghost"
+              onClick={(e) => { e.stopPropagation(); openNew(); }}
+              title="Add a new signal"
+            >
+              + Add
+            </button>
+          )}
+        </div>
+
+        {!collapsed && (
+          <div className="part-tracking-section__list">
+            {signals.length === 0 && (
+              <div className="device-sidebar__empty" style={{ padding: '6px 10px', fontSize: 11 }}>
+                <p>No signals defined yet.</p>
+              </div>
+            )}
+            {signals.map(sig => {
+              const badge = SIGNAL_TYPE_BADGES[sig.type] ?? SIGNAL_TYPE_BADGES.condition;
+              const isLatched = !!sig.offCondition;
+              // Tooltip summarizes on/off semantics so the user doesn't have
+              // to open the modal just to remember what a signal does.
+              const tooltip = [
+                sig.description || sig.name,
+                isLatched
+                  ? 'Latched (OTL + OTU) — latches ON at the ON condition, OFF at the OFF condition.'
+                  : 'Computed (OTE) — TRUE whenever the condition holds.',
+              ].filter(Boolean).join('\n');
+              return (
+                <div key={sig.id} className="pt-field-row">
+                  <span style={{
+                    fontSize: 8, fontWeight: 700, padding: '1px 4px', borderRadius: 3,
+                    color: badge.textColor, background: badge.bg, border: `1px solid ${badge.color}`,
+                    whiteSpace: 'nowrap', flexShrink: 0,
+                  }}>
+                    {badge.label}
+                  </span>
+                  {/* Latch indicator: blue dot = pure computed (OTE),
+                      split green/red flag = latched (OTL + OTU). Tooltip covers the rest. */}
+                  <span
+                    title={isLatched ? 'Latched (ON + OFF conditions)' : 'Computed (ON condition only)'}
+                    style={{
+                      flexShrink: 0,
+                      width: 14, height: 14, borderRadius: '50%',
+                      display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                      background: isLatched
+                        ? 'linear-gradient(135deg, #16a34a 50%, #dc2626 50%)'
+                        : '#0072B5',
+                      border: '1px solid #fff',
+                      boxShadow: '0 0 0 1px rgba(0,0,0,0.15)',
+                    }}
+                  />
+                  <span className="pt-field-row__name" title={tooltip}>{sig.name}</span>
+                  <button
+                    className="icon-btn icon-btn--sm"
+                    title="Edit signal"
+                    onClick={() => openEdit(sig)}
+                  >✏</button>
+                  <button
+                    className="icon-btn icon-btn--sm icon-btn--danger"
+                    title="Delete signal"
+                    onClick={() => {
+                      if (confirm(`Delete signal "${sig.name}"?`)) {
+                        store.deleteSignal(sig.id);
+                      }
+                    }}
+                  >✕</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+
+      <SignalModal
+        isOpen={showModal}
+        signal={editingSignal}
+        onClose={closeModal}
+      />
+    </>
+  );
+}
+
+function DeviceItem({ device, smId, onReorderDragStart, onReorderDragOver, onReorderDrop, onReorderDragEnd, isDragOver, dragPosition }) {
+  const store = useDiagramStore();
+  const typeInfo = DEVICE_TYPES[device.type];
+
+  function handleDragStart(e) {
+    // If starting from the drag handle, do reorder
+    if (e.target.classList.contains('device-item__drag-handle')) {
+      onReorderDragStart?.(e, device.id);
+      return;
+    }
+    // Otherwise, drag to canvas
+    e.dataTransfer.setData('application/state-node', 'true');
+    e.dataTransfer.setData('application/state-node-label', `${device.displayName}`);
+    e.dataTransfer.effectAllowed = 'move';
+  }
+
+  return (
+    <div
+      className={`device-item${isDragOver && dragPosition === 'above' ? ' device-item--drop-above' : ''}${isDragOver && dragPosition === 'below' ? ' device-item--drop-below' : ''}`}
+      draggable
+      onDragStart={handleDragStart}
+      onDragOver={(e) => onReorderDragOver?.(e, device.id)}
+      onDrop={(e) => onReorderDrop?.(e, device.id)}
+      onClick={() => { if (!device._autoVision) store.openEditDeviceModal(device.id); }}
+      style={{ '--device-color': device._autoVision ? '#b8a020' : (typeInfo?.color ?? '#9ca3af'), cursor: device._autoVision ? 'default' : 'pointer' }}
+    >
+      <span
+        className="device-item__drag-handle"
+        draggable
+        onDragStart={(e) => {
+          e.stopPropagation();
+          onReorderDragStart?.(e, device.id);
+        }}
+        onDragEnd={onReorderDragEnd}
+        onClick={(e) => e.stopPropagation()}
+        title="Drag to reorder"
+      >⠿</span>
+      <span className="device-item__icon"><DeviceIcon type={device.type} size={18} /></span>
+      <div className="device-item__info">
+        <span className="device-item__name" title={device.displayName}>{device.displayName}</span>
+        <span className="device-item__type">{typeInfo?.label ?? device.type}</span>
+      </div>
+      <div className="device-item__actions">
+        {device._autoVision ? (
+          <span style={{ fontSize: 9, color: '#9ca3af', fontStyle: 'italic', padding: '0 4px' }}>auto</span>
+        ) : (
+          <>
+            <button
+              className="icon-btn icon-btn--sm"
+              title="Duplicate device"
+              onClick={(e) => {
+                e.stopPropagation();
+                const newId = store.duplicateDevice(smId, device.id);
+                if (newId) store.openEditDeviceModal(newId);
+              }}
+              style={{ color: '#6b7280' }}
+            >⧉</button>
+            <button
+              className="icon-btn icon-btn--sm icon-btn--danger"
+              title="Delete device"
+              onClick={(e) => {
+                e.stopPropagation();
+                if (confirm(`Delete subject "${device.displayName}"?`)) {
+                  store.deleteDevice(smId, device.id);
+                }
+              }}
+            >✕</button>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+const UPDATE_LABELS = {
+  checking:     'Checking...',
+  downloading:  'Downloading update...',
+  restarting:   'Restarting in 5s...',
+  ready:        'Restart to Update',
+  'up-to-date': 'Up to date!',
+  'dev-mode':   'Dev mode',
+  error:        'Check failed',
+};
+
+function VersionBlock() {
+  const [open, setOpen] = useState(false);
+  const [updateStatus, setUpdateStatus] = useState(null);
+  const isElectron = typeof window !== 'undefined' && !!window.electronAPI;
+
+  useState(() => {
+    if (!isElectron) return;
+    const cleanup = window.electronAPI.onUpdateStatus(setUpdateStatus);
+    return cleanup;
+  });
+
+  function handleCheckUpdate() {
+    setUpdateStatus('checking');
+    window.electronAPI.checkForUpdates();
+  }
+
+  return (
+    <div className="sidebar-version">
+      <div className="sidebar-version__label">Rev {APP_VERSION}</div>
+      <button
+        className="sidebar-version__notes-btn"
+        onClick={() => setOpen(true)}
+        title="View release notes"
+      >
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor">
+          <path d="M2 2a2 2 0 012-2h8a2 2 0 012 2v12a2 2 0 01-2 2H4a2 2 0 01-2-2V2zm2-.5a.5.5 0 00-.5.5v12a.5.5 0 00.5.5h8a.5.5 0 00.5-.5V2a.5.5 0 00-.5-.5H4z"/>
+          <path d="M5.5 4h5a.5.5 0 010 1h-5a.5.5 0 010-1zm0 3h5a.5.5 0 010 1h-5a.5.5 0 010-1zm0 3h3a.5.5 0 010 1h-3a.5.5 0 010-1z"/>
+        </svg>
+        <span>Release Notes</span>
+      </button>
+
+      {isElectron && (
+        <button
+          className={`sidebar-version__update-btn ${updateStatus || ''}`}
+          onClick={handleCheckUpdate}
+          disabled={updateStatus === 'checking' || updateStatus === 'downloading'}
+          title="Check for app updates"
+        >
+          <svg width="13" height="13" viewBox="0 0 16 16" fill="currentColor">
+            <path d="M8 3a5 5 0 1 0 4.546 2.914.5.5 0 0 1 .908-.417A6 6 0 1 1 8 2v1z"/>
+            <path d="M8 4.466V.534a.25.25 0 0 1 .41-.192l2.36 1.966c.12.1.12.284 0 .384L8.41 4.658A.25.25 0 0 1 8 4.466z"/>
+          </svg>
+          <span>{updateStatus ? UPDATE_LABELS[updateStatus] ?? 'Check for Updates' : 'Check for Updates'}</span>
+        </button>
+      )}
+
+      {open && (
+        <div className="changelog-backdrop" onClick={() => setOpen(false)}>
+          <div className="changelog-popup" onClick={e => e.stopPropagation()}>
+            <div className="changelog-popup__header">
+              <span className="changelog-popup__title">Release Notes</span>
+              <button className="changelog-popup__close" onClick={() => setOpen(false)}>×</button>
+            </div>
+            <div className="changelog-popup__body">
+              {CHANGELOG.map(entry => (
+                <div key={entry.version} className="changelog-popup__entry">
+                  <div className="changelog-popup__version">
+                    v{entry.version}
+                    <span className="changelog-popup__date">
+                      {entry.date}{entry.time ? ` · ${entry.time}` : ''}
+                    </span>
+                  </div>
+                  {entry.author && (
+                    <div className="changelog-popup__author">
+                      <svg width="11" height="11" viewBox="0 0 16 16" fill="currentColor" style={{marginRight: 4, flexShrink: 0}}>
+                        <path d="M8 8a3 3 0 1 0 0-6 3 3 0 0 0 0 6zm2-3a2 2 0 1 1-4 0 2 2 0 0 1 4 0zm4 8c0 1-1 1-1 1H3s-1 0-1-1 1-4 6-4 6 3 6 4zm-1-.004c-.001-.246-.154-.986-.832-1.664C11.516 10.68 10.025 10 8 10c-2.025 0-3.516.68-4.168 1.332-.678.678-.83 1.418-.832 1.664h10z"/>
+                      </svg>
+                      {entry.author}
+                    </div>
+                  )}
+                  <ul className="changelog-popup__list">
+                    {entry.changes.map((c, i) => <li key={i}>{c}</li>)}
+                  </ul>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+export function DeviceSidebar() {
+  const store = useDiagramStore();
+  const sm = store.getActiveSm();
+  const [collapsed, setCollapsed] = useState(false);
+  // User-dragged width. Auto-width based on content acts as a floor.
+  const [userWidth, setUserWidth] = useState(220);
+  const resizing = useRef(false);
+
+  // Drag-to-reorder state
+  const [dragDeviceId, setDragDeviceId] = useState(null);
+  const [dragOverId, setDragOverId] = useState(null);
+  const [dragPosition, setDragPosition] = useState(null); // 'above' | 'below'
+
+  // Auto-size floor: grow sidebar so the longest visible subject name fits.
+  // Heuristic: ~7.0px/char at 12px font + icon (28) + inner padding (32) + safety (16).
+  const autoMinWidth = useMemo(() => {
+    const devs = (sm?.devices ?? []).filter(d => !d._autoVerify && !d._autoVision && !d.crossSmId);
+    if (devs.length === 0) return 220;
+    const longest = devs.reduce(
+      (m, d) => Math.max(m, (d.displayName ?? d.name ?? '').length),
+      0
+    );
+    return Math.min(Math.max(220, Math.round(longest * 7.0 + 76)), 500);
+  }, [sm?.devices]);
+
+  // Effective width is the larger of user's choice and the auto floor.
+  const width = Math.max(userWidth, autoMinWidth);
+
+  const handleMouseDown = useCallback((e) => {
+    e.preventDefault();
+    resizing.current = true;
+    const startX = e.clientX;
+    const startW = width;
+    function onMove(ev) {
+      const newW = Math.min(Math.max(startW + (ev.clientX - startX), 160), 500);
+      setUserWidth(newW);
+    }
+    function onUp() {
+      resizing.current = false;
+      document.removeEventListener('mousemove', onMove);
+      document.removeEventListener('mouseup', onUp);
+    }
+    document.addEventListener('mousemove', onMove);
+    document.addEventListener('mouseup', onUp);
+  }, [width]);
+
+  // Reorder drag handlers
+  function handleReorderDragStart(e, deviceId) {
+    setDragDeviceId(deviceId);
+    e.dataTransfer.effectAllowed = 'move';
+    e.dataTransfer.setData('application/device-reorder', deviceId);
+  }
+
+  function handleReorderDragOver(e, targetId) {
+    if (!dragDeviceId || dragDeviceId === targetId) return;
+    // Only handle reorder drags (not canvas drags)
+    if (!e.dataTransfer.types.includes('application/device-reorder')) return;
+    e.preventDefault();
+    e.dataTransfer.dropEffect = 'move';
+    const rect = e.currentTarget.getBoundingClientRect();
+    const midY = rect.top + rect.height / 2;
+    setDragOverId(targetId);
+    setDragPosition(e.clientY < midY ? 'above' : 'below');
+  }
+
+  function handleReorderDrop(e, targetId) {
+    e.preventDefault();
+    if (!dragDeviceId || !sm || dragDeviceId === targetId) return;
+    const insertAfter = dragPosition === 'below';
+    store.reorderDevices(sm.id, dragDeviceId, targetId, insertAfter);
+    setDragDeviceId(null);
+    setDragOverId(null);
+    setDragPosition(null);
+  }
+
+  function handleReorderDragEnd() {
+    setDragDeviceId(null);
+    setDragOverId(null);
+    setDragPosition(null);
+  }
+
+  if (!sm) return null;
+
+  const devices = (sm.devices ?? []).filter(d => !d._autoVerify && !d._autoVision && !d.crossSmId);
+
+  // Group by category
+  const grouped = {};
+  for (const [cat, types] of Object.entries(DEVICE_CATEGORIES)) {
+    const devs = devices.filter(d => types.includes(d.type));
+    if (devs.length > 0) grouped[cat] = devs;
+  }
+
+  return (
+    <aside
+      className={`device-sidebar${collapsed ? ' device-sidebar--collapsed' : ''}`}
+      style={collapsed ? undefined : { width, minWidth: width }}
+    >
+      <div className="device-sidebar__header">
+        {!collapsed && <span className="device-sidebar__title">Subjects</span>}
+        <button
+          className="icon-btn"
+          onClick={() => setCollapsed(!collapsed)}
+          title={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
+        >
+          {collapsed ? '→' : '←'}
+        </button>
+      </div>
+
+      {!collapsed && (
+        <>
+          {/* Subject library */}
+          <div className="device-sidebar__section-header">
+            <span>Subject Library</span>
+            <div style={{ display: 'flex', gap: 4 }}>
+              <button
+                className="btn btn--xs btn--ghost"
+                onClick={() => { store.refreshSubjects(sm.id); }}
+                title="Refresh subjects — sync vision params and propagate device changes to nodes"
+              >
+                ↻
+              </button>
+              <button
+                className="btn btn--xs btn--ghost"
+                onClick={store.openAddDeviceModal}
+                title="Add a new subject to this state machine"
+              >
+                + Add
+              </button>
+            </div>
+          </div>
+
+          {/* Scrollable subject list — gets priority space */}
+          <div className="device-sidebar__scroll">
+            {devices.length === 0 && (
+              <div className="device-sidebar__empty">
+                <p>No subjects defined yet.</p>
+                <button className="btn btn--sm btn--secondary" onClick={store.openAddDeviceModal}>
+                  + Add Subject
+                </button>
+              </div>
+            )}
+
+            {Object.entries(grouped).map(([cat, devs]) => (
+              <div key={cat} className="device-group">
+                <div className="device-group__label">{cat}</div>
+                {devs.map(d => (
+                  <DeviceItem
+                    key={d.id}
+                    device={d}
+                    smId={sm.id}
+                    onReorderDragStart={handleReorderDragStart}
+                    onReorderDragOver={handleReorderDragOver}
+                    onReorderDrop={handleReorderDrop}
+                    onReorderDragEnd={handleReorderDragEnd}
+                    isDragOver={dragOverId === d.id}
+                    dragPosition={dragOverId === d.id ? dragPosition : null}
+                  />
+                ))}
+              </div>
+            ))}
+
+            {/* Ungrouped devices */}
+            {devices
+              .filter(d => !Object.values(DEVICE_CATEGORIES).flat().includes(d.type))
+              .map(d => (
+                <DeviceItem
+                  key={d.id}
+                  device={d}
+                  smId={sm.id}
+                  onReorderDragStart={handleReorderDragStart}
+                  onReorderDragOver={handleReorderDragOver}
+                  onReorderDrop={handleReorderDrop}
+                  onReorderDragEnd={handleReorderDragEnd}
+                  isDragOver={dragOverId === d.id}
+                  dragPosition={dragOverId === d.id ? dragPosition : null}
+                />
+              ))}
+          </div>
+
+          {/* Bottom panel — PT & Signals, compact, constrained height */}
+          <div className="device-sidebar__bottom-panel">
+            <PartTrackingSection />
+            <SignalsSection />
+            {/* Revision number + changelog */}
+            <VersionBlock />
+          </div>
+        </>
+      )}
+      {/* Drag handle to resize sidebar */}
+      {!collapsed && (
+        <div className="device-sidebar__resize" onMouseDown={handleMouseDown} />
+      )}
+    </aside>
+  );
+}

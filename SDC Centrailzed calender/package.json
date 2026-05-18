@@ -1,0 +1,53 @@
+{
+  "name": "sdc-centralized-calendar",
+  "version": "1.2.6",
+  "description": "SDC Automation Centralized Calendar — desktop app",
+  "main": "electron/main.js",
+  "scripts": {
+    "start": "electron .",
+    "dev": "electron . --enable-logging",
+    "build": "electron-builder build --windows",
+    "publish": "electron-builder build --windows -p always"
+  },
+  "build": {
+    "appId": "com.sdc.calendar",
+    "productName": "SDC Calendar",
+    "copyright": "Copyright © 2026 SDC",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "electron/**/*",
+      "frontend/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        "nsis"
+      ],
+      "icon": "frontend/icons/sdc-calendar-icon-C-new.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "SDC Calendar"
+    },
+    "publish": {
+      "provider": "github",
+      "owner": "abhikamuju36-ui",
+      "repo": "sdc_calender",
+      "releaseType": "release"
+    }
+  },
+  "devDependencies": {
+    "electron": "^29.0.0",
+    "electron-builder": "^26.8.1"
+  },
+  "dependencies": {
+    "nodemailer": "^8.0.7",
+    "sqlite3": "^6.0.1",
+    "xlsx": "^0.18.5"
+  }
+}

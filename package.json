@@ -1,0 +1,22 @@
+{
+  "name": "sdc-tools",
+  "version": "1.0.0",
+  "private": true,
+  "workspaces": [
+    "shell",
+    "Assembilies library main",
+    "Build_Readiness_Report",
+    "SDC_Scheduler",
+    "state_logic_builder"
+  ],
+  "scripts": {
+    "dev": "npm run dev --workspace=shell",
+    "build": "npm run build:apps && npm run electron:build --workspace=shell",
+    "build:apps": "npm run build --workspace=\"Assembilies library main\" && npm run build --workspace=state_logic_builder",
+    "install:all": "npm install --workspaces",
+    "start:assemblies": "npm run start --workspace=\"Assembilies library main\"",
+    "start:readiness": "npm run start --workspace=Build_Readiness_Report",
+    "start:scheduler": "npm run start --workspace=SDC_Scheduler",
+    "start:statelogic": "npm run start --workspace=state_logic_builder"
+  }
+}

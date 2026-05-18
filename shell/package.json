@@ -1,0 +1,29 @@
+{
+  "name": "sdc-shell",
+  "version": "1.0.0",
+  "private": true,
+  "main": "electron/main.js",
+  "scripts": {
+    "vite": "vite",
+    "dev": "concurrently -k -n VITE,ELECTRON -c cyan,yellow \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "build": "vite build",
+    "electron:build": "npm run build && electron-builder --win",
+    "electron:build:publish": "npm run build && electron-builder --win --publish always",
+    "preview": "vite preview"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^5.2.1",
+    "dotenv": "^16.6.1",
+    "electron-updater": "^6.8.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^9.1.0",
+    "electron": "^35.0.0",
+    "electron-builder": "^25.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^5.4.0",
+    "wait-on": "^8.0.0"
+  }
+}

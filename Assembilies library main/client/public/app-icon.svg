@@ -1,0 +1,66 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
+  <defs>
+    <clipPath id="icon-clip">
+      <rect x="0" y="0" width="512" height="512" rx="112" ry="112" />
+    </clipPath>
+    <radialGradient id="bg-grad" cx="30%" cy="20%" r="100%">
+      <stop offset="0%" stop-color="#2A93DD" />
+      <stop offset="55%" stop-color="#1169B0" />
+      <stop offset="100%" stop-color="#07375E" />
+    </radialGradient>
+    <linearGradient id="cube-top" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#FFFFFF" />
+      <stop offset="100%" stop-color="#E4F0F9" />
+    </linearGradient>
+    <linearGradient id="cube-left" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#C3D8E8" />
+      <stop offset="100%" stop-color="#8FB0C6" />
+    </linearGradient>
+    <linearGradient id="cube-right" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0%" stop-color="#9DB8CB" />
+      <stop offset="100%" stop-color="#5E7E95" />
+    </linearGradient>
+    <radialGradient id="shadow" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#000000" stop-opacity="0.35" />
+      <stop offset="100%" stop-color="#000000" stop-opacity="0" />
+    </radialGradient>
+  </defs>
+
+  <g clip-path="url(#icon-clip)">
+    <!-- Background -->
+    <rect x="0" y="0" width="512" height="512" fill="url(#bg-grad)" />
+
+    <!-- Ambient shadow under stack -->
+    <ellipse cx="256" cy="430" rx="170" ry="22" fill="url(#shadow)" />
+
+    <!-- Back-left cube -->
+    <g transform="translate(108, 268)">
+      <polygon points="0,36 72,0 144,36 72,72" fill="url(#cube-top)" />
+      <polygon points="0,36 72,72 72,144 0,108" fill="url(#cube-left)" />
+      <polygon points="72,72 144,36 144,108 72,144" fill="url(#cube-right)" />
+      <line x1="0" y1="36" x2="72" y2="0" stroke="#FFFFFF" stroke-width="1.5" opacity="0.5" />
+      <line x1="72" y1="0" x2="144" y2="36" stroke="#FFFFFF" stroke-width="1.5" opacity="0.35" />
+    </g>
+
+    <!-- Bottom-right cube -->
+    <g transform="translate(260, 268)">
+      <polygon points="0,36 72,0 144,36 72,72" fill="url(#cube-top)" />
+      <polygon points="0,36 72,72 72,144 0,108" fill="url(#cube-left)" />
+      <polygon points="72,72 144,36 144,108 72,144" fill="url(#cube-right)" />
+      <line x1="0" y1="36" x2="72" y2="0" stroke="#FFFFFF" stroke-width="1.5" opacity="0.5" />
+      <line x1="72" y1="0" x2="144" y2="36" stroke="#FFFFFF" stroke-width="1.5" opacity="0.35" />
+    </g>
+
+    <!-- Top cube -->
+    <g transform="translate(184, 140)">
+      <polygon points="0,36 72,0 144,36 72,72" fill="url(#cube-top)" />
+      <polygon points="0,36 72,72 72,144 0,108" fill="url(#cube-left)" />
+      <polygon points="72,72 144,36 144,108 72,144" fill="url(#cube-right)" />
+      <line x1="0" y1="36" x2="72" y2="0" stroke="#FFFFFF" stroke-width="1.5" opacity="0.6" />
+      <line x1="72" y1="0" x2="144" y2="36" stroke="#FFFFFF" stroke-width="1.5" opacity="0.4" />
+    </g>
+
+    <!-- Top-edge sheen -->
+    <path d="M 0 0 L 512 0 L 512 60 Q 256 140 0 60 Z" fill="#FFFFFF" opacity="0.06" />
+  </g>
+</svg>

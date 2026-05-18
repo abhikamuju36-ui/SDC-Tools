@@ -1,0 +1,125 @@
+name: Build & Release SDC Tools
+
+# ─────────────────────────────────────────────────────────────────────────────
+# How to ship a new version (same workflow as Dan's state_logic_builder):
+#
+#   1. Bump "version" in shell/package.json  (e.g. "1.0.0" → "1.1.0")
+#   2. git commit -m "chore: release v1.1.0"
+#   3. git push origin main
+#
+# GitHub Actions detects the version bump, builds the Windows installer,
+# and publishes it to GitHub Releases automatically.
+# Every installed copy of SDC Tools will auto-update within ~30 minutes.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  push:
+    branches: [main]
+
+# Required so electron-builder can create GitHub Releases
+permissions:
+  contents: write
+
+jobs:
+  # ── Step 1: Detect version bump (fast, runs on Linux) ──────────────────────
+  check-version:
+    name: Check if version changed
+    runs-on: ubuntu-latest
+    outputs:
+      version:        ${{ steps.get_version.outputs.version }}
+      should_release: ${{ steps.check.outputs.should_release }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+
+      - name: Get current version
+        id: get_version
+        run: echo "version=$(node -p "require('./shell/package.json').version")" >> $GITHUB_OUTPUT
+
+      - name: Compare with previous commit
+        id: check
+        run: |
+          PREV=$(git show HEAD~1:shell/package.json 2>/dev/null \
+            | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" \
+            2>/dev/null || echo "none")
+          CURR="${{ steps.get_version.outputs.version }}"
+          echo "Previous: $PREV  →  Current: $CURR"
+          if [ "$PREV" != "$CURR" ]; then
+            echo "should_release=true" >> $GITHUB_OUTPUT
+          else
+            echo "should_release=false" >> $GITHUB_OUTPUT
+          fi
+
+  # ── Step 2: Build & publish (only when version changed) ────────────────────
+  build-and-release:
+    name: Build installer & publish release
+    needs: check-version
+    if: needs.check-version.outputs.should_release == 'true'
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: shell/package-lock.json
+
+      # ── Install sub-app production deps ──────────────────────────────────
+      - name: Install SDC_Scheduler deps
+        working-directory: SDC_Scheduler
+        run: npm ci --omit=dev
+
+      - name: Install state_logic_builder deps
+        working-directory: state_logic_builder
+        run: npm ci --omit=dev
+
+      - name: Install Calendar deps
+        working-directory: "SDC Centrailzed calender/server"
+        run: npm ci --omit=dev
+
+      - name: Install Assemblies Library deps
+        working-directory: "Assembilies library main"
+        run: npm ci --omit=dev
+
+      - name: Install Build Readiness deps
+        working-directory: Build_Readiness_Report
+        run: npm ci --omit=dev
+
+      # ── Build frontends that need a compile step ──────────────────────────
+      - name: Build State Logic Builder frontend
+        working-directory: state_logic_builder
+        run: npm run build
+
+      - name: Build Assemblies Library frontend
+        working-directory: "Assembilies library main"
+        run: npm run build --if-present
+
+      # ── Shell: build launcher UI & package installer ──────────────────────
+      - name: Install shell deps
+        working-directory: shell
+        run: npm ci
+
+      # No native module rebuild needed — Assemblies Library now uses Azure SQL
+      # (mssql is pure JS). Remove this step if you see it in older versions.
+
+      - name: Build Vite launcher UI
+        working-directory: shell
+        run: npm run build
+
+      - name: Package & publish installer to GitHub Releases
+        working-directory: shell
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Keep a 90-day backup copy in workflow artifacts ───────────────────
+      - name: Upload installer as artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SDC-Tools-v${{ needs.check-version.outputs.version }}
+          path: shell/dist-electron/*.exe
+          retention-days: 90

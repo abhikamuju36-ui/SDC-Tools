@@ -1,0 +1,157 @@
+name: CI — All Apps
+
+# Runs on every push and pull request.
+# Path filters ensure only the relevant job runs when a specific app changes.
+
+on:
+  push:
+    branches: [main, develop, 'feature/**', 'fix/**']
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  # ── Shell launcher ────────────────────────────────────────────────────────────
+  shell:
+    name: Shell — lint & build UI
+    runs-on: ubuntu-latest
+    if: |
+      contains(github.event.head_commit.modified, 'shell/') ||
+      github.event_name == 'pull_request'
+    defaults:
+      run:
+        working-directory: shell
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: shell/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build Vite UI
+        run: npm run build
+
+  # ── SDC Scheduler ─────────────────────────────────────────────────────────────
+  scheduler:
+    name: Scheduler — test & lint
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: SDC_Scheduler
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'          # node:sqlite requires ≥ 22.5
+          cache: npm
+          cache-dependency-path: SDC_Scheduler/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Lint
+        run: npx eslint . --ext .js || true
+
+      - name: Unit tests
+        run: npm test
+        env:
+          NODE_ENV: test
+          SESSION_SECRET: ci-test-secret-do-not-use-in-production
+
+  # ── Assemblies Library ────────────────────────────────────────────────────────
+  assemblies:
+    name: Assemblies Library — build client
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: "Assembilies library main"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: "Assembilies library main/package-lock.json"
+
+      - name: Install
+        run: npm ci
+
+      - name: Build React client
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+  # ── Build Readiness ───────────────────────────────────────────────────────────
+  readiness:
+    name: Build Readiness — install & check
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: Build_Readiness_Report
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: Build_Readiness_Report/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Syntax check server
+        run: node --check server/index.js && node --check server/routes/readiness.js && node --check server/routes/bom.js
+        env:
+          # Prevents dotenv from erroring on missing .env in CI
+          NODE_ENV: test
+
+  # ── State Logic Builder ───────────────────────────────────────────────────────
+  statelogic:
+    name: State Logic Builder — build client
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: state_logic_builder
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: state_logic_builder/package-lock.json
+
+      - name: Install
+        run: npm ci
+
+      - name: Build Vite app
+        run: npm run build
+        env:
+          NODE_ENV: production
+
+      - name: Syntax check server
+        run: node --check server.js
+
+  # ── Gate: all must pass before release ───────────────────────────────────────
+  all-green:
+    name: All checks passed
+    needs: [scheduler, assemblies, readiness, statelogic]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "All CI jobs passed — ready to release"

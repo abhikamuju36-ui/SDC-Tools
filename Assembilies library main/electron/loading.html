@@ -1,0 +1,43 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <style>
+        body {
+            background: #FAFAF9;
+            color: #1C1917;
+            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+        }
+        .logo {
+            width: 80px;
+            height: 80px;
+            margin-bottom: 24px;
+            animation: pulse 2s infinite ease-in-out;
+        }
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 3px solid rgba(0, 56, 147, 0.1);
+            border-top: 3px solid #003893;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-bottom: 16px;
+        }
+        h1 { font-size: 18px; font-weight: 700; margin: 0 0 8px; }
+        p { font-size: 13px; color: #78716C; margin: 0; }
+        @keyframes spin { to { transform: rotate(360deg); } }
+        @keyframes pulse { 0%, 100% { opacity: 1; transform: scale(1); } 50% { opacity: 0.8; transform: scale(0.95); } }
+    </style>
+</head>
+<body>
+    <div class="spinner"></div>
+    <h1>Initializing Library</h1>
+    <p>Connecting to SDC Database...</p>
+</body>
+</html>

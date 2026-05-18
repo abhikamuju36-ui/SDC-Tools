@@ -1,0 +1,42 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+build/
+!build/installer.nsh
+out/
+
+# Local data / user content
+projects/
+backups/
+data/
+*.log
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# Editor / OS
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+*.swp
+
+# Electron build artifacts
+release/
+dist-electron/
+
+# Claude Code local settings (machine-specific)
+.claude/settings.local.json
+
+# Confidential SDC reference material (never commit)
+plc_guide.*
+**/PLC Software Standardization Guide*
+**/SDC*Guide*.pdf
+
+# Smoke test output (regenerated)
+scripts/out.L5X
+test_output*.L5X
