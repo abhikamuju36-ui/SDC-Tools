@@ -1,0 +1,120 @@
+/**
+ * PM2 Ecosystem Config — SDC Tools Server
+ *
+ * Run on the company server PC to manage all 5 backend services.
+ *
+ * ── First-time setup ─────────────────────────────────────────────────────────
+ *   1. Install Node.js LTS  →  https://nodejs.org
+ *   2. Install PM2          →  npm install -g pm2
+ *   3. Clone / pull repo    →  git clone https://github.com/abhikamuju36-ui/SDC-Tools.git
+ *   4. Install all deps     →  npm install  (from repo root)
+ *   5. Start all apps       →  pm2 start ecosystem.config.js
+ *   6. Save + auto-start    →  pm2 save  &&  pm2 startup
+ *      (follow the printed command to register the Windows service)
+ *
+ * ── Daily use ────────────────────────────────────────────────────────────────
+ *   pm2 status              → see all apps and their status
+ *   pm2 logs                → tail all logs
+ *   pm2 logs scheduler      → tail one app
+ *   pm2 restart all         → restart everything (e.g. after git pull)
+ *   pm2 restart scheduler   → restart one app
+ *
+ * ── Deploy an update ─────────────────────────────────────────────────────────
+ *   git pull && pm2 restart all
+ *   (or set up the GitHub Actions deploy workflow to do this automatically)
+ *
+ * ── Ports ────────────────────────────────────────────────────────────────────
+ *   assemblies   4001    BRR          4002
+ *   scheduler    4003    statelogic   4004    calendar  4005
+ *
+ *   Open these ports in Windows Firewall (inbound, TCP) for LAN access.
+ * ─────────────────────────────────────────────────────────────────────────────
+ */
+
+module.exports = {
+  apps: [
+
+    // ── Assemblies Library ──────────────────────────────────────────────────
+    {
+      name:          'assemblies',
+      script:        'server/index.js',
+      cwd:           './Assembilies library main',
+      env: {
+        PORT:        '4001',
+        NODE_ENV:    'production',
+      },
+      watch:         false,
+      max_restarts:  10,
+      restart_delay: 3000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    },
+
+    // ── Build Readiness Report ───────────────────────────────────────────────
+    {
+      name:          'readiness',
+      script:        'server/index.js',
+      cwd:           './Build_Readiness_Report',
+      env: {
+        PORT:        '4002',
+        NODE_ENV:    'production',
+      },
+      watch:         false,
+      max_restarts:  10,
+      restart_delay: 3000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    },
+
+    // ── SDC Scheduler ───────────────────────────────────────────────────────
+    {
+      name:          'scheduler',
+      script:        'server.js',
+      cwd:           './SDC_Scheduler',
+      env: {
+        PORT:        '4003',
+        NODE_ENV:    'production',
+        NODE_NO_WARNINGS: '1',
+      },
+      watch:         false,
+      max_restarts:  10,
+      restart_delay: 3000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    },
+
+    // ── State Logic Builder ─────────────────────────────────────────────────
+    {
+      name:          'statelogic',
+      script:        'server.js',
+      cwd:           './state_logic_builder',
+      env: {
+        PORT:        '4004',
+        NODE_ENV:    'production',
+        // Update this path if the standards drive is mapped differently on the server
+        STANDARDS_DIR: 'N:\\AI Folder\\State Logic Diagrams\\standards',
+      },
+      watch:         false,
+      max_restarts:  10,
+      restart_delay: 3000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    },
+
+    // ── SDC Calendar ────────────────────────────────────────────────────────
+    {
+      name:          'calendar',
+      script:        'server/server.js',
+      cwd:           './SDC Centrailzed calender',
+      env: {
+        PORT:        '4005',
+        NODE_ENV:    'production',
+        SKIP_AUTH:   'true',
+        // Update to the actual server hostname/IP so calendar links work correctly
+        FRONTEND_URL: 'http://SDC-SERVER:4005',
+        SERVER_IP:    'SDC-SERVER',
+      },
+      watch:         false,
+      max_restarts:  10,
+      restart_delay: 3000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+    },
+
+  ],
+};

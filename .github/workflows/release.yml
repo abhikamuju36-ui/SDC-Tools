@@ -1,15 +1,18 @@
 name: Build & Release SDC Tools
 
 # ─────────────────────────────────────────────────────────────────────────────
-# How to ship a new version (same workflow as Dan's state_logic_builder):
+# How to ship a new version:
 #
-#   1. Bump "version" in shell/package.json  (e.g. "1.0.0" → "1.1.0")
-#   2. git commit -m "chore: release v1.1.0"
-#   3. git push origin main
+#   1. Update SDC_SERVER_HOST in shell/.env to the real server hostname/IP
+#   2. Bump "version" in shell/package.json  (e.g. "1.1.0" → "1.2.0")
+#   3. git commit -m "chore: release v1.2.0"
+#   4. git push origin master
 #
-# GitHub Actions detects the version bump, builds the Windows installer,
-# and publishes it to GitHub Releases automatically.
-# Every installed copy of SDC Tools will auto-update within ~30 minutes.
+# GitHub Actions builds the installer and publishes it to GitHub Releases.
+# Every installed copy of SDC Tools auto-updates within ~30 minutes.
+#
+# Backend updates (new features, bug fixes) do NOT need a new installer:
+#   → Just SSH into the server and run:  git pull && pm2 restart all
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
@@ -68,48 +71,38 @@ jobs:
           cache: "npm"
           cache-dependency-path: package-lock.json
 
-      # ── Install all workspace member deps in one shot ────────────────────
-      # SDC_Scheduler, state_logic_builder, Assembilies library main,
-      # Build_Readiness_Report are all npm workspace members → single root
-      # npm ci reads the root package-lock.json and installs everything,
-      # INCLUDING devDependencies (vite, @vitejs/plugin-react, etc.) so the
-      # frontend build steps below can compile the React apps.
-      - name: Install all workspace deps (root)
-        run: npm ci
+      # Write shell/.env so the installer gets SDC_SERVER_HOST baked in.
+      # Set SDC_SERVER_HOST in GitHub → Settings → Secrets → Actions.
+      # Azure AD keys are only needed if MSAL auth is enabled.
+      - name: Write shell/.env
+        shell: bash
+        run: |
+          cat > shell/.env <<EOF
+          SDC_SERVER_HOST=${{ secrets.SDC_SERVER_HOST || 'SDC-SERVER' }}
+          AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}
+          EOF
 
-      # Calendar is NOT in the workspace → needs its own install step
-      - name: Install Calendar deps
-        working-directory: "SDC Centrailzed calender/server"
-        run: npm install --omit=dev
-
-      # ── Build frontends that need a compile step ──────────────────────────
-      - name: Build State Logic Builder frontend
-        working-directory: state_logic_builder
-        run: npm run build
-
-      - name: Build Assemblies Library frontend
-        working-directory: "Assembilies library main"
-        run: npm run build --if-present
-
-      # ── Shell: install locally so electron-builder can find electron ─────────
-      # electron-builder resolves the electron binary from the shell's LOCAL
-      # node_modules, not the hoisted workspace root. A dedicated npm install
-      # here ensures shell/node_modules/electron exists before packaging.
-      - name: Install shell deps (local)
+      # Shell is NOT in the workspace (removed so electron-builder finds electron locally)
+      # Install shell deps locally so electron-builder can resolve the electron binary
+      - name: Install shell deps
         working-directory: shell
         run: npm install
 
+      # Build the Vite launcher UI (React frontend for the shell window)
       - name: Build Vite launcher UI
         working-directory: shell
         run: npm run build
 
+      # Package and publish to GitHub Releases
+      # Installer is now ~100 MB (shell only — backends run on server PC)
       - name: Package & publish installer to GitHub Releases
         working-directory: shell
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
-      # ── Keep a 90-day backup copy in workflow artifacts ───────────────────
+      # Keep a 90-day backup copy in workflow artifacts
       - name: Upload installer as artifact
         uses: actions/upload-artifact@v4
         with:

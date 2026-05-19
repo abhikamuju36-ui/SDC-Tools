@@ -22,106 +22,14 @@ publish:
   owner: abhikamuju36-ui
   repo: SDC-Tools
 
-# Shell app files (launcher UI + Electron main process)
+# Shell app files only — launcher UI + Electron main process.
+# Backends run on the company server PC (PM2), not bundled here.
+# This keeps the installer lean (~100 MB vs ~600 MB previously).
 files:
   - electron/**
   - dist/**
   - package.json
-
-# ── Sub-app resources ──────────────────────────────────────────────────────────
-# Each app's server code + pre-built frontend is bundled here.
-# Sub-apps run IN-PROCESS via require() — no child_process.spawn needed.
-# node_modules are kept per-app so require() resolution works correctly.
-# Dev files, test fixtures, SQLite WAL files, and caches are excluded to keep
-# the installer lean.
-extraResources:
-
-  # ── Assemblies Library ─────────────────────────────────────────────────────
-  - from: "../Assembilies library main"
-    to: apps/assemblies
-    filter:
-      - server/**
-      - client/dist/**
-      - package.json
-      - .env
-      - node_modules/**
-      - "!node_modules/**/electron/**"
-      - "!node_modules/**/.cache/**"
-      - "!node_modules/**/*.map"
-      - "!node_modules/**/test/**"
-      - "!node_modules/**/tests/**"
-      - "!node_modules/**/__tests__/**"
-
-  # ── Build Readiness Report ─────────────────────────────────────────────────
-  - from: "../Build_Readiness_Report"
-    to: apps/readiness
-    filter:
-      - server/**
-      - client/**
-      - package.json
-      - node_modules/**
-      - "!node_modules/**/.cache/**"
-      - "!node_modules/**/*.map"
-      - "!node_modules/**/test/**"
-      - "!node_modules/**/tests/**"
-
-  # ── SDC Scheduler ─────────────────────────────────────────────────────────
-  # Include all runtime files. DB files (.db) are intentionally included so
-  # the calendar's scheduler-sync route can read local tasks if Azure SQL is
-  # unavailable. .db-shm/.db-wal (WAL journal) are excluded — they are
-  # ephemeral and should not be in the package.
-  - from: "../SDC_Scheduler"
-    to: apps/scheduler
-    filter:
-      - "**"
-      - "!tests/**"
-      - "!__tests__/**"
-      - "!playwright-report/**"
-      - "!test-results/**"
-      - "!scratch/**"
-      - "!.git/**"
-      - "!.github/**"
-      - "!.claude/**"
-      - "!*.db-shm"
-      - "!*.db-wal"
-      - "!node_modules/**/.cache/**"
-      - "!node_modules/**/*.map"
-      - "!node_modules/**/test/**"
-      - "!node_modules/**/tests/**"
-
-  # ── State Logic Builder ────────────────────────────────────────────────────
-  - from: "../state_logic_builder"
-    to: apps/statelogic
-    filter:
-      - dist/**
-      - server.js
-      - azureDb.js
-      - package.json
-      - .env
-      - node_modules/**
-      - "!node_modules/**/.cache/**"
-      - "!node_modules/**/*.map"
-      - "!node_modules/**/test/**"
-      - "!node_modules/**/tests/**"
-
-  # ── SDC Calendar ──────────────────────────────────────────────────────────
-  # Frontend is vanilla HTML/JS served statically by the Node server.
-  - from: "../SDC Centrailzed calender"
-    to: apps/calendar
-    filter:
-      - server/**
-      - frontend/**
-      - "!server/logs/**"
-      - "!server/node_modules/**/.cache/**"
-      - "!server/node_modules/**/*.map"
-      - "!server/node_modules/**/test/**"
-      - "!server/node_modules/**/tests/**"
-      - "!server/*.db"
-      - "!server/*.db-shm"
-      - "!server/*.db-wal"
-      - "!.git/**"
-      - "!.github/**"
-      - "!.claude/**"
+  - .env
 
 win:
   target:
@@ -136,8 +44,6 @@ nsis:
   uninstallerIcon: build/icon.ico
   artifactName: "SDC-Tools-Setup-${version}.exe"
 
-# Unpack everything from the ASAR so:
-#   1. Native modules (better-sqlite3) can be loaded at runtime
-#   2. File-system operations in server code work correctly
-asarUnpack:
-  - "**"
+# No native modules in the shell — asar is safe to keep enabled.
+# (better-sqlite3 and other native deps live on the server, not here)
+asar: true

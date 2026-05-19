@@ -475,8 +475,9 @@ app.whenReady().then(() => {
 // ── Notification polling ──────────────────────────────────────────────────────
 // Polls each app's /api/notifications/pending every 60 s and fires native toasts
 // for upcoming calendar events. Also watches for app crashes.
+const _serverHost = process.env.SDC_SERVER_HOST || 'localhost';
 const APP_NOTIFICATION_ENDPOINTS = {
-  calendar: 'http://localhost:4005/api/notifications/pending?window=30',
+  calendar: `http://${_serverHost}:4005/api/notifications/pending?window=30`,
 };
 const firedReminders = new Set();
 const lastAppState   = {};
