@@ -27,6 +27,7 @@ contextBridge.exposeInMainWorld('shellAPI', {
 
   // ── Auto-updater ──────────────────────────────────────────────────────────
   getAppVersion:    () => ipcRenderer.invoke('get-app-version'),
+  getServerHost:    () => ipcRenderer.invoke('get-server-host'),
   updateDownload:   () => ipcRenderer.invoke('update-download'),
   updateInstall:    () => ipcRenderer.invoke('update-install'),
 
@@ -39,6 +40,11 @@ contextBridge.exposeInMainWorld('shellAPI', {
   // ── System / preferences ──────────────────────────────────────────────────
   getLaunchOnStartup: () => ipcRenderer.invoke('get-launch-on-startup'),
   setLaunchOnStartup: (enable) => ipcRenderer.invoke('set-launch-on-startup', enable),
+
+  // ── Window controls ───────────────────────────────────────────────────────
+  windowMinimize: () => ipcRenderer.invoke('window-minimize'),
+  windowMaximize: () => ipcRenderer.invoke('window-maximize'),
+  windowClose:    () => ipcRenderer.invoke('window-close'),
 
   // ── Microsoft SSO auth ────────────────────────────────────────────────────
   authGetStatus: () => ipcRenderer.invoke('auth-get-status'),

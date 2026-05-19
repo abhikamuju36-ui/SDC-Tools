@@ -6,6 +6,7 @@ import LogPanel from './components/LogPanel'
 import UpdateBanner from './components/UpdateBanner'
 import NotificationCenter from './components/NotificationCenter'
 import RecentActivity from './components/RecentActivity'
+import WindowChrome from './components/WindowChrome'
 import LoginScreen from './screens/LoginScreen'
 
 const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'calendar'].map(id => ({
@@ -27,9 +28,9 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
   status: 'starting',
   color: {
     assemblies: '#1574C4',
-    readiness:  '#74C415',
-    scheduler:  '#F59E0B',
-    statelogic: '#E07B39',
+    readiness:  '#16a34a',
+    scheduler:  '#FFDE51',
+    statelogic: '#ea580c',
     calendar:   '#74C415',
   }[id],
   url: '',
@@ -83,9 +84,17 @@ function formatHeaderDate(date) {
 
 function getGreeting(date) {
   const h = date.getHours()
+  if (h < 5)  return 'Working late'
   if (h < 12) return 'Good morning'
   if (h < 17) return 'Good afternoon'
-  return 'Good evening'
+  if (h < 21) return 'Good evening'
+  return 'Working late'
+}
+
+function stringToColor(s) {
+  let h = 0
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) & 0xffffffff
+  return `oklch(0.55 0.12 ${Math.abs(h) % 360})`
 }
 
 export default function App() {
@@ -98,15 +107,16 @@ export default function App() {
   const [busy, setBusy]           = useState(false)
   const [updateStatus, setUpdateStatus] = useState(null)
   const [appVersion, setAppVersion]     = useState('')
+  const [serverHost, setServerHost]     = useState('')
   const [launchOnStartup, setLaunchOnStartup] = useState(false)
   const [theme, setTheme]         = useState(() => localStorage.getItem('sdc-theme') || 'light')
   const [searchQuery, setSearchQuery] = useState('')
   const searchRef = useRef(null)
 
-  // Live clock (updates every minute)
+  // Live clock (updates every 30 seconds)
   const [now, setNow] = useState(new Date())
   useEffect(() => {
-    const t = setInterval(() => setNow(new Date()), 60000)
+    const t = setInterval(() => setNow(new Date()), 30_000)
     return () => clearInterval(t)
   }, [])
 
@@ -166,6 +176,7 @@ export default function App() {
       if (Object.keys(status).length) setApps(Object.values(status))
     })
     api.getAppVersion().then(v => setAppVersion(v))
+    api.getServerHost().then(h => setServerHost(h))
     api.getLaunchOnStartup().then(v => setLaunchOnStartup(v))
 
     const unsubStatus = api.onStatusChange(status => setApps(Object.values(status)))
@@ -254,6 +265,8 @@ export default function App() {
 
   return (
     <div className="app">
+      <WindowChrome />
+
       {/* ── Header ───────────────────────────────────────────────────── */}
       <header className="app-header">
         <div className="header-brand">
@@ -299,7 +312,7 @@ export default function App() {
           </button>
 
           <div className="header-user" title={authUser.email}>
-            <span className="header-user-avatar">{initials}</span>
+            <span className="header-user-avatar" style={{ background: authUser.name ? stringToColor(authUser.name) : undefined }}>{initials}</span>
             <div className="header-user-info">
               <span className="header-user-name">{authUser.name || authUser.email}</span>
               <span className="header-user-email">{authUser.email}</span>
@@ -370,29 +383,33 @@ export default function App() {
             </div>
           </div>
 
-          {/* Engineering Applications section */}
-          <div className="section-header">
-            <span className="section-title">ENGINEERING APPLICATIONS</span>
-            <span className="section-count">{runningCount} of {apps.length}</span>
+          {/* Two-column content grid: apps + activity sidebar */}
+          <div className="content-grid">
+            <section className="apps-section">
+              <div className="section-header">
+                <span className="section-title">ENGINEERING APPLICATIONS</span>
+                <span className="section-count">{runningCount} of {apps.length}</span>
+              </div>
+
+              <AppGrid
+                apps={filteredApps}
+                lastOpened={lastOpened}
+                onOpen={handleOpen}
+                onRetry={handleRetry}
+                onShowLogs={handleShowLogs}
+              />
+            </section>
+
+            <aside className="activity-sidebar">
+              <div className="section-header">
+                <span className="section-title">RECENT ACTIVITY</span>
+                {activity.length > 5 && (
+                  <button className="section-link" onClick={() => {}}>View all</button>
+                )}
+              </div>
+              <RecentActivity activity={activity} apps={apps} />
+            </aside>
           </div>
-
-          <AppGrid
-            apps={filteredApps}
-            lastOpened={lastOpened}
-            onOpen={handleOpen}
-            onRetry={handleRetry}
-            onShowLogs={handleShowLogs}
-          />
-
-          {/* Recent Activity section */}
-          <div className="section-header" style={{ marginTop: 28 }}>
-            <span className="section-title">RECENT ACTIVITY</span>
-            {activity.length > 5 && (
-              <button className="section-link" onClick={() => {}}>View all</button>
-            )}
-          </div>
-
-          <RecentActivity activity={activity} apps={apps} />
         </div>
       </main>
 
@@ -405,7 +422,7 @@ export default function App() {
         />
       )}
 
-      <StatusBar apps={apps} runningCount={runningCount} email={authUser.email} />
+      <StatusBar apps={apps} runningCount={runningCount} email={authUser.email} serverHost={serverHost} version={appVersion} />
     </div>
   )
 }

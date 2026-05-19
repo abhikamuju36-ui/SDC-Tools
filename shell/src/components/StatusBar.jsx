@@ -1,4 +1,4 @@
-export default function StatusBar({ apps, runningCount, email }) {
+export default function StatusBar({ apps, runningCount, email, serverHost, version }) {
   const total = apps.length
   const allUp = runningCount === total && total > 0
 
@@ -24,15 +24,19 @@ export default function StatusBar({ apps, runningCount, email }) {
       </div>
 
       <div className="status-bar-right">
-        <span className="sb-host">SDC-ENG-01</span>
+        {serverHost && <span className="sb-host">{serverHost}</span>}
         {email && (
           <>
             <span className="sb-sep">·</span>
             <span className="sb-host">{email}</span>
           </>
         )}
-        <span className="sb-sep">·</span>
-        <span className="sb-build">Build #421</span>
+        {version && (
+          <>
+            <span className="sb-sep">·</span>
+            <span className="sb-build">v{version}</span>
+          </>
+        )}
       </div>
     </footer>
   )

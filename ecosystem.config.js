@@ -20,8 +20,13 @@
  *   pm2 restart scheduler   → restart one app
  *
  * ── Deploy an update ─────────────────────────────────────────────────────────
- *   git pull && pm2 restart all
- *   (or set up the GitHub Actions deploy workflow to do this automatically)
+ *   git pull && npm run deploy
+ *   (builds React frontends then restarts all PM2 apps)
+ *
+ * ── Environment ──────────────────────────────────────────────────────────────
+ *   Each app loads its own .env file via dotenv (from its cwd).
+ *   Copy .env.example → each app's folder and fill in AZURE_SQL_* creds.
+ *   Shell-launcher specific: .env at repo root (SDC_SERVER_HOST, AZURE_*).
  *
  * ── Ports ────────────────────────────────────────────────────────────────────
  *   assemblies   4001    BRR          4002
@@ -40,13 +45,15 @@ module.exports = {
       script:        'server/index.js',
       cwd:           './Assembilies library main',
       env: {
-        PORT:        '4001',
-        NODE_ENV:    'production',
+        PORT:             '4001',
+        NODE_ENV:         'production',
+        NODE_NO_WARNINGS: '1',
       },
       watch:         false,
       max_restarts:  10,
       restart_delay: 3000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs:    true,
     },
 
     // ── Build Readiness Report ───────────────────────────────────────────────
@@ -55,13 +62,15 @@ module.exports = {
       script:        'server/index.js',
       cwd:           './Build_Readiness_Report',
       env: {
-        PORT:        '4002',
-        NODE_ENV:    'production',
+        PORT:             '4002',
+        NODE_ENV:         'production',
+        NODE_NO_WARNINGS: '1',
       },
       watch:         false,
       max_restarts:  10,
       restart_delay: 3000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs:    true,
     },
 
     // ── SDC Scheduler ───────────────────────────────────────────────────────
@@ -70,14 +79,15 @@ module.exports = {
       script:        'server.js',
       cwd:           './SDC_Scheduler',
       env: {
-        PORT:        '4003',
-        NODE_ENV:    'production',
+        PORT:             '4003',
+        NODE_ENV:         'production',
         NODE_NO_WARNINGS: '1',
       },
       watch:         false,
       max_restarts:  10,
       restart_delay: 3000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs:    true,
     },
 
     // ── State Logic Builder ─────────────────────────────────────────────────
@@ -86,15 +96,17 @@ module.exports = {
       script:        'server.js',
       cwd:           './state_logic_builder',
       env: {
-        PORT:        '4004',
-        NODE_ENV:    'production',
+        PORT:             '4004',
+        NODE_ENV:         'production',
+        NODE_NO_WARNINGS: '1',
         // Update this path if the standards drive is mapped differently on the server
-        STANDARDS_DIR: 'N:\\AI Folder\\State Logic Diagrams\\standards',
+        STANDARDS_DIR:    'N:\\AI Folder\\State Logic Diagrams\\standards',
       },
       watch:         false,
       max_restarts:  10,
       restart_delay: 3000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs:    true,
     },
 
     // ── SDC Calendar ────────────────────────────────────────────────────────
@@ -103,17 +115,19 @@ module.exports = {
       script:        'server/server.js',
       cwd:           './SDC Centrailzed calender',
       env: {
-        PORT:        '4005',
-        NODE_ENV:    'production',
-        SKIP_AUTH:   'true',
+        PORT:             '4005',
+        NODE_ENV:         'production',
+        NODE_NO_WARNINGS: '1',
+        SKIP_AUTH:        'true',
         // Update to the actual server hostname/IP so calendar links work correctly
-        FRONTEND_URL: 'http://SERVER-APP1:4005',
-        SERVER_IP:    'SERVER-APP1',
+        FRONTEND_URL:     'http://SERVER-APP1:4005',
+        SERVER_IP:        'SERVER-APP1',
       },
       watch:         false,
       max_restarts:  10,
       restart_delay: 3000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs:    true,
     },
 
   ],

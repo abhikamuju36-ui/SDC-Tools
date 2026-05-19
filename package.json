@@ -10,12 +10,19 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace=shell",
-    "build": "npm run build:apps && npm run electron:build --workspace=shell",
     "build:apps": "npm run build --workspace=\"Assembilies library main\" && npm run build --workspace=state_logic_builder",
-    "install:all": "npm install --workspaces",
+    "build": "npm run build:apps && npm run electron:build --workspace=shell",
+    "install:all": "npm install --workspaces && npm install --prefix \"SDC Centrailzed calender/server\"",
     "start:assemblies": "npm run start --workspace=\"Assembilies library main\"",
     "start:readiness": "npm run start --workspace=Build_Readiness_Report",
     "start:scheduler": "npm run start --workspace=SDC_Scheduler",
-    "start:statelogic": "npm run start --workspace=state_logic_builder"
+    "start:statelogic": "npm run start --workspace=state_logic_builder",
+    "start:calendar": "node \"SDC Centrailzed calender/server/server.js\"",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:restart": "pm2 restart all",
+    "pm2:stop": "pm2 stop all",
+    "pm2:logs": "pm2 logs",
+    "pm2:status": "pm2 status",
+    "deploy": "npm run build:apps && pm2 restart all"
   }
 }

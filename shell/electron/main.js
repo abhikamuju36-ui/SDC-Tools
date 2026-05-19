@@ -446,7 +446,16 @@ app.whenReady().then(() => {
     pendingUpdate = true;
     await performQuit();
   });
-  ipcMain.handle('get-app-version', () => app.getVersion());
+  ipcMain.handle('get-app-version',  () => app.getVersion());
+  ipcMain.handle('get-server-host',  () => _serverHost);
+
+  // ── Window controls ───────────────────────────────────────────────────────
+  ipcMain.handle('window-minimize', () => mainWindow?.minimize());
+  ipcMain.handle('window-maximize', () => {
+    if (mainWindow?.isMaximized()) mainWindow.unmaximize();
+    else mainWindow?.maximize();
+  });
+  ipcMain.handle('window-close', () => mainWindow?.close());
 
   // ── Startup with Windows ───────────────────────────────────────────────────
   ipcMain.handle('get-launch-on-startup', () => {

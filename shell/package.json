@@ -1,0 +1,30 @@
+{
+  "name": "sdc-shell",
+  "version": "1.2.1",
+  "description": "SDC Tools — Electron launcher shell for all SDC apps",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently \"vite\" \"wait-on http://localhost:5173 && electron .\"",
+    "build": "vite build",
+    "preview": "vite preview",
+    "electron:dev": "electron .",
+    "electron:build": "electron-builder --win --publish never",
+    "electron:publish": "electron-builder --win --publish always"
+  },
+  "dependencies": {
+    "@azure/msal-node": "^5.2.1",
+    "dotenv": "^16.6.1",
+    "electron-updater": "^6.8.3"
+  },
+  "devDependencies": {
+    "@vitejs/plugin-react": "^4.3.1",
+    "concurrently": "^9.1.0",
+    "electron": "^35.7.5",
+    "electron-builder": "^25.1.0",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "vite": "^5.4.0",
+    "wait-on": "^8.0.0"
+  }
+}

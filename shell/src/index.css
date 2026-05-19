@@ -72,6 +72,71 @@ body {
 .app { display: flex; flex-direction: column; height: 100vh; }
 
 /* ═══════════════════════════════════════════════════════════════════════
+   WINDOW CHROME  (Electron custom title bar)
+═══════════════════════════════════════════════════════════════════════ */
+.winbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 30px;
+  background: #040c18;
+  border-bottom: 1px solid rgba(255,255,255,0.05);
+  flex-shrink: 0;
+  -webkit-app-region: drag;
+  user-select: none;
+}
+.winbar-left {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 0 12px;
+}
+.winbar-title {
+  font-size: 11px;
+  font-weight: 600;
+  color: rgba(255,255,255,0.45);
+  letter-spacing: 0.04em;
+}
+.winbar-menu {
+  display: flex;
+  gap: 0;
+  -webkit-app-region: no-drag;
+}
+.winbar-menu button {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.35);
+  font-size: 11px;
+  font-family: inherit;
+  padding: 4px 9px;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: background 0.12s, color 0.12s;
+}
+.winbar-menu button:hover {
+  background: rgba(255,255,255,0.08);
+  color: rgba(255,255,255,0.8);
+}
+.winbar-controls {
+  display: flex;
+  -webkit-app-region: no-drag;
+}
+.wc {
+  background: none;
+  border: none;
+  color: rgba(255,255,255,0.35);
+  width: 46px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: background 0.12s, color 0.12s;
+}
+.wc:hover { background: rgba(255,255,255,0.1); color: rgba(255,255,255,0.9); }
+.wc-close:hover { background: #c42b1c !important; color: #fff !important; }
+
+/* ═══════════════════════════════════════════════════════════════════════
    HEADER  (3-column: brand | search | controls)
 ═══════════════════════════════════════════════════════════════════════ */
 .app-header {
@@ -422,12 +487,29 @@ body {
 .section-link:hover { background: rgba(21,116,196,0.08); }
 
 /* ═══════════════════════════════════════════════════════════════════════
-   APP GRID  (4-column)
+   CONTENT GRID  (apps + activity sidebar)
+═══════════════════════════════════════════════════════════════════════ */
+.content-grid {
+  display: grid;
+  grid-template-columns: 1fr 300px;
+  gap: 20px;
+  align-items: start;
+}
+.apps-section { min-width: 0; }
+.activity-sidebar { min-width: 0; }
+
+/* ═══════════════════════════════════════════════════════════════════════
+   APP GRID  (3-column inside apps-section, 4-column in full width)
 ═══════════════════════════════════════════════════════════════════════ */
 .app-grid {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(3, 1fr);
   gap: 14px;
+}
+/* Full-width fallback when no sidebar */
+.app-grid:only-child,
+.app-grid--full {
+  grid-template-columns: repeat(4, 1fr);
 }
 
 /* ── App card ───────────────────────────────────────────────────────── */
@@ -629,21 +711,31 @@ body {
   border-radius: 50%;
   flex-shrink: 0;
 }
-.activity-body { flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px; }
+
+/* v2: colored icon square */
+.activity-icon {
+  width: 26px;
+  height: 26px;
+  border-radius: 7px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.activity-body { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
 .activity-label {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--text-primary);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  flex: 1;
 }
 .activity-meta {
   display: flex;
   align-items: center;
   gap: 6px;
-  flex-shrink: 0;
-  font-size: 11px;
+  font-size: 10.5px;
   color: var(--text-sec);
 }
 .activity-time { color: var(--text-muted); }
