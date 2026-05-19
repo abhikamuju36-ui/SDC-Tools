@@ -10,10 +10,11 @@ const canMutate = (user, event) => {
   return event.creatorEmail === user.email;
 };
 
-// GET /api/events
+// GET /api/events[?month=YYYY-MM]
 router.get('/', requireAuth, async (req, res) => {
   try {
-    const all = await sqlite.getAllEvents();
+    const { month } = req.query; // e.g. '2026-05' — optional server-side filter
+    const all = await sqlite.getAllEvents(month ? { month } : {});
     if (req.user.role === 'admin' || req.user.role === 'manager') {
       res.json(all);
     } else {
