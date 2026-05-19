@@ -1,6 +1,8 @@
 {
   "name": "sdc-shell",
-  "version": "1.0.8",
+  "version": "1.0.9",
+  "description": "SDC Tools — Engineering Applications Suite launcher",
+  "author": "Stevens Douglas Corp.",
   "private": true,
   "main": "electron/main.js",
   "scripts": {

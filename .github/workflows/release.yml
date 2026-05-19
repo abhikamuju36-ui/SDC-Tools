@@ -91,8 +91,14 @@ jobs:
         working-directory: "Assembilies library main"
         run: npm run build --if-present
 
-      # ── Shell: build launcher UI & package installer ──────────────────────
-      # Shell deps already installed by root npm ci above (it's a workspace member).
+      # ── Shell: install locally so electron-builder can find electron ─────────
+      # electron-builder resolves the electron binary from the shell's LOCAL
+      # node_modules, not the hoisted workspace root. A dedicated npm install
+      # here ensures shell/node_modules/electron exists before packaging.
+      - name: Install shell deps (local)
+        working-directory: shell
+        run: npm install
+
       - name: Build Vite launcher UI
         working-directory: shell
         run: npm run build
