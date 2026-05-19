@@ -78,10 +78,10 @@ jobs:
         shell: bash
         run: |
           cat > shell/.env <<EOF
-          SDC_SERVER_HOST=${{ secrets.SDC_SERVER_HOST || 'SERVER-APP1' }}
-          AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
-          AZURE_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}
-          EOF
+SDC_SERVER_HOST=${{ secrets.SDC_SERVER_HOST || 'SERVER-APP1' }}
+AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
+AZURE_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}
+EOF
 
       # Shell is NOT in the workspace (removed so electron-builder finds electron locally)
       # Install shell deps locally so electron-builder can resolve the electron binary
@@ -90,9 +90,10 @@ jobs:
         run: npm install
 
       # Build the Vite launcher UI (React frontend for the shell window)
+      # Use npx vite directly — avoids npm picking up the root workspace build script
       - name: Build Vite launcher UI
         working-directory: shell
-        run: npm run build
+        run: npx vite build
 
       # Package and publish to GitHub Releases
       # Installer is now ~100 MB (shell only — backends run on server PC)
