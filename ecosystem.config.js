@@ -107,8 +107,8 @@ module.exports = {
         NODE_ENV:    'production',
         SKIP_AUTH:   'true',
         // Update to the actual server hostname/IP so calendar links work correctly
-        FRONTEND_URL: 'http://SDC-SERVER:4005',
-        SERVER_IP:    'SDC-SERVER',
+        FRONTEND_URL: 'http://SERVER-APP1:4005',
+        SERVER_IP:    'SERVER-APP1',
       },
       watch:         false,
       max_restarts:  10,

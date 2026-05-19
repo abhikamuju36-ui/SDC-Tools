@@ -78,7 +78,7 @@ jobs:
         shell: bash
         run: |
           cat > shell/.env <<EOF
-          SDC_SERVER_HOST=${{ secrets.SDC_SERVER_HOST || 'SDC-SERVER' }}
+          SDC_SERVER_HOST=${{ secrets.SDC_SERVER_HOST || 'SERVER-APP1' }}
           AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}
           EOF
