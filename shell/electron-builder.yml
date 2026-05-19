@@ -32,6 +32,8 @@ files:
   - .env
 
 win:
+  sign: null
+  signingHashAlgorithms: null
   target:
     - target: nsis
       arch: x64
