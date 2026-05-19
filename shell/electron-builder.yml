@@ -2,6 +2,14 @@ appId: com.sdc.tools
 productName: SDC Tools
 copyright: Copyright © 2025 SDC
 
+# Pin the electron binary version explicitly.
+# electron-builder normally auto-detects this from shell/node_modules/electron,
+# but because 'shell' is an npm workspace member all deps are hoisted to the
+# root node_modules — so the local lookup always fails.  Setting electronVersion
+# here bypasses that lookup entirely; electron-builder downloads the correct
+# binary directly from GitHub releases.
+electronVersion: "35.7.5"
+
 directories:
   buildResources: build
   output: dist-electron

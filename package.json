@@ -3,7 +3,6 @@
   "version": "1.0.0",
   "private": true,
   "workspaces": [
-    "shell",
     "Assembilies library main",
     "Build_Readiness_Report",
     "SDC_Scheduler",
