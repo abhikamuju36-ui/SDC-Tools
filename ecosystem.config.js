@@ -20,8 +20,9 @@
  *   pm2 restart scheduler   → restart one app
  *
  * ── Deploy an update ─────────────────────────────────────────────────────────
- *   git pull && npm run deploy
- *   (builds React frontends then restarts all PM2 apps)
+ *   Automatic: sdc-updater polls GitHub every 5 min — no manual steps needed.
+ *   Manual:    git pull && npm run deploy
+ *   Shell app: electron-updater checks GitHub Releases every 30 min (OTA).
  *
  * ── Environment ──────────────────────────────────────────────────────────────
  *   Each app loads its own .env file via dotenv (from its cwd).
@@ -38,6 +39,26 @@
 
 module.exports = {
   apps: [
+
+    // ── SDC Tools Server Auto-Updater ───────────────────────────────────────
+    // Polls GitHub every 5 min for new commits on master.
+    // On change: git pull → npm install → npm run deploy (build + pm2 restart all).
+    // Covers all 5 server-hosted apps automatically.
+    // Electron shell gets OTA updates separately via electron-updater + release.yml.
+    {
+      name:          'sdc-updater',
+      script:        'scripts/server-auto-update.js',
+      cwd:           '.',
+      env: {
+        NODE_ENV:         'production',
+        NODE_NO_WARNINGS: '1',
+      },
+      watch:         false,
+      max_restarts:  5,
+      restart_delay: 60000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs:    true,
+    },
 
     // ── Assemblies Library ──────────────────────────────────────────────────
     {
