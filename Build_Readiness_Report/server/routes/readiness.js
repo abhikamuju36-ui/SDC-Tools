@@ -16,6 +16,7 @@ router.get('/:projectId', async (req, res) => {
     try {
       await eto.getPool();
     } catch (etoErr) {
+      console.error('[readiness] ETO connection failed:', etoErr.message);
       return res.status(503).json({
         error: 'ETO database is not reachable. Check that you are on the company network and ETO SQL Server is running.',
         detail: etoErr.message,
