@@ -106,12 +106,14 @@ function startServer({ port } = {}) {
     const p = port || PORT;
     const server = app.listen(p, '0.0.0.0', () => {
         logger(`[assemblies] Running at http://0.0.0.0:${p}`);
-        logger(`Database: Azure SQL [assemblies].[assemblies]`);
+        logger(`Database: SQLite — ${config.SQLITE_PATH}`);
 
-        // Async record count — fire-and-forget for the startup log
-        dbService.getCounts()
-            .then(({ globalTotal }) => logger(`Database OK — ${globalTotal} records.`))
-            .catch(e => logger(`Database check FAILED: ${e.message}`, 'ERROR'));
+        try {
+            const { globalTotal } = dbService.getCounts();
+            logger(`Database OK — ${globalTotal} records.`);
+        } catch (e) {
+            logger(`Database check FAILED: ${e.message}`, 'ERROR');
+        }
 
         ['N', 'L'].forEach(drive => {
             const drivePath = config.DRIVES[drive];
