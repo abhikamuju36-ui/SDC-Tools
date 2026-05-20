@@ -132,7 +132,13 @@ class SyncService {
 
             // ── 2. Ensure thumbnail directory exists ──────────────────────────
             if (!fs.existsSync(config.THUMB_DIR)) {
-                fs.mkdirSync(config.THUMB_DIR, { recursive: true });
+                try {
+                    fs.mkdirSync(config.THUMB_DIR, { recursive: true });
+                } catch (mkdirErr) {
+                    // N: drive may be read-only or not yet available — not fatal,
+                    // thumbnail extraction will simply skip files it can't write.
+                    console.warn(`[Sync] Could not create thumbnail dir: ${mkdirErr.message}`);
+                }
             }
 
             // ── 3. Load existing records ──────────────────────────────────────
@@ -368,7 +374,8 @@ class SyncService {
         } catch (err) {
             // Categorise the error for a friendlier message
             let msg = err.message || 'Unknown error';
-            if (err.code === 'ENOENT')   msg = `File not found: ${msg}`;
+            if (err.code === 'ENOENT' && msg.includes('mkdir')) msg = `N: drive path not accessible — check network share`;
+            else if (err.code === 'ENOENT')   msg = `File not found: ${msg}`;
             else if (err.code === 'EACCES') msg = `Permission denied: ${msg}`;
             else if (err.code === 'ETIMEDOUT' || msg.includes('timeout')) msg = `Network timeout: ${msg}`;
             else if (msg.includes('SQLITE')) msg = `Database error: ${msg}`;
