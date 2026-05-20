@@ -101,6 +101,7 @@ function createMainWindow() {
     minHeight: 560,
     title: 'SDC Tools',
     backgroundColor: '#0d0d1a',
+    frame: false,
     show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),

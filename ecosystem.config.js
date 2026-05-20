@@ -80,6 +80,25 @@ module.exports = {
       merge_logs:    true,
     },
 
+    // ── Build Readiness Report — Auto-Updater ──────────────────────────────
+    // Polls abhikamuju36-ui/Build_Readiness_Report every 5 min for new commits.
+    // Replaces client/, server/routes/, server/services/, server/lib/ and restarts sdc-build-readiness.
+    // Preserves server/index.js (health endpoint, startServer export) and server/cache/.
+    {
+      name:          'sdc-brr-updater',
+      script:        'scripts/server-auto-update.js',
+      cwd:           './Build_Readiness_Report',
+      env: {
+        NODE_ENV:         'production',
+        NODE_NO_WARNINGS: '1',
+      },
+      watch:         false,
+      max_restarts:  5,
+      restart_delay: 60000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs:    true,
+    },
+
     // ── Build Readiness Report ───────────────────────────────────────────────
     {
       name:          'sdc-readiness',
@@ -93,6 +112,25 @@ module.exports = {
       watch:         false,
       max_restarts:  10,
       restart_delay: 3000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs:    true,
+    },
+
+    // ── SDC Scheduler — Auto-Updater ────────────────────────────────────────
+    // Polls danbelliveau2/SDC_Scheduler every 5 min for new commits.
+    // Replaces public/, db.js and restarts sdc-scheduler.
+    // Preserves server.js (compression, azureSync, /health), azureDb.js, *.db files.
+    {
+      name:          'sdc-scheduler-updater',
+      script:        'scripts/server-auto-update.js',
+      cwd:           './SDC_Scheduler',
+      env: {
+        NODE_ENV:         'production',
+        NODE_NO_WARNINGS: '1',
+      },
+      watch:         false,
+      max_restarts:  5,
+      restart_delay: 60000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs:    true,
     },
