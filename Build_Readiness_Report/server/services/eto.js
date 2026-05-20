@@ -223,6 +223,7 @@ async function getSpecCosting(projectId) {
 }
 
 module.exports = {
+  getPool,
   getSpecs,
   getTopNode,
   getBomRows,
