@@ -1,3 +1,4 @@
+import { useState } from 'react'
 import AppLogo from './AppLogos'
 
 const SHORTCUT_INDEX = { assemblies: 1, readiness: 2, scheduler: 3, statelogic: 4, calendar: 5 }
@@ -24,8 +25,12 @@ function timeAgo(ts) {
   return `${d} d ago`
 }
 
-export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs }) {
+// Apps that have dedicated upstream updaters with a manual trigger
+const UPDATABLE_APPS = { readiness: true, scheduler: true }
+
+export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs, onTriggerUpdate }) {
   const { id, name, description, status, color, port } = app
+  const [updateState, setUpdateState] = useState('idle') // idle | checking | done | error
   const shortcut  = SHORTCUT_INDEX[id]
   const openedAgo = timeAgo(lastOpened?.[id])
 
@@ -34,6 +39,13 @@ export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs }
   const btnStyle = color
     ? { background: color, color: isLight(color) ? '#1a1a1a' : '#ffffff', borderColor: 'transparent' }
     : {}
+
+  const handleCheckUpdate = async () => {
+    setUpdateState('checking')
+    const result = await onTriggerUpdate?.(id)
+    setUpdateState(result?.ok ? 'done' : 'error')
+    setTimeout(() => setUpdateState('idle'), 3000)
+  }
 
   const handleKeyDown = (e) => {
     if ((e.key === 'Enter' || e.key === ' ') && status === 'running') {
@@ -85,6 +97,16 @@ export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs }
           </div>
 
           <div className="btn-row">
+            {UPDATABLE_APPS[id] && (
+              <button
+                className={`btn btn-update btn-update--${updateState}`}
+                onClick={handleCheckUpdate}
+                disabled={updateState === 'checking'}
+                title="Check for upstream updates now"
+              >
+                {updateState === 'checking' ? 'Checking…' : updateState === 'done' ? '✓ Triggered' : updateState === 'error' ? '✗ Failed' : '↑ Update'}
+              </button>
+            )}
             <button
               className="btn btn-logs"
               onClick={() => onShowLogs(id)}

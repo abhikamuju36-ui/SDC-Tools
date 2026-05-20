@@ -57,6 +57,7 @@ const api = window.shellAPI ?? {
   authGetStatus: () => Promise.resolve({ isAuthenticated: false, configured: false, user: null }),
   authLogin: () => Promise.resolve({ success: false, error: 'No API' }),
   authLogout: () => Promise.resolve({ success: true }),
+  triggerUpdate: () => Promise.resolve({ ok: false }),
 }
 
 function timeAgo(ts) {
@@ -235,7 +236,8 @@ export default function App() {
     })
   }, [apps])
 
-  const handleRetry      = useCallback((appId) => api.retryApp(appId), [])
+  const handleRetry        = useCallback((appId) => api.retryApp(appId), [])
+  const handleTriggerUpdate = useCallback((appId) => api.triggerUpdate?.(appId), [])
   const handleStopAll    = useCallback(async () => { setBusy(true); await api.stopAll();    setBusy(false) }, [])
   const handleRestartAll = useCallback(async () => { setBusy(true); await api.restartAll(); setBusy(false) }, [])
   const handleShowLogs   = useCallback(async (appId) => {
@@ -397,6 +399,7 @@ export default function App() {
                 onOpen={handleOpen}
                 onRetry={handleRetry}
                 onShowLogs={handleShowLogs}
+                onTriggerUpdate={handleTriggerUpdate}
               />
             </section>
 

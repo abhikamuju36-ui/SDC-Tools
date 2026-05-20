@@ -46,6 +46,9 @@ contextBridge.exposeInMainWorld('shellAPI', {
   windowMaximize: () => ipcRenderer.invoke('window-maximize'),
   windowClose:    () => ipcRenderer.invoke('window-close'),
 
+  // ── Manual update trigger ─────────────────────────────────────────────────
+  triggerUpdate: (appId) => ipcRenderer.invoke('trigger-update', appId),
+
   // ── Microsoft SSO auth ────────────────────────────────────────────────────
   authGetStatus: () => ipcRenderer.invoke('auth-get-status'),
   authLogin:     () => ipcRenderer.invoke('auth-login'),

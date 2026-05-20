@@ -448,6 +448,21 @@ app.whenReady().then(() => {
   ipcMain.handle('get-app-version',  () => app.getVersion());
   ipcMain.handle('get-server-host',  () => _serverHost);
 
+  // Manually trigger an upstream update check for apps that have dedicated updaters
+  ipcMain.handle('trigger-update', (_, appId) => {
+    const TRIGGER_PORTS = { readiness: 4012, scheduler: 4013 };
+    const port = TRIGGER_PORTS[appId];
+    if (!port) return { error: 'No updater for this app' };
+    return new Promise((resolve) => {
+      const req = require('http').request(
+        { host: _serverHost, port, path: '/trigger', method: 'POST' },
+        (res) => resolve({ ok: res.statusCode === 202 })
+      );
+      req.on('error', (e) => resolve({ error: e.message }));
+      req.end();
+    });
+  });
+
   // ── Window controls ───────────────────────────────────────────────────────
   ipcMain.handle('window-minimize', () => mainWindow?.minimize());
   ipcMain.handle('window-maximize', () => {

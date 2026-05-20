@@ -684,6 +684,16 @@ body {
 }
 .btn-logs:hover { background: var(--bg-page); color: var(--text-sec); }
 
+.btn-update {
+  background: var(--bg-btn-ghost);
+  color: var(--text-btn-ghost);
+  border-color: var(--border-btn);
+}
+.btn-update:hover:not(:disabled) { background: var(--bg-page); color: var(--text-sec); }
+.btn-update:disabled { opacity: 0.6; cursor: default; }
+.btn-update--done  { color: #16a34a; border-color: #16a34a44; }
+.btn-update--error { color: #ef4444; border-color: #ef444444; }
+
 /* ═══════════════════════════════════════════════════════════════════════
    RECENT ACTIVITY
 ═══════════════════════════════════════════════════════════════════════ */
