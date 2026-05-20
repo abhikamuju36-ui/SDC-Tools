@@ -11,8 +11,7 @@ const auth           = require('./auth');
 //   • autoDownload = true    — download silently in background, no prompt needed
 //   • autoInstallOnAppQuit = false — prevents the double-NSIS-trigger bug
 //     (April 2026 incident). Install only fires via explicit quitAndInstall().
-//   • Check on launch + every 30 minutes (Dan checks every 2 min; 30 min is
-//     less disruptive for a multi-app shell that stays open all day).
+//   • Check on launch + every 2 minutes.
 let autoUpdater;
 if (!process.env.SKIP_AUTO_UPDATE) {
   try {
@@ -394,12 +393,11 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send('update-status', { phase: 'error', message: err.message });
     });
 
-    // Check on launch, then every 30 minutes (Dan's app checks every 2 min;
-    // 30 min is less disruptive for a shell that stays open all day)
+    // Check on launch, then every 2 minutes
     autoUpdater.checkForUpdates().catch(e => console.warn('[updater] Check failed:', e.message));
     setInterval(() => {
       autoUpdater.checkForUpdates().catch(e => console.warn('[updater] Periodic check failed:', e.message));
-    }, 30 * 60 * 1000);
+    }, 2 * 60 * 1000);
   }
 
   // ── IPC handlers ──────────────────────────────────────────────────────────
