@@ -24,7 +24,7 @@ const { execSync }     = require('child_process');
 
 const GITHUB_REPO       = 'abhikamuju36-ui/Build_Readiness_Report';
 const GITHUB_BRANCH     = 'main';
-const CHECK_INTERVAL_MS = 5 * 60 * 1000;
+const CHECK_INTERVAL_MS = 2 * 60 * 1000;
 const APP_DIR           = path.join(__dirname, '..');
 const PM2_APP_NAME      = 'sdc-build-readiness';
 const SHA_FILE          = path.join(APP_DIR, '.update-sha');
