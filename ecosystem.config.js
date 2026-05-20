@@ -109,6 +109,24 @@ module.exports = {
       merge_logs:    true,
     },
 
+    // ── State Logic Builder — Auto-Updater ─────────────────────────────────
+    // Mirrors electron-updater: checks Dan's GitHub releases every 5 min,
+    // pulls src/ + public/ + index.html, rebuilds, and restarts statelogic.
+    {
+      name:          'statelogic-updater',
+      script:        'scripts/server-auto-update.js',
+      cwd:           './state_logic_builder',
+      env: {
+        NODE_ENV:         'production',
+        NODE_NO_WARNINGS: '1',
+      },
+      watch:         false,
+      max_restarts:  5,
+      restart_delay: 60000,   // wait 1 min before restarting on crash
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs:    true,
+    },
+
     // ── SDC Calendar ────────────────────────────────────────────────────────
     {
       name:          'calendar',
