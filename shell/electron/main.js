@@ -438,6 +438,11 @@ app.whenReady().then(() => {
   ipcMain.handle('sync-status',  () => processManager.syncStatus());
 
   // Update: download is automatic (autoDownload=true). Install on user confirm.
+  ipcMain.handle('check-for-updates', () => {
+    if (autoUpdater && !isDev) {
+      autoUpdater.checkForUpdates().catch(e => console.warn('[updater] Manual check failed:', e.message));
+    }
+  });
   ipcMain.handle('update-download', () => {
     // No-op — kept for UI compatibility. Download starts automatically.
   });

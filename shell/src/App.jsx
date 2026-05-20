@@ -57,6 +57,7 @@ const api = window.shellAPI ?? {
   authGetStatus: () => Promise.resolve({ isAuthenticated: false, configured: false, user: null }),
   authLogin: () => Promise.resolve({ success: false, error: 'No API' }),
   authLogout: () => Promise.resolve({ success: true }),
+  checkForUpdates: () => Promise.resolve(),
   triggerUpdate: () => Promise.resolve({ ok: false }),
 }
 
@@ -111,6 +112,7 @@ export default function App() {
   const [serverHost, setServerHost]     = useState('')
   const [launchOnStartup, setLaunchOnStartup] = useState(false)
   const [theme, setTheme]         = useState(() => localStorage.getItem('sdc-theme') || 'light')
+  const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
   const searchRef = useRef(null)
 
@@ -211,6 +213,12 @@ export default function App() {
     window.addEventListener('keydown', handler)
     return () => window.removeEventListener('keydown', handler)
   }, [apps])
+
+  const handleCheckForUpdates = useCallback(async () => {
+    setCheckingUpdate(true)
+    await api.checkForUpdates()
+    setTimeout(() => setCheckingUpdate(false), 3000)
+  }, [])
 
   const handleToggleStartup = useCallback(async () => {
     const next = await api.setLaunchOnStartup(!launchOnStartup)
@@ -375,6 +383,14 @@ export default function App() {
               >
                 <span className="btn-action-dot" />
                 Auto-start
+              </button>
+              <button
+                className="btn btn-action"
+                onClick={handleCheckForUpdates}
+                disabled={checkingUpdate}
+                title="Check for SDC Tools app updates now"
+              >
+                {checkingUpdate ? '↑ Checking…' : '↑ Check Updates'}
               </button>
               <button className="btn btn-action" onClick={handleRestartAll} disabled={busy} title="Restart all servers">
                 ↺ Restart All
