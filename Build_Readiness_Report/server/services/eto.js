@@ -3,12 +3,18 @@ const sql = require('mssql');
 let pool = null;
 
 const config = {
-  server: process.env.ETO_HOST,
+  server:   process.env.ETO_HOST,
   database: process.env.ETO_DATABASE,
-  user: process.env.ETO_USER,
-  password: process.env.ETO_PASSWORD,
-  domain: process.env.ETO_DOMAIN,
-  port: process.env.ETO_PORT ? parseInt(process.env.ETO_PORT) : 1433,
+  port:     process.env.ETO_PORT ? parseInt(process.env.ETO_PORT) : 1433,
+  // mssql v11+ requires authentication block for NTLM domain auth
+  authentication: {
+    type: 'ntlm',
+    options: {
+      domain:   process.env.ETO_DOMAIN,
+      userName: process.env.ETO_USER,
+      password: process.env.ETO_PASSWORD,
+    },
+  },
   options: {
     encrypt: false,
     trustServerCertificate: true,
