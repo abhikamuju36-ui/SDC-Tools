@@ -69,6 +69,9 @@ module.exports = {
         PORT:             '4001',
         NODE_ENV:         'production',
         NODE_NO_WARNINGS: '1',
+        // UNC path so PM2 (which runs in its own session) can reach the share
+        // without needing N: drive mapped in the service session.
+        SHARED_BASE: '\\\\stevendouglas.local\\dfs\\Company\\Job Folder\\_Assembilies_Library_Application',
       },
       watch:         false,
       max_restarts:  10,
