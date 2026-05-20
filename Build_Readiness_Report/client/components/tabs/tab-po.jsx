@@ -25,7 +25,7 @@ function useColResize(initial) {
     const onMove = ev => {
       if (!drag.current) return;
       const { idx, x, w } = drag.current;
-      setWidths(prev => { const n = [...prev]; n[idx] = Math.max(70, w + (ev.clientX - x)); return n; });
+      setWidths(prev => { const n = [...prev]; n[idx] = Math.max(40, w + (ev.clientX - x)); return n; });
     };
     const onUp = () => {
       drag.current = null;
@@ -242,7 +242,132 @@ function PartsFlatView({ parts, query, job }) {
   );
 }
 
-function VendorCard({ v, highlightPoIds, expandedPos, togglePo, isHighlighted }) {
+function PoDrawer({ po, supplier, onClose }) {
+  const fmtDate = d => d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+  const poRcvd = po.parts.filter(p => p.received >= p.qty).length;
+  const poLines = po.parts.length;
+  const pct = poLines > 0 ? Math.round((poRcvd / poLines) * 100) : 0;
+  const poStatus = poRcvd === poLines ? 'RECEIVED' : (po.worstDays < 0 ? 'PAST DUE' : po.worstDays <= 14 ? 'LATE/EXP' : 'OPEN');
+  const dueDate = po.worstDays != null ? new Date(Date.now() + po.worstDays * 86400000) : null;
+  const totalValue = po.parts.reduce((s, p) => s + (p.price > 0 ? p.price * p.qty : 0), 0);
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.4)', zIndex: 300, backdropFilter: 'blur(2px)' }} />
+      <div style={{
+        position: 'fixed', top: 0, right: 0, bottom: 0, width: 580,
+        background: 'var(--bg-raised)', boxShadow: '-8px 0 48px rgba(0,0,0,0.22)',
+        zIndex: 301, display: 'flex', flexDirection: 'column',
+        animation: 'slideInRight 0.22s cubic-bezier(0.4,0,0.2,1)',
+      }}>
+        {/* Header */}
+        <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-raised)', flexShrink: 0 }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
+              <window.VendorAvatar vendor={supplier} size={40} />
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--fg-0)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{supplier}</div>
+                <div className="mono" style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 2 }}>PO #{po.poId}</div>
+              </div>
+            </div>
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
+              <window.StatusBadge status={poStatus} />
+              <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-3)', padding: 4, display: 'flex', alignItems: 'center', borderRadius: 4 }}>
+                <window.IconX size={18} />
+              </button>
+            </div>
+          </div>
+
+          {/* Stats row */}
+          <div style={{ display: 'flex', gap: 24, alignItems: 'center', marginBottom: 12 }}>
+            <div>
+              <div style={{ fontSize: 9, color: 'var(--fg-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Ordered</div>
+              <div className="mono" style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-1)' }}>{fmtDate(po.poDate)}</div>
+            </div>
+            <div>
+              <div style={{ fontSize: 9, color: 'var(--fg-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>Due</div>
+              <div className="mono" style={{ fontSize: 12, fontWeight: 600, color: po.worstDays < 0 ? 'var(--threat)' : 'var(--fg-1)' }}>
+                {dueDate ? dueDate.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) : '—'}
+              </div>
+            </div>
+            {totalValue > 0 && (
+              <div>
+                <div style={{ fontSize: 9, color: 'var(--fg-3)', fontWeight: 600, textTransform: 'uppercase', letterSpacing: '0.06em', marginBottom: 2 }}>PO Value</div>
+                <div className="mono" style={{ fontSize: 12, fontWeight: 600, color: 'var(--fg-1)' }}>
+                  ${totalValue.toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}
+                </div>
+              </div>
+            )}
+            <div style={{ marginLeft: 'auto', minWidth: 120 }}>
+              <div style={{ display: 'flex', justifyContent: 'space-between', marginBottom: 4 }}>
+                <span style={{ fontSize: 10, color: 'var(--fg-3)' }}>{poRcvd}/{poLines} received</span>
+                <span style={{ fontSize: 11, fontWeight: 700, color: 'var(--fg-1)' }}>{pct}%</span>
+              </div>
+              <div className="bar-track" style={{ height: 6 }}>
+                <div className="bar-fill" style={{ width: `${pct}%`, background: pct === 100 ? 'var(--ready)' : (po.worstDays < 0 ? 'var(--threat)' : 'var(--sdc-blue)') }} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Parts table */}
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          <div style={{
+            display: 'grid', gridTemplateColumns: '1fr 36px 76px 76px 100px 58px',
+            padding: '8px 24px', gap: 10,
+            background: 'var(--ink)', color: '#fff',
+            position: 'sticky', top: 0, zIndex: 2,
+          }}>
+            {['Part', 'Qty', 'Ordered', 'Expected', 'Received', 'Price'].map((h, i) => (
+              <span key={i} className="eyebrow" style={{ fontSize: 9, color: 'rgba(255,255,255,0.65)', textAlign: i > 0 ? 'right' : 'left' }}>{h}</span>
+            ))}
+          </div>
+
+          {po.parts.map((p, i) => {
+            const isRcvd = !!(p.receivedDate || p.received >= p.qty);
+            const expectedDate = p.expectedDate || p.dueDate;
+            return (
+              <div key={i} style={{
+                display: 'grid', gridTemplateColumns: '1fr 36px 76px 76px 100px 58px',
+                padding: '10px 24px', gap: 10, alignItems: 'center',
+                borderBottom: '1px solid var(--border-subtle)',
+                background: isRcvd ? 'rgba(22,163,74,0.04)' : 'transparent',
+              }}>
+                <div style={{ minWidth: 0 }}>
+                  <div className="mono" style={{ fontSize: 12, fontWeight: 700, color: 'var(--fg-0)', wordBreak: 'break-all' }}>{p.partNumber || '—'}</div>
+                  {p.partDesc && <div style={{ fontSize: 10, color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 2 }}>{p.partDesc}</div>}
+                </div>
+                <span className="mono" style={{ fontSize: 12, color: 'var(--fg-1)', textAlign: 'right' }}>{p.qty}</span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', textAlign: 'right' }}>{fmtDate(po.poDate)}</span>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--fg-3)', textAlign: 'right' }}>{fmtDate(expectedDate)}</span>
+                {/* Received: actual date if yes, expected date in amber if not yet */}
+                <div style={{ textAlign: 'right' }}>
+                  {isRcvd ? (
+                    <span className="mono" style={{ fontSize: 11, fontWeight: 700, color: 'var(--ready-ink)' }}>✓ {fmtDate(p.receivedDate)}</span>
+                  ) : expectedDate ? (
+                    <span className="mono" style={{ fontSize: 10, color: '#b45309', fontWeight: 600 }}>Exp {fmtDate(expectedDate)}</span>
+                  ) : (
+                    <span className="mono" style={{ fontSize: 11, color: 'var(--fg-4)' }}>—</span>
+                  )}
+                </div>
+                <span className="mono" style={{ fontSize: 11, color: 'var(--fg-2)', textAlign: 'right' }}>
+                  {p.price > 0 ? `$${Number(p.price).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '—'}
+                </span>
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: '12px 24px', borderTop: '1px solid var(--border)', background: 'var(--bg)', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+          <button className="btn-secondary" onClick={onClose} style={{ fontSize: 13, padding: '7px 18px' }}>Close</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function VendorCard({ v, highlightPoIds, onPoClick, isHighlighted }) {
   const totalPOs = v.pos.length;
   const totalLines = v.pos.reduce((sum, po) => sum + po.parts.length, 0);
   const rcvdLines = v.pos.reduce((sum, po) => sum + po.parts.filter(p => p.received >= p.qty).length, 0);
@@ -252,12 +377,12 @@ function VendorCard({ v, highlightPoIds, expandedPos, togglePo, isHighlighted })
   return (
     <div className={`vendor-card fade-in ${isHighlighted ? 'highlighted' : ''}`}>
       <div className="vendor-card-header">
-        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 16 }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
-            <window.VendorAvatar vendor={v.supplier} size={36} />
-            <div>
-              <h3 style={{ fontSize: 15, fontWeight: 700, margin: 0, color: 'var(--fg-0)' }}>{v.supplier}</h3>
-              <div style={{ fontSize: 11, color: 'var(--fg-3)', display: 'flex', gap: 8, marginTop: 2 }}>
+        <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
+            <window.VendorAvatar vendor={v.supplier} size={28} />
+            <div style={{ minWidth: 0 }}>
+              <h3 style={{ fontSize: 12, fontWeight: 700, margin: 0, color: 'var(--fg-0)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.supplier}</h3>
+              <div style={{ fontSize: 10, color: 'var(--fg-3)', display: 'flex', gap: 6, marginTop: 1 }}>
                 <span>{totalPOs} PO{totalPOs !== 1 ? 's' : ''}</span>
                 <span>•</span>
                 <span>{totalLines} Items</span>
@@ -266,7 +391,7 @@ function VendorCard({ v, highlightPoIds, expandedPos, togglePo, isHighlighted })
           </div>
           <window.StatusBadge status={status} />
         </div>
-        
+
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
           <div className="bar-track" style={{ flex: 1, height: 6 }}>
             <div className="bar-fill" style={{ width: `${pct}%`, background: pct === 100 ? 'var(--ready)' : (v.worstDays < 0 ? 'var(--threat)' : 'var(--sdc-blue)') }} />
@@ -277,72 +402,34 @@ function VendorCard({ v, highlightPoIds, expandedPos, togglePo, isHighlighted })
 
       <div className="vendor-card-body">
         {v.pos.map((po, pi) => {
-          const isPoExpanded = expandedPos.has(po.poId);
           const poRcvd = po.parts.filter(p => p.received >= p.qty).length;
           const poLines = po.parts.length;
           const poStatus = poRcvd === poLines ? 'RECEIVED' : (po.worstDays < 0 ? 'PAST DUE' : po.worstDays <= 14 ? 'LATE/EXP' : 'OPEN');
           const poHighlight = highlightPoIds.includes(po.poId);
 
           return (
-            <div key={pi}>
-              <div 
-                onClick={() => togglePo(po.poId)}
-                className={`po-item ${isPoExpanded ? 'active' : ''}`}
-                style={{ borderLeft: poHighlight ? '3px solid var(--sdc-blue)' : 'none' }}
-              >
-                <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                  <window.IconCaretRight size={10} style={{ transform: isPoExpanded ? 'rotate(90deg)' : 'none', transition: 'transform 0.2s', color: 'var(--fg-3)' }}/>
-                  <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: poHighlight ? 'var(--sdc-blue)' : 'var(--fg-1)' }}>{po.poId}</span>
-                </div>
-                <div style={{ fontSize: 10, color: 'var(--fg-3)', fontWeight: 500 }}>{poRcvd}/{poLines} rcvd</div>
-                <div style={{ width: 8, height: 8, borderRadius: '50%', background: poStatus === 'RECEIVED' ? 'var(--ready)' : (poStatus === 'PAST DUE' ? 'var(--threat)' : 'var(--pending)') }} />
+            <div
+              key={pi}
+              onClick={() => onPoClick(po)}
+              className="po-item"
+              style={{ borderLeft: poHighlight ? '3px solid var(--sdc-blue)' : 'none', cursor: 'pointer' }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+                <window.IconCaretRight size={10} style={{ color: 'var(--fg-4)' }} />
+                <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: poHighlight ? 'var(--sdc-blue)' : 'var(--fg-1)' }}>{po.poId}</span>
               </div>
-              
-              {isPoExpanded && (
-                <div className="po-detail-row fade-in">
-                  <div style={{ 
-                    display: 'grid', gridTemplateColumns: '1.2fr 40px 70px 75px 65px', 
-                    gap: 10, marginBottom: 8, paddingBottom: 4, borderBottom: '1px solid var(--border-subtle)'
-                  }}>
-                    <span className="eyebrow" style={{ fontSize: 8 }}>Part</span>
-                    <span className="eyebrow" style={{ fontSize: 8, textAlign: 'right' }}>Qty</span>
-                    <span className="eyebrow" style={{ fontSize: 8, textAlign: 'right' }}>Ordered</span>
-                    <span className="eyebrow" style={{ fontSize: 8, textAlign: 'right' }}>Received</span>
-                    <span className="eyebrow" style={{ fontSize: 8, textAlign: 'right' }}>Price</span>
-                  </div>
-                  {po.parts.map((p, pidx) => {
-                    const fmtDate = d => d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
-                    return (
-                      <div key={pidx} style={{ 
-                        display: 'grid', gridTemplateColumns: '1.2fr 40px 70px 75px 65px', 
-                        gap: 10, marginBottom: 6, alignItems: 'center' 
-                      }}>
-                        <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0 }}>
-                          <span style={{ fontSize: 11, fontWeight: 600, color: 'var(--fg-1)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.partNumber}</span>
-                          <span style={{ fontSize: 9, color: 'var(--fg-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.partDesc}</span>
-                        </div>
-                        <span className="mono" style={{ fontSize: 10, color: 'var(--fg-1)', textAlign: 'right' }}>{p.qty}</span>
-                        <span className="mono" style={{ fontSize: 10, color: 'var(--fg-3)', textAlign: 'right' }}>{fmtDate(po.poDate)}</span>
-                        <span className="mono" style={{ fontSize: 10, color: p.receivedDate ? 'var(--ready-ink)' : 'var(--fg-4)', textAlign: 'right', fontWeight: p.receivedDate ? 600 : 400 }}>{fmtDate(p.receivedDate)}</span>
-                        <span className="mono" style={{ fontSize: 10, color: 'var(--fg-2)', textAlign: 'right' }}>
-                          {p.price != null && p.price > 0 ? `$${Number(p.price).toLocaleString('en-US', { minimumFractionDigits: 0, maximumFractionDigits: 0 })}` : '—'}
-                        </span>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+              <div style={{ fontSize: 10, color: 'var(--fg-3)', fontWeight: 500 }}>{poRcvd}/{poLines} rcvd</div>
+              <div style={{ width: 8, height: 8, borderRadius: '50%', background: poStatus === 'RECEIVED' ? 'var(--ready)' : (poStatus === 'PAST DUE' ? 'var(--threat)' : 'var(--pending)') }} />
             </div>
           );
         })}
       </div>
-      
     </div>
   );
 }
 
 function PoTracker({ poActions, query, highlightPoIds = [], onClearHighlight }) {
-  const [expandedPos, setExpandedPos] = useState(() => new Set(highlightPoIds));
+  const [drawerData, setDrawerData] = useState(null); // { po, supplier }
 
   const allPos = useMemo(() => {
     const list = [
@@ -354,9 +441,9 @@ function PoTracker({ poActions, query, highlightPoIds = [], onClearHighlight }) 
     return list.filter(entry => {
       if (!query) return true;
       const q = query.toLowerCase();
-      return entry.supplier.toLowerCase().includes(q) || 
-             String(entry.po.poId).toLowerCase().includes(q) ||
-             entry.po.parts.some(p => String(p.partNumber).toLowerCase().includes(q) || String(p.partDesc).toLowerCase().includes(q));
+      return String(entry.supplier || '').toLowerCase().includes(q) ||
+             String(entry.po?.poId || '').toLowerCase().includes(q) ||
+             (entry.po?.parts || []).some(p => String(p.partNumber || '').toLowerCase().includes(q) || String(p.partDesc || '').toLowerCase().includes(q));
     });
   }, [poActions, query]);
 
@@ -392,21 +479,11 @@ function PoTracker({ poActions, query, highlightPoIds = [], onClearHighlight }) 
     });
   }, [allPos]);
 
-  useEffect(() => {
-    if (highlightPoIds.length > 0) {
-      setExpandedPos(new Set(highlightPoIds));
-    }
-  }, [highlightPoIds]);
-
-  const togglePo = (p) => {
-    const next = new Set(expandedPos);
-    if (next.has(p)) next.delete(p);
-    else next.add(p);
-    setExpandedPos(next);
-  };
-
   return (
     <div style={{ display: 'flex', flexDirection: 'column', height: '100%', background: 'var(--bg-sunken)' }}>
+      {drawerData && (
+        <PoDrawer po={drawerData.po} supplier={drawerData.supplier} onClose={() => setDrawerData(null)} />
+      )}
       {highlightPoIds.length > 0 && (
         <div style={{ padding: '8px 20px', background: 'var(--sdc-blue-soft)', borderBottom: '1px solid var(--border-soft)', display: 'flex', alignItems: 'center', gap: 10 }}>
           <span style={{ fontSize: 11, color: 'var(--sdc-blue-ink)' }}>
@@ -420,12 +497,11 @@ function PoTracker({ poActions, query, highlightPoIds = [], onClearHighlight }) 
 
       <div className="vendor-grid">
         {vendorGroups.map((v, vi) => (
-          <VendorCard 
-            key={vi} 
-            v={v} 
-            highlightPoIds={highlightPoIds} 
-            expandedPos={expandedPos} 
-            togglePo={togglePo}
+          <VendorCard
+            key={vi}
+            v={v}
+            highlightPoIds={highlightPoIds}
+            onPoClick={po => setDrawerData({ po, supplier: v.supplier })}
             isHighlighted={v.pos.some(po => highlightPoIds.includes(po.poId))}
           />
         ))}

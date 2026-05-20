@@ -1,10 +1,9 @@
 const express = require('express');
 const router = express.Router();
-const azure    = require('../azureDb');
-const azureData = require('../services/azureData');
+const eto = require('../services/eto');
 const demo = require('../services/demoData');
 
-function db() { return azure.isAvailable() ? azureData : demo; }
+function db() { return demo.isDemoMode() ? demo : eto; }
 
 // GET /api/emails/:projectId — generate draft follow-up emails
 router.get('/:projectId', async (req, res) => {

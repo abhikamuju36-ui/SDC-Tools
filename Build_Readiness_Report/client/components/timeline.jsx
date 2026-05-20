@@ -66,16 +66,138 @@ function useTimelineDrag(scrollRef) {
   return moved;
 }
 
+// ── Timeline side drawer — shown when a PO diamond is clicked ─────────────
+function TimelineDrawer({ marker, buildStart, onClose, onDrillDown }) {
+  const today   = new Date();
+  const fmt     = d => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric' }) : '—';
+  const fmtFull = d => d ? new Date(d).toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }) : '—';
+  const bsDays  = Math.round((+buildStart - +marker.date) / 86400000);
+
+  const COL = '1fr 30px 62px 62px 86px 54px';
+
+  return (
+    <>
+      <div onClick={onClose} style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.18)', zIndex: 300 }} />
+      <div style={{ position: 'fixed', top: 0, right: 0, bottom: 0, width: 580, background: '#fff', borderLeft: '1px solid #e5e7eb', boxShadow: '-4px 0 20px rgba(0,0,0,0.08)', zIndex: 301, display: 'flex', flexDirection: 'column', animation: 'slideInRight 0.2s ease-out' }}>
+
+        {/* Header */}
+        <div style={{ padding: '18px 24px 16px', borderBottom: '1px solid #f0f0f0', display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', flexShrink: 0 }}>
+          <div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: '#111', letterSpacing: '-0.01em' }}>{fmtFull(marker.date)}</div>
+            <div style={{ fontSize: 12, color: '#9ca3af', marginTop: 3 }}>
+              {marker.items.length} PO{marker.items.length !== 1 ? 's' : ''}
+              {' · '}
+              {bsDays > 0 ? `${bsDays}d before build` : bsDays === 0 ? 'build starts today' : `${Math.abs(bsDays)}d past build`}
+            </div>
+          </div>
+          <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: '#9ca3af', fontSize: 18, lineHeight: 1, padding: '2px 4px' }}>✕</button>
+        </div>
+
+        {/* PO list */}
+        <div style={{ flex: 1, overflowY: 'auto' }}>
+          {marker.items.map((entry, ei) => {
+            const po      = entry.po;
+            const parts   = po?.parts || [];
+            const poCls   = poReceiptClass(po, today);
+            const isRcvd  = poCls === 'green';
+            const isOver  = poCls === 'red';
+            const isWarn  = poCls === 'yellow';
+            const stColor = isRcvd ? '#16a34a' : isOver ? '#dc2626' : isWarn ? '#ca8a04' : '#6b7280';
+            const stLabel = isRcvd ? 'Received' : isOver ? 'Overdue' : isWarn ? 'Partial' : 'On track';
+            const poQty   = parts.reduce((s, p) => s + (p.qty || 0), 0);
+            const poRcvd  = parts.reduce((s, p) => s + (p.received || 0), 0);
+
+            return (
+              <div key={ei} style={{ borderBottom: '1px solid #e5e7eb' }}>
+                {/* PO row */}
+                <div style={{ padding: '11px 24px 11px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, background: CLS[poCls].bg, borderBottom: '1px solid #e5e7eb', borderLeft: `3px solid ${CLS[poCls].color}` }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
+                    <window.VendorAvatar vendor={entry.supplier || 'Unknown'} size={28} />
+                    <div style={{ minWidth: 0 }}>
+                      <div style={{ fontSize: 13, fontWeight: 600, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.supplier || 'Unknown'}</div>
+                      <div className="mono" style={{ fontSize: 10, color: '#6b7280', marginTop: 1 }}>PO #{po?.poId}{po?.poDate ? ` · ${fmt(po.poDate)}` : ''}</div>
+                    </div>
+                  </div>
+                  <div style={{ textAlign: 'right', flexShrink: 0 }}>
+                    <div style={{ fontSize: 11, fontWeight: 600, color: stColor }}>{stLabel}</div>
+                    <div className="mono" style={{ fontSize: 10, color: '#6b7280', marginTop: 1 }}>{poRcvd}/{poQty}</div>
+                  </div>
+                </div>
+
+                {/* Column labels — shown once per PO above its parts */}
+                {parts.length > 0 && (
+                  <div style={{ display: 'grid', gridTemplateColumns: COL, gap: 8, padding: '6px 24px', background: '#1f2937' }}>
+                    {['Part', 'Qty', 'Ordered', 'Expected', 'Received', 'Price'].map((h, i) => (
+                      <span key={i} style={{ fontSize: 9.5, color: '#d1d5db', fontWeight: 700, letterSpacing: '0.07em', textTransform: 'uppercase', textAlign: i > 0 ? 'right' : 'left' }}>{h}</span>
+                    ))}
+                  </div>
+                )}
+
+                {/* Part rows */}
+                {parts.map((p, pi) => {
+                  const rcvd     = !!(p.receivedDate || (p.received || 0) >= (p.qty || 1) && (p.qty || 0) > 0);
+                  const partial  = !rcvd && (p.received || 0) > 0;
+                  const expDate  = p.expectedDate || po?.dueDate;
+                  const overdue  = !rcvd && expDate && new Date(expDate) < today;
+                  const rowBg    = rcvd    ? 'rgba(22,163,74,0.06)'
+                                 : overdue ? 'rgba(220,38,38,0.06)'
+                                 : partial ? 'rgba(202,138,4,0.06)'
+                                 : 'transparent';
+                  const rowBorder = rcvd    ? '#16a34a'
+                                  : overdue ? '#dc2626'
+                                  : partial ? '#ca8a04'
+                                  : '#e5e7eb';
+                  return (
+                    <div key={pi} style={{ display: 'grid', gridTemplateColumns: COL, gap: 8, padding: '8px 24px 8px 20px', alignItems: 'center', borderBottom: pi < parts.length - 1 ? '1px solid #f3f4f6' : 'none', background: rowBg, borderLeft: `3px solid ${rowBorder}` }}>
+                      <div style={{ minWidth: 0 }}>
+                        <div className="mono" style={{ fontSize: 11, fontWeight: 600, color: '#374151', wordBreak: 'break-all' }}>{p.partNumber || '—'}</div>
+                        {p.partDesc && <div style={{ fontSize: 10, color: '#9ca3af', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: 1 }}>{p.partDesc}</div>}
+                      </div>
+                      <span className="mono" style={{ fontSize: 11, color: '#374151', textAlign: 'right' }}>{p.qty}</span>
+                      <span className="mono" style={{ fontSize: 10, color: '#9ca3af', textAlign: 'right' }}>{fmt(po?.poDate)}</span>
+                      <span className="mono" style={{ fontSize: 10, color: '#9ca3af', textAlign: 'right' }}>{fmt(expDate)}</span>
+                      <div style={{ textAlign: 'right' }}>
+                        {rcvd
+                          ? <span className="mono" style={{ fontSize: 10, color: '#16a34a', fontWeight: 600 }}>✓ {fmt(p.receivedDate)}</span>
+                          : expDate
+                            ? <span className="mono" style={{ fontSize: 10, color: overdue ? '#dc2626' : '#d97706' }}>Exp {fmt(expDate)}</span>
+                            : <span style={{ fontSize: 10, color: '#d1d5db' }}>—</span>
+                        }
+                      </div>
+                      <span className="mono" style={{ fontSize: 10, color: '#6b7280', textAlign: 'right' }}>
+                        {p.price > 0 ? `$${Number(p.price).toLocaleString('en-US', { maximumFractionDigits: 0 })}` : '—'}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Footer */}
+        <div style={{ padding: '12px 24px', borderTop: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
+          {onDrillDown && (
+            <button onClick={() => { onClose(); onDrillDown(marker.items.map(e => e.po?.poId).filter(Boolean)); }}
+              style={{ fontSize: 12, color: '#2563eb', fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+              View in Procurement →
+            </button>
+          )}
+          <button onClick={onClose} style={{ marginLeft: 'auto', padding: '6px 16px', background: '#f9fafb', border: '1px solid #e5e7eb', borderRadius: 6, fontSize: 13, color: '#374151', cursor: 'pointer' }}>Close</button>
+        </div>
+      </div>
+    </>
+  );
+}
+
 function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
   const [viewMode, setViewMode] = useState('ribbon'); // 'ribbon' or 'gantt'
   const [hoveredItem, setHoveredItem] = useState(null);
-  const [pinnedItem, setPinnedItem] = useState(null);
+  const [drawerMarker, setDrawerMarker] = useState(null);
   const [canScrollLeft, setCanScrollLeft] = useState(false);
   const [canScrollRight, setCanScrollRight] = useState(true);
   const scrollRef = useRef(null);
   const wasDragged = useTimelineDrag(scrollRef);
-
-  const activeItem = pinnedItem || hoveredItem;
 
   const updateScrollBtns = () => {
     const el = scrollRef.current;
@@ -83,29 +205,20 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
     setCanScrollLeft(el.scrollLeft > 10);
     setCanScrollRight(el.scrollLeft < el.scrollWidth - el.clientWidth - 10);
   };
-
-  // Close pinned tooltip on outside click
-  useEffect(() => {
-    if (!pinnedItem) return;
-    const handler = e => {
-      if (!e.target.closest('[data-timeline-tooltip]') && !e.target.closest('[data-timeline-diamond]'))
-        setPinnedItem(null);
-    };
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [pinnedItem]);
   const today = new Date();
-  const buildStart = job.buildStart ? new Date(job.buildStart) : today;
-  const hasBuildStart = !!job.buildStart;
+  const buildStart = job.buildStart ? new Date(job.buildStart) : new Date();
   const ship = job.shipDate ? new Date(job.shipDate) : null;
 
   const displayMilestones = useMemo(() => {
     if (smartsheet?.milestones?.length > 0) {
-      return smartsheet.milestones.map((m, i) => ({
-        id: `ss-${i}`, label: m.name,
-        color: m.health.toLowerCase() === 'red' ? 'threat' : m.health.toLowerCase() === 'yellow' ? 'pending' : 'ready',
-        actualDate: m.finish ? new Date(m.finish) : null,
-      }));
+      return smartsheet.milestones.map((m, i) => {
+        const h = String(m.health || 'green').toLowerCase();
+        return {
+          id: `ss-${i}`, label: m.name,
+          color: h === 'red' ? 'threat' : h === 'yellow' ? 'pending' : 'ready',
+          actualDate: m.finish ? new Date(m.finish) : null,
+        };
+      });
     }
     return [
       { id: 'all',      label: 'All Parts',   color: 'ready',   offset: -20 },
@@ -178,6 +291,26 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
       .sort((a, b) => new Date(a.finish) - new Date(b.finish));
   }, [smartsheet, poActions]);
 
+  // ── Swimlane: group entries by vendor, worst-status first ─────────────
+  const swimlaneVendors = useMemo(() => {
+    const now = new Date();
+    const vendorMap = {};
+    [...(poActions?.critical || []), ...(poActions?.warning || []), ...(poActions?.onTrack || []), ...(poActions?.delivered || [])].forEach(entry => {
+      const vendor = entry.supplier || 'Unknown';
+      if (!vendorMap[vendor]) vendorMap[vendor] = [];
+      vendorMap[vendor].push(entry);
+    });
+    return Object.entries(vendorMap)
+      .map(([vendor, entries]) => {
+        const worstCls = entries.reduce((worst, e) => {
+          const cls = poReceiptClass(e.po, now);
+          return CLS[cls].rank > CLS[worst].rank ? cls : worst;
+        }, 'green');
+        return { vendor, entries, worstCls };
+      })
+      .sort((a, b) => CLS[b.worstCls].rank - CLS[a.worstCls].rank);
+  }, [poActions]);
+
   // ── View range ─────────────────────────────────────────────────────────
   const allDates = [
     new Date(+today - 30 * 86400000),
@@ -185,7 +318,7 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
     ...displayMilestones.filter(m => m.actualDate).map(m => m.actualDate),
     buildStart,
     ...(ship ? [ship] : []),
-  ];
+  ].filter(d => d instanceof Date && !isNaN(+d));   // drop any Invalid Date values
   const earliest = new Date(Math.min(...allDates.map(d => +d)));
   const latestKnown = new Date(Math.max(...allDates.map(d => +d)));
   const rangeEnd = ship ? new Date(+ship + 30 * 86400000) : new Date(+latestKnown + 60 * 86400000);
@@ -275,6 +408,10 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
   ) : [];
 
   const TY = 160;
+  const SWIM_MS_H  = 76;  // swimlane milestone lane height
+  const SWIM_VH    = 38;  // swimlane per-vendor lane height
+  const SCAT_MS_H  = 70;  // scatter milestone band height
+  const SCAT_H     = 290; // scatter plot area height
   const totalPOs = Object.values(summary).reduce((s, arr) => s + arr.length, 0);
 
   // ── V2 header derived values ───────────────────────────────────────────
@@ -347,7 +484,7 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
             </div>
           </div>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 5, paddingLeft: 16, borderLeft: '1px solid var(--border-subtle)' }}>
-            {[['Today', fmtFull(today), false], ['Build', hasBuildStart ? fmtFull(buildStart) : 'TBD', hasBuildStart && bsDays < 7], ['Ship', ship ? fmtFull(ship) : 'TBD', false]].map(([lbl, val, warn]) => (
+            {[['Today', fmtFull(today), false], ['Build', fmtFull(buildStart), bsDays < 7], ['Ship', ship ? fmtFull(ship) : 'TBD', false]].map(([lbl, val, warn]) => (
               <div key={lbl} style={{ display: 'flex', gap: 8, alignItems: 'baseline' }}>
                 <span style={{ fontSize: 9.5, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-4)', width: 34, flexShrink: 0 }}>{lbl}</span>
                 <span style={{ fontFamily: 'var(--font-mono)', fontWeight: 600, fontSize: 12, color: warn ? '#dc2626' : val === 'TBD' ? 'var(--ink-4)' : 'var(--ink)' }}>{val}</span>
@@ -384,9 +521,13 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
       {/* ── Scrollable Calendar Strip ── */}
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-end', marginBottom: 8 }}>
         <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink)' }}>Schedule & PO Tracking</div>
-        <button onClick={() => setViewMode(v => v === 'ribbon' ? 'gantt' : 'ribbon')} style={{ padding: '4px 12px', background: 'var(--bg-sunken)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11, fontWeight: 600, color: 'var(--ink-2)', cursor: 'pointer' }}>
-          {viewMode === 'ribbon' ? 'Switch to Full Gantt View' : 'Switch to Timeline Ribbon'}
-        </button>
+        <div style={{ display: 'flex', gap: 3 }}>
+          {[['ribbon','Timeline'],['swimlane','Swimlane'],['scatter','Scatter'],['gantt','Gantt']].map(([mode, label]) => (
+            <button key={mode} onClick={() => setViewMode(mode)} style={{ padding: '4px 12px', background: viewMode === mode ? 'var(--sdc-blue)' : 'var(--bg-sunken)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11, fontWeight: 600, color: viewMode === mode ? '#fff' : 'var(--ink-2)', cursor: 'pointer' }}>
+              {label}
+            </button>
+          ))}
+        </div>
       </div>
 
       <div style={{ display: 'flex', border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'hidden', background: 'var(--bg-raised)' }}>
@@ -426,6 +567,51 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
                   </div>
                 );
               })}
+            </div>
+          </div>
+        )}
+
+        {/* Swimlane left label pane */}
+        {viewMode === 'swimlane' && (
+          <div style={{ width: 210, flexShrink: 0, borderRight: '1px solid var(--border-strong)', background: 'var(--bg-raised)', zIndex: 50, display: 'flex', flexDirection: 'column' }}>
+            {/* header spacer matching year+month+week bands = 56px */}
+            <div style={{ height: 56, borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-sunken)' }} />
+            {/* Milestones lane label */}
+            <div style={{ height: SWIM_MS_H, borderBottom: '2px solid var(--border)', background: 'var(--bg-sunken)', padding: '0 14px', display: 'flex', alignItems: 'center' }}>
+              <span style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--ink-4)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Milestones</span>
+            </div>
+            {/* Vendor rows */}
+            {swimlaneVendors.map(({ vendor, entries, worstCls }, vi) => (
+              <div key={vi} style={{ height: SWIM_VH, flexShrink: 0, borderBottom: '1px solid var(--border-subtle)', background: vi % 2 === 0 ? 'var(--bg-raised)' : 'var(--bg-sunken)', padding: '0 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
+                <window.VendorAvatar vendor={vendor} size={20} />
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{vendor}</div>
+                  <div style={{ fontSize: 9, color: 'var(--ink-4)' }}>{entries.length} PO{entries.length !== 1 ? 's' : ''}</div>
+                </div>
+                <div style={{ width: 7, height: 7, borderRadius: '50%', background: CLS[worstCls].color, flexShrink: 0 }} />
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Scatter left pane — Y-axis labels */}
+        {viewMode === 'scatter' && (
+          <div style={{ width: 200, flexShrink: 0, borderRight: '1px solid var(--border-strong)', background: 'var(--bg-raised)', zIndex: 50, display: 'flex', flexDirection: 'column' }}>
+            <div style={{ height: 56, borderBottom: '1px solid var(--border-subtle)', background: 'var(--bg-sunken)' }} />
+            <div style={{ height: SCAT_MS_H, borderBottom: '2px solid var(--border)', background: 'var(--bg-sunken)', padding: '0 14px', display: 'flex', alignItems: 'center' }}>
+              <span style={{ fontSize: 9.5, fontWeight: 700, color: 'var(--ink-4)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>Milestones</span>
+            </div>
+            {/* Y-axis label strip */}
+            <div style={{ position: 'relative', height: SCAT_H, flexShrink: 0 }}>
+              {/* Rotated axis title */}
+              <div style={{ position: 'absolute', left: 10, top: '50%', transform: 'translateY(-50%) rotate(-90deg)', transformOrigin: 'center', fontSize: 9, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase', color: 'var(--ink-5)', whiteSpace: 'nowrap' }}>% Parts Received</div>
+              {/* Tick labels */}
+              {[100, 75, 50, 25, 0].map(pct => (
+                <div key={pct} style={{ position: 'absolute', right: 14, top: ((100 - pct) / 100) * SCAT_H, transform: 'translateY(-50%)', display: 'flex', alignItems: 'center', gap: 5 }}>
+                  <span style={{ fontSize: 9.5, fontFamily: 'var(--font-mono)', fontWeight: 600, color: pct === 100 ? '#16a34a' : pct === 0 ? '#dc2626' : 'var(--ink-4)' }}>{pct}%</span>
+                  <div style={{ width: 6, height: 1, background: 'var(--border-subtle)' }} />
+                </div>
+              ))}
             </div>
           </div>
         )}
@@ -481,23 +667,30 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
           </div>
 
           {/* Track area */}
-          <div style={{ position: 'relative', height: viewMode === 'gantt' && ganttRows.length > 0 ? TY + (ganttRows.length * 28) + 40 : TY + 80, background: 'var(--bg-raised)' }}>
+          <div style={{ position: 'relative', height: viewMode === 'gantt' && ganttRows.length > 0 ? TY + (ganttRows.length * 28) + 40 : viewMode === 'swimlane' ? SWIM_MS_H + (swimlaneVendors.length * SWIM_VH) + 20 : viewMode === 'scatter' ? SCAT_MS_H + SCAT_H + 30 : TY + 80, background: 'var(--bg-raised)' }}>
             {months.map((m, i) => m.even ? <div key={i} style={{ position: 'absolute', left: m.startX, width: m.width, top: 0, bottom: 0, background: 'rgba(0,0,0,0.012)' }} /> : null)}
             {months.slice(1).map((m, i) => <div key={i} style={{ position: 'absolute', left: m.startX, top: 0, bottom: 0, width: 1, background: 'var(--border-subtle)', opacity: 0.4 }} />)}
 
+            {viewMode !== 'swimlane' && viewMode !== 'scatter' && <>
             <div style={{ position: 'absolute', left: 0, right: 0, top: TY, height: 5, background: 'var(--bg-sunken)', borderRadius: 3 }} />
             <div style={{ position: 'absolute', left: 0, width: dayToX(today), top: TY, height: 5, background: 'linear-gradient(90deg, var(--ready), var(--sdc-blue))', borderRadius: 3 }} />
-
             {summary.red.length + summary.yellow.length > 0 && dayToX(buildStart) > dayToX(today) && (
               <div style={{ position: 'absolute', left: dayToX(today), width: dayToX(buildStart) - dayToX(today), top: TY, height: 5, background: 'repeating-linear-gradient(45deg, rgba(220,38,38,0.12) 0 4px, rgba(220,38,38,0.45) 4px 5px)', borderRadius: 3 }} />
             )}
+            </>}
 
-            <div style={{ position: 'absolute', left: dayToX(buildStart), top: TY, bottom: 0, width: 1.5, background: 'var(--threat)', opacity: 0.45, transform: 'translateX(-50%)', pointerEvents: 'none', zIndex: 5 }} />
-            {ship && <div style={{ position: 'absolute', left: dayToX(ship), top: TY, bottom: 0, width: 1, background: 'var(--ink-4)', opacity: 0.25, transform: 'translateX(-50%)', pointerEvents: 'none' }} />}
-
-            <div style={{ position: 'absolute', left: todayX, top: TY - 22, transform: 'translateX(-50%)', background: 'var(--sdc-blue)', color: '#fff', fontSize: 7.5, fontWeight: 800, letterSpacing: '0.08em', padding: '2px 5px', borderRadius: 3, whiteSpace: 'nowrap', zIndex: 35, pointerEvents: 'none' }}>TODAY</div>
-            <div style={{ position: 'absolute', left: dayToX(buildStart), top: TY + 13, transform: 'translateX(-50%)', background: 'var(--threat)', color: '#fff', fontSize: 7, fontWeight: 800, letterSpacing: '0.06em', padding: '2px 5px', borderRadius: 3, whiteSpace: 'nowrap', zIndex: 20, pointerEvents: 'none' }}>BUILD START</div>
-            {ship && <div style={{ position: 'absolute', left: dayToX(ship), top: TY + 13, transform: 'translateX(-50%)', background: 'var(--bg-sunken)', border: '1px solid var(--border)', color: 'var(--ink-3)', fontSize: 7, fontWeight: 700, letterSpacing: '0.06em', padding: '2px 5px', borderRadius: 3, whiteSpace: 'nowrap', zIndex: 15, pointerEvents: 'none' }}>SHIP</div>}
+            {(() => {
+              const altMode  = viewMode === 'swimlane' || viewMode === 'scatter';
+              const labelTop = viewMode === 'swimlane' ? SWIM_MS_H + 5 : viewMode === 'scatter' ? SCAT_MS_H + 8 : TY + 13;
+              const todayTop = viewMode === 'swimlane' ? 6 : viewMode === 'scatter' ? 6 : TY - 22;
+              return (<>
+                <div style={{ position: 'absolute', left: dayToX(buildStart), top: altMode ? 0 : TY, bottom: 0, width: 1.5, background: 'var(--threat)', opacity: 0.45, transform: 'translateX(-50%)', pointerEvents: 'none', zIndex: 5 }} />
+                {ship && <div style={{ position: 'absolute', left: dayToX(ship), top: altMode ? 0 : TY, bottom: 0, width: 1, background: 'var(--ink-4)', opacity: 0.25, transform: 'translateX(-50%)', pointerEvents: 'none' }} />}
+                <div style={{ position: 'absolute', left: todayX, top: todayTop, transform: 'translateX(-50%)', background: 'var(--sdc-blue)', color: '#fff', fontSize: 7.5, fontWeight: 800, letterSpacing: '0.08em', padding: '2px 5px', borderRadius: 3, whiteSpace: 'nowrap', zIndex: 35, pointerEvents: 'none' }}>TODAY</div>
+                <div style={{ position: 'absolute', left: dayToX(buildStart), top: labelTop, transform: 'translateX(-50%)', background: 'var(--threat)', color: '#fff', fontSize: 7, fontWeight: 800, letterSpacing: '0.06em', padding: '2px 5px', borderRadius: 3, whiteSpace: 'nowrap', zIndex: 20, pointerEvents: 'none' }}>BUILD START</div>
+                {ship && <div style={{ position: 'absolute', left: dayToX(ship), top: labelTop, transform: 'translateX(-50%)', background: 'var(--bg-sunken)', border: '1px solid var(--border)', color: 'var(--ink-3)', fontSize: 7, fontWeight: 700, letterSpacing: '0.06em', padding: '2px 5px', borderRadius: 3, whiteSpace: 'nowrap', zIndex: 15, pointerEvents: 'none' }}>SHIP</div>}
+              </>);
+            })()}
 
             {/* Milestone chips — ribbon mode only */}
             {viewMode === 'ribbon' && milestones.map(m => {
@@ -521,21 +714,85 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
             {/* Classified PO threat markers — ribbon mode only */}
             {viewMode === 'ribbon' && classifiedMarkers.map((m, i) => {
               const { color } = CLS[m.cls];
-              const size = 11;
-              const isPinned = pinnedItem?.data === m;
+              const sz = 11;
+              const isActive = drawerMarker === m;
+              const count = m.items.length;
+              const stackDepth = Math.min(count, 3);
+              // Container grows upward to accommodate the stack
+              const containerTop = TY + 7 - (stackDepth - 1) * 4;
+
               return (
                 <div key={i}
                   data-timeline-diamond="1"
-                  onMouseEnter={e => !pinnedItem && setHoveredItem({ type: 'threat', data: m, rect: e.currentTarget.getBoundingClientRect() })}
-                  onMouseLeave={() => !pinnedItem && setHoveredItem(null)}
+                  onMouseEnter={e => setHoveredItem({ type: 'threat', data: m, rect: e.currentTarget.getBoundingClientRect() })}
+                  onMouseLeave={() => setHoveredItem(null)}
                   onClick={e => {
                     if (wasDragged.current) { wasDragged.current = false; return; }
                     e.stopPropagation();
                     setHoveredItem(null);
-                    setPinnedItem(isPinned ? null : { type: 'threat', data: m, rect: e.currentTarget.getBoundingClientRect() });
+                    setDrawerMarker(m);
                   }}
-                  style={{ position: 'absolute', top: TY + 7, left: dayToX(m.date), transform: 'translateX(-50%) rotate(45deg)', width: size, height: size, background: color, border: isPinned ? `2px solid var(--bg-raised)` : '1.5px solid var(--bg-raised)', borderRadius: 1, boxShadow: isPinned ? `0 0 0 2px ${color}, 0 0 8px ${color}80` : `0 0 5px ${color}60`, zIndex: isPinned ? 20 : 15, cursor: 'pointer', transition: 'box-shadow 0.15s', opacity: m.cls === 'green' ? 0.5 : 1 }}
-                />
+                  style={{
+                    position: 'absolute',
+                    top: containerTop,
+                    left: dayToX(m.date),
+                    transform: 'translateX(-50%)',
+                    width: sz + 10,
+                    height: sz + (stackDepth - 1) * 4 + 4,
+                    zIndex: isActive ? 20 : 15,
+                    cursor: 'pointer',
+                  }}
+                >
+                  {/* Stack layers: si=0 is furthest back (top of visual stack), si=stackDepth-1 is front */}
+                  {Array.from({ length: stackDepth }).map((_, si) => {
+                    const isFront = si === stackDepth - 1;
+                    const yOffset = (stackDepth - 1 - si) * 4;
+                    return (
+                      <div key={si} style={{
+                        position: 'absolute',
+                        top: yOffset,
+                        left: '50%',
+                        transform: 'translateX(-50%) rotate(45deg)',
+                        width: sz,
+                        height: sz,
+                        background: isFront ? color : 'var(--bg-raised)',
+                        border: `${isFront && isActive ? '2px' : '1.5px'} solid ${color}`,
+                        borderRadius: 1,
+                        opacity: m.cls === 'green'
+                          ? (isFront ? 0.5 : 0.18)
+                          : (isFront ? 1 : 0.28 + si * 0.18),
+                        boxShadow: isFront
+                          ? (isActive ? `0 0 0 2px ${color}, 0 0 8px ${color}80` : `0 0 5px ${color}60`)
+                          : 'none',
+                        zIndex: si + 1,
+                        transition: 'box-shadow 0.15s',
+                      }} />
+                    );
+                  })}
+                  {/* Count badge — only shown when more than 1 PO */}
+                  {count > 1 && (
+                    <div style={{
+                      position: 'absolute',
+                      top: 0,
+                      right: -1,
+                      background: color,
+                      color: '#fff',
+                      fontSize: 6.5,
+                      fontWeight: 800,
+                      minWidth: 13,
+                      height: 13,
+                      borderRadius: 7,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
+                      padding: '0 2px',
+                      border: '1.5px solid var(--bg-raised)',
+                      zIndex: stackDepth + 2,
+                      letterSpacing: '0.02em',
+                      pointerEvents: 'none',
+                    }}>{count}</div>
+                  )}
+                </div>
               );
             })}
 
@@ -621,6 +878,204 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
                 </React.Fragment>
               );
             })}
+
+            {/* ── Swimlane view ── */}
+            {viewMode === 'swimlane' && (() => {
+              const now = new Date();
+              return (
+                <>
+                  {/* Milestone lane background */}
+                  <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: SWIM_MS_H, background: 'var(--bg-sunken)', pointerEvents: 'none', zIndex: 1 }} />
+                  {/* Milestone / vendor separator */}
+                  <div style={{ position: 'absolute', left: 0, right: 0, top: SWIM_MS_H, height: 2, background: 'var(--border)', pointerEvents: 'none', zIndex: 3 }} />
+                  {/* Vendor lane alternating backgrounds + dividers */}
+                  {swimlaneVendors.map(({ }, vi) => (
+                    <div key={`vb-${vi}`} style={{ position: 'absolute', left: 0, right: 0, top: SWIM_MS_H + vi * SWIM_VH, height: SWIM_VH, background: vi % 2 === 0 ? 'transparent' : 'rgba(0,0,0,0.018)', borderBottom: '1px solid var(--border-subtle)', pointerEvents: 'none', zIndex: 1 }} />
+                  ))}
+
+                  {/* Milestone chips */}
+                  {milestones.map(m => {
+                    const x = dayToX(m.actualDate);
+                    const c = M[m.color] || 'var(--ink-4)';
+                    const chipTop = m.row === 0 ? 7 : SWIM_MS_H / 2 + 2;
+                    return (
+                      <React.Fragment key={m.id}>
+                        <div
+                          onMouseEnter={e => setHoveredItem({ type: 'milestone', data: m, date: m.actualDate, rect: e.currentTarget.getBoundingClientRect() })}
+                          onMouseLeave={() => setHoveredItem(null)}
+                          style={{ position: 'absolute', left: x, top: chipTop, transform: 'translateX(-50%)', zIndex: 10, cursor: 'pointer' }}
+                        >
+                          <div style={{ background: 'var(--bg-raised)', border: `1.5px solid ${c}`, borderRadius: 4, padding: '2px 7px', fontSize: 8, fontWeight: 700, letterSpacing: '0.05em', color: c, textTransform: 'uppercase', whiteSpace: 'nowrap', boxShadow: '0 1px 4px rgba(0,0,0,0.09)' }}>
+                            {m.label}
+                          </div>
+                        </div>
+                        {/* stem to bottom of milestone lane */}
+                        <div style={{ position: 'absolute', left: x, top: chipTop + 18, transform: 'translateX(-50%)', width: 1, height: Math.max(0, SWIM_MS_H - chipTop - 26), background: c, opacity: 0.25, pointerEvents: 'none', zIndex: 4 }} />
+                        {/* diamond at bottom edge of milestone lane */}
+                        <div style={{ position: 'absolute', left: x, top: SWIM_MS_H - 10, transform: 'translate(-50%, -50%) rotate(45deg)', width: 8, height: 8, background: c, border: '2px solid var(--bg-raised)', borderRadius: 1, pointerEvents: 'none', zIndex: 12 }} />
+                      </React.Fragment>
+                    );
+                  })}
+
+                  {/* PO bars per vendor */}
+                  {swimlaneVendors.map(({ entries }, vi) => {
+                    const laneY = SWIM_MS_H + vi * SWIM_VH;
+                    return entries.map((entry, ei) => {
+                      if (!entry.po?.dueDate) return null;
+                      const cls = poReceiptClass(entry.po, now);
+                      const { color } = CLS[cls];
+                      const startD = entry.po.poDate
+                        ? new Date(entry.po.poDate)
+                        : new Date(+new Date(entry.po.dueDate) - 21 * 86400000);
+                      const sx = dayToX(startD);
+                      const fx = dayToX(new Date(entry.po.dueDate));
+                      const bw = Math.max(6, fx - sx);
+                      const isRcvd = cls === 'green';
+                      return (
+                        <div
+                          key={`sw-${vi}-${ei}`}
+                          onMouseEnter={e => setHoveredItem({ type: 'threat', data: { date: new Date(entry.po.dueDate), items: [entry], cls }, rect: e.currentTarget.getBoundingClientRect() })}
+                          onMouseLeave={() => setHoveredItem(null)}
+                          onClick={e => {
+                            if (wasDragged.current) { wasDragged.current = false; return; }
+                            e.stopPropagation();
+                            setHoveredItem(null);
+                            setDrawerMarker({ date: new Date(entry.po.dueDate), items: [entry] });
+                          }}
+                          style={{
+                            position: 'absolute',
+                            left: sx,
+                            top: laneY + 7,
+                            width: bw,
+                            height: SWIM_VH - 14,
+                            background: `${color}${isRcvd ? '20' : '28'}`,
+                            border: `1.5px solid ${color}${isRcvd ? '70' : 'bb'}`,
+                            borderLeft: `3px solid ${color}`,
+                            borderRadius: 3,
+                            cursor: 'pointer',
+                            overflow: 'hidden',
+                            zIndex: 10,
+                          }}
+                        >
+                          {bw > 32 && (
+                            <span className="mono" style={{ position: 'absolute', left: 5, top: '50%', transform: 'translateY(-50%)', fontSize: 8.5, fontWeight: 700, color, whiteSpace: 'nowrap', overflow: 'hidden', maxWidth: bw - 10 }}>
+                              {entry.po.poId}
+                            </span>
+                          )}
+                        </div>
+                      );
+                    });
+                  })}
+                </>
+              );
+            })()}
+
+            {/* ── Scatter plot view ── */}
+            {viewMode === 'scatter' && (() => {
+              const now = new Date();
+              const allEntries = [
+                ...(poActions?.critical  || []),
+                ...(poActions?.warning   || []),
+                ...(poActions?.onTrack   || []),
+                ...(poActions?.delivered || []),
+              ];
+              const bsX = dayToX(buildStart);
+
+              return (
+                <>
+                  {/* Milestone band background */}
+                  <div style={{ position: 'absolute', left: 0, right: 0, top: 0, height: SCAT_MS_H, background: 'var(--bg-sunken)', pointerEvents: 'none', zIndex: 1 }} />
+                  {/* Band separator */}
+                  <div style={{ position: 'absolute', left: 0, right: 0, top: SCAT_MS_H, height: 2, background: 'var(--border)', pointerEvents: 'none', zIndex: 3 }} />
+
+                  {/* Horizontal grid lines at 0 / 25 / 50 / 75 / 100 % */}
+                  {[0, 0.25, 0.5, 0.75, 1].map(pct => (
+                    <div key={pct} style={{ position: 'absolute', left: 0, right: 0, top: SCAT_MS_H + (1 - pct) * SCAT_H, height: 1, background: pct === 0 || pct === 1 ? 'var(--border)' : 'var(--border-subtle)', opacity: pct === 0 || pct === 1 ? 0.9 : 0.6, pointerEvents: 'none', zIndex: 2 }} />
+                  ))}
+
+                  {/* Danger zone — before build start, below 50% received */}
+                  {bsX > 0 && (
+                    <div style={{ position: 'absolute', left: 0, width: bsX, top: SCAT_MS_H + SCAT_H * 0.5, height: SCAT_H * 0.5, background: 'rgba(220,38,38,0.055)', pointerEvents: 'none', zIndex: 1 }}>
+                      <span style={{ position: 'absolute', left: 10, bottom: 8, fontSize: 9, fontWeight: 700, color: '#dc262660', letterSpacing: '0.06em', textTransform: 'uppercase', whiteSpace: 'nowrap' }}>⚠ Risk Zone</span>
+                    </div>
+                  )}
+
+                  {/* 100% "safe" band — top strip */}
+                  <div style={{ position: 'absolute', left: 0, right: 0, top: SCAT_MS_H, height: SCAT_H * 0.04, background: 'rgba(22,163,74,0.07)', pointerEvents: 'none', zIndex: 1 }} />
+
+                  {/* Milestone chips in milestone band */}
+                  {milestones.map(m => {
+                    const x = dayToX(m.actualDate);
+                    const c = M[m.color] || 'var(--ink-4)';
+                    const chipTop = m.row === 0 ? 7 : SCAT_MS_H / 2 + 2;
+                    return (
+                      <React.Fragment key={m.id}>
+                        <div
+                          onMouseEnter={e => setHoveredItem({ type: 'milestone', data: m, date: m.actualDate, rect: e.currentTarget.getBoundingClientRect() })}
+                          onMouseLeave={() => setHoveredItem(null)}
+                          style={{ position: 'absolute', left: x, top: chipTop, transform: 'translateX(-50%)', zIndex: 10, cursor: 'pointer' }}
+                        >
+                          <div style={{ background: 'var(--bg-raised)', border: `1.5px solid ${c}`, borderRadius: 4, padding: '2px 7px', fontSize: 8, fontWeight: 700, letterSpacing: '0.05em', color: c, textTransform: 'uppercase', whiteSpace: 'nowrap', boxShadow: '0 1px 4px rgba(0,0,0,0.09)' }}>{m.label}</div>
+                        </div>
+                        <div style={{ position: 'absolute', left: x, top: SCAT_MS_H - 10, transform: 'translate(-50%,-50%) rotate(45deg)', width: 8, height: 8, background: c, border: '2px solid var(--bg-raised)', borderRadius: 1, pointerEvents: 'none', zIndex: 12 }} />
+                      </React.Fragment>
+                    );
+                  })}
+
+                  {/* PO bubbles */}
+                  {allEntries.map((entry, i) => {
+                    if (!entry.po?.dueDate) return null;
+                    const cls   = poReceiptClass(entry.po, now);
+                    const { color } = CLS[cls];
+                    const parts = (entry.po?.parts || []).filter(p => (p.qty || 0) > 0);
+                    const qty   = parts.reduce((s, p) => s + (p.qty || 0), 0);
+                    const rcvd  = parts.reduce((s, p) => s + (p.received || 0), 0);
+                    const pct   = qty > 0 ? rcvd / qty : (cls === 'green' ? 1 : 0);
+                    const r     = Math.max(7, Math.min(20, 5 + Math.sqrt(qty) * 1.6));
+                    const cx    = dayToX(new Date(entry.po.dueDate));
+                    const cy    = SCAT_MS_H + (1 - pct) * SCAT_H;
+                    const isRcvd = cls === 'green';
+                    return (
+                      <div
+                        key={`sc-${i}`}
+                        onMouseEnter={e => setHoveredItem({ type: 'threat', data: { date: new Date(entry.po.dueDate), items: [entry], cls }, rect: e.currentTarget.getBoundingClientRect() })}
+                        onMouseLeave={() => setHoveredItem(null)}
+                        onClick={e => {
+                          if (wasDragged.current) { wasDragged.current = false; return; }
+                          e.stopPropagation();
+                          setHoveredItem(null);
+                          setDrawerMarker({ date: new Date(entry.po.dueDate), items: [entry] });
+                        }}
+                        style={{
+                          position: 'absolute',
+                          left: cx,
+                          top: cy,
+                          transform: 'translate(-50%, -50%)',
+                          width: r * 2,
+                          height: r * 2,
+                          borderRadius: '50%',
+                          background: `${color}${isRcvd ? '28' : '3a'}`,
+                          border: `2px solid ${color}${isRcvd ? '90' : 'dd'}`,
+                          cursor: 'pointer',
+                          zIndex: 10,
+                          boxShadow: `0 1px 4px ${color}40`,
+                          transition: 'transform 0.12s, box-shadow 0.12s',
+                        }}
+                        onMouseOver={e => { e.currentTarget.style.transform = 'translate(-50%,-50%) scale(1.25)'; e.currentTarget.style.boxShadow = `0 2px 10px ${color}70`; }}
+                        onMouseOut={e => { e.currentTarget.style.transform = 'translate(-50%,-50%) scale(1)'; e.currentTarget.style.boxShadow = `0 1px 4px ${color}40`; }}
+                      >
+                        {/* PO id label inside large bubbles */}
+                        {r >= 14 && (
+                          <span className="mono" style={{ position: 'absolute', inset: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 7.5, fontWeight: 800, color, pointerEvents: 'none' }}>
+                            {entry.po.poId}
+                          </span>
+                        )}
+                      </div>
+                    );
+                  })}
+                </>
+              );
+            })()}
           </div>
         </div>
       </div>
@@ -646,188 +1101,62 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
         <span style={{ fontSize: 8, color: 'var(--ink-5)', marginLeft: 'auto' }}>{totalPOs} POs total across all categories</span>
       </div>
 
-      {/* ── Tooltip (hover preview + click-to-pin for full interactive view) ── */}
-      {activeItem && (() => {
-        const { type, data, rect, date } = activeItem;
-        const isPinned = !!pinnedItem;
-
-        // Smart positioning
-        const tipW = isPinned ? 440 : 400;
-        const estH = isPinned ? 600 : 350;
-        const spaceAbove = rect.top - 12;
-        const spaceBelow = window.innerHeight - rect.bottom - 12;
-        const useBelow = spaceAbove < estH;
-        const availH = useBelow ? spaceBelow : spaceAbove;
-        const maxTipH = Math.max(200, Math.min(estH, availH));
+      {/* ── Hover tooltip — milestones only (diamonds open drawer on click) ── */}
+      {hoveredItem && (() => {
+        const { type, data, rect, date } = hoveredItem;
+        const tipW = 260;
+        const useBelow = rect.top < 200;
         const hPos = { left: Math.max(8, Math.min(window.innerWidth - tipW - 8, rect.left + rect.width / 2 - tipW / 2)) };
         const vPos = useBelow ? { top: rect.bottom + 10 } : { bottom: window.innerHeight - rect.top + 10 };
-        const baseStyle = {
-          position: 'fixed', ...hPos, ...vPos, width: tipW, maxHeight: maxTipH, zIndex: 1000,
-          boxShadow: isPinned ? '0 8px 32px rgba(0,0,0,0.22)' : 'var(--shadow-lg)',
-          pointerEvents: isPinned ? 'all' : 'none',
-          borderRadius: 10, overflow: 'hidden',
-          transition: 'width 0.15s, box-shadow 0.15s',
-        };
+        const base = { position: 'fixed', ...hPos, ...vPos, width: tipW, zIndex: 1000, pointerEvents: 'none', borderRadius: 8, overflow: 'hidden', boxShadow: 'var(--shadow-lg)' };
 
         if (type === 'milestone') {
           const dft = Math.round((+date - +today) / 86400000);
           return (
-            <div data-timeline-tooltip="1" style={{ ...baseStyle, background: 'var(--bg-raised)', border: '1px solid var(--border)', padding: '12px 14px' }}>
-              <div style={{ fontSize: 10, color: 'var(--ink-4)', borderBottom: '1px solid var(--border-subtle)', paddingBottom: 6, marginBottom: 8, display: 'flex', justifyContent: 'space-between' }}>
+            <div style={{ ...base, background: 'var(--bg-raised)', border: '1px solid var(--border)', padding: '11px 14px' }}>
+              <div style={{ fontSize: 9.5, color: 'var(--ink-4)', marginBottom: 5, display: 'flex', justifyContent: 'space-between' }}>
                 <span>MILESTONE · {fmt(date)}</span>
                 <span className={`badge badge-${data.color || 'neutral'}`}>{dft >= 0 ? 'ON TRACK' : 'DELAYED'}</span>
               </div>
-              <div style={{ fontSize: 14, fontWeight: 700, color: 'var(--ink)' }}>{data.label}</div>
-              <div className="mono" style={{ fontSize: 11, color: 'var(--ink-3)', marginTop: 4 }}>
+              <div style={{ fontSize: 13, fontWeight: 700, color: 'var(--ink)' }}>{data.label}</div>
+              <div className="mono" style={{ fontSize: 10, color: 'var(--ink-3)', marginTop: 3 }}>
                 {dft >= 0 ? `Target in ${dft} days` : `Delayed by ${Math.abs(dft)} days`}
               </div>
             </div>
           );
         }
 
-        // ── V1 Minimal tooltip ────────────────────────────────────────
-        const cfg = CLS[data.cls] || CLS.red;
-        const bsDaysRemaining = Math.round((+buildStart - +data.date) / 86400000);
-
-        // Aggregate totals across all POs in this date group
-        const allParts = data.items.flatMap(e => e.po.parts || []);
-        const grpQty   = allParts.reduce((s, p) => s + (p.qty || 0), 0);
-        const grpRcvd  = allParts.reduce((s, p) => s + (p.received || 0), 0);
-        const grpPct   = grpQty > 0 ? Math.round(grpRcvd / grpQty * 100) : 0;
-        const barColor = grpPct === 100 ? '#16a34a' : grpPct > 0 ? '#ca8a04' : cfg.color;
-        const pillLabel = { green: 'ON TIME', lightGreen: 'ON TRACK', yellow: 'PARTIAL', red: 'MISSING' }[data.cls] || cfg.label;
-        const uniqueSuppliers = [...new Set(data.items.map(e => e.supplier).filter(Boolean))];
-        const supplierMeta = uniqueSuppliers.length === 1 ? uniqueSuppliers[0] : `${uniqueSuppliers.length} suppliers · ${data.items.length} POs`;
-        const flatParts = data.items.flatMap(e => (e.po.parts || []).map(p => ({ ...p, _poId: e.po.poId, _supplier: e.supplier })));
-        const MAX_PARTS = 8;
-
-        const partRow = (p, pi, total, showBorder) => {
-          const rcvd = (p.received || 0) >= (p.qty || 1) && (p.qty || 0) > 0;
-          const partial = (p.received || 0) > 0 && !rcvd;
-          const dotColor = rcvd ? '#16a34a' : partial ? '#ca8a04' : cfg.color;
-          const price = p.price ? `$${Number(p.price).toLocaleString(undefined, {minimumFractionDigits: 2})}` : '—';
-          const isFirst = pi === 0;
-          const isLast = pi === total - 1;
-          
+        if (type === 'threat') {
+          const cfg = CLS[data.cls] || CLS.lightGreen;
+          const allP = data.items.flatMap(e => e.po?.parts || []);
+          const qty  = allP.reduce((s, p) => s + (p.qty  || 0), 0);
+          const rcvd = allP.reduce((s, p) => s + (p.received || 0), 0);
+          const pct  = qty > 0 ? Math.round(rcvd / qty * 100) : 0;
           return (
-            <div key={pi} style={{ position: 'relative', display: 'grid', gridTemplateColumns: '12px 1fr auto', gap: 12, alignItems: 'flex-start', padding: '10px 16px 10px 32px', borderBottom: showBorder ? '1px solid var(--border-subtle)' : 'none' }}>
-              {total > 1 && (
-                <div style={{ 
-                  position: 'absolute', left: 38, width: 2, background: 'var(--border-strong)', opacity: 0.35,
-                  top: isFirst ? 18 : 0, 
-                  bottom: isLast ? 'auto' : 0,
-                  height: isLast ? 18 : 'auto',
-                  zIndex: 1
-                }} />
-              )}
-              <span style={{ width: 6, height: 6, borderRadius: '50%', background: dotColor, marginTop: 9, flexShrink: 0, position: 'relative', zIndex: 2 }} />
-              <div style={{ minWidth: 0 }}>
-                <div style={{ color: 'var(--ink)', fontSize: 12.5, fontWeight: 700, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginBottom: 2 }}>
-                  {p.partDesc || 'Unnamed Part'}
-                </div>
-                <div className="mono" style={{ color: 'var(--sdc-blue)', fontSize: 10.5, fontWeight: 700, marginBottom: 4, wordBreak: 'break-all' }}>
-                  {p.partNumber}
-                </div>
-                <div style={{ display: 'flex', flexWrap: 'wrap', gap: '4px 12px', fontSize: 10, color: 'var(--ink-4)', fontFamily: 'var(--font-mono)', letterSpacing: '0.01em' }}>
-                  <span>QTY: <span style={{ color: 'var(--ink-1)', fontWeight: 600 }}>{p.qty}</span></span>
-                  <span>COST: <span style={{ color: 'var(--ink-1)', fontWeight: 600 }}>{price}</span></span>
-                </div>
-                <div style={{ display: 'flex', gap: 12, marginTop: 3, fontSize: 10, color: 'var(--ink-4)', fontFamily: 'var(--font-mono)' }}>
-                   <span>REQ: <span style={{ color: 'var(--ink-2)', fontWeight: 600 }}>{p.requiredDate ? fmt(p.requiredDate) : '—'}</span></span>
-                   <span>EXP: <span style={{ color: 'var(--ink-2)', fontWeight: 600 }}>{p.expectedDate ? fmt(p.expectedDate) : '—'}</span></span>
-                </div>
+            <div style={{ ...base, background: 'var(--bg-raised)', border: `1px solid ${cfg.color}30`, padding: '10px 13px' }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: 'var(--ink)', marginBottom: 3 }}>ETA · {fmt(data.date)}</div>
+              <div style={{ fontSize: 10, color: 'var(--ink-4)', marginBottom: 7 }}>
+                {data.items.length} PO{data.items.length !== 1 ? 's' : ''} · {data.items.length === 1 ? data.items[0].supplier : `${data.items.length} vendors`}
               </div>
-              <div style={{ textAlign: 'right', flexShrink: 0 }}>
-                <div style={{ fontFamily: 'var(--font-mono)', fontSize: 11.5, color: rcvd ? '#16a34a' : 'var(--ink-2)', fontWeight: 700 }}>{p.received || 0}/{p.qty || 0}</div>
+              <div style={{ height: 3, background: 'var(--border)', borderRadius: 2, overflow: 'hidden', marginBottom: 5 }}>
+                <div style={{ height: '100%', width: `${pct}%`, background: cfg.color, borderRadius: 2 }} />
               </div>
+              <div style={{ fontSize: 9.5, color: cfg.color, fontWeight: 700 }}>{pct}% received · click to open</div>
             </div>
           );
-        };
-
-        return (
-          <div data-timeline-tooltip="1" style={{ ...baseStyle, background: 'var(--bg-raised)', border: '1px solid var(--border)', display: 'flex', flexDirection: 'column', boxShadow: isPinned ? '0 8px 32px rgba(0,0,0,0.18)' : '0 8px 24px rgba(20,14,4,0.1), 0 1px 2px rgba(20,14,4,0.04)' }}>
-
-          {/* Head: ETA · date + status pill */}
-          <div style={{ padding: '14px 16px 12px', display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12 }}>
-            <div style={{ minWidth: 0 }}>
-              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--ink)', letterSpacing: '-0.005em', marginBottom: 3 }}>ETA · {fmt(data.date)}</div>
-              <div style={{ fontSize: 11.5, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{supplierMeta}</div>
-            </div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexShrink: 0 }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, padding: '3px 9px', background: cfg.bg, color: cfg.color, borderRadius: 999, fontSize: 10, fontWeight: 700, letterSpacing: '0.1em', textTransform: 'uppercase' }}>
-                <span style={{ width: 5, height: 5, borderRadius: '50%', background: cfg.color }} />{pillLabel}
-              </span>
-              {isPinned && (
-                <button onClick={() => setPinnedItem(null)} style={{ width: 18, height: 18, borderRadius: '50%', background: 'var(--bg-sunken)', border: '1px solid var(--border)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 10, color: 'var(--ink-3)', flexShrink: 0 }}>✕</button>
-              )}
-            </div>
-          </div>
-
-          {/* Progress: "N of N received" + slim bar */}
-          <div style={{ padding: '0 16px 12px' }}>
-            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'baseline', marginBottom: 6, fontSize: 11, color: 'var(--ink-3)', fontFamily: 'var(--font-mono)' }}>
-              <span><span style={{ color: 'var(--ink)', fontWeight: 600 }}>{grpRcvd}</span> of <span style={{ color: 'var(--ink)', fontWeight: 600 }}>{grpQty}</span> received</span>
-              <span style={{ color: barColor, fontWeight: 600 }}>{grpPct}%</span>
-            </div>
-            <div style={{ height: 3, background: 'var(--border)', borderRadius: 2, overflow: 'hidden' }}>
-              <div style={{ height: '100%', width: `${grpPct}%`, background: barColor, borderRadius: 2, transition: 'width 0.3s' }} />
-            </div>
-          </div>
-
-          {/* Parts dot-list */}
-          <div style={{ borderTop: '1px solid var(--border-subtle)', overflowY: isPinned ? 'auto' : 'hidden', maxHeight: isPinned ? 300 : 220, flex: 1, minHeight: 0 }}>
-            {isPinned
-              ? data.items.map((entry, ei) => {
-                  const parts = entry.po.parts || [];
-                  const isLast = ei === data.items.length - 1;
-                  return (
-                    <div key={ei}>
-                      {(uniqueSuppliers.length > 1 || data.items.length > 1) && (
-                        <div style={{ 
-                          padding: '7px 16px', fontSize: 10.5, fontWeight: 800, letterSpacing: '0.04em', color: 'var(--ink-1)', textTransform: 'uppercase', 
-                          background: 'var(--bg-sunken)', borderBottom: '1px solid var(--border-subtle)', borderLeft: '4px solid var(--sdc-blue)',
-                          display: 'flex', alignItems: 'center', gap: 10
-                        }}>
-                          <div style={{ width: 14, height: 14, borderRadius: 3, background: 'var(--sdc-blue)', color: '#fff', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 8 }}>V</div>
-                          {uniqueSuppliers.length > 1 ? entry.supplier : `Purchase Order ${entry.po.poId}`}
-                        </div>
-                      )}
-                      {parts.map((p, pi) => partRow(p, pi, parts.length, pi < parts.length - 1 || !isLast))}
-                    </div>
-                  );
-                })
-              : (() => {
-                  const shown = flatParts.slice(0, MAX_PARTS);
-                  const overflow = flatParts.length - shown.length;
-                  return (
-                    <>
-                      {shown.map((p, pi) => partRow(p, pi, pi < shown.length - 1))}
-                      {overflow > 0 && (
-                        <div style={{ padding: '7px 16px', fontSize: 11, color: 'var(--ink-4)', fontStyle: 'italic', borderTop: '1px solid var(--border-subtle)' }}>
-                          +{overflow} more · click to see all
-                        </div>
-                      )}
-                    </>
-                  );
-                })()
-            }
-          </div>
-
-          {/* Footer */}
-          <div style={{ padding: '10px 16px', borderTop: '1px solid var(--border)', background: 'var(--bg-sunken)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', fontSize: 11.5, color: 'var(--ink-3)', flexShrink: 0 }}>
-            <span>{data.items.length} PO{data.items.length !== 1 ? 's' : ''} · {bsDaysRemaining > 0 ? `${bsDaysRemaining}d before build` : bsDaysRemaining === 0 ? 'build starts today' : `${Math.abs(bsDaysRemaining)}d past build`}</span>
-            {onDrillDown && (
-              <button
-                onClick={() => { setPinnedItem(null); onDrillDown(data.items.map(e => e.po.poId)); }}
-                style={{ color: '#1d4ed8', fontWeight: 500, display: 'inline-flex', alignItems: 'center', gap: 4, background: 'none', border: 'none', cursor: 'pointer', fontSize: 11.5, padding: 0 }}
-              >
-                View →
-              </button>
-            )}
-          </div>
-        </div>
-        );
+        }
+        return null;
       })()}
+
+      {/* ── Side drawer — opened by clicking a diamond ── */}
+      {drawerMarker && (
+        <TimelineDrawer
+          marker={drawerMarker}
+          buildStart={buildStart}
+          onClose={() => setDrawerMarker(null)}
+          onDrillDown={onDrillDown}
+        />
+      )}
     </div>
   );
 }

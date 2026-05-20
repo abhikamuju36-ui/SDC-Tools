@@ -29,7 +29,7 @@ const { execSync } = require('child_process');
 const GITHUB_REPO       = 'danbelliveau2/state_logic_builder';
 const CHECK_INTERVAL_MS = 5 * 60 * 1000;   // 5 minutes — same cadence as electron-updater
 const APP_DIR           = path.join(__dirname, '..');
-const PM2_APP_NAME      = 'statelogic';
+const PM2_APP_NAME      = 'sdc-statelogic';
 
 // Directories/files from upstream that are safe to replace
 const SAFE_PATHS = ['src', 'public', 'index.html'];

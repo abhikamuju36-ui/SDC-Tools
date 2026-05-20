@@ -1,12 +1,11 @@
-const path = require('path');
-require('dotenv').config({ path: path.join(__dirname, '..', '.env') });
+require('dotenv').config();
 const express = require('express');
-const azure   = require('./azureDb');
-const { seedIfNeeded } = require('./services/seedAzure');
+const path = require('path');
 
 const bomRoutes       = require('./routes/bom');
 const readinessRoutes = require('./routes/readiness');
 const emailRoutes     = require('./routes/emails');
+const checkRoutes     = require('./routes/check');
 
 const app  = express();
 const PORT = process.env.PORT || 3000;
@@ -31,6 +30,7 @@ app.get('/health', (_req, res) => res.json({ ok: true, ts: new Date().toISOStrin
 app.use(express.static(path.join(__dirname, '..', 'client')));
 
 // API routes
+app.use('/api/check',     checkRoutes);
 app.use('/api/bom',       bomRoutes);
 app.use('/api/readiness', readinessRoutes);
 app.use('/api/emails',    emailRoutes);
@@ -47,23 +47,10 @@ app.use((err, _req, res, _next) => {
   res.status(status).json({ error: status < 500 ? err.message : 'Internal server error' });
 });
 
-// ── Azure SQL initialisation (non-blocking — server starts even if DB is down) ──
-async function initAzure() {
-  try {
-    await azure.ensureSchema();
-    await seedIfNeeded();
-    console.log('[readiness] Azure SQL ready.');
-  } catch (err) {
-    console.warn('[readiness] Azure SQL unavailable — running in demo mode:', err.message);
-  }
-}
-
-// ── Exportable entry point (Electron in-process execution) ───────────────────
 function startServer({ port } = {}) {
   const p = port || PORT;
   const server = app.listen(p, '0.0.0.0', () => {
     console.log(`[readiness] Running at http://localhost:${p}`);
-    initAzure(); // fire-and-forget — server is already accepting requests
   });
   server.on('error', err => console.error('[readiness] Server error:', err.message));
   return server;

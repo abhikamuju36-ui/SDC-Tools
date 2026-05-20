@@ -528,6 +528,8 @@ input { font-family: inherit; }
 @keyframes spin { to { transform: rotate(360deg); } }
 .spinner { animation: spin 0.9s linear infinite; }
 
+@keyframes progressBar { from { transform: scaleX(0); transform-origin: left; } to { transform: scaleX(1); transform-origin: left; } }
+
 /* ---- TABLE ROW HOVER ---- */
 .row-hover { transition: background 0.1s; cursor: pointer; }
 .row-hover:hover { background: var(--bg-hover) !important; }
@@ -589,9 +591,9 @@ input { font-family: inherit; }
 /* Vendor Card Grid & Components */
 .vendor-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
-  gap: 24px;
-  padding: 24px;
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+  gap: 12px;
+  padding: 16px 24px;
 }
 
 .vendor-card {
@@ -618,7 +620,7 @@ input { font-family: inherit; }
 }
 
 .vendor-card-header {
-  padding: 20px;
+  padding: 12px 14px;
   background: linear-gradient(180deg, var(--bg-raised) 0%, var(--bg) 100%);
   border-bottom: 1px solid var(--border-subtle);
 }
@@ -631,7 +633,7 @@ input { font-family: inherit; }
 }
 
 .vendor-card-footer {
-  padding: 12px 20px;
+  padding: 8px 14px;
   background: var(--bg);
   border-top: 1px solid var(--border-subtle);
   display: flex;
@@ -640,10 +642,10 @@ input { font-family: inherit; }
 }
 
 .po-item {
-  padding: 10px 20px;
+  padding: 8px 14px;
   display: grid;
   grid-template-columns: 1fr auto auto;
-  gap: 12px;
+  gap: 8px;
   align-items: center;
   border-bottom: 1px solid var(--border-subtle);
   cursor: pointer;
@@ -666,4 +668,9 @@ input { font-family: inherit; }
   padding: 8px 20px 10px 42px;
   background: var(--bg-sunken);
   border-bottom: 1px solid var(--border-subtle);
+}
+
+@keyframes slideInRight {
+  from { transform: translateX(100%); opacity: 0.6; }
+  to   { transform: translateX(0);    opacity: 1; }
 }

@@ -10,7 +10,7 @@ function useColResize(initial) {
     const onMove = ev => {
       if (!drag.current) return;
       const { idx, x, w } = drag.current;
-      setWidths(prev => { const n = [...prev]; n[idx] = Math.max(70, w + (ev.clientX - x)); return n; });
+      setWidths(prev => { const n = [...prev]; n[idx] = Math.max(40, w + (ev.clientX - x)); return n; });
     };
     const onUp = () => {
       drag.current = null;
@@ -31,27 +31,30 @@ function useColResize(initial) {
 const ColHandle = ({ onMouseDown }) => (
   <div
     onMouseDown={onMouseDown}
-    style={{ position: 'absolute', right: 0, top: '10%', bottom: '10%', width: 3, cursor: 'col-resize', zIndex: 1, background: '#1a1a1a', opacity: 0.55, borderRadius: 2, transition: 'opacity 0.15s' }}
+    style={{ position: 'absolute', right: 0, top: '15%', bottom: '15%', width: 3, cursor: 'col-resize', zIndex: 1, background: 'var(--border-strong)', opacity: 0.35, borderRadius: 2, transition: 'opacity 0.15s' }}
     onMouseEnter={e => e.currentTarget.style.opacity = '1'}
-    onMouseLeave={e => e.currentTarget.style.opacity = '0.55'}
+    onMouseLeave={e => e.currentTarget.style.opacity = '0.35'}
   />
 );
 
 function RiskPartsPanel({ nopo, poActions }) {
-  const [slipCollapsed, setSlipCollapsed] = useState(false);
-  const [nopCollapsed,  setNopCollapsed]  = useState(false);
-  const slip = useColResize([110, 200, 68, 68, 72, 70]);
-  const nop  = useColResize([110, 200, 70, 40, 70]);
+  const [slipCollapsed,     setSlipCollapsed]     = useState(false);
+  const [nopCollapsed,      setNopCollapsed]       = useState(false);
+  const [upcomingCollapsed, setUpcomingCollapsed]  = useState(false);
+  const [upcomingWeeks,     setUpcomingWeeks]      = useState(2);
+  const slip     = useColResize([110, 200, 68, 68, 72, 70]);
+  const nop      = useColResize([110, 200, 70, 40, 70]);
+  const upcoming = useColResize([76, 130, 240, 110, 90, 80, 80, 80]);
 
   const todayStart = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
 
   const slipping = useMemo(() => {
-    const windowStart = new Date(todayStart); windowStart.setDate(windowStart.getDate() - 7);
-    const windowEnd   = new Date(todayStart); windowEnd.setDate(windowEnd.getDate() + 8);
+    const windowStart = new Date(todayStart); windowStart.setDate(windowStart.getDate() - 7); // 7 days ago
+    const windowEnd   = new Date(todayStart); windowEnd.setDate(windowEnd.getDate() + 1);     // end of today
     const parts = [];
     [...(poActions?.critical || []), ...(poActions?.warning || []), ...(poActions?.onTrack || [])].forEach(entry => {
-      entry.po.parts.forEach(p => {
-        if (p.received >= p.qty) return;
+      (entry.po?.parts || []).forEach(p => {
+        if ((p.received || 0) >= (p.qty || 0) && (p.qty || 0) > 0) return;
         const dueDate = p.dueDate ? new Date(p.dueDate) : null;
         if (!dueDate || dueDate < windowStart || dueDate >= windowEnd) return;
         parts.push({ ...p, supplier: entry.supplier, poId: entry.po.poId, poDate: entry.po.poDate });
@@ -90,12 +93,33 @@ function RiskPartsPanel({ nopo, poActions }) {
     };
   }, [nopo, todayStart]);
 
+  const upcomingParts = useMemo(() => {
+    const windowStart = new Date(todayStart); windowStart.setDate(windowStart.getDate() + 1);
+    const windowEnd   = new Date(todayStart); windowEnd.setDate(windowEnd.getDate() + upcomingWeeks * 7 + 1);
+    const parts = [];
+    [...(poActions?.critical || []), ...(poActions?.warning || []), ...(poActions?.onTrack || [])].forEach(entry => {
+      (entry.po?.parts || []).forEach(p => {
+        if ((p.received || 0) >= (p.qty || 0) && (p.qty || 0) > 0) return;
+        const dueDate = p.dueDate ? new Date(p.dueDate) : null;
+        if (!dueDate || dueDate < windowStart || dueDate >= windowEnd) return;
+        parts.push({ ...p, supplier: entry.supplier, poId: entry.po.poId, poDate: entry.po.poDate });
+      });
+    });
+    return parts.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
+  }, [poActions, todayStart, upcomingWeeks]);
+
+  const upcomingStats = useMemo(() => {
+    const suppliers = new Set(upcomingParts.map(p => p.supplier)).size;
+    const nearest = upcomingParts.length > 0 ? upcomingParts[0].dueDate : null;
+    return { suppliers, nearest };
+  }, [upcomingParts]);
+
   const fmtDate = d => d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
 
   const CARD   = { background: 'var(--bg-raised)', border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'hidden' };
-  const HDR_BASE = { display: 'grid', gap: 10, padding: '5px 14px 4px', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--ink-4)', textTransform: 'uppercase', background: 'var(--bg-sunken)', borderBottom: '1px solid var(--border-subtle)' };
-  const ROW_BASE = { display: 'grid', gap: 10, padding: '4px 14px', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', fontSize: 12 };
-  const CELL_H   = { position: 'relative', overflow: 'hidden', display: 'block' };
+  const HDR_BASE = { display: 'grid', gap: 10, padding: '8px 14px 7px', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--ink-4)', textTransform: 'uppercase', background: 'var(--bg-sunken)', borderBottom: '1px solid var(--border-subtle)' };
+  const ROW_BASE = { display: 'grid', gap: 10, padding: '7px 14px', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', fontSize: 12 };
+  const CELL_H   = { position: 'relative', overflow: 'hidden' };
 
   const Stat = ({ label, value, valueColor }) => (
     <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
@@ -111,7 +135,8 @@ function RiskPartsPanel({ nopo, poActions }) {
   );
 
   return (
-    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12, margin: '12px 0' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: 12, margin: '12px 0' }}>
+    <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
 
       {/* ── Delivery Slip Card ── */}
       <div style={CARD}>
@@ -133,9 +158,9 @@ function RiskPartsPanel({ nopo, poActions }) {
                 <span key={i} style={{ ...CELL_H, textAlign: i === 5 ? 'right' : 'left' }}>{lbl}<ColHandle onMouseDown={e => slip.startDrag(i, e)} /></span>
               ))}
             </div>
-            <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+            <div style={{ maxHeight: 150, overflowY: 'auto' }}>
               {slipping.length === 0
-                ? <div style={{ padding: '20px 14px', textAlign: 'center', color: 'var(--ink-4)', fontSize: 12 }}>No parts due within ±7 days</div>
+                ? <div style={{ padding: '20px 14px', textAlign: 'center', color: 'var(--ink-4)', fontSize: 12 }}>No parts due today or overdue in last 7 days</div>
                 : slipping.map((p, i) => (
                   <div key={i} className="row-hover" style={{ ...ROW_BASE, gridTemplateColumns: slip.template }}>
                     <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--sdc-blue)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.partNumber}</span>
@@ -174,7 +199,7 @@ function RiskPartsPanel({ nopo, poActions }) {
                 <span key={i} style={{ ...CELL_H, textAlign: i >= 3 ? 'right' : 'left' }}>{lbl}<ColHandle onMouseDown={e => nop.startDrag(i, e)} /></span>
               ))}
             </div>
-            <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+            <div style={{ maxHeight: 150, overflowY: 'auto' }}>
               {nopo.length === 0
                 ? <div style={{ padding: '20px 14px', textAlign: 'center', color: 'var(--ink-4)', fontSize: 12 }}>All parts have purchase orders</div>
                 : nopo.map((p, i) => (
@@ -193,6 +218,69 @@ function RiskPartsPanel({ nopo, poActions }) {
           </>
         )}
       </div>
+
+    </div>{/* end 2-col grid */}
+
+    {/* ── Upcoming Deliveries Card ── */}
+    <div style={CARD}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'auto auto 1fr auto auto auto auto', alignItems: 'center', gap: 16, padding: '12px 16px', borderBottom: '1px solid var(--border-subtle)', flexWrap: 'wrap' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 11, fontWeight: 700, letterSpacing: '0.12em', textTransform: 'uppercase', color: '#0d7490' }}>
+          <span style={{ width: 18, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#e0f5fa', color: '#0d7490', borderRadius: 4, fontWeight: 800, fontSize: 11 }}>→</span>
+          Upcoming Deliveries
+        </span>
+        {/* Week selector pills */}
+        <div style={{ display: 'flex', gap: 4 }}>
+          {[1, 2, 3, 4, 6, 8].map(w => (
+            <button key={w} onClick={() => setUpcomingWeeks(w)} style={{
+              padding: '3px 9px', fontSize: 11, fontWeight: 600, borderRadius: 5, cursor: 'pointer', border: 'none',
+              background: upcomingWeeks === w ? '#0d7490' : 'var(--bg-sunken)',
+              color: upcomingWeeks === w ? '#fff' : 'var(--ink-3)',
+              transition: 'all 0.15s',
+            }}>{w}W</button>
+          ))}
+        </div>
+        <span />
+        <Stat label="Parts"     value={upcomingParts.length} valueColor="#0d7490" />
+        <Stat label="Suppliers" value={upcomingStats.suppliers} />
+        <Stat label="Nearest"   value={upcomingStats.nearest ? fmtDate(upcomingStats.nearest) : '—'} />
+        <HideBtn collapsed={upcomingCollapsed} onToggle={() => setUpcomingCollapsed(c => !c)} />
+      </div>
+      {!upcomingCollapsed && (
+        <>
+          <div style={{ ...HDR_BASE, gridTemplateColumns: upcoming.template }}>
+            {['PO #','Part #','Description','Supplier','Exp Date','Req Date','Order Date','Cost'].map((lbl, i) => (
+              <span key={i} style={{ ...CELL_H, textAlign: i === 7 ? 'right' : 'left' }}>{lbl}<ColHandle onMouseDown={e => upcoming.startDrag(i, e)} /></span>
+            ))}
+          </div>
+          <div style={{ maxHeight: 220, overflowY: 'auto' }}>
+            {upcomingParts.length === 0
+              ? <div style={{ padding: '20px 14px', textAlign: 'center', color: 'var(--ink-4)', fontSize: 12 }}>No parts due in the next {upcomingWeeks} week{upcomingWeeks > 1 ? 's' : ''}</div>
+              : upcomingParts.map((p, i) => {
+                  const daysAway = Math.ceil((new Date(p.dueDate) - todayStart) / 86400000);
+                  const urgColor = daysAway <= 7 ? '#b8861b' : daysAway <= 14 ? '#0d7490' : 'var(--ink-3)';
+                  return (
+                    <div key={i} className="row-hover" style={{ ...ROW_BASE, gridTemplateColumns: upcoming.template }}>
+                      <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: p.poId ? 'var(--ink-2)' : 'var(--ink-4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.poId || '—'}</span>
+                      <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--sdc-blue)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.partNumber}</span>
+                      <span style={{ fontSize: 12, letterSpacing: '0.02em', textTransform: 'uppercase', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.partDesc}</span>
+                      <span style={{ fontSize: 11, color: 'var(--ink-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.supplier || '—'}</span>
+                      <span className="mono" style={{ fontWeight: 700, color: urgColor, fontSize: 11, whiteSpace: 'nowrap' }}>
+                        {fmtDate(p.dueDate)}
+                        <span style={{ fontSize: 9, fontWeight: 400, color: 'var(--ink-4)', marginLeft: 4 }}>in {daysAway}d</span>
+                      </span>
+                      <span className="mono" style={{ color: 'var(--ink-3)', fontSize: 11, whiteSpace: 'nowrap' }}>{fmtDate(p.requiredDate)}</span>
+                      <span className="mono" style={{ color: 'var(--ink-3)', fontSize: 11, whiteSpace: 'nowrap' }}>{p.poDate ? fmtDate(p.poDate) : '—'}</span>
+                      <span className="mono" style={{ textAlign: 'right', fontSize: 11, color: p.price > 0 ? 'var(--ink-2)' : 'var(--ink-4)' }}>
+                        {p.price > 0 ? `$${Number(p.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
+                      </span>
+                    </div>
+                  );
+                })
+            }
+          </div>
+        </>
+      )}
+    </div>
 
     </div>
   );

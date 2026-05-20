@@ -3,18 +3,12 @@ const sql = require('mssql');
 let pool = null;
 
 const config = {
-  server:   process.env.ETO_HOST,
+  server: process.env.ETO_HOST,
   database: process.env.ETO_DATABASE,
-  port:     process.env.ETO_PORT ? parseInt(process.env.ETO_PORT) : 1433,
-  // mssql v11+ requires authentication block for NTLM domain auth
-  authentication: {
-    type: 'ntlm',
-    options: {
-      domain:   process.env.ETO_DOMAIN,
-      userName: process.env.ETO_USER,
-      password: process.env.ETO_PASSWORD,
-    },
-  },
+  user: process.env.ETO_USER,
+  password: process.env.ETO_PASSWORD,
+  domain: process.env.ETO_DOMAIN,
+  port: process.env.ETO_PORT ? parseInt(process.env.ETO_PORT) : 1433,
   options: {
     encrypt: false,
     trustServerCertificate: true,
@@ -82,6 +76,7 @@ async function getBomRows(projectId, specId) {
         eps.ItemQty,
         eps.SpecID,
         eps.RequiredDate,
+        eps.ItemHold,
         ISNULL((
           SELECT SUM(pod.PurchaseQty)
           FROM tblPurchaseOrderDetails pod
@@ -229,7 +224,6 @@ async function getSpecCosting(projectId) {
 }
 
 module.exports = {
-  getPool,
   getSpecs,
   getTopNode,
   getBomRows,

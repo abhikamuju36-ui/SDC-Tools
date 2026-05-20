@@ -15,9 +15,9 @@
  * ── Daily use ────────────────────────────────────────────────────────────────
  *   pm2 status              → see all apps and their status
  *   pm2 logs                → tail all logs
- *   pm2 logs scheduler      → tail one app
- *   pm2 restart all         → restart everything (e.g. after git pull)
- *   pm2 restart scheduler   → restart one app
+ *   pm2 logs sdc-scheduler      → tail one app
+ *   pm2 restart all             → restart everything (e.g. after git pull)
+ *   pm2 restart sdc-scheduler   → restart one app
  *
  * ── Deploy an update ─────────────────────────────────────────────────────────
  *   Automatic: sdc-updater polls GitHub every 5 min — no manual steps needed.
@@ -30,8 +30,8 @@
  *   Shell-launcher specific: .env at repo root (SDC_SERVER_HOST, AZURE_*).
  *
  * ── Ports ────────────────────────────────────────────────────────────────────
- *   assemblies   4001    BRR          4002
- *   scheduler    4003    statelogic   4004    calendar  4005
+ *   sdc-assemblies   4001    sdc-readiness   4002
+ *   sdc-scheduler    4003    sdc-statelogic  4004    sdc-calendar  4005
  *
  *   Open these ports in Windows Firewall (inbound, TCP) for LAN access.
  * ─────────────────────────────────────────────────────────────────────────────
@@ -62,7 +62,7 @@ module.exports = {
 
     // ── Assemblies Library ──────────────────────────────────────────────────
     {
-      name:          'assemblies',
+      name:          'sdc-assemblies',
       script:        'server/index.js',
       cwd:           './Assembilies library main',
       env: {
@@ -82,7 +82,7 @@ module.exports = {
 
     // ── Build Readiness Report ───────────────────────────────────────────────
     {
-      name:          'readiness',
+      name:          'sdc-readiness',
       script:        'server/index.js',
       cwd:           './Build_Readiness_Report',
       env: {
@@ -99,7 +99,7 @@ module.exports = {
 
     // ── SDC Scheduler ───────────────────────────────────────────────────────
     {
-      name:          'scheduler',
+      name:          'sdc-scheduler',
       script:        'server.js',
       cwd:           './SDC_Scheduler',
       env: {
@@ -116,7 +116,7 @@ module.exports = {
 
     // ── State Logic Builder ─────────────────────────────────────────────────
     {
-      name:          'statelogic',
+      name:          'sdc-statelogic',
       script:        'server.js',
       cwd:           './state_logic_builder',
       env: {
@@ -137,7 +137,7 @@ module.exports = {
     // Mirrors electron-updater: checks Dan's GitHub releases every 5 min,
     // pulls src/ + public/ + index.html, rebuilds, and restarts statelogic.
     {
-      name:          'statelogic-updater',
+      name:          'sdc-statelogic-updater',
       script:        'scripts/server-auto-update.js',
       cwd:           './state_logic_builder',
       env: {
@@ -153,7 +153,7 @@ module.exports = {
 
     // ── SDC Calendar ────────────────────────────────────────────────────────
     {
-      name:          'calendar',
+      name:          'sdc-calendar',
       script:        'server/server.js',
       cwd:           './SDC Centrailzed calender',
       env: {

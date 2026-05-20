@@ -325,7 +325,8 @@ function buildPoActionList(poRows) {
 function findNoPoParts(bomRows, assemblyIds) {
   const seen = new Set();
   return bomRows
-    .filter(r => !assemblyIds.has(r.ChildID)) // leaf parts only
+    .filter(r => !assemblyIds.has(r.ChildID))  // leaf parts only
+    .filter(r => !r.ItemHold)                  // exclude parts marked on-hold in TotalETO
     .filter(r => r.POQty === 0 && r.ReceivedQty < r.ItemQty)
     .filter(r => {
       if (seen.has(r.ChildID)) return false;

@@ -22,14 +22,29 @@ async function smartsheetFetch(path) {
 }
 
 
+// Sheet ID cache — avoids re-listing all sheets on every request
+const _sheetIdCache = {};
+
 async function findScheduleSheet(projectId) {
-  const data = await smartsheetFetch(`/search?query=${projectId}`);
-  if (!data?.results) return null;
-  const match = data.results.find(r =>
-    r.objectType === 'sheet' && r.text &&
-    (r.text.toLowerCase().includes('schedule') || r.text.toLowerCase().includes('assembly') || r.text.toLowerCase().includes(projectId.toString()))
-  );
-  return match ? { id: match.objectId, name: match.text } : null;
+  if (_sheetIdCache[projectId]) return _sheetIdCache[projectId];
+
+  // List all accessible sheets and match by project ID in the name.
+  // The /search endpoint requires a plan upgrade (returns error 4000), so we
+  // use /sheets?includeAll=true instead, which works on all plan levels.
+  const data = await smartsheetFetch('/sheets?includeAll=true');
+  if (!data?.data) return null;
+
+  const pid = String(projectId);
+  const sheets = data.data;
+
+  // Priority 1: exact project ID + "schedule" in name
+  let match = sheets.find(s => s.name.includes(pid) && s.name.toLowerCase().includes('schedule'));
+  // Priority 2: project ID anywhere in name (handles "1129_Schneider..." style names)
+  if (!match) match = sheets.find(s => s.name.includes(pid));
+
+  const result = match ? { id: match.id, name: match.name } : null;
+  if (result) _sheetIdCache[projectId] = result;
+  return result;
 }
 
 async function getBuildDates(projectId) {
@@ -89,7 +104,7 @@ async function getBuildDates(projectId) {
     const startVal  = cell[cols.start]?.value  || null;
     const finishVal = cell[cols.finish]?.value || null;
     const pct       = typeof cell[cols.percent]?.value === 'number' ? cell[cols.percent].value : 0;
-    const health    = cell[cols.health]?.displayValue || cell[cols.health]?.value || 'Green';
+    const health    = String(cell[cols.health]?.displayValue || cell[cols.health]?.value || 'Green');
     const durVal    = cell[cols.duration]?.value;
 
     // Assignee
@@ -117,14 +132,8 @@ async function getBuildDates(projectId) {
     const indentLevel = getIndentLevel(row);
 
     const tl = taskName.toLowerCase();
-    if (!buildStart && (tl.includes('project start') || tl.includes('build start') || tl.includes('builder 1')) && startVal)
-      buildStart = startVal;
-    if (tl.includes('ship') && finishVal) {
-      // take the latest ship date across all ship milestones
-      if (!buildComplete || new Date(finishVal) > new Date(buildComplete)) buildComplete = finishVal;
-    }
-    if (!buildComplete && (tl.includes('build complete')) && finishVal)
-      buildComplete = finishVal;
+    if ((tl.includes('builder 1') || tl.includes('build start')) && startVal) buildStart = startVal;
+    if ((tl.includes('build complete') || tl.includes('ship machine')) && !buildComplete && finishVal) buildComplete = finishVal;
 
     tasks.push({
       id: row.id, rowNumber: row.rowNumber, name: taskName,
@@ -168,4 +177,4 @@ async function getBuildDates(projectId) {
   };
 }
 
-module.exports = { getBuildDates };
+module.exports = { getBuildDates, findScheduleSheet };

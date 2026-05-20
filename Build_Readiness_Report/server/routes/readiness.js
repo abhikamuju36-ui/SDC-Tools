@@ -1,49 +1,41 @@
 const express = require('express');
-const router  = express.Router();
-const eto     = require('../services/eto');
+const router = express.Router();
+const eto = require('../services/eto');
+const demo = require('../services/demoData');
 const { getBuildDates } = require('../services/smartsheet');
 const { buildTree, buildReadinessSummary, buildPoActionList, buildPoIndex, findNoPoParts } = require('../lib/bomTree');
+
+function db() { return demo.isDemoMode() ? demo : eto; }
 
 // GET /api/readiness/:projectId — full readiness report
 router.get('/:projectId', async (req, res) => {
   try {
-    const projectId = parseInt(req.params.projectId, 10);
-    if (isNaN(projectId) || projectId <= 0) {
-      return res.status(400).json({ error: 'Invalid project ID' });
-    }
-
-    // Verify ETO is reachable before proceeding
-    try {
-      await eto.getPool();
-    } catch (etoErr) {
-      console.error('[readiness] ETO connection failed:', etoErr.message);
-      return res.status(503).json({
-        error: 'ETO database is not reachable. Check that you are on the company network and ETO SQL Server is running.',
-        detail: etoErr.message,
-      });
-    }
+    const projectId = parseInt(req.params.projectId);
+    const src = db();
 
     const [project, specs, poRows, buildDates, projectCosting, specCosting] = await Promise.all([
-      eto.getProjectInfo(projectId),
-      eto.getSpecs(projectId),
-      eto.getPoDetails(projectId),
+      src.getProjectInfo(projectId),
+      src.getSpecs(projectId),
+      src.getPoDetails(projectId),
       getBuildDates(projectId).catch(() => ({ buildStart: null, buildComplete: null })),
-      eto.getProjectCosting(projectId).catch(() => null),
-      eto.getSpecCosting(projectId).catch(() => []),
+      src.getProjectCosting(projectId).catch(() => null),
+      src.getSpecCosting(projectId).catch(() => []),
     ]);
 
     if (!specs || specs.length === 0) {
-      return res.status(404).json({
-        error: `No specs found for project ${projectId} in ETO.`,
-      });
+      return res.status(404).json({ error: demo.isDemoMode()
+        ? `Demo mode — no cached data for project ${projectId}. Available: ${demo.getCachedProjects().join(', ')}`
+        : `No specs found for project ${projectId}` });
     }
 
+    // Build PO index (ItemID → PO detail lines)
     const poIndex = buildPoIndex(poRows);
 
+    // Build readiness per spec concurrently
     const specReportsRaw = await Promise.all(specs.map(async (spec) => {
       const [topNode, bomRows] = await Promise.all([
-        eto.getTopNode(projectId, spec.SpecID),
-        eto.getBomRows(projectId, spec.SpecID),
+        src.getTopNode(projectId, spec.SpecID),
+        src.getBomRows(projectId, spec.SpecID),
       ]);
 
       if (!topNode || bomRows.length === 0) return null;
@@ -56,13 +48,13 @@ router.get('/:projectId', async (req, res) => {
       const noPoParts = findNoPoParts(bomRows, assemblyIds);
 
       return {
-        specId:     spec.SpecID,
-        specName:   spec.SDescription,
-        specQty:    spec.SQuantity,
-        topPN:      topNode.TopPN,
-        topDesc:    topNode.TopDesc,
-        machines:   summary.machines,
-        tree:       summary.tree,
+        specId: spec.SpecID,
+        specName: spec.SDescription,
+        specQty: spec.SQuantity,
+        topPN: topNode.TopPN,
+        topDesc: topNode.TopDesc,
+        machines: summary.machines,
+        tree: summary.tree,
         noPoParts,
         totalParts: bomRows.filter(r => !assemblyIds.has(r.ChildID)).length,
       };
@@ -70,7 +62,8 @@ router.get('/:projectId', async (req, res) => {
 
     const specReports = specReportsRaw.filter(Boolean);
 
-    // Global dedup of noPoParts across specs
+    // Global dedup of noPoParts across specs — a part appearing in both spec 10 and spec 30
+    // should only be reported once (first occurrence wins).
     const seenNoPo = new Set();
     specReports.forEach(s => {
       s.noPoParts = s.noPoParts.filter(p => {
@@ -80,6 +73,7 @@ router.get('/:projectId', async (req, res) => {
       });
     });
 
+    // PO action list
     const poActions = buildPoActionList(poRows);
 
     res.json({
@@ -89,7 +83,7 @@ router.get('/:projectId', async (req, res) => {
       buildDates,
       projectCosting,
       specCosting,
-      demoMode: false,
+      demoMode: demo.isDemoMode(),
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {
@@ -97,5 +91,6 @@ router.get('/:projectId', async (req, res) => {
     res.status(500).json({ error: err.message });
   }
 });
+
 
 module.exports = router;
