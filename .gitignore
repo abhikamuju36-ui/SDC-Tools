@@ -60,9 +60,13 @@ Thumbs.db
 backups/
 *.bak
 
-# ── Scratch / one-time scripts ────────────────────────────────────────────────
+# ── Scratch / one-time scripts & local dev artefacts ─────────────────────────
 scratch/
 **/scratch/
+check-sqlite.js
+_icongen/
+central/
+server version/
 
 # ── Sensitive documents (employee lists, contracts, patents) ──────────────────
 *Employee List*

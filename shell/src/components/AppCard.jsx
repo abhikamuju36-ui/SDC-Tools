@@ -104,7 +104,7 @@ export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs, 
                 disabled={updateState === 'checking'}
                 title="Check for upstream updates now"
               >
-                {updateState === 'checking' ? 'Checking…' : updateState === 'done' ? '✓ Triggered' : updateState === 'error' ? '✗ Failed' : '↑ Update'}
+                {updateState === 'checking' ? 'Checking…' : updateState === 'done' ? '✓ Triggered' : updateState === 'error' ? '✗ Failed' : '+ Update'}
               </button>
             )}
             <button

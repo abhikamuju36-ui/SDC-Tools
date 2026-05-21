@@ -2,19 +2,19 @@
 
 **Stevens Douglas Corp. — Engineering Applications Suite**
 
-SDC Tools is a Windows desktop application (Electron) that bundles five internal engineering web apps into a single unified launcher. Each app runs as an in-process Node.js server on a dedicated localhost port; the Electron shell provides authentication, auto-update, and a central dashboard.
+SDC Tools is a Windows desktop application (Electron) that bundles five internal engineering web apps into a single unified launcher. Each app runs as a Node.js/Express server on a dedicated port on the company server (SERVER-APP1); the Electron shell provides a dashboard, authentication, auto-update, and one-click access to every app.
 
 ---
 
 ## Applications
 
-| App | Port | Description |
-|-----|------|-------------|
-| **Assemblies Library** | 4001 | SolidWorks CAD assembly search, preview, and vault check-out |
-| **Build Readiness Report** | 4002 | Live ETO project build status — parts, prints, and sign-offs |
-| **SDC Scheduler** | 4003 | Gantt scheduling, resource loading, and two-way Smartsheet sync |
-| **State Logic Builder** | 4004 | Visual PLC state-machine editor with Allen-Bradley L5X export |
-| **SDC Calendar** | 4005 | Company-wide calendar — events, birthdays, paydays, Scheduler sync |
+| App | Port | Description | Backend DB |
+|-----|------|-------------|------------|
+| **Assemblies Library** | 4001 | SolidWorks CAD assembly search, preview & vault management | SQLite (`assemblies.db`) |
+| **Build Readiness Report** | 4002 | Live ETO project build status — parts, prints, sign-offs | ETO on-prem SQL Server + Smartsheet |
+| **SDC Scheduler** | 4003 | Gantt scheduling, resource loading, Smartsheet sync | SQLite + Smartsheet |
+| **State Logic Builder** | 4004 | Visual PLC state-machine editor → Allen-Bradley L5X export | File-based (JSON projects) |
+| **SDC Calendar** | 4005 | Company-wide calendar — events, birthdays, paydays, Scheduler sync | SQLite + Smartsheet |
 
 ---
 
@@ -24,8 +24,7 @@ SDC Tools is a Windows desktop application (Electron) that bundles five internal
 |------|---------|
 | Node.js | 22 LTS |
 | npm | 10+ |
-
-All sub-apps use **Azure SQL** (pure-JS `mssql` driver) — no native modules, no SQLite dependency.
+| PM2 | latest (`npm install -g pm2`) |
 
 ---
 
@@ -36,82 +35,97 @@ All sub-apps use **Azure SQL** (pure-JS `mssql` driver) — no native modules, n
 git clone https://github.com/abhikamuju36-ui/SDC-Tools.git
 cd SDC-Tools
 
-# 2. Copy and fill in environment files
-cp .env.example shell/.env                             # Azure AD credentials
-cp .env.example "Assembilies library main/.env"        # Azure SQL
-cp .env.example "Build_Readiness_Report/.env"
-cp .env.example "SDC_Scheduler/.env"
-cp .env.example "state_logic_builder/.env"
-cp .env.example "SDC Centrailzed calender/server/.env"
+# 2. Install all workspace dependencies
+npm install
 
-# 3. Install all dependencies
-npm install                 # root workspace (installs shell deps)
-npm install --prefix "Assembilies library main"
-npm install --prefix Build_Readiness_Report
-npm install --prefix SDC_Scheduler
-npm install --prefix state_logic_builder
-npm install --prefix "SDC Centrailzed calender/server"
+# 3. Set up environment files (see Environment Variables section below)
 
-# 4. Run the Electron shell in dev mode
+# 4. Run the Electron shell in dev mode (connects to SERVER-APP1 backends)
 cd shell
 npm run dev
 ```
 
-The shell starts Vite on port 5173 for hot-reload, then launches Electron. Each sub-app starts automatically on its port when the launcher opens.
+The shell starts Vite on port 5173 for hot-reload, then launches Electron. Each sub-app is accessed via its port on SERVER-APP1.
+
+---
+
+## Server Setup (PM2 — SERVER-APP1)
+
+All five backends run on the company server via PM2:
+
+```bash
+# First-time setup on SERVER-APP1
+npm install
+pm2 startOrRestart ecosystem.config.js
+pm2 save
+pm2 startup   # follow printed command to auto-start on boot
+```
+
+**Auto-updates are fully automatic** — each app has a dedicated PM2 updater process that polls GitHub every 2–5 minutes and restarts the app when new code is available. No manual `git pull` needed.
+
+| Updater process | Polls | Trigger port |
+|-----------------|-------|--------------|
+| `sdc-updater` | `abhikamuju36-ui/SDC-Tools` (master) | — |
+| `sdc-brr-updater` | `abhikamuju36-ui/Build_Readiness_Report` | 4012 |
+| `sdc-scheduler-updater` | `danbelliveau2/SDC_Scheduler` (main) | 4013 |
+| `sdc-statelogic-updater` | `danbelliveau2/state_logic_builder` (releases) | 4014 |
 
 ---
 
 ## Environment Variables
 
-Copy `.env.example` to each sub-app directory and fill in the values.
-
-### Azure SQL (all sub-apps)
+### Assemblies Library (`Assembilies library main/.env`)
 ```env
-AZURE_SQL_SERVER=sdc-automation.database.windows.net
-AZURE_SQL_DATABASE=free-sql-db-7038618
-AZURE_SQL_USER=sdcadmin
-AZURE_SQL_PASSWORD=your_password_here
+SHARED_BASE=\\stevendouglas.local\dfs\Company\Job Folder\_Assembilies_Library_Application
+DELETE_PASSWORD=your_delete_password
 ```
 
-### Shell (Azure AD authentication)
+### Build Readiness Report (`Build_Readiness_Report/.env`)
 ```env
+# ETO on-prem SQL Server (required)
+ETO_HOST=SERVER-APP1.stevendouglas.local
+ETO_DATABASE=SDC
+ETO_USER=your_user
+ETO_PASSWORD=your_password
+ETO_DOMAIN=stevendouglas
+ETO_PORT=1433
+
+# Smartsheet (optional — enriches build dates)
+SMARTSHEET_API_KEY=your_token
+
+PORT=3000
+```
+
+### SDC Scheduler (`SDC_Scheduler/.env`)
+```env
+SMARTSHEET_API_TOKEN=your_token
+SESSION_SECRET=your_session_secret
+```
+
+### State Logic Builder (`state_logic_builder/.env`)
+```env
+STANDARDS_DIR=N:\AI Folder\State Logic Diagrams\standards
+```
+
+### SDC Calendar (`SDC Centrailzed calender/server/.env`)
+```env
+SMARTSHEET_API_TOKEN=your_token
+JWT_SECRET=your_jwt_secret
+SESSION_SECRET=your_session_secret
+FRONTEND_URL=http://SERVER-APP1:4005
+SERVER_IP=SERVER-APP1
+```
+
+### Shell / Electron (`shell/.env`)
+```env
+SDC_SERVER_HOST=SERVER-APP1
 AZURE_TENANT_ID=your_tenant_id
 AZURE_CLIENT_ID=your_client_id
 ```
 
-### Assemblies Library (delete protection)
-```env
-DELETE_PASSWORD=your_delete_password
-```
-
-### SDC Scheduler (Smartsheet sync)
-```env
-SMARTSHEET_API_TOKEN=your_token
-SESSION_SECRET=your_session_secret
-```
-
-### SDC Calendar (Azure AD + Smartsheet)
-```env
-AZURE_CLIENT_SECRET=your_client_secret
-JWT_SECRET=your_jwt_secret
-SESSION_SECRET=your_session_secret
-SMARTSHEET_API_TOKEN=your_token
-```
-
 ---
 
-## Building the Installer
-
-```bash
-cd shell
-npm run electron:build
-```
-
-Output: `shell/dist-electron/SDC-Tools-Setup-<version>.exe`
-
----
-
-## Releasing a New Version
+## Releasing a New Shell Version
 
 Releases are **fully automated** via GitHub Actions:
 
@@ -119,14 +133,15 @@ Releases are **fully automated** via GitHub Actions:
 2. Commit and push to `master`
 
 ```bash
-# Example: bump 1.0.3 → 1.1.0
-# Edit shell/package.json, then:
+# Edit shell/package.json version, then:
 git add shell/package.json
-git commit -m "chore: release v1.1.0"
+git commit -m "chore: release v1.3.0"
 git push
 ```
 
-GitHub Actions detects the version change, builds the Windows installer on a `windows-latest` runner, and publishes it to **GitHub Releases**. Every installed copy of SDC Tools will silently download and install the update within ~30 minutes.
+GitHub Actions detects the version change, builds the Windows NSIS installer on a `windows-latest` runner, and publishes it to **GitHub Releases**. Every installed copy of SDC Tools silently downloads and installs the update on next quit (within ~2 minutes of release).
+
+> **Backend updates** (BRR, Scheduler, State Logic Builder) do **not** need a new shell release — the per-app auto-updaters handle them independently.
 
 ---
 
@@ -136,46 +151,45 @@ GitHub Actions detects the version change, builds the Windows installer on a `wi
 SDC-Tools/
 ├── shell/                          # Electron launcher (main process + React UI)
 │   ├── electron/
-│   │   ├── main.js                 # Electron entry — BrowserWindow, IPC, updater
-│   │   ├── processManager.js       # Starts/stops sub-app servers in-process
-│   │   ├── auth.js                 # Azure AD MSAL authentication
-│   │   ├── preload.js              # Context-bridge (shell → renderer)
-│   │   └── appPreload.js           # Context-bridge (sub-app WebViews)
-│   ├── src/                        # React launcher UI (Vite + Tailwind-free)
-│   │   ├── App.jsx                 # Root component — auth, status, layout
+│   │   ├── main.js                 # Entry — BrowserWindow, IPC, auto-updater
+│   │   ├── processManager.js       # Connects to sub-app servers
+│   │   ├── auth.js                 # Azure AD (MSAL) authentication
+│   │   ├── preload.js              # Context-bridge: shell renderer
+│   │   └── appPreload.js           # Context-bridge: sub-app windows
+│   ├── src/                        # React launcher UI (Vite)
+│   │   ├── App.jsx
 │   │   ├── components/
-│   │   │   ├── AppCard.jsx         # Per-app card with status + open button
-│   │   │   ├── AppGrid.jsx         # 4-column app grid
+│   │   │   ├── AppCard.jsx         # Per-app card — status, logs, open, update
+│   │   │   ├── AppGrid.jsx
 │   │   │   ├── NotificationCenter.jsx
-│   │   │   ├── RecentActivity.jsx  # localStorage-backed activity log
-│   │   │   ├── StatusBar.jsx       # Bottom status bar
-│   │   │   ├── LogPanel.jsx        # Floating log viewer
-│   │   │   └── UpdateBanner.jsx    # Auto-update notification strip
-│   │   └── screens/
-│   │       └── LoginScreen.jsx     # Azure AD sign-in screen
-│   ├── electron-builder.yml        # Installer config + sub-app bundle paths
+│   │   │   ├── RecentActivity.jsx
+│   │   │   ├── StatusBar.jsx
+│   │   │   ├── LogPanel.jsx
+│   │   │   └── UpdateBanner.jsx    # Shell auto-update notification strip
+│   │   └── screens/LoginScreen.jsx
+│   ├── build/                      # Electron icon assets
+│   ├── electron-builder.yml        # Installer config (publish → GitHub Releases)
 │   └── package.json
 │
-├── Assembilies library main/       # Assemblies Library (Express + React/Vite)
-├── Build_Readiness_Report/         # Build Readiness (Express + React)
-├── SDC_Scheduler/                  # SDC Scheduler (Express + vanilla JS)
+├── Assembilies library main/       # Assemblies Library (Express + React/Vite + SQLite)
+├── Build_Readiness_Report/         # Build Readiness (Express + React, ETO SQL + Smartsheet)
+├── SDC_Scheduler/                  # SDC Scheduler (Express + vanilla JS + SQLite)
 ├── state_logic_builder/            # State Logic Builder (Express + React/Vite)
 ├── SDC Centrailzed calender/       # SDC Calendar (Express + vanilla JS)
 │
+├── scripts/
+│   └── server-auto-update.js       # Root monorepo updater (git pull + pm2 restart)
+│
 ├── .github/workflows/
-│   ├── release.yml                 # Auto-build + publish installer on version bump
+│   ├── release.yml                 # Build + publish installer on shell version bump
 │   └── ci.yml                      # PR checks
 │
-├── .env.example                    # Environment variable template
+├── ecosystem.config.js             # PM2 process definitions for SERVER-APP1
+├── .env.example                    # Environment variable reference
 ├── .gitignore
-└── package.json                    # npm workspaces root
+├── package.json                    # npm workspaces root
+└── ARCHITECTURE.md                 # Detailed architecture & IPC reference
 ```
-
----
-
-## Architecture Overview
-
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for a detailed breakdown of how the shell loads sub-apps, the Azure SQL schema, the auto-update pipeline, and the authentication flow.
 
 ---
 
@@ -186,21 +200,12 @@ See [ARCHITECTURE.md](./ARCHITECTURE.md) for a detailed breakdown of how the she
 | Desktop shell | Electron 35, electron-builder, electron-updater |
 | Launcher UI | React 18, Vite 5 |
 | Sub-app servers | Node.js 22, Express 4 |
-| Sub-app frontends | React/Vite (Assemblies, State Logic, Build Readiness), Vanilla JS (Scheduler, Calendar) |
-| Database | Azure SQL (shared instance, per-app schemas) via `mssql` |
-| Authentication | Azure AD (MSAL Node) |
-| External sync | Smartsheet API (Scheduler, Calendar) |
-| CI/CD | GitHub Actions → GitHub Releases |
-
----
-
-## Contributing
-
-1. Branch off `master`
-2. Make changes in the relevant sub-app directory
-3. Test locally with `npm run dev` in `shell/`
-4. Open a PR — CI runs automatically
-5. Merge to `master` + bump version to trigger a release
+| Sub-app frontends | React/Vite (Assemblies, State Logic, BRR), Vanilla JS (Scheduler, Calendar) |
+| Databases | SQLite/better-sqlite3 (Assemblies, Scheduler, Calendar), ETO on-prem MSSQL (BRR) |
+| Authentication | Azure AD — MSAL Node (shell only) |
+| External sync | Smartsheet API (Scheduler, Calendar, BRR) |
+| CI/CD | GitHub Actions → GitHub Releases (shell installer) |
+| Process management | PM2 (SERVER-APP1) |
 
 ---
 
