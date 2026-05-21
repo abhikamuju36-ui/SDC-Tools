@@ -1,15 +1,12 @@
 const express = require('express');
 const router = express.Router();
 const eto = require('../services/eto');
-const demo = require('../services/demoData');
-
-function db() { return demo.isDemoMode() ? demo : eto; }
 
 // GET /api/emails/:projectId — generate draft follow-up emails
 router.get('/:projectId', async (req, res) => {
   try {
     const projectId = parseInt(req.params.projectId);
-    const src = db();
+    const src = eto;
     const [project, poRows] = await Promise.all([
       src.getProjectInfo(projectId),
       src.getPoDetails(projectId),

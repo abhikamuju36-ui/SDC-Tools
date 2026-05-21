@@ -1,17 +1,14 @@
 const express = require('express');
 const router = express.Router();
 const eto = require('../services/eto');
-const demo = require('../services/demoData');
 const { getBuildDates } = require('../services/smartsheet');
 const { buildTree, buildReadinessSummary, buildPoActionList, buildPoIndex, findNoPoParts } = require('../lib/bomTree');
-
-function db() { return demo.isDemoMode() ? demo : eto; }
 
 // GET /api/readiness/:projectId — full readiness report
 router.get('/:projectId', async (req, res) => {
   try {
     const projectId = parseInt(req.params.projectId);
-    const src = db();
+    const src = eto;
 
     const [project, specs, poRows, buildDates, projectCosting, specCosting] = await Promise.all([
       src.getProjectInfo(projectId),
@@ -23,9 +20,7 @@ router.get('/:projectId', async (req, res) => {
     ]);
 
     if (!specs || specs.length === 0) {
-      return res.status(404).json({ error: demo.isDemoMode()
-        ? `Demo mode — no cached data for project ${projectId}. Available: ${demo.getCachedProjects().join(', ')}`
-        : `No specs found for project ${projectId}` });
+      return res.status(404).json({ error: `No specs found for project ${projectId}` });
     }
 
     // Build PO index (ItemID → PO detail lines)
@@ -83,7 +78,6 @@ router.get('/:projectId', async (req, res) => {
       buildDates,
       projectCosting,
       specCosting,
-      demoMode: demo.isDemoMode(),
       generatedAt: new Date().toISOString(),
     });
   } catch (err) {

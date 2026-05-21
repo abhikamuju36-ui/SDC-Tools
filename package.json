@@ -23,6 +23,7 @@
     "pm2:stop": "pm2 stop all",
     "pm2:logs": "pm2 logs",
     "pm2:status": "pm2 status",
-    "deploy": "npm run build:apps && pm2 restart all"
+    "deploy": "npm run build:apps && pm2 startOrRestart ecosystem.config.js"
   }
 }
+

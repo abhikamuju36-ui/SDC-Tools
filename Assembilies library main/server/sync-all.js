@@ -32,12 +32,13 @@ async function sync() {
     let extracted = 0, already = 0, failed = 0, skipped = 0, linked = 0;
 
     const nSwFilesCache = {};
-    const getNFiles = (jobId) => {
+    const getNFiles = async (jobId) => {
         if (nSwFilesCache[jobId]) return nSwFilesCache[jobId];
         const dir = nJobDirMap[jobId];
         if (!dir) return null;
         const map = new Map();
-        scanner.safeReaddir(dir).filter(f => /\.sldasm$/i.test(f) && !f.startsWith('~$')).forEach(f => {
+        const files = await scanner.safeReaddir(dir);
+        files.filter(f => /\.sldasm$/i.test(f) && !f.startsWith('~$')).forEach(f => {
             map.set(f.replace(/\.sldasm$/i, '').toLowerCase(), path.join(dir, f));
         });
         nSwFilesCache[jobId] = map;
@@ -58,7 +59,7 @@ async function sync() {
 
         // Try N Drive lookup
         if (library === 'N Drive' || !library) {
-            const nFiles = getNFiles(job_id);
+            const nFiles = await getNFiles(job_id);
             if (nFiles) {
                 sldPath = nFiles.get(fn) || nFiles.get(pn);
             }
@@ -66,13 +67,13 @@ async function sync() {
 
         // Try L Drive lookup if not found
         if (!sldPath && (library === 'L Drive' || !library)) {
-            const lFolder = String(job_id || '').trim().padStart(3, '0');
-            const directPath = path.join(config.DRIVES.L, lFolder, saveName + '.sldasm');
-            if (fs.existsSync(directPath)) {
-                sldPath = directPath;
-            } else {
-                sldPath = lFileMap.get(fn) || lFileMap.get(pn);
+            const jobIdStr = String(job_id || '').trim();
+            const lCandidates = [...new Set([jobIdStr, jobIdStr.padStart(3, '0'), jobIdStr.padStart(4, '0')])];
+            for (const lFolder of lCandidates) {
+                const directPath = path.join(config.DRIVES.L, lFolder, saveName + '.sldasm');
+                if (fs.existsSync(directPath)) { sldPath = directPath; break; }
             }
+            if (!sldPath) sldPath = lFileMap.get(fn) || lFileMap.get(pn);
         }
 
         if (!sldPath) {
@@ -92,7 +93,7 @@ async function sync() {
             record.picture_link = `/thumbnails/${saveName}.jpg`;
             already++;
         } else {
-            const success = scanner.extractThumbnail(sldPath, thumbPath);
+            const success = await scanner.extractThumbnail(sldPath, thumbPath);
             if (success) {
                 record.picture_link = `/thumbnails/${saveName}.jpg`;
                 extracted++;

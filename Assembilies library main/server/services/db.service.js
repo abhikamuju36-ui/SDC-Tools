@@ -150,6 +150,10 @@ class DbService {
         return this.db.prepare('SELECT * FROM assemblies ORDER BY job_id DESC').all();
     }
 
+    getOne(partno) {
+        return this.db.prepare('SELECT * FROM assemblies WHERE partno = ?').get(partno) || null;
+    }
+
     writeAll(records) {
         const insertNew = this.db.prepare(`
             INSERT OR IGNORE INTO assemblies (

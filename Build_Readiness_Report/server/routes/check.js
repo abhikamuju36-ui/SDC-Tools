@@ -1,10 +1,7 @@
 const express = require('express');
 const router = express.Router();
 const eto = require('../services/eto');
-const demo = require('../services/demoData');
 const { findScheduleSheet } = require('../services/smartsheet');
-
-function db() { return demo.isDemoMode() ? demo : eto; }
 
 // GET /api/check/:projectId — lightweight pre-flight check across all systems
 router.get('/:projectId', async (req, res) => {
@@ -17,7 +14,7 @@ router.get('/:projectId', async (req, res) => {
   }
 
   const [etoResult, ssResult] = await Promise.allSettled([
-    db().getProjectInfo(projectId),
+    eto.getProjectInfo(projectId),
     findScheduleSheet(projectId),
   ]);
 

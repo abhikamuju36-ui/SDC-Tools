@@ -119,8 +119,9 @@ class ScannerService {
     async extractThumbnail(sldPath, thumbPath) {
         // Guard: PS script must exist before attempting execution
         if (!fs.existsSync(config.PS_EXTRACTOR)) {
-            if (process.env.DEBUG) {
-                console.warn(`[Scanner] PS_EXTRACTOR not found — skipping ${path.basename(sldPath)}`);
+            if (!ScannerService._psWarnShown) {
+                console.error(`[Scanner] PS_EXTRACTOR not found at: ${config.PS_EXTRACTOR} — thumbnail extraction disabled`);
+                ScannerService._psWarnShown = true;
             }
             return false;
         }
@@ -164,4 +165,5 @@ class ScannerService {
     }
 }
 
+ScannerService._psWarnShown = false;
 module.exports = new ScannerService();

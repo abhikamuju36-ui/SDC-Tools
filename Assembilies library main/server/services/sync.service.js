@@ -266,13 +266,17 @@ class SyncService {
                         if (nFiles) sldPath = nFiles.get(fn) || nFiles.get(pn);
                     }
                     if (!sldPath && (library === 'L Drive' || !library)) {
-                        const lFolder    = String(job_id || '').trim().padStart(3, '0');
-                        const directPath = path.join(config.DRIVES.L, lFolder, saveName + '.sldasm');
-                        if (fs.existsSync(directPath)) {
-                            sldPath = directPath;
-                        } else {
-                            sldPath = lFileMap.get(fn) || lFileMap.get(pn);
+                        const jobIdStr = String(job_id || '').trim();
+                        const lCandidates = [...new Set([
+                            jobIdStr,
+                            jobIdStr.padStart(3, '0'),
+                            jobIdStr.padStart(4, '0'),
+                        ])];
+                        for (const lFolder of lCandidates) {
+                            const directPath = path.join(config.DRIVES.L, lFolder, saveName + '.sldasm');
+                            if (fs.existsSync(directPath)) { sldPath = directPath; break; }
                         }
+                        if (!sldPath) sldPath = lFileMap.get(fn) || lFileMap.get(pn);
                     }
                 }
 

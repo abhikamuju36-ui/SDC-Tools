@@ -104,7 +104,13 @@ function cpDir(src, dst) {
 }
 
 function run(cmd, cwd) {
-  execSync(cmd, { cwd: cwd || APP_DIR, stdio: 'pipe' });
+  try {
+    execSync(cmd, { cwd: cwd || APP_DIR, stdio: 'pipe' });
+  } catch (e) {
+    const detail = e.stderr ? e.stderr.toString().trim() : (e.stdout ? e.stdout.toString().trim() : '');
+    const err = new Error(`Command failed: ${cmd}\n${detail}`);
+    throw err;
+  }
 }
 
 // ─── main update flow ─────────────────────────────────────────────────────────
@@ -187,7 +193,9 @@ async function checkAndUpdate() {
           if (upstream[key]) local[key] = { ...local[key], ...upstream[key] };
         }
         fs.writeFileSync(path.join(APP_DIR, 'package.json'), JSON.stringify(local, null, 2));
-        run('npm install');
+        // --include=dev ensures vite (a devDependency) is always installed even
+        // when this process runs under NODE_ENV=production
+        run('npm install --include=dev');
       }
     }
 
