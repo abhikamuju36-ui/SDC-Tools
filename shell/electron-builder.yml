@@ -21,6 +21,7 @@ publish:
   provider: github
   owner: abhikamuju36-ui
   repo: SDC-Tools
+  releaseType: release    # publish immediately — not a draft
 
 # Shell app files only — launcher UI + Electron main process.
 # Backends run on the company server PC (PM2), not bundled here.
