@@ -105,7 +105,16 @@ function cpDir(src, dst) {
 
 function run(cmd, cwd) {
   try {
-    execSync(cmd, { cwd: cwd || APP_DIR, stdio: 'pipe' });
+    // On Windows with npm workspaces, devDeps like vite are hoisted to the
+    // REPO ROOT node_modules/.bin.  execSync doesn't inherit npm's workspace
+    // PATH extension, so we prepend it explicitly so 'vite build' is found.
+    const rootBin = path.join(APP_DIR, '..', 'node_modules', '.bin');
+    const env = { ...process.env };
+    const sep = process.platform === 'win32' ? ';' : ':';
+    if (!env.PATH || !env.PATH.includes(rootBin)) {
+      env.PATH = rootBin + sep + (env.PATH || '');
+    }
+    execSync(cmd, { cwd: cwd || APP_DIR, stdio: 'pipe', env });
   } catch (e) {
     const detail = e.stderr ? e.stderr.toString().trim() : (e.stdout ? e.stdout.toString().trim() : '');
     const err = new Error(`Command failed: ${cmd}\n${detail}`);
