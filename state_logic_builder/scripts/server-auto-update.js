@@ -208,9 +208,20 @@ async function checkAndUpdate() {
       }
     }
 
-    // 5. Rebuild frontend
+    // 5. Rebuild frontend.
+    // vite is a devDep hoisted to the REPO ROOT node_modules/.bin by npm workspaces.
+    // PM2 runs with NODE_ENV=production which causes 'npm install' to skip devDeps,
+    // so vite.cmd may not exist at all.  Check for it and install if missing,
+    // then invoke vite by its full absolute path to bypass all PATH resolution.
+    const rootDir   = path.join(APP_DIR, '..');
+    const viteExt   = process.platform === 'win32' ? 'vite.cmd' : 'vite';
+    const viteBin   = path.join(rootDir, 'node_modules', '.bin', viteExt);
+    if (!fs.existsSync(viteBin)) {
+      log('vite not found — running npm install --include=dev at workspace root…');
+      run('npm install --include=dev', rootDir);
+    }
     log('Building frontend…');
-    run('npm run build');
+    run(`"${viteBin}" build`, APP_DIR);
 
     // 6. Bump local version to match
     const localPkg = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'package.json'), 'utf8'));
