@@ -26,7 +26,7 @@ function timeAgo(ts) {
 }
 
 // Apps that have dedicated upstream updaters with a manual trigger
-const UPDATABLE_APPS = { readiness: true, scheduler: true }
+const UPDATABLE_APPS = { readiness: true, scheduler: true, statelogic: true }
 
 export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs, onTriggerUpdate }) {
   const { id, name, description, status, color, port } = app

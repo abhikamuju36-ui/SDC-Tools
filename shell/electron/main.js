@@ -455,7 +455,7 @@ app.whenReady().then(() => {
 
   // Manually trigger an upstream update check for apps that have dedicated updaters
   ipcMain.handle('trigger-update', (_, appId) => {
-    const TRIGGER_PORTS = { readiness: 4012, scheduler: 4013 };
+    const TRIGGER_PORTS = { readiness: 4012, scheduler: 4013, statelogic: 4014 };
     const port = TRIGGER_PORTS[appId];
     if (!port) return { error: 'No updater for this app' };
     return new Promise((resolve) => {
