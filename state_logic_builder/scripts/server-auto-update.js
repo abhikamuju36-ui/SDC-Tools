@@ -105,16 +105,7 @@ function cpDir(src, dst) {
 
 function run(cmd, cwd) {
   try {
-    // On Windows with npm workspaces, devDeps like vite are hoisted to the
-    // REPO ROOT node_modules/.bin.  execSync doesn't inherit npm's workspace
-    // PATH extension, so we prepend it explicitly so 'vite build' is found.
-    const rootBin = path.join(APP_DIR, '..', 'node_modules', '.bin');
-    const env = { ...process.env };
-    const sep = process.platform === 'win32' ? ';' : ':';
-    if (!env.PATH || !env.PATH.includes(rootBin)) {
-      env.PATH = rootBin + sep + (env.PATH || '');
-    }
-    execSync(cmd, { cwd: cwd || APP_DIR, stdio: 'pipe', env });
+    execSync(cmd, { cwd: cwd || APP_DIR, stdio: 'pipe' });
   } catch (e) {
     const detail = e.stderr ? e.stderr.toString().trim() : (e.stdout ? e.stdout.toString().trim() : '');
     const err = new Error(`Command failed: ${cmd}\n${detail}`);
@@ -209,19 +200,23 @@ async function checkAndUpdate() {
     }
 
     // 5. Rebuild frontend.
-    // vite is a devDep hoisted to the REPO ROOT node_modules/.bin by npm workspaces.
-    // PM2 runs with NODE_ENV=production which causes 'npm install' to skip devDeps,
-    // so vite.cmd may not exist at all.  Check for it and install if missing,
-    // then invoke vite by its full absolute path to bypass all PATH resolution.
-    const rootDir   = path.join(APP_DIR, '..');
-    const viteExt   = process.platform === 'win32' ? 'vite.cmd' : 'vite';
-    const viteBin   = path.join(rootDir, 'node_modules', '.bin', viteExt);
-    if (!fs.existsSync(viteBin)) {
-      log('vite not found — running npm install --include=dev at workspace root…');
+    // We call vite via `node path/to/vite.js build` — exactly what vite.cmd
+    // does internally.  This bypasses all PATH resolution and .cmd execution
+    // issues on Windows (PM2 service PATH is stripped; .cmd needs a shell).
+    //
+    // vite is a devDep.  PM2 runs NODE_ENV=production so `npm install` skips
+    // devDeps — vite may never have been installed.  Check and fix before building.
+    const rootDir = path.join(APP_DIR, '..');
+    const viteJs  = path.join(rootDir, 'node_modules', 'vite', 'bin', 'vite.js');
+    if (!fs.existsSync(viteJs)) {
+      log('vite not installed — running npm install --include=dev at workspace root…');
       run('npm install --include=dev', rootDir);
     }
+    if (!fs.existsSync(viteJs)) {
+      throw new Error('vite still missing after npm install — check devDependencies in state_logic_builder/package.json');
+    }
     log('Building frontend…');
-    run(`"${viteBin}" build`, APP_DIR);
+    run(`node "${viteJs}" build`, APP_DIR);
 
     // 6. Bump local version to match
     const localPkg = JSON.parse(fs.readFileSync(path.join(APP_DIR, 'package.json'), 'utf8'));
