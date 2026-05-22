@@ -197,7 +197,7 @@ module.exports = {
     {
       name:          'sdc-vendor',
       script:        'server/server.js',
-      cwd:           '../Vendors tracking dashboard',
+      cwd:           './Vendors tracking dashboard',
       env: {
         PORT:             '4006',
         NODE_ENV:         'production',
