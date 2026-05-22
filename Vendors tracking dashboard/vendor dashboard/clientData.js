@@ -403,23 +403,29 @@
     const t0 = Date.now();
     console.group('[SDC Vendor Tracker] Data sync');
     try {
-      console.log('Fetching /api/projects, /api/orders and /api/projects/costing …');
-      const [rawProjects, rawOrders, rawCosting] = await Promise.all([
+      // Step 1: fetch projects + costing in parallel
+      console.log('Fetching /api/projects and /api/projects/costing …');
+      const [rawProjects, rawCosting] = await Promise.all([
         fetch('/api/projects', { cache: 'no-cache' }).then(r => {
           if (!r.ok) throw new Error('Projects API ' + r.status);
           return r.json();
         }),
-        fetch('/api/orders', { cache: 'no-cache' }).then(r => {
-          if (!r.ok) throw new Error('Orders API ' + r.status);
-          return r.json();
-        }),
         fetch('/api/projects/costing', { cache: 'no-cache' }).then(r => r.ok ? r.json() : []).catch(() => []),
       ]);
-      console.log('API response: ' + rawProjects.length + ' projects, ' + rawOrders.length + ' orders (' + (Date.now()-t0) + 'ms)');
 
       if (!Array.isArray(rawProjects) || rawProjects.length === 0) {
         throw new Error('No projects returned from API');
       }
+
+      // Step 2: fetch orders scoped to the loaded projects (avoids full-table scan)
+      const projectIdList = rawProjects.map(p => p.id).join(',');
+      console.log('Fetching /api/orders for ' + rawProjects.length + ' projects …');
+      const rawOrders = await fetch('/api/orders?projectIds=' + projectIdList, { cache: 'no-cache' }).then(r => {
+        if (!r.ok) throw new Error('Orders API ' + r.status);
+        return r.json();
+      });
+
+      console.log('API response: ' + rawProjects.length + ' projects, ' + rawOrders.length + ' orders (' + (Date.now()-t0) + 'ms)');
 
       const localOrders  = JSON.parse(localStorage.getItem('vtd_local_orders')  || '[]');
       const localVendors = JSON.parse(localStorage.getItem('vtd_local_vendors') || '[]');
