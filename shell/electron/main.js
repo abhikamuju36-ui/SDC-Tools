@@ -57,30 +57,12 @@ const APP_WINDOW_SIZES = {
 };
 
 // ── Per-app title-bar icons ───────────────────────────────────────────────────
-// In dev:  reference source assets directly.
-// In prod: Vite copies public/ → dist/, extraResources bundles dist/ → resources/apps/.
+// Icons live in shell/build/icons/<appId>.png — bundled into the asar via
+// electron-builder.yml files[] so the same relative path works in dev and prod.
 function _getAppIcon(appId) {
   try {
-    let p;
-    if (isDev) {
-      const roots = {
-        assemblies: path.join(__dirname, '../../Assembilies library main/client/public/app-icon.png'),
-        readiness:  path.join(__dirname, '../build/icons/readiness.png'),
-        scheduler:  path.join(__dirname, '../build/icons/scheduler.png'),
-        statelogic: path.join(__dirname, '../../state_logic_builder/public/icon.png'),
-      };
-      p = roots[appId];
-    } else {
-      const res = process.resourcesPath;
-      const prod = {
-        assemblies: path.join(res, 'apps/assemblies/client/dist/app-icon.png'),
-        readiness:  path.join(res, 'apps/readiness/build/icons/readiness.png'),
-        scheduler:  path.join(res, 'apps/scheduler/build/icons/scheduler.png'),
-        statelogic: path.join(res, 'apps/statelogic/dist/icon.png'),
-      };
-      p = prod[appId];
-    }
-    return p && fs.existsSync(p) ? nativeImage.createFromPath(p) : null;
+    const p = path.join(__dirname, '../build/icons', `${appId}.png`);
+    return fs.existsSync(p) ? nativeImage.createFromPath(p) : null;
   } catch (_) { return null; }
 }
 

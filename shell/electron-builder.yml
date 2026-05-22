@@ -29,6 +29,7 @@ publish:
 files:
   - electron/**
   - dist/**
+  - build/icons/**
   - package.json
   - .env
 
