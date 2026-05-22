@@ -6,7 +6,10 @@ export default function WindowChrome() {
   return (
     <div className="winbar">
       <div className="winbar-left">
-        <span className="winbar-title">SDC Tools</span>
+        <div className="winbar-brand-tab">
+          <span className="dot" />
+          SDC Tools
+        </div>
         <nav className="winbar-menu">
           <button>File</button>
           <button>Edit</button>

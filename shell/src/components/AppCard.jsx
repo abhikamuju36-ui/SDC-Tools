@@ -3,6 +3,9 @@ import AppLogo from './AppLogos'
 
 const SHORTCUT_INDEX = { assemblies: 1, readiness: 2, scheduler: 3, statelogic: 4, calendar: 5, vendor: 6 }
 
+// Apps that have dedicated upstream updaters with a manual trigger
+const UPDATABLE_APPS = { readiness: true, scheduler: true, statelogic: true }
+
 /** Returns true if a hex color is light enough to need dark text */
 function isLight(hex) {
   if (!hex || hex[0] !== '#') return false
@@ -20,13 +23,10 @@ function timeAgo(ts) {
   const d = Math.floor(h / 24)
   if (m < 1) return 'just now'
   if (m < 60) return `${m}m ago`
-  if (h < 24) return `${h} h ago`
+  if (h < 24) return `${h}h ago`
   if (d === 1) return 'Yesterday'
-  return `${d} d ago`
+  return `${d}d ago`
 }
-
-// Apps that have dedicated upstream updaters with a manual trigger
-const UPDATABLE_APPS = { readiness: true, scheduler: true, statelogic: true }
 
 export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs, onTriggerUpdate }) {
   const { id, name, description, status, color, port } = app
@@ -34,7 +34,13 @@ export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs, 
   const shortcut  = SHORTCUT_INDEX[id]
   const openedAgo = timeAgo(lastOpened?.[id])
 
-  const statusLabels = { starting: 'Starting…', running: 'Running', error: 'Error', stopped: 'Stopped' }
+  const statusLabels = {
+    starting: 'Starting…',
+    running:  'Running',
+    error:    'Error',
+    stopped:  'Stopped',
+    update:   'Update ready',
+  }
 
   const btnStyle = color
     ? { background: color, color: isLight(color) ? '#1a1a1a' : '#ffffff', borderColor: 'transparent' }
@@ -63,10 +69,17 @@ export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs, 
       aria-label={`${name} — ${statusLabels[status] ?? status}`}
       onKeyDown={handleKeyDown}
     >
+      {/* Colored top stripe */}
       <div className="card-accent" />
+
+      {/* Update flag badge (top-right, for updatable apps) */}
+      {UPDATABLE_APPS[id] && (
+        <span className="card-update-flag">Update</span>
+      )}
+
       <div className="card-body">
 
-        {/* Icon + name + shortcut row */}
+        {/* Icon + name + shortcut */}
         <div className="card-top">
           <div className="card-logo" aria-hidden="true">
             <AppLogo appId={id} size={44} />
@@ -74,7 +87,10 @@ export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs, 
           <div className="card-info">
             <h2 className="card-name">{name}</h2>
             {shortcut && (
-              <span className="card-shortcut">Ctrl + {shortcut}</span>
+              <div className="card-shortcut">
+                <span>Ctrl</span>
+                <span>{shortcut}</span>
+              </div>
             )}
           </div>
         </div>
@@ -82,58 +98,62 @@ export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs, 
         {/* Description */}
         {description && <p className="card-desc">{description}</p>}
 
-        {/* Port + last opened */}
+        {/* Port + last opened — sits above footer with dashed top border */}
         <div className="card-meta">
-          {port && <span className="card-port">localhost:{port}</span>}
+          {port && <span className="card-port">:{port}</span>}
           {port && openedAgo && <span className="card-meta-sep">·</span>}
           {openedAgo && <span className="card-last-opened">Last opened {openedAgo}</span>}
         </div>
 
-        {/* Footer */}
-        <div className="card-footer">
-          <div className={`status-pill status-${status}`}>
-            <span className="status-dot" aria-hidden="true" />
-            <span className="status-label">{statusLabels[status] ?? status}</span>
-          </div>
+      </div>
 
-          <div className="btn-row">
-            {UPDATABLE_APPS[id] && (
-              <button
-                className={`btn btn-update btn-update--${updateState}`}
-                onClick={handleCheckUpdate}
-                disabled={updateState === 'checking'}
-                title="Check for upstream updates now"
-              >
-                {updateState === 'checking' ? 'Checking…' : updateState === 'done' ? '✓ Triggered' : updateState === 'error' ? '✗ Failed' : '+ Update'}
-              </button>
-            )}
+      {/* Sunken footer */}
+      <div className="card-footer">
+        <div className={`status-pill status-${status}`}>
+          <span className="status-dot" aria-hidden="true" />
+          <span className="status-label">{statusLabels[status] ?? status}</span>
+        </div>
+
+        <div className="btn-row">
+          {UPDATABLE_APPS[id] && (
             <button
-              className="btn btn-logs"
-              onClick={() => onShowLogs(id)}
-              aria-label={`Show logs for ${name}`}
-              title="View server logs"
+              className={`btn btn-update${updateState === 'done' ? ' btn-update--done' : updateState === 'error' ? ' btn-update--error' : ''}`}
+              onClick={handleCheckUpdate}
+              disabled={updateState === 'checking'}
+              title="Check for upstream updates now"
             >
-              Logs
+              {updateState === 'checking' ? 'Checking…'
+                : updateState === 'done'  ? '✓ Triggered'
+                : updateState === 'error' ? '✗ Failed'
+                : '↑ Update'}
             </button>
-            {status === 'error' && (
-              <button
-                className="btn btn-retry"
-                onClick={() => onRetry(id)}
-                aria-label={`Retry starting ${name}`}
-              >
-                Retry
-              </button>
-            )}
+          )}
+          <button
+            className="btn btn-logs"
+            onClick={() => onShowLogs(id)}
+            aria-label={`Show logs for ${name}`}
+            title="View server logs"
+          >
+            ↳ Logs
+          </button>
+          {status === 'error' && (
             <button
-              className="btn btn-open"
-              style={status === 'running' ? btnStyle : {}}
-              disabled={status !== 'running'}
-              onClick={() => onOpen(id)}
-              aria-label={status === 'running' ? `Open ${name}` : `${name} is not ready`}
+              className="btn btn-retry"
+              onClick={() => onRetry(id)}
+              aria-label={`Retry starting ${name}`}
             >
-              Open →
+              Retry
             </button>
-          </div>
+          )}
+          <button
+            className="btn btn-open"
+            style={status === 'running' ? btnStyle : {}}
+            disabled={status !== 'running'}
+            onClick={() => onOpen(id)}
+            aria-label={status === 'running' ? `Open ${name}` : `${name} is not ready`}
+          >
+            Open →
+          </button>
         </div>
       </div>
     </div>

@@ -1,8 +1,8 @@
 import AppCard from './AppCard'
 
-export default function AppGrid({ apps, lastOpened, onOpen, onRetry, onShowLogs, onTriggerUpdate }) {
+export default function AppGrid({ apps, lastOpened, onOpen, onRetry, onShowLogs, onTriggerUpdate, viewMode = 'grid' }) {
   return (
-    <div className="app-grid" role="list">
+    <div className={`app-grid${viewMode === 'list' ? ' is-list' : ''}`} role="list">
       {apps.map(app => (
         <AppCard
           key={app.id}

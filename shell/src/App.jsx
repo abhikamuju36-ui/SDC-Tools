@@ -1,5 +1,4 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
-import sdcLogo from './assets/sdc-logo.png'
 import AppGrid from './components/AppGrid'
 import StatusBar from './components/StatusBar'
 import LogPanel from './components/LogPanel'
@@ -62,6 +61,7 @@ const api = window.shellAPI ?? {
   authLogout: () => Promise.resolve({ success: true }),
   checkForUpdates: () => Promise.resolve(),
   triggerUpdate: () => Promise.resolve({ ok: false }),
+  getServerHost: () => Promise.resolve(''),
 }
 
 function timeAgo(ts) {
@@ -72,9 +72,9 @@ function timeAgo(ts) {
   const d = Math.floor(h / 24)
   if (m < 1) return 'just now'
   if (m < 60) return `${m}m ago`
-  if (h < 24) return `${h} h ago`
+  if (h < 24) return `${h}h ago`
   if (d === 1) return 'Yesterday'
-  return `${d} d ago`
+  return `${d}d ago`
 }
 
 function formatHeaderDate(date) {
@@ -102,6 +102,9 @@ function stringToColor(s) {
   return `oklch(0.55 0.12 ${Math.abs(h) % 360})`
 }
 
+// Apps that have dedicated upstream updaters with a manual trigger
+const UPDATABLE_APPS = { readiness: true, scheduler: true, statelogic: true }
+
 export default function App() {
   const [authUser, setAuthUser]   = useState(null)
   const [authReady, setAuthReady] = useState(false)
@@ -117,6 +120,7 @@ export default function App() {
   const [theme, setTheme]         = useState(() => localStorage.getItem('sdc-theme') || 'light')
   const [checkingUpdate, setCheckingUpdate] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [viewMode, setViewMode]   = useState('grid')
   const searchRef = useRef(null)
 
   // Live clock (updates every 30 seconds)
@@ -206,7 +210,7 @@ export default function App() {
         e.preventDefault()
         searchRef.current?.focus()
       }
-      // Ctrl+1–5 opens apps
+      // Ctrl+1–6 opens apps
       if (e.ctrlKey && e.key >= '1' && e.key <= '6') {
         const idx = Number(e.key) - 1
         const app = apps[idx]
@@ -231,13 +235,11 @@ export default function App() {
   const handleOpen = useCallback(async (appId) => {
     await api.openApp(appId)
     const ts = Date.now()
-    // Track last-opened
     setLastOpened(prev => {
       const next = { ...prev, [appId]: ts }
       localStorage.setItem('sdc-last-opened', JSON.stringify(next))
       return next
     })
-    // Track activity
     setActivity(prev => {
       const appName = apps.find(a => a.id === appId)?.name || appId
       const entry = { id: ts, type: 'open', appId, appName, label: `Opened ${appName}`, ts }
@@ -259,6 +261,7 @@ export default function App() {
 
   const runningCount = apps.filter(a => a.status === 'running').length
   const allOnline    = runningCount === apps.length && apps.length > 0
+  const updatableCount = apps.filter(a => UPDATABLE_APPS[a.id]).length
 
   if (!authReady) return <div className="auth-loading">Checking credentials…</div>
   if (!authUser)  return <LoginScreen onLogin={user => setAuthUser(user)} />
@@ -280,22 +283,24 @@ export default function App() {
     <div className="app">
       <WindowChrome />
 
-      {/* ── Header ───────────────────────────────────────────────────── */}
+      {/* ── Header ─────────────────────────────────────────────────── */}
       <header className="app-header">
+        {/* Brand (left) */}
         <div className="header-brand">
-          <div className="header-logo">
-            <img src={sdcLogo} alt="SDC" style={{ height: 44, width: 'auto', display: 'block', mixBlendMode: 'screen' }} />
+          <div className="brand-mark">
+            <span className="brand-mark-label">SDC</span>
           </div>
           <div className="header-wordmark">
-            <div className="header-title">SDC TOOLS</div>
-            <div className="header-subtitle">Steven Douglas Corp. · Engineering Applications Suite</div>
+            <div className="header-title">Steven Douglas Corp.</div>
+            <div className="header-subtitle">Engineering Applications Suite</div>
           </div>
         </div>
 
+        {/* Search (center) */}
         <div className="header-search-wrap">
           <div className="header-search">
-            <svg className="search-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/>
+            <svg className="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>
             </svg>
             <input
               ref={searchRef}
@@ -306,12 +311,14 @@ export default function App() {
               onChange={e => setSearchQuery(e.target.value)}
               onKeyDown={e => e.key === 'Escape' && setSearchQuery('')}
             />
-            <span className="search-hint">Ctrl+K</span>
+            <span className="search-hint">Ctrl K</span>
           </div>
         </div>
 
+        {/* Controls (right) */}
         <div className="header-controls">
           <NotificationCenter />
+
           <button
             className="btn-header-icon"
             onClick={() => setTheme(t => t === 'light' ? 'dark' : 'light')}
@@ -319,18 +326,23 @@ export default function App() {
             aria-label="Toggle theme"
           >
             {theme === 'light'
-              ? <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/><line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/><line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/><line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/></svg>
-              : <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
+              ? <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"/></svg>
+              : <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/></svg>
             }
           </button>
 
           <div className="header-user" title={authUser.email}>
-            <span className="header-user-avatar" style={{ background: authUser.name ? stringToColor(authUser.name) : undefined }}>{initials}</span>
+            <span
+              className="header-user-avatar"
+              style={{ background: authUser.name ? stringToColor(authUser.name) : undefined }}
+            >
+              {initials}
+            </span>
             <div className="header-user-info">
               <span className="header-user-name">{authUser.name || authUser.email}</span>
               <span className="header-user-email">{authUser.email}</span>
             </div>
-            {appVersion && <span className="header-version">v{appVersion}</span>}
+            {appVersion && <span className="version-tag">v{appVersion}</span>}
           </div>
 
           <button
@@ -343,7 +355,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* ── Update banner ──────────────────────────────────────────── */}
+      {/* ── Update banner ─────────────────────────────────────────── */}
       <UpdateBanner
         status={updateStatus}
         onDownload={() => api.updateDownload()}
@@ -351,65 +363,98 @@ export default function App() {
         onDismiss={() => setUpdateStatus(null)}
       />
 
-      {/* ── Main ───────────────────────────────────────────────────── */}
-      <main className="app-main">
-        <div className="main-content">
-
-          {/* Greeting + status row */}
-          <div className="greeting-row">
-            <div className="greeting-left">
-              <h1 className="greeting-text">
-                {getGreeting(now)}, <span className="greeting-name">{firstName}</span>
-              </h1>
-              <p className="greeting-date">{formatHeaderDate(now)}</p>
+      {/* ── Hero section ──────────────────────────────────────────── */}
+      <section className="app-hero">
+        <div className="hero-inner">
+          {/* Left: greeting */}
+          <div className="greeting">
+            <div className="eyebrow-badge">
+              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
+              </svg>
+              Workstation · {serverHost || 'SERVER-APP1'}
             </div>
+            <h1 className="greeting-h1">
+              {getGreeting(now)}, <span className="greeting-accent">{firstName}.</span>
+            </h1>
+            <div className="greeting-meta">
+              <span className="date-pill">
+                <span className="date-dot" />
+                {formatHeaderDate(now)}
+              </span>
+              <span className="greeting-status-text">
+                {allOnline ? 'Your suite is healthy and ready.' : `${runningCount} of ${apps.length} services online`}
+              </span>
+            </div>
+          </div>
 
-            <div className={`greeting-status${allOnline ? ' greeting-status--ok' : ''}`}>
-              <span className={`gsb-dot status-${allOnline ? 'running' : runningCount > 0 ? 'starting' : 'stopped'}`} />
-              <div className="gsb-text">
-                <span className="gsb-title">
-                  {allOnline
-                    ? `All ${apps.length} services online`
-                    : `${runningCount} / ${apps.length} running`}
-                </span>
+          {/* Right: system status card + action buttons */}
+          <div className="system-row">
+            <div className="system-status">
+              <div className="system-status-icon">✓</div>
+              <div>
+                <div className="system-status-label">
+                  {allOnline ? `All ${apps.length} services online` : `${runningCount} / ${apps.length} running`}
+                </div>
                 {lastSync && (
-                  <span className="gsb-sub">Last sync {timeAgo(lastSync)}</span>
+                  <div className="system-status-sub">Last sync · {timeAgo(lastSync)}</div>
                 )}
               </div>
             </div>
-
-            <div className="greeting-actions">
+            <div className="sys-actions">
               <button
-                className={`btn btn-action${launchOnStartup ? ' btn-action--active' : ''}`}
+                className={`action-btn${launchOnStartup ? ' action-btn--active' : ''}`}
                 onClick={handleToggleStartup}
                 title={launchOnStartup ? 'Disable launch on Windows startup' : 'Enable launch on Windows startup'}
               >
-                <span className="btn-action-dot" />
-                Auto-start
+                ⬤ Auto-start
               </button>
               <button
-                className="btn btn-action"
+                className="action-btn"
                 onClick={handleCheckForUpdates}
                 disabled={checkingUpdate}
                 title="Check for SDC Tools app updates now"
               >
-                {checkingUpdate ? '↑ Checking…' : '↑ Check Updates'}
+                ↑ {checkingUpdate ? 'Checking…' : 'Check updates'}
               </button>
-              <button className="btn btn-action" onClick={handleRestartAll} disabled={busy} title="Restart all servers">
-                ↺ Restart All
+              <button className="action-btn" onClick={handleRestartAll} disabled={busy} title="Restart all servers">
+                ↺ Restart all
               </button>
-              <button className="btn btn-action btn-action--stop" onClick={handleStopAll} disabled={busy} title="Stop all servers">
-                ■ Stop All
+              <button className="action-btn action-btn--stop" onClick={handleStopAll} disabled={busy} title="Stop all servers">
+                ■ Stop all
               </button>
             </div>
           </div>
+        </div>
+      </section>
 
-          {/* Two-column content grid: apps + activity sidebar */}
+      {/* ── Main ──────────────────────────────────────────────────── */}
+      <main className="app-main">
+        <div className="main-content">
+
+          {/* Two-column content grid: apps + right rail */}
           <div className="content-grid">
             <section className="apps-section">
-              <div className="section-header">
-                <span className="section-title">ENGINEERING APPLICATIONS</span>
-                <span className="section-count">{runningCount} of {apps.length}</span>
+              {/* Section eyebrow */}
+              <div className="section-eyebrow">
+                <span className="section-eyebrow-title">Engineering Applications</span>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 12, color: 'var(--text-3)' }}>
+                  <span>{runningCount} of {apps.length} running</span>
+                  <div className="view-toggle">
+                    <button
+                      className={viewMode === 'grid' ? 'active' : ''}
+                      onClick={() => setViewMode('grid')}
+                    >
+                      Grid
+                    </button>
+                    <button
+                      className={viewMode === 'list' ? 'active' : ''}
+                      onClick={() => setViewMode('list')}
+                    >
+                      List
+                    </button>
+                  </div>
+                </div>
               </div>
 
               <AppGrid
@@ -419,17 +464,55 @@ export default function App() {
                 onRetry={handleRetry}
                 onShowLogs={handleShowLogs}
                 onTriggerUpdate={handleTriggerUpdate}
+                viewMode={viewMode}
               />
             </section>
 
+            {/* Right rail */}
             <aside className="activity-sidebar">
-              <div className="section-header">
-                <span className="section-title">RECENT ACTIVITY</span>
-                {activity.length > 5 && (
-                  <button className="section-link" onClick={() => {}}>View all</button>
-                )}
+              {/* Tip callout */}
+              {updatableCount > 0 && (
+                <div className="tip-callout">
+                  <div className="tip-icon">ℹ</div>
+                  <div className="tip-callout-body">
+                    <strong className="tip-callout-title">{updatableCount} updates ready</strong>
+                    Apply them together to keep your suite in sync.
+                  </div>
+                </div>
+              )}
+
+              {/* Recent activity panel */}
+              <div className="rail-panel">
+                <div className="rail-panel-header">
+                  <span className="rail-panel-header-title">Recent Activity</span>
+                  <span className="rail-panel-header-badge">Today</span>
+                </div>
+                <RecentActivity activity={activity} apps={apps} />
               </div>
-              <RecentActivity activity={activity} apps={apps} />
+
+              {/* Keyboard shortcuts panel */}
+              <div className="rail-panel">
+                <div className="rail-panel-header">
+                  <span className="rail-panel-header-title">Keyboard Shortcuts</span>
+                </div>
+                <div className="shortcuts-grid">
+                  {[
+                    ['Quick open', 'Ctrl', 'K'],
+                    ['Restart all', 'Ctrl', 'R'],
+                    ['Toggle theme', 'Ctrl', 'D'],
+                    ['View logs', 'Ctrl', 'L'],
+                    ['Settings', 'Ctrl', ','],
+                    ['Help', 'F1'],
+                  ].map(([label, ...keys]) => (
+                    <div key={label} className="shortcut-row">
+                      <span>{label}</span>
+                      <div className="shortcut-keys">
+                        {keys.map(k => <span key={k}>{k}</span>)}
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </div>
             </aside>
           </div>
         </div>
@@ -444,7 +527,13 @@ export default function App() {
         />
       )}
 
-      <StatusBar apps={apps} runningCount={runningCount} email={authUser.email} serverHost={serverHost} version={appVersion} />
+      <StatusBar
+        apps={apps}
+        runningCount={runningCount}
+        email={authUser.email}
+        serverHost={serverHost}
+        version={appVersion}
+      />
     </div>
   )
 }
