@@ -1,214 +1,294 @@
 /**
- * AppLogos — inline SVG logos sourced directly from each app's own icon assets.
- *
- * Assemblies Library  → client/public/app-icon.svg   (isometric cubes on blue gradient)
- * Build Readiness     → client/assets/favicon.svg    (Gantt bars + alert)
- * SDC Scheduler       → public/index.html brand-mark (S-knot on navy + green dot)
- * State Logic Builder → public/icon.svg              (flowchart on dark grid)
+ * AppLogos — inline SVG card icons, brand-accurate per SDC Brand Guide 2026.
+ * Designs match shell/build/icons/ PNGs (same geometry, same palette).
  */
 
+/* ── Shared geometry ─────────────────────────────────────────────────────── */
+const SQ =
+  'M114.53 0L397.47 0C460.73 0 512 51.27 512 114.53L512 397.47' +
+  'C512 460.73 460.73 512 397.47 512L114.53 512' +
+  'C51.27 512 0 460.73 0 397.47L0 114.53C0 51.27 51.27 0 114.53 0Z';
+
+function buildGearPath() {
+  const teeth = 10, rO = 138, rI = 112, hw = 0.15;
+  const pts = [];
+  for (let i = 0; i < teeth; i++) {
+    const a  = (i / teeth) * Math.PI * 2 - Math.PI / 2;
+    const aN = ((i + 1) / teeth) * Math.PI * 2 - Math.PI / 2;
+    [[a - hw, rO], [a + hw, rO], [a + hw + 0.10, rI], [aN - hw - 0.10, rI]]
+      .forEach(([ang, r]) =>
+        pts.push(`${(Math.cos(ang) * r).toFixed(2)},${(Math.sin(ang) * r).toFixed(2)}`)
+      );
+  }
+  return `M ${pts.join(' L ')} Z`;
+}
+const GEAR = buildGearPath();
+
+const P = {
+  blue:  '#1574C4',
+  navy:  '#061D39',
+  lb:    '#AACEE8',
+  yel:   '#FFDE51',
+  green: '#74C415',
+};
+const BG_GRAD = (id) => (
+  <linearGradient id={id} x1="0" y1="0" x2="0" y2="1">
+    <stop offset="0%"   stopColor="#ffffff" />
+    <stop offset="100%" stopColor="#f4f7fb" />
+  </linearGradient>
+);
+
+/* ── ASSEMBLIES LIBRARY ──────────────────────────────────────────────────── */
 export function AssembliesLogo({ size = 48 }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 512 512">
+    <svg viewBox="0 0 512 512" width={size} height={size} xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <clipPath id="al-clip">
-          <rect x="0" y="0" width="512" height="512" rx="112" ry="112" />
-        </clipPath>
-        <radialGradient id="al-bg" cx="30%" cy="20%" r="100%">
-          <stop offset="0%" stopColor="#2A93DD" />
-          <stop offset="55%" stopColor="#1169B0" />
-          <stop offset="100%" stopColor="#07375E" />
-        </radialGradient>
-        <linearGradient id="al-top" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#FFFFFF" />
-          <stop offset="100%" stopColor="#E4F0F9" />
-        </linearGradient>
-        <linearGradient id="al-left" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#C3D8E8" />
-          <stop offset="100%" stopColor="#8FB0C6" />
-        </linearGradient>
-        <linearGradient id="al-right" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#9DB8CB" />
-          <stop offset="100%" stopColor="#5E7E95" />
-        </linearGradient>
-        <radialGradient id="al-shadow" cx="50%" cy="50%" r="50%">
-          <stop offset="0%" stopColor="#000000" stopOpacity="0.35" />
-          <stop offset="100%" stopColor="#000000" stopOpacity="0" />
-        </radialGradient>
+        <clipPath id="sq-al"><path d={SQ} /></clipPath>
+        {BG_GRAD('bg-al')}
       </defs>
-      <g clipPath="url(#al-clip)">
-        <rect x="0" y="0" width="512" height="512" fill="url(#al-bg)" />
-        <ellipse cx="256" cy="430" rx="170" ry="22" fill="url(#al-shadow)" />
-        {/* Back-left cube */}
-        <g transform="translate(108, 268)">
-          <polygon points="0,36 72,0 144,36 72,72" fill="url(#al-top)" />
-          <polygon points="0,36 72,72 72,144 0,108" fill="url(#al-left)" />
-          <polygon points="72,72 144,36 144,108 72,144" fill="url(#al-right)" />
-          <line x1="0" y1="36" x2="72" y2="0" stroke="#FFFFFF" strokeWidth="1.5" opacity="0.5" />
-          <line x1="72" y1="0" x2="144" y2="36" stroke="#FFFFFF" strokeWidth="1.5" opacity="0.35" />
+      <path d={SQ} fill="url(#bg-al)" />
+      <path d={SQ} fill="none" stroke="rgba(6,29,57,0.12)" strokeWidth="2" />
+      <g clipPath="url(#sq-al)">
+        {/* Layered sheets */}
+        <rect x="118" y="262" width="240" height="160" rx="14" fill="#dde9f5" stroke={P.lb} strokeWidth="1.5" />
+        <rect x="138" y="288" width="120" height="6" rx="3" fill={P.lb} />
+        <rect x="138" y="306" width="170" height="6" rx="3" fill={P.lb} />
+        <rect x="138" y="324" width="90"  height="6" rx="3" fill={P.lb} />
+        <rect x="138" y="232" width="260" height="170" rx="14" fill="#e9f1f9" stroke={P.lb} strokeWidth="1.5" />
+        <rect x="158" y="260" width="140" height="6" rx="3" fill={P.lb} />
+        <rect x="158" y="278" width="200" height="6" rx="3" fill={P.lb} />
+        <rect x="158" y="296" width="110" height="6" rx="3" fill={P.lb} />
+        <rect x="156" y="206" width="270" height="180" rx="14" fill="#ffffff" stroke={P.lb} strokeWidth="1.5" />
+        <rect x="178" y="234" width="130" height="6" rx="3" fill="#9ab9d4" />
+        <rect x="178" y="252" width="190" height="6" rx="3" fill="#9ab9d4" />
+        <rect x="178" y="270" width="100" height="6" rx="3" fill="#9ab9d4" />
+        {/* Gear — subtle shadow then main */}
+        <g transform="translate(256,220) rotate(-12)">
+          <g transform="translate(3,4)" opacity="0.18">
+            <path d={GEAR} fill={P.navy} />
+            <circle cx="0" cy="0" r="40" fill="#ffffff" />
+            <circle cx="0" cy="0" r="14" fill={P.navy} />
+          </g>
+          <path d={GEAR} fill={P.blue} />
+          <circle cx="0" cy="0" r="40" fill="#ffffff" />
+          <circle cx="0" cy="0" r="14" fill={P.blue} />
         </g>
-        {/* Bottom-right cube */}
-        <g transform="translate(260, 268)">
-          <polygon points="0,36 72,0 144,36 72,72" fill="url(#al-top)" />
-          <polygon points="0,36 72,72 72,144 0,108" fill="url(#al-left)" />
-          <polygon points="72,72 144,36 144,108 72,144" fill="url(#al-right)" />
-          <line x1="0" y1="36" x2="72" y2="0" stroke="#FFFFFF" strokeWidth="1.5" opacity="0.5" />
-          <line x1="72" y1="0" x2="144" y2="36" stroke="#FFFFFF" strokeWidth="1.5" opacity="0.35" />
-        </g>
-        {/* Top cube */}
-        <g transform="translate(184, 140)">
-          <polygon points="0,36 72,0 144,36 72,72" fill="url(#al-top)" />
-          <polygon points="0,36 72,72 72,144 0,108" fill="url(#al-left)" />
-          <polygon points="72,72 144,36 144,108 72,144" fill="url(#al-right)" />
-          <line x1="0" y1="36" x2="72" y2="0" stroke="#FFFFFF" strokeWidth="1.5" opacity="0.6" />
-          <line x1="72" y1="0" x2="144" y2="36" stroke="#FFFFFF" strokeWidth="1.5" opacity="0.4" />
-        </g>
-        <path d="M 0 0 L 512 0 L 512 60 Q 256 140 0 60 Z" fill="#FFFFFF" opacity="0.06" />
       </g>
     </svg>
   );
 }
 
+/* ── BUILD READINESS REPORT ──────────────────────────────────────────────── */
 export function ReadinessLogo({ size = 48 }) {
+  const rows = [
+    { y: 156, ok: true,  w1: 150, w2: 100 },
+    { y: 202, ok: true,  w1: 120, w2: 70  },
+    { y: 248, ok: false, w1: 90,  w2: 140 },
+  ];
+  const circR = 48;
+  const circ  = 2 * Math.PI * circR;
+  const dash  = (circ * 0.72).toFixed(2);
   return (
-    <svg width={size} height={size} viewBox="0 0 512 512" xmlns="http://www.w3.org/2000/svg">
+    <svg viewBox="0 0 512 512" width={size} height={size} xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <linearGradient id="rl-bg" x1="0" y1="0" x2="1" y2="1">
-          <stop offset="0" stopColor="oklch(0.22 0.02 250)" />
-          <stop offset="1" stopColor="oklch(0.14 0.012 250)" />
-        </linearGradient>
+        <clipPath id="sq-rl"><path d={SQ} /></clipPath>
+        {BG_GRAD('bg-rl')}
       </defs>
-      <rect width="512" height="512" rx="112" fill="url(#rl-bg)" />
-      <g stroke="oklch(0.45 0.02 250)" strokeWidth="2" fill="none" opacity="0.5">
-        <line x1="96" y1="160" x2="416" y2="160" />
-        <line x1="96" y1="226" x2="416" y2="226" />
-        <line x1="96" y1="292" x2="416" y2="292" />
-        <line x1="96" y1="358" x2="416" y2="358" />
-      </g>
-      <g>
-        <rect x="120" y="148" width="220" height="24" rx="4" fill="oklch(0.78 0.16 150)" />
-        <rect x="140" y="214" width="180" height="24" rx="4" fill="oklch(0.82 0.16 80)" />
-        <rect x="100" y="280" width="240" height="24" rx="4" fill="oklch(0.66 0.20 25)" />
-        <rect x="160" y="346" width="220" height="24" rx="4" fill="oklch(0.74 0.10 230)" />
-      </g>
-      <g>
-        <line x1="356" y1="120" x2="356" y2="400" stroke="oklch(0.95 0.10 80)" strokeWidth="3" strokeDasharray="6 6" />
-        <polygon points="346,116 366,116 356,134" fill="oklch(0.95 0.10 80)" />
-      </g>
-      <g transform="translate(380 116)">
-        <circle r="28" fill="oklch(0.66 0.22 25)" stroke="oklch(0.20 0.04 250)" strokeWidth="4" />
-        <text y="8" textAnchor="middle" fill="white" fontSize="32" fontWeight="700" fontFamily="'JetBrains Mono', monospace">!</text>
+      <path d={SQ} fill="url(#bg-rl)" />
+      <path d={SQ} fill="none" stroke="rgba(6,29,57,0.12)" strokeWidth="2" />
+      <g clipPath="url(#sq-rl)">
+        {/* Clipboard */}
+        <rect x="216" y="76"  width="80" height="32" rx="8" fill={P.navy} />
+        <rect x="232" y="68"  width="48" height="20" rx="6" fill={P.blue} />
+        <rect x="116" y="100" width="280" height="336" rx="22" fill="#ffffff" stroke={P.lb} strokeWidth="2" />
+        <rect x="140" y="124" width="232" height="288" rx="14" fill="#f4f8fc" />
+        {/* Checklist rows */}
+        {rows.map(({ y, ok, w1, w2 }) => (
+          <g key={y}>
+            <rect x="160" y={y} width="26" height="26" rx="6"
+              fill={ok ? P.green : '#ffffff'}
+              stroke={ok ? P.green : P.lb} strokeWidth="2.5" />
+            {ok && (
+              <path d={`M 166 ${y + 13} L 172 ${y + 19} L 181 ${y + 9}`}
+                fill="none" stroke="#ffffff" strokeWidth="3.5"
+                strokeLinecap="round" strokeLinejoin="round" />
+            )}
+            <rect x="200" y={y + 5}  width={w1} height="6" rx="3"
+              fill={ok ? P.navy : 'rgba(6,29,57,0.28)'} opacity={ok ? 0.85 : 1} />
+            <rect x="200" y={y + 19} width={w2} height="5" rx="2.5" fill={P.lb} />
+          </g>
+        ))}
+        {/* Progress ring badge */}
+        <g transform="translate(344,360)">
+          <circle cx="0" cy="0" r="58" fill="#ffffff" stroke={P.lb} strokeWidth="2" />
+          <circle cx="0" cy="0" r={circR} fill="none" stroke="#e6eef6" strokeWidth="10" />
+          <circle cx="0" cy="0" r={circR} fill="none" stroke={P.blue} strokeWidth="10"
+            strokeLinecap="round"
+            strokeDasharray={`${dash} ${circ.toFixed(2)}`}
+            transform="rotate(-90)" />
+          <circle cx="0" cy="0" r="26" fill={P.yel} />
+          <path d="M -12 0 L -3 9 L 14 -10" fill="none" stroke={P.green}
+            strokeWidth="6.5" strokeLinecap="round" strokeLinejoin="round" />
+        </g>
       </g>
     </svg>
   );
 }
 
+/* ── SDC SCHEDULER ───────────────────────────────────────────────────────── */
 export function SchedulerLogo({ size = 48 }) {
   return (
-    <svg viewBox="0 0 40 40" xmlns="http://www.w3.org/2000/svg" width={size} height={size}>
-      <rect x="0" y="0" width="40" height="40" rx="8" fill="#061d39" />
-      <path
-        d="M27 14c-1.6-2-4.2-3-7-3-3.4 0-6 1.6-6 4.2 0 2.4 1.8 3.6 5.6 4.4l2 .4c2 .4 2.8 1 2.8 2 0 1.4-1.4 2.2-3.6 2.2-2.4 0-4-.8-5.4-2.4L13 24.2c1.8 2.2 4.4 3.4 7.6 3.4 4.2 0 6.8-1.8 6.8-4.8 0-2.4-1.6-3.8-5.4-4.6l-2-.4c-2-.4-3-.8-3-1.8 0-1.2 1.2-2 3-2 1.8 0 3.4.6 4.6 1.8z"
-        fill="#1574c4"
-      />
-      <circle cx="32" cy="32" r="3" fill="#74c415" />
+    <svg viewBox="0 0 512 512" width={size} height={size} xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <clipPath id="sq-sc"><path d={SQ} /></clipPath>
+        {BG_GRAD('bg-sc')}
+      </defs>
+      <path d={SQ} fill="url(#bg-sc)" />
+      <path d={SQ} fill="none" stroke="rgba(6,29,57,0.12)" strokeWidth="2" />
+      <g clipPath="url(#sq-sc)">
+        {/* Vertical grid lines */}
+        {[1,2,3,4,5,6].map(i => (
+          <line key={i} x1={88 + i * 56} y1="120" x2={88 + i * 56} y2="392"
+            stroke="rgba(6,29,57,0.10)" strokeWidth="1.5" />
+        ))}
+        <line x1="80" y1="120" x2="432" y2="120" stroke={P.navy} strokeWidth="2" opacity="0.25" />
+        {/* Tick marks */}
+        {[0,1,2,3,4,5,6].map(i => (
+          <rect key={i} x={82 + i * 56} y="106" width="12" height="4" rx="2" fill={P.lb} />
+        ))}
+        {/* Gantt bars */}
+        <rect x="100" y="160" width="180" height="34" rx="8" fill={P.blue} />
+        <rect x="156" y="214" width="220" height="34" rx="8" fill={P.lb} />
+        <rect x="128" y="268" width="140" height="34" rx="8" fill={P.navy} />
+        <rect x="184" y="322" width="200" height="34" rx="8" fill={P.blue} />
+        {/* Milestone diamond */}
+        <g transform="translate(384,339)">
+          <rect x="-14" y="-14" width="28" height="28" rx="3" transform="rotate(45)"
+            fill={P.yel} stroke={P.navy} strokeWidth="2" />
+        </g>
+        {/* Row dots */}
+        {[177,231,285,339].map(y => (
+          <circle key={y} cx="80" cy={y} r="4" fill={P.lb} />
+        ))}
+      </g>
     </svg>
   );
 }
 
+/* ── STATE LOGIC BUILDER ─────────────────────────────────────────────────── */
 export function StateLogicLogo({ size = 48 }) {
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width={size} height={size}>
+    <svg viewBox="0 0 512 512" width={size} height={size} xmlns="http://www.w3.org/2000/svg">
       <defs>
-        <linearGradient id="sl-bg" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#1A2430" />
-          <stop offset="1" stopColor="#0B0F14" />
-        </linearGradient>
-        <marker id="sl-arr" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="4" markerHeight="4" orient="auto-start-reverse">
-          <path d="M 0 0 L 10 5 L 0 10 z" fill="#1877BC" />
-        </marker>
+        <clipPath id="sq-sl"><path d={SQ} /></clipPath>
+        {BG_GRAD('bg-sl')}
       </defs>
-      <rect x="0" y="0" width="256" height="256" rx="56" fill="url(#sl-bg)" />
-      <g opacity="0.08" stroke="white">
-        <line x1="16" y1="32" x2="240" y2="32" strokeWidth="1" />
-        <line x1="16" y1="64" x2="240" y2="64" strokeWidth="1" />
-        <line x1="16" y1="96" x2="240" y2="96" strokeWidth="1" />
-        <line x1="16" y1="128" x2="240" y2="128" strokeWidth="1" />
-        <line x1="16" y1="160" x2="240" y2="160" strokeWidth="1" />
-        <line x1="16" y1="192" x2="240" y2="192" strokeWidth="1" />
-        <line x1="16" y1="224" x2="240" y2="224" strokeWidth="1" />
-        <line x1="32" y1="16" x2="32" y2="240" strokeWidth="1" />
-        <line x1="64" y1="16" x2="64" y2="240" strokeWidth="1" />
-        <line x1="96" y1="16" x2="96" y2="240" strokeWidth="1" />
-        <line x1="128" y1="16" x2="128" y2="240" strokeWidth="1" />
-        <line x1="160" y1="16" x2="160" y2="240" strokeWidth="1" />
-        <line x1="192" y1="16" x2="192" y2="240" strokeWidth="1" />
-        <line x1="224" y1="16" x2="224" y2="240" strokeWidth="1" />
+      <path d={SQ} fill="url(#bg-sl)" />
+      <path d={SQ} fill="none" stroke="rgba(6,29,57,0.12)" strokeWidth="2" />
+      <g clipPath="url(#sq-sl)">
+        {/* PLC ladder rails */}
+        <line x1="76"  y1="100" x2="76"  y2="412" stroke={P.lb} strokeWidth="2.5" opacity="0.85" />
+        <line x1="436" y1="100" x2="436" y2="412" stroke={P.lb} strokeWidth="2.5" opacity="0.85" />
+        {/* Rungs */}
+        {[120,176,232,288,344,400].map(y => (
+          <line key={y} x1="76" y1={y} x2="436" y2={y}
+            stroke={P.lb} strokeWidth="2" opacity="0.7" />
+        ))}
+        {/* Contact symbols */}
+        <g stroke={P.lb} strokeWidth="2.5" fill="none">
+          <line x1="118" y1="115" x2="118" y2="125" />
+          <line x1="128" y1="115" x2="128" y2="125" />
+          <line x1="356" y1="395" x2="356" y2="405" />
+          <line x1="366" y1="395" x2="366" y2="405" />
+        </g>
+        {/* Inactive state node */}
+        <rect x="92" y="156" width="148" height="74" rx="16" fill="#ffffff" stroke={P.navy} strokeWidth="2.5" />
+        <circle cx="116" cy="193" r="7" fill={P.lb} />
+        <rect x="134" y="184" width="84" height="6" rx="3" fill="rgba(6,29,57,0.55)" />
+        <rect x="134" y="198" width="60" height="5" rx="2.5" fill="rgba(6,29,57,0.28)" />
+        {/* Focus rings */}
+        <rect x="158" y="202" width="204" height="108" rx="24" fill="none" stroke={P.lb} strokeWidth="2" opacity="0.55" />
+        <rect x="170" y="214" width="180" height="84"  rx="20" fill="none" stroke={P.blue} strokeWidth="2" opacity="0.35" />
+        {/* Active state node */}
+        <rect x="180" y="224" width="152" height="64" rx="14" fill={P.blue} />
+        <circle cx="206" cy="256" r="7" fill={P.yel} />
+        <rect x="224" y="247" width="86" height="6" rx="3" fill="#ffffff" />
+        <rect x="224" y="261" width="60" height="5" rx="2.5" fill="#ffffff" opacity="0.7" />
+        {/* Next state node */}
+        <rect x="272" y="320" width="148" height="74" rx="16" fill="#ffffff" stroke={P.navy} strokeWidth="2.5" />
+        <circle cx="296" cy="357" r="7" fill={P.lb} />
+        <rect x="314" y="348" width="84" height="6" rx="3" fill="rgba(6,29,57,0.55)" />
+        <rect x="314" y="362" width="60" height="5" rx="2.5" fill="rgba(6,29,57,0.28)" />
+        {/* Transition arrows */}
+        <g fill="none" stroke={P.navy} strokeWidth="4" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M 200 230 C 220 254 240 252 240 224" />
+          <path d="M 234 220 L 240 224 L 246 220" />
+          <path d="M 290 288 C 300 308 304 316 308 318" />
+          <path d="M 302 314 L 308 318 L 312 312" />
+        </g>
       </g>
-      <rect x="4" y="4" width="248" height="248" rx="54" fill="none" stroke="white" strokeOpacity="0.06" strokeWidth="2" />
-      <line x1="64" y1="74" x2="110" y2="118" stroke="#1877BC" strokeWidth="8" strokeLinecap="round" markerEnd="url(#sl-arr)" />
-      <line x1="146" y1="118" x2="192" y2="74" stroke="#1877BC" strokeWidth="8" strokeLinecap="round" markerEnd="url(#sl-arr)" />
-      <line x1="128" y1="150" x2="128" y2="186" stroke="#1877BC" strokeWidth="8" strokeLinecap="round" markerEnd="url(#sl-arr)" />
-      <circle cx="56" cy="66" r="20" fill="white" />
-      <rect x="104" y="104" width="48" height="48" rx="4" transform="rotate(45 128 128)" fill="#1877BC" />
-      <circle cx="200" cy="66" r="26" fill="none" stroke="#22D3EE" strokeWidth="3" opacity="0.9" />
-      <circle cx="200" cy="66" r="20" fill="#22D3EE" />
-      <circle cx="128" cy="196" r="20" fill="white" />
     </svg>
   );
 }
 
+/* ── SDC CALENDAR ────────────────────────────────────────────────────────── */
 export function CalendarLogo({ size = 48 }) {
+  const cols = 4, rows = 3, gx = 100, gy = 184, gw = 312, gh = 234;
+  const cw = gw / cols, ch = gh / rows;
+  const cells = [];
+  for (let r = 0; r < rows; r++) {
+    for (let c = 0; c < cols; c++) {
+      const x = gx + c * cw + 4, y = gy + r * ch + 4, w = cw - 8, h = ch - 8;
+      const hl = r === 1 && c === 2;
+      const yd = !hl && ((r === 0 && c === 0) || (r === 2 && c === 3));
+      cells.push(
+        <g key={`${r}-${c}`}>
+          <rect x={+x.toFixed(1)} y={+y.toFixed(1)}
+            width={+w.toFixed(1)} height={+h.toFixed(1)} rx="10"
+            fill={hl ? P.blue : '#f4f8fc'} stroke={hl ? P.blue : P.lb} strokeWidth="1.5" />
+          <rect x={+(x + 10).toFixed(1)} y={+(y + 10).toFixed(1)}
+            width={hl ? 22 : 14} height="6" rx="3"
+            fill={hl ? '#ffffff' : P.lb} />
+          {yd && <circle cx={+(x + 16).toFixed(1)} cy={+(y + h - 14).toFixed(1)} r="4" fill={P.yel} />}
+          {hl && <circle cx={+(x + 16).toFixed(1)} cy={+(y + h - 14).toFixed(1)} r="4" fill="#ffffff" />}
+        </g>
+      );
+    }
+  }
   return (
-    <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 512 512">
-      <rect width="512" height="512" rx="112" fill="#061D39" />
-      {/* Header bar */}
-      <rect x="72" y="88" width="368" height="88" rx="14" fill="#1574C4" />
-      {/* Ring pins */}
-      <rect x="168" y="56" width="22" height="60" rx="11" fill="#AACEE8" />
-      <rect x="322" y="56" width="22" height="60" rx="11" fill="#AACEE8" />
-      {/* Month label placeholder */}
-      <rect x="116" y="112" width="140" height="16" rx="6" fill="rgba(255,255,255,0.85)" />
-      {/* Nav arrows */}
-      <polygon points="390,120 406,108 406,132" fill="rgba(255,255,255,0.7)" />
-      <polygon points="430,120 414,108 414,132" fill="rgba(255,255,255,0.7)" />
-      {/* Calendar body */}
-      <rect x="72" y="176" width="368" height="276" rx="0" fill="rgba(255,255,255,0.04)" />
-      <rect x="72" y="440" width="368" height="12" rx="0" fill="rgba(255,255,255,0.04)" />
-      {/* Row grid lines */}
-      <line x1="72"  y1="230" x2="440" y2="230" stroke="#AACEE8" strokeWidth="1.5" opacity="0.2" />
-      <line x1="72"  y1="284" x2="440" y2="284" stroke="#AACEE8" strokeWidth="1.5" opacity="0.2" />
-      <line x1="72"  y1="338" x2="440" y2="338" stroke="#AACEE8" strokeWidth="1.5" opacity="0.2" />
-      <line x1="72"  y1="392" x2="440" y2="392" stroke="#AACEE8" strokeWidth="1.5" opacity="0.2" />
-      {/* Column grid lines (6 cols) */}
-      <line x1="125" y1="176" x2="125" y2="452" stroke="#AACEE8" strokeWidth="1.5" opacity="0.15" />
-      <line x1="178" y1="176" x2="178" y2="452" stroke="#AACEE8" strokeWidth="1.5" opacity="0.15" />
-      <line x1="231" y1="176" x2="231" y2="452" stroke="#AACEE8" strokeWidth="1.5" opacity="0.15" />
-      <line x1="284" y1="176" x2="284" y2="452" stroke="#AACEE8" strokeWidth="1.5" opacity="0.15" />
-      <line x1="337" y1="176" x2="337" y2="452" stroke="#AACEE8" strokeWidth="1.5" opacity="0.15" />
-      <line x1="390" y1="176" x2="390" y2="452" stroke="#AACEE8" strokeWidth="1.5" opacity="0.15" />
-      {/* Day header row */}
-      <rect x="80"  y="182" width="38" height="38" fill="rgba(170,206,232,0.12)" />
-      <rect x="133" y="182" width="38" height="38" fill="rgba(170,206,232,0.12)" />
-      <rect x="186" y="182" width="38" height="38" fill="rgba(170,206,232,0.12)" />
-      <rect x="239" y="182" width="38" height="38" fill="rgba(170,206,232,0.12)" />
-      <rect x="292" y="182" width="38" height="38" fill="rgba(170,206,232,0.12)" />
-      <rect x="345" y="182" width="38" height="38" fill="rgba(170,206,232,0.12)" />
-      <rect x="398" y="182" width="38" height="38" fill="rgba(170,206,232,0.12)" />
-      {/* Today highlight cell */}
-      <rect x="239" y="236" width="38" height="42" rx="8" fill="#FFDE51" />
-      <text x="258" y="264" textAnchor="middle" fill="#061D39" fontSize="20" fontWeight="800" fontFamily="Montserrat,Arial,sans-serif">15</text>
-      {/* Event dots */}
-      <circle cx="99"  cy="275" r="7" fill="#74C415" />
-      <circle cx="152" cy="329" r="7" fill="#1574C4" />
-      <circle cx="311" cy="275" r="7" fill="#BEFA4F" />
-      <circle cx="364" cy="329" r="7" fill="#74C415" />
-      <circle cx="99"  cy="383" r="7" fill="#FFDE51" />
-      <circle cx="417" cy="383" r="7" fill="#1574C4" />
+    <svg viewBox="0 0 512 512" width={size} height={size} xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <clipPath id="sq-ca"><path d={SQ} /></clipPath>
+        {BG_GRAD('bg-ca')}
+      </defs>
+      <path d={SQ} fill="url(#bg-ca)" />
+      <path d={SQ} fill="none" stroke="rgba(6,29,57,0.12)" strokeWidth="2" />
+      <g clipPath="url(#sq-ca)">
+        {/* Calendar frame */}
+        <rect x="84" y="116" width="344" height="320" rx="22" fill="#ffffff" stroke={P.lb} strokeWidth="2" />
+        {/* Dark header */}
+        <rect x="84" y="116" width="344" height="56" rx="22" fill={P.navy} />
+        <rect x="84" y="148" width="344" height="24" fill={P.navy} />
+        {/* Hanger pegs */}
+        <rect x="146" y="96"  width="14" height="40" rx="6" fill={P.navy} />
+        <rect x="352" y="96"  width="14" height="40" rx="6" fill={P.navy} />
+        {/* Header text placeholders */}
+        <rect x="108" y="138" width="92" height="8" rx="4" fill="#ffffff" opacity="0.95" />
+        <rect x="108" y="152" width="50" height="6" rx="3" fill="#ffffff" opacity="0.45" />
+        {/* Day cells */}
+        {cells}
+        {/* Sync circular-arrow arc inside the header (270° CW, white) */}
+        <g fill="none" stroke="rgba(255,255,255,0.82)" strokeWidth="7"
+          strokeLinecap="round" strokeLinejoin="round">
+          <path d="M 394 122 A 26 26 0 1 1 368 148" />
+          <path d="M 361 141 L 368 148 L 375 141" />
+        </g>
+      </g>
     </svg>
   );
 }
 
+/* ── Registry ────────────────────────────────────────────────────────────── */
 const LOGOS = {
   assemblies: AssembliesLogo,
   readiness:  ReadinessLogo,
@@ -217,7 +297,6 @@ const LOGOS = {
   calendar:   CalendarLogo,
 };
 
-/** Returns the correct logo component for a given app id, or null. */
 export default function AppLogo({ appId, size = 48 }) {
   const Logo = LOGOS[appId];
   return Logo ? <Logo size={size} /> : null;
