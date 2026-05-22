@@ -189,6 +189,23 @@ module.exports = {
       merge_logs:    true,
     },
 
+    // ── Vendor Tracker ──────────────────────────────────────────────────────
+    {
+      name:          'sdc-vendor',
+      script:        'server/server.js',
+      cwd:           'C:/Transfer/Projects/Vendors tracking dashboard',
+      env: {
+        PORT:             '4006',
+        NODE_ENV:         'production',
+        NODE_NO_WARNINGS: '1',
+      },
+      watch:         false,
+      max_restarts:  10,
+      restart_delay: 3000,
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs:    true,
+    },
+
     // ── SDC Calendar ────────────────────────────────────────────────────────
     {
       name:          'sdc-calendar',

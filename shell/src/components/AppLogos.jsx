@@ -288,6 +288,62 @@ export function CalendarLogo({ size = 48 }) {
   );
 }
 
+/* ── VENDOR TRACKER ──────────────────────────────────────────────────────── */
+export function VendorLogo({ size = 48 }) {
+  // Bar chart tops (floor=270): bars of height 126, 88, 110, 72
+  const floor = 270;
+  const bars = [
+    { x: 118, h: 126, fill: P.blue,  op: null },
+    { x: 205, h: 88,  fill: P.lb,    op: null },
+    { x: 292, h: 110, fill: P.navy,  op: null },
+    { x: 379, h: 72,  fill: P.blue,  op: '0.6' },
+  ];
+  const cx = bars.map(b => b.x + 29);      // [147, 234, 321, 408]
+  const cy = bars.map(b => floor - b.h);   // [144, 182, 160, 198]
+  const pts = cx.map((x, i) => `${x},${cy[i]}`).join(' ');
+
+  return (
+    <svg viewBox="0 0 512 512" width={size} height={size} xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <clipPath id="sq-vd"><path d={SQ} /></clipPath>
+        {BG_GRAD('bg-vd')}
+      </defs>
+      <path d={SQ} fill="url(#bg-vd)" />
+      <path d={SQ} fill="none" stroke="rgba(6,29,57,0.12)" strokeWidth="2" />
+      <g clipPath="url(#sq-vd)">
+        {/* Floor line */}
+        <line x1="96" y1={floor} x2="416" y2={floor} stroke={P.navy} strokeWidth="2" opacity="0.15" />
+        {/* Bars */}
+        {bars.map((b, i) => (
+          <rect key={i} x={b.x} y={floor - b.h} width="58" height={b.h} rx="8"
+            fill={b.fill} opacity={b.op ?? undefined} />
+        ))}
+        {/* Growth trend line connecting bar tops */}
+        <polyline points={pts} fill="none" stroke={P.green}
+          strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+        {cx.map((x, i) => (
+          <circle key={i} cx={x} cy={cy[i]} r="5" fill={P.green} />
+        ))}
+        {/* Vendor score rows */}
+        <rect x="88" y="284" width="336" height="44" rx="10" fill="#f4f8fc" stroke={P.lb} strokeWidth="1.5" />
+        <circle cx="113" cy="306" r="9" fill={P.blue} />
+        <rect x="133" y="298" width="186" height="7" rx="3.5" fill={P.blue} opacity="0.85" />
+        <rect x="133" y="311" width="104" height="5" rx="2.5" fill={P.lb} />
+
+        <rect x="88" y="340" width="336" height="44" rx="10" fill="#f4f8fc" stroke={P.lb} strokeWidth="1.5" />
+        <circle cx="113" cy="362" r="9" fill={P.green} />
+        <rect x="133" y="354" width="148" height="7" rx="3.5" fill={P.green} opacity="0.85" />
+        <rect x="133" y="367" width="82" height="5" rx="2.5" fill={P.lb} />
+
+        <rect x="88" y="396" width="336" height="44" rx="10" fill="#f4f8fc" stroke={P.lb} strokeWidth="1.5" />
+        <circle cx="113" cy="418" r="9" fill={P.yel} />
+        <rect x="133" y="410" width="110" height="7" rx="3.5" fill={P.yel} opacity="0.9" />
+        <rect x="133" y="423" width="60" height="5" rx="2.5" fill={P.lb} />
+      </g>
+    </svg>
+  );
+}
+
 /* ── Registry ────────────────────────────────────────────────────────────── */
 const LOGOS = {
   assemblies: AssembliesLogo,
@@ -295,6 +351,7 @@ const LOGOS = {
   scheduler:  SchedulerLogo,
   statelogic: StateLogicLogo,
   calendar:   CalendarLogo,
+  vendor:     VendorLogo,
 };
 
 export default function AppLogo({ appId, size = 48 }) {

@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import AppLogo from './AppLogos'
 
-const SHORTCUT_INDEX = { assemblies: 1, readiness: 2, scheduler: 3, statelogic: 4, calendar: 5 }
+const SHORTCUT_INDEX = { assemblies: 1, readiness: 2, scheduler: 3, statelogic: 4, calendar: 5, vendor: 6 }
 
 /** Returns true if a hex color is light enough to need dark text */
 function isLight(hex) {

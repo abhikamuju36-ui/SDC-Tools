@@ -9,7 +9,7 @@ import RecentActivity from './components/RecentActivity'
 import WindowChrome from './components/WindowChrome'
 import LoginScreen from './screens/LoginScreen'
 
-const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'calendar'].map(id => ({
+const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'calendar', 'vendor'].map(id => ({
   id,
   name: {
     assemblies: 'Assemblies Library',
@@ -17,6 +17,7 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
     scheduler:  'SDC Scheduler',
     statelogic: 'State Logic Builder',
     calendar:   'SDC Calendar',
+    vendor:     'Vendor Tracker',
   }[id],
   description: {
     assemblies: 'SolidWorks CAD assembly search and check-out — 18,442 assemblies in the vault.',
@@ -24,6 +25,7 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
     scheduler:  'Gantt views, resource load, and two-way Smartsheet sync for active projects.',
     statelogic: 'Author PLC state machines and export Allen-Bradley L5X for ControlLogix.',
     calendar:   'Company-wide calendar — events, birthdays, paydays, Scheduler sync.',
+    vendor:     'Procurement analytics — vendor scorecards, PO ledger & spend tracking.',
   }[id],
   status: 'starting',
   color: {
@@ -32,6 +34,7 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
     scheduler:  '#FFDE51',
     statelogic: '#ea580c',
     calendar:   '#74C415',
+    vendor:     '#1574C4',
   }[id],
   url: '',
 }))
@@ -204,7 +207,7 @@ export default function App() {
         searchRef.current?.focus()
       }
       // Ctrl+1–5 opens apps
-      if (e.ctrlKey && e.key >= '1' && e.key <= '5') {
+      if (e.ctrlKey && e.key >= '1' && e.key <= '6') {
         const idx = Number(e.key) - 1
         const app = apps[idx]
         if (app?.status === 'running') handleOpen(app.id)
