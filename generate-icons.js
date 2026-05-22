@@ -1,10 +1,4 @@
 'use strict';
-/**
- * generate-icons.js
- * Converts the JSX icon definitions from app icon/icons.jsx
- * into 512×512 PNG files in shell/build/icons/.
- * Run: node generate-icons.js
- */
 const fs   = require('fs');
 const path = require('path');
 
@@ -12,22 +6,18 @@ const OUT = path.join(__dirname, 'shell', 'build', 'icons');
 fs.mkdirSync(OUT, { recursive: true });
 
 const P = {
-  bg:        '#ffffff',
-  bgSoft:    '#f4f7fb',
   blue:      '#1574C4',
   navy:      '#061D39',
   lightBlue: '#AACEE8',
   yellow:    '#FFDE51',
   green:     '#74C415',
-  gray:      '#D9D9D9',
-  black:     '#231F20',
   ink:       'rgba(6,29,57,0.55)',
   inkDim:    'rgba(6,29,57,0.28)',
   inkFaint:  'rgba(6,29,57,0.10)',
   hairline:  'rgba(6,29,57,0.12)',
 };
 
-/* ── Squircle (iOS superellipse) ────────────────────────────────────────── */
+/* ── Squircle ───────────────────────────────────────────────────────────── */
 function squirclePath(s = 512) {
   const r = s * 0.2237, c = r * 0.55228;
   const f = n => n.toFixed(2);
@@ -43,6 +33,7 @@ function squirclePath(s = 512) {
   ].join(' ');
 }
 
+/* Light background frame (sub-apps) */
 function frame(id, inner) {
   const sq = squirclePath(512);
   return `<svg viewBox="0 0 512 512" width="512" height="512" xmlns="http://www.w3.org/2000/svg">
@@ -59,29 +50,27 @@ function frame(id, inner) {
 </svg>`;
 }
 
-/* ── Gear path ──────────────────────────────────────────────────────────── */
+/* ── Gear (FIXED: no heavy stroke, subtle offset shadow) ─────────────────── */
 function gearPath() {
-  const teeth = 10, rO = 140, rI = 110, hw = 0.18;
+  const teeth = 10, rO = 138, rI = 112, hw = 0.15;
   const pts = [];
   for (let i = 0; i < teeth; i++) {
     const a  = (i / teeth) * Math.PI * 2 - Math.PI / 2;
     const aN = ((i+1) / teeth) * Math.PI * 2 - Math.PI / 2;
-    [[a-hw, rO],[a+hw, rO],[a+hw+0.10, rI],[aN-hw-0.10, rI]].forEach(([ang, r]) =>
+    [[a-hw,rO],[a+hw,rO],[a+hw+0.10,rI],[aN-hw-0.10,rI]].forEach(([ang,r]) =>
       pts.push(`${(Math.cos(ang)*r).toFixed(2)},${(Math.sin(ang)*r).toFixed(2)}`)
     );
   }
   return `M ${pts.join(' L ')} Z`;
 }
-function gear(color, stroke) {
+function gear(color) {
   const d = gearPath();
-  const sw = stroke && stroke !== 'none' ? `stroke="${stroke}" stroke-width="3" stroke-linejoin="round"` : 'stroke="none"';
-  const dotFill = stroke && stroke !== 'none' ? P.navy : color;
-  return `<path d="${d}" fill="${color}" ${sw}/>
-    <circle cx="0" cy="0" r="40" fill="#ffffff" ${sw}/>
-    <circle cx="0" cy="0" r="14" fill="${dotFill}"/>`;
+  return `<path d="${d}" fill="${color}"/>
+    <circle cx="0" cy="0" r="40" fill="#ffffff"/>
+    <circle cx="0" cy="0" r="14" fill="${color}"/>`;
 }
 
-/* ── ICON 1 — Assemblies Library ────────────────────────────────────────── */
+/* ── ICON 1 — Assemblies (FIXED: clean gear, no heavy shadow) ────────────── */
 function iconAssemblies() {
   return frame('assemblies', `
   <rect x="118" y="262" width="240" height="160" rx="14" fill="#dde9f5" stroke="${P.lightBlue}" stroke-width="1.5"/>
@@ -97,12 +86,12 @@ function iconAssemblies() {
   <rect x="178" y="252" width="190" height="6" rx="3" fill="#9ab9d4"/>
   <rect x="178" y="270" width="100" height="6" rx="3" fill="#9ab9d4"/>
   <g transform="translate(256,220) rotate(-12)">
-    <g transform="translate(6,12)">${gear(P.navy,'none')}</g>
-    ${gear(P.blue, P.navy)}
+    <g transform="translate(3,4)" opacity="0.18">${gear(P.navy)}</g>
+    ${gear(P.blue)}
   </g>`);
 }
 
-/* ── ICON 2 — Build Readiness Report ───────────────────────────────────── */
+/* ── ICON 2 — Build Readiness (unchanged) ───────────────────────────────── */
 function iconReadiness() {
   const rows = [
     { y:156, ok:true,  w1:150, w2:100 },
@@ -139,7 +128,7 @@ function iconReadiness() {
   </g>`);
 }
 
-/* ── ICON 3 — SDC Scheduler ─────────────────────────────────────────────── */
+/* ── ICON 3 — Scheduler (unchanged) ─────────────────────────────────────── */
 function iconScheduler() {
   const vl = [1,2,3,4,5,6].map(i =>
     `<line x1="${88+i*56}" y1="120" x2="${88+i*56}" y2="392" stroke="${P.inkFaint}" stroke-width="1.5"/>`).join('');
@@ -162,13 +151,13 @@ function iconScheduler() {
   ${dt}`);
 }
 
-/* ── ICON 4 — State Logic Builder ───────────────────────────────────────── */
+/* ── ICON 4 — State Logic (FIXED: darker grid lines) ────────────────────── */
 function iconStateLogic() {
   const rungs = [120,176,232,288,344,400].map(y =>
-    `<line x1="76" y1="${y}" x2="436" y2="${y}" stroke="${P.lightBlue}" stroke-width="1.5" opacity="0.45"/>`).join('');
+    `<line x1="76" y1="${y}" x2="436" y2="${y}" stroke="${P.lightBlue}" stroke-width="2" opacity="0.7"/>`).join('');
   return frame('statelogic', `
-  <line x1="76" y1="100" x2="76" y2="412" stroke="${P.lightBlue}" stroke-width="2" opacity="0.6"/>
-  <line x1="436" y1="100" x2="436" y2="412" stroke="${P.lightBlue}" stroke-width="2" opacity="0.6"/>
+  <line x1="76"  y1="100" x2="76"  y2="412" stroke="${P.lightBlue}" stroke-width="2.5" opacity="0.85"/>
+  <line x1="436" y1="100" x2="436" y2="412" stroke="${P.lightBlue}" stroke-width="2.5" opacity="0.85"/>
   ${rungs}
   <g stroke="${P.lightBlue}" stroke-width="2.5" fill="none">
     <line x1="118" y1="115" x2="118" y2="125"/>
@@ -198,7 +187,7 @@ function iconStateLogic() {
   </g>`);
 }
 
-/* ── ICON 5 — SDC Calendar ──────────────────────────────────────────────── */
+/* ── ICON 5 — Calendar (FIXED: sync arc fully inside header) ────────────── */
 function iconCalendar() {
   const cols=4, rows=3, gx=100, gy=184, gw=312, gh=234;
   const cw=gw/cols, ch=gh/rows;
@@ -224,14 +213,116 @@ function iconCalendar() {
   <rect x="108" y="138" width="92" height="8" rx="4" fill="#ffffff" opacity="0.95"/>
   <rect x="108" y="152" width="50" height="6" rx="3" fill="#ffffff" opacity="0.45"/>
   ${cells}
-  <g fill="none" stroke="${P.blue}" stroke-width="8" stroke-linecap="round">
-    <path d="M 360 86 A 70 70 0 0 1 430 156"/>
-    <path d="M 422 138 L 432 156 L 414 162" stroke-linejoin="round"/>
+  <g fill="none" stroke="rgba(255,255,255,0.82)" stroke-width="7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M 394 122 A 26 26 0 1 1 368 148"/>
+    <path d="M 361 141 L 368 148 L 375 141"/>
   </g>`);
 }
 
-/* ── Render all to PNG via sharp ────────────────────────────────────────── */
-const icons = {
+/* ── ICON — SDC Tools Main App ──────────────────────────────────────────── */
+function iconSDCTools() {
+  const sq = squirclePath(512);
+  const cx = 256, cy = 236, R = 128;
+
+  const apps = [
+    { angle: -90, color: '#1574C4' },   // Assemblies  — top
+    { angle: -18, color: '#74C415' },   // Readiness   — top-right
+    { angle:  54, color: '#FFDE51' },   // Scheduler   — bottom-right
+    { angle: 126, color: '#AACEE8' },   // State Logic — bottom-left
+    { angle: 198, color: '#1574C4' },   // Calendar    — top-left
+  ];
+  const rad = a => a * Math.PI / 180;
+  const pts = apps.map(a => ({
+    x: cx + R * Math.cos(rad(a.angle)),
+    y: cy + R * Math.sin(rad(a.angle)),
+    color: a.color,
+  }));
+
+  const penta = pts.map((p, i) => {
+    const n = pts[(i+1) % 5];
+    return `<line x1="${p.x.toFixed(1)}" y1="${p.y.toFixed(1)}"
+             x2="${n.x.toFixed(1)}" y2="${n.y.toFixed(1)}"
+             stroke="rgba(255,255,255,0.1)" stroke-width="1.5"/>`;
+  }).join('');
+
+  const spokes = pts.map(p =>
+    `<line x1="${cx}" y1="${cy}" x2="${p.x.toFixed(1)}" y2="${p.y.toFixed(1)}"
+     stroke="rgba(255,255,255,0.18)" stroke-width="2"/>`
+  ).join('');
+
+  const dots = pts.map(p => `
+    <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="30"
+      fill="${p.color}" opacity="0.92"/>
+    <circle cx="${p.x.toFixed(1)}" cy="${p.y.toFixed(1)}" r="30"
+      fill="none" stroke="rgba(255,255,255,0.28)" stroke-width="2.5"/>
+  `).join('');
+
+  // Center SDC hub: dark inset circle + white oval ring + stylised S
+  const hub = `
+    <circle cx="${cx}" cy="${cy}" r="55" fill="#091e3a"/>
+    <ellipse cx="${cx}" cy="${cy}" rx="42" ry="28"
+      fill="none" stroke="rgba(255,255,255,0.88)" stroke-width="4.5"/>
+    <path d="M 272 228 C 284 222 282 238 256 240 C 230 242 228 256 240 258"
+      fill="none" stroke="rgba(255,255,255,0.88)" stroke-width="7"
+      stroke-linecap="round"/>
+  `;
+
+  // Subtle label bars at bottom
+  const bars = `
+    <rect x="194" y="408" width="124" height="6" rx="3" fill="rgba(255,255,255,0.18)"/>
+    <rect x="214" y="422" width="84"  height="5" rx="2.5" fill="rgba(255,255,255,0.10)"/>
+  `;
+
+  return `<svg viewBox="0 0 512 512" width="512" height="512" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <clipPath id="sq-tools"><path d="${sq}"/></clipPath>
+    <radialGradient id="bg-tools" cx="50%" cy="40%" r="65%">
+      <stop offset="0%" stop-color="#0e2d54"/>
+      <stop offset="100%" stop-color="#061D39"/>
+    </radialGradient>
+  </defs>
+  <path d="${sq}" fill="url(#bg-tools)"/>
+  <g clip-path="url(#sq-tools)">
+    ${penta}
+    ${spokes}
+    ${dots}
+    ${hub}
+    ${bars}
+  </g>
+</svg>`;
+}
+
+/* ── Build ICO (PNG-in-ICO, Vista+) ─────────────────────────────────────── */
+async function buildIco(sharp, pngPath, icoPath) {
+  const sizes   = [16, 32, 48, 256];
+  const images  = await Promise.all(sizes.map(s =>
+    sharp(pngPath).resize(s, s).png().toBuffer()
+  ));
+  const count   = sizes.length;
+  const header  = Buffer.alloc(6);
+  header.writeUInt16LE(0, 0);
+  header.writeUInt16LE(1, 2);
+  header.writeUInt16LE(count, 4);
+
+  let offset = 6 + count * 16;
+  const entries = images.map((img, i) => {
+    const sz = sizes[i];
+    const e  = Buffer.alloc(16);
+    e.writeUInt8(sz === 256 ? 0 : sz, 0);
+    e.writeUInt8(sz === 256 ? 0 : sz, 1);
+    e.writeUInt8(0, 2); e.writeUInt8(0, 3);
+    e.writeUInt16LE(1,  4);
+    e.writeUInt16LE(32, 6);
+    e.writeUInt32LE(img.length, 8);
+    e.writeUInt32LE(offset,     12);
+    offset += img.length;
+    return e;
+  });
+  fs.writeFileSync(icoPath, Buffer.concat([header, ...entries, ...images]));
+}
+
+/* ── Render ──────────────────────────────────────────────────────────────── */
+const subIcons = {
   assemblies: iconAssemblies(),
   readiness:  iconReadiness(),
   scheduler:  iconScheduler(),
@@ -241,12 +332,23 @@ const icons = {
 
 async function main() {
   const sharp = require('sharp');
-  for (const [name, svg] of Object.entries(icons)) {
+
+  // Sub-app icons → shell/build/icons/
+  for (const [name, svg] of Object.entries(subIcons)) {
     const out = path.join(OUT, `${name}.png`);
     await sharp(Buffer.from(svg)).resize(512, 512).png().toFile(out);
     console.log(`✓ ${name}.png`);
   }
-  console.log('\nAll icons saved to shell/build/icons/');
+
+  // Main SDC Tools icon → shell/build/icon.png + icon.ico
+  const mainPng = path.join(__dirname, 'shell', 'build', 'icon.png');
+  const mainIco = path.join(__dirname, 'shell', 'build', 'icon.ico');
+  await sharp(Buffer.from(iconSDCTools())).resize(512, 512).png().toFile(mainPng);
+  console.log('✓ icon.png (main app)');
+  await buildIco(sharp, mainPng, mainIco);
+  console.log('✓ icon.ico (main app)');
+
+  console.log('\nAll icons saved.');
 }
 
 main().catch(e => { console.error(e); process.exit(1); });
