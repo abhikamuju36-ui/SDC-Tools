@@ -1,0 +1,676 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="light">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Vendor Tracker | SDC Procurement Dashboard</title>
+
+  <!-- Stylesheet -->
+  <link rel="stylesheet" href="styles.css">
+
+  <!-- Chart.js for data visualizations -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+</head>
+<body>
+
+<div class="app">
+
+  <!-- ============================
+       SIDEBAR
+       ============================ -->
+  <aside class="sidebar">
+
+    <div class="sidebar-brand">
+      <div class="sidebar-logo">SDC</div>
+      <div class="sidebar-name">
+        Vendor Tracker
+        <span>Procurement Analytics</span>
+      </div>
+    </div>
+
+    <div class="sidebar-section-label">Main Menu</div>
+    <nav class="nav">
+      <button id="tab-overview" class="tab-btn nav-item active">
+        <i data-lucide="layout-dashboard"></i>
+        Overview
+        <span class="nav-item-badge">All</span>
+      </button>
+      <button id="tab-analyzer" class="tab-btn nav-item">
+        <i data-lucide="sliders"></i>
+        Project Analyzer
+      </button>
+      <button id="tab-vendor" class="tab-btn nav-item">
+        <i data-lucide="users"></i>
+        Vendor Analyzer
+      </button>
+    </nav>
+
+    <div class="sidebar-divider"></div>
+
+    <div class="sidebar-section-label">Actions</div>
+    <div class="sidebar-actions">
+      <button id="btn-new-vendor" class="btn btn-secondary sidebar-action-btn">
+        <i data-lucide="user-plus"></i>
+        Add Vendor
+      </button>
+      <button id="btn-new-order" class="btn btn-primary sidebar-action-btn">
+        <i data-lucide="file-plus"></i>
+        Create PO
+      </button>
+    </div>
+
+    <div class="sidebar-foot">
+      <div class="user-chip">
+        <div class="user-avatar">SD</div>
+        <div class="user-details">
+          <div class="user-name">SDC Team</div>
+          <div class="user-role">Procurement</div>
+        </div>
+        <button id="theme-toggle-btn" class="icon-btn" title="Toggle Theme">
+          <i id="theme-icon" data-lucide="sun"></i>
+        </button>
+      </div>
+    </div>
+
+  </aside>
+
+  <!-- ============================
+       MAIN CONTENT
+       ============================ -->
+  <div class="main">
+
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="crumbs">
+        <i data-lucide="home"></i>
+        Vendor Tracker
+        <i data-lucide="chevron-right"></i>
+        <strong id="topbar-crumb-active">Overview</strong>
+      </div>
+      <div class="topbar-search-wrap">
+        <i data-lucide="search"></i>
+        <input type="text" id="topbar-search" placeholder="Search projects, vendors, POs…" />
+      </div>
+      <div class="topbar-actions">
+        <!-- intentionally empty — actions live in sidebar -->
+      </div>
+    </header>
+
+    <!-- Page Content -->
+    <div class="page">
+
+      <!-- ============================
+           SHARED KPI METRICS GRID
+           ============================ -->
+      <section class="metrics-grid">
+
+        <div class="metric-card spend">
+          <div class="metric-header">
+            <span class="metric-title">Total Spend</span>
+            <div class="metric-icon-wrapper">
+              <i data-lucide="dollar-sign"></i>
+            </div>
+          </div>
+          <div class="metric-value kpi-total-spend">$0</div>
+          <div class="metric-footer" id="kpi-spend-trend">
+            <span class="trend-badge up">
+              <i data-lucide="arrow-up-right"></i>
+              +0%
+            </span>
+            <span class="text">vs last month</span>
+          </div>
+        </div>
+
+        <div class="metric-card avg-spend">
+          <div class="metric-header">
+            <span class="metric-title">Avg Order Size</span>
+            <div class="metric-icon-wrapper">
+              <i data-lucide="credit-card"></i>
+            </div>
+          </div>
+          <div class="metric-value kpi-avg-spend">$0</div>
+          <div class="metric-footer" id="kpi-avg-trend">
+            <span class="trend-badge up">
+              <i data-lucide="arrow-up-right"></i>
+              +0%
+            </span>
+            <span class="text">vs last month</span>
+          </div>
+        </div>
+
+        <div class="metric-card shipping">
+          <div class="metric-header">
+            <span class="metric-title">Avg Shipping Duration</span>
+            <div class="metric-icon-wrapper">
+              <i data-lucide="truck"></i>
+            </div>
+          </div>
+          <div class="metric-value kpi-shipping">0 Days</div>
+          <div class="metric-footer" id="kpi-ship-trend">
+            <span class="trend-badge up">
+              <i data-lucide="arrow-up-right"></i>
+              -0.0d
+            </span>
+            <span class="text">faster speed</span>
+          </div>
+        </div>
+
+        <div class="metric-card ontime">
+          <div class="metric-header">
+            <span class="metric-title">On-Time Rate</span>
+            <div class="metric-icon-wrapper">
+              <i data-lucide="calendar-check"></i>
+            </div>
+          </div>
+          <div class="metric-value kpi-on-time">0%</div>
+          <div class="metric-footer" id="kpi-ontime-trend">
+            <span class="trend-badge up">
+              <i data-lucide="arrow-up-right"></i>
+              +0%
+            </span>
+            <span class="text">vs last month</span>
+          </div>
+        </div>
+
+      </section>
+
+      <!-- ============================
+           TAB PANEL 1: OVERVIEW
+           ============================ -->
+      <main id="panel-overview" class="tab-content active">
+
+        <section class="charts-grid">
+          <div class="dashboard-card">
+            <div class="card-header">
+              <div class="card-title">
+                <h3>Spend Allocation by Project</h3>
+                <p>Total purchase order distribution across all active initiatives</p>
+              </div>
+            </div>
+            <div class="chart-container">
+              <canvas id="spendChart"></canvas>
+            </div>
+          </div>
+
+          <div class="dashboard-card">
+            <div class="card-header">
+              <div class="card-title">
+                <h3>Vendor Delivery Performance</h3>
+                <p>Average on-time reliability index by vendor (%)</p>
+              </div>
+            </div>
+            <div class="chart-container">
+              <canvas id="performanceChart"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <section class="dashboard-split">
+
+          <!-- Vendor Scorecards -->
+          <div class="dashboard-card">
+            <div class="card-header">
+              <div class="card-title">
+                <h3>Vendor Scorecards &amp; Rankings</h3>
+                <p>Performance ratings out of 100 based on delivery and volume</p>
+              </div>
+            </div>
+            <div class="vendor-list-container">
+              <div id="vendors-ranking-list"></div>
+            </div>
+          </div>
+
+          <!-- Purchase Order Ledger -->
+          <div class="dashboard-card">
+            <div class="card-header">
+              <div class="card-title">
+                <h3>Purchase Order Ledger</h3>
+                <p>Real-time purchase order tracker across all projects</p>
+              </div>
+            </div>
+
+            <div class="filters-bar">
+              <div class="search-input-wrapper">
+                <i data-lucide="search" class="search-icon"></i>
+                <input type="text" id="search-overview" class="search-input" placeholder="Search POs, vendors, or projects…">
+              </div>
+              <div class="filter-selects">
+                <select id="filter-status-overview" class="form-select">
+                  <option value="">All Statuses</option>
+                  <option value="delivered">Delivered</option>
+                  <option value="shipped">Shipped</option>
+                  <option value="pending">Pending</option>
+                  <option value="delayed">Delayed / Overdue</option>
+                </select>
+              </div>
+            </div>
+
+            <div class="table-responsive">
+              <table class="data-table">
+                <thead>
+                  <tr>
+                    <th>PO ID</th>
+                    <th>Project</th>
+                    <th>Vendor</th>
+                    <th>Order Date</th>
+                    <th>Due Date</th>
+                    <th>Amount</th>
+                    <th>Status</th>
+                  </tr>
+                </thead>
+                <tbody id="recent-orders-body"></tbody>
+              </table>
+            </div>
+          </div>
+
+        </section>
+
+      </main>
+
+      <!-- ============================
+           TAB PANEL 2: PROJECT ANALYZER
+           ============================ -->
+      <main id="panel-analyzer" class="tab-content">
+
+        <!-- Project Selector Bar -->
+        <div class="project-selector-wrapper">
+          <div class="project-select-label">
+            <i data-lucide="folder-kanban" style="color: var(--sdc-blue);"></i>
+            <span class="select-title">Analyze Project:</span>
+            <select id="project-selector" class="form-select" style="font-size: 0.95rem; padding: 6px 28px 6px 10px; font-weight: 600; min-width: 220px;">
+              <!-- Dynamically Populated -->
+            </select>
+          </div>
+          <div class="project-pill-details">
+            <div class="project-pill" id="proj-pill-budget">Budget: <strong>$0</strong></div>
+            <div class="project-pill" id="proj-pill-status">Status: <strong>Active</strong></div>
+            <div class="project-pill" id="proj-pill-vendor-count">Vendors: <strong>0</strong></div>
+          </div>
+        </div>
+
+        <!-- Primary Vendor Insights -->
+        <section class="dashboard-card" id="analyzer-vendor-insight-card" style="margin-bottom: 1rem;">
+          <div class="card-header">
+            <div class="card-title">
+              <h3>Primary Vendor Performance on Project</h3>
+              <p>Metrics for the top supplier by total financial spend inside the selected project</p>
+            </div>
+          </div>
+
+          <div class="kpi-grid" style="margin-top: 0.5rem; margin-bottom: 0;">
+            <div class="card kpi-card">
+              <div class="kpi-icon-container" style="background: var(--sdc-light-blue-tint); color: var(--sdc-blue);">
+                <i data-lucide="award" style="width:20px;height:20px;"></i>
+              </div>
+              <div class="kpi-info">
+                <h3 class="kpi-title">Primary Supplier</h3>
+                <div class="kpi-value-row">
+                  <span class="kpi-number" id="analyzer-vendor-top-name" style="font-size: 1.05rem; word-break: break-word;">—</span>
+                </div>
+                <span class="score-label" id="analyzer-vendor-top-spend">—</span>
+              </div>
+            </div>
+
+            <div class="card kpi-card">
+              <div class="kpi-icon-container" style="background: var(--positive-tint); color: var(--positive);">
+                <i data-lucide="shield-check" style="width:20px;height:20px;"></i>
+              </div>
+              <div class="kpi-info">
+                <h3 class="kpi-title">Supplier On-Time Rate</h3>
+                <div class="kpi-value-row">
+                  <span class="kpi-number" id="analyzer-vendor-ontime">—</span>
+                </div>
+                <span class="score-label">For this project's orders</span>
+              </div>
+            </div>
+
+            <div class="card kpi-card">
+              <div class="kpi-icon-container" style="background: var(--warning-tint); color: var(--warning);">
+                <i data-lucide="truck" style="width:20px;height:20px;"></i>
+              </div>
+              <div class="kpi-info">
+                <h3 class="kpi-title">Avg Shipping Speed</h3>
+                <div class="kpi-value-row">
+                  <span class="kpi-number" id="analyzer-vendor-shipping">—</span>
+                </div>
+                <span class="score-label">Mean fulfillment duration</span>
+              </div>
+            </div>
+
+            <div class="card kpi-card">
+              <div class="kpi-icon-container" style="background: var(--sdc-light-blue-tint); color: var(--sdc-blue);">
+                <i data-lucide="shopping-bag" style="width:20px;height:20px;"></i>
+              </div>
+              <div class="kpi-info">
+                <h3 class="kpi-title">Project Volume</h3>
+                <div class="kpi-value-row">
+                  <span class="kpi-number" id="analyzer-vendor-volume">—</span>
+                </div>
+                <span class="score-label">Total requisitions placed</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Project Charts -->
+        <section class="charts-grid" style="margin-bottom: 1rem;">
+          <div class="dashboard-card">
+            <div class="card-header">
+              <div class="card-title">
+                <h3>Vendor Budget Share</h3>
+                <p>Breakdown of total spend apportioned to each supplier on this project</p>
+              </div>
+            </div>
+            <div class="chart-container">
+              <canvas id="projectSpendChart"></canvas>
+            </div>
+          </div>
+
+          <div class="dashboard-card">
+            <div class="card-header">
+              <div class="card-title">
+                <h3>Cumulative Spending Curve</h3>
+                <p>Budget exhaustion projection over individual order dates</p>
+              </div>
+            </div>
+            <div class="chart-container">
+              <canvas id="projectTrendChart"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <!-- Smartsheet Milestones -->
+        <section class="dashboard-card" style="margin-bottom: 1rem; display: none;" id="smartsheet-milestones-card">
+          <div class="card-header">
+            <div class="card-title">
+              <h3>Smartsheet Schedule Milestones</h3>
+              <p id="smartsheet-meta-info">Sourced from project schedule tracker sheet</p>
+            </div>
+            <div class="project-pill" id="smartsheet-source-pill" style="font-size: 0.75rem;">
+              Source: Live Sync
+            </div>
+          </div>
+          <div id="smartsheet-milestones-list" style="display: flex; gap: 1rem; overflow-x: auto; padding: 0.5rem 0; scrollbar-width: thin;">
+            <!-- Dynamically Populated -->
+          </div>
+        </section>
+
+        <!-- Project PO Table -->
+        <section class="dashboard-card">
+          <div class="card-header">
+            <div class="card-title">
+              <h3>Project Purchase Orders</h3>
+              <p>Filtered list of purchase requisitions assigned to this project</p>
+            </div>
+          </div>
+
+          <div class="filters-bar">
+            <div class="search-input-wrapper">
+              <i data-lucide="search" class="search-icon"></i>
+              <input type="text" id="search-analyzer" class="search-input" placeholder="Search POs or vendors…">
+            </div>
+            <div class="filter-selects">
+              <select id="filter-status-analyzer" class="form-select">
+                <option value="">All Statuses</option>
+                <option value="delivered">Delivered</option>
+                <option value="shipped">Shipped</option>
+                <option value="pending">Pending</option>
+                <option value="delayed">Delayed / Overdue</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="table-responsive">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>PO ID</th>
+                  <th>Vendor</th>
+                  <th>Order Date</th>
+                  <th>Shipping Date</th>
+                  <th>Amount</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="analyzer-orders-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+      </main>
+
+      <!-- ============================
+           TAB PANEL 3: VENDOR ANALYZER
+           ============================ -->
+      <main id="panel-vendor" class="tab-content">
+
+        <!-- Vendor Control Bar -->
+        <section class="dashboard-card" style="margin-bottom: 1rem;">
+          <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 1.25rem; align-items: center;">
+            <div>
+              <label for="vendor-selector" class="form-label" style="margin-bottom: 6px;">Select Supplier to Analyze</label>
+              <select id="vendor-selector" class="form-select" style="width: 100%;">
+                <!-- Dynamically Populated -->
+              </select>
+            </div>
+            <div id="vendor-contact-pill" class="vendor-contact-card">
+              <div style="font-size: 0.82rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px;">
+                <i data-lucide="mail" style="width:14px;height:14px;color:var(--sdc-blue);flex-shrink:0;"></i>
+                <span id="vendor-contact-email" style="font-weight:500;word-break:break-all;">procurement@supplier.com</span>
+              </div>
+              <div style="font-size: 0.82rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px;">
+                <i data-lucide="phone" style="width:14px;height:14px;color:var(--sdc-blue);flex-shrink:0;"></i>
+                <span id="vendor-contact-phone">—</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Vendor KPI Cards -->
+        <section class="kpi-grid">
+          <div class="card kpi-card">
+            <div class="kpi-icon-container" style="background: var(--sdc-light-blue-tint); color: var(--sdc-blue);">
+              <i data-lucide="wallet" style="width:20px;height:20px;"></i>
+            </div>
+            <div class="kpi-info">
+              <h3 class="kpi-title">Supplier Total Spend</h3>
+              <div class="kpi-value-row">
+                <span class="kpi-number" id="vendor-kpi-spend">$0</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card kpi-card">
+            <div class="kpi-icon-container" style="background: var(--positive-tint); color: var(--positive);">
+              <i data-lucide="shield-check" style="width:20px;height:20px;"></i>
+            </div>
+            <div class="kpi-info">
+              <h3 class="kpi-title">Reliability Rate</h3>
+              <div class="kpi-value-row">
+                <span class="kpi-number" id="vendor-kpi-ontime">0.0%</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card kpi-card">
+            <div class="kpi-icon-container" style="background: var(--warning-tint); color: var(--warning);">
+              <i data-lucide="truck" style="width:20px;height:20px;"></i>
+            </div>
+            <div class="kpi-info">
+              <h3 class="kpi-title">Average Shipping</h3>
+              <div class="kpi-value-row">
+                <span class="kpi-number" id="vendor-kpi-shipping">0.0 Days</span>
+              </div>
+            </div>
+          </div>
+
+          <div class="card kpi-card">
+            <div class="kpi-icon-container" style="background: var(--sdc-light-blue-tint); color: var(--sdc-blue);">
+              <i data-lucide="shopping-bag" style="width:20px;height:20px;"></i>
+            </div>
+            <div class="kpi-info">
+              <h3 class="kpi-title">Purchase Volume</h3>
+              <div class="kpi-value-row">
+                <span class="kpi-number" id="vendor-kpi-volume">0 Orders</span>
+              </div>
+            </div>
+          </div>
+        </section>
+
+        <!-- Vendor Charts -->
+        <section class="charts-grid" style="margin-top: 1rem; margin-bottom: 1rem;">
+          <div class="card chart-card">
+            <h2 class="chart-card-title">Project Spend Distribution</h2>
+            <div class="chart-wrapper">
+              <canvas id="vendorSpendChart"></canvas>
+            </div>
+          </div>
+          <div class="card chart-card">
+            <h2 class="chart-card-title">Order Status Breakdown</h2>
+            <div class="chart-wrapper">
+              <canvas id="vendorStatusChart"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <!-- Vendor PO Ledger -->
+        <section class="card table-card">
+          <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 1rem; margin-bottom: 1.25rem;">
+            <h2 class="table-card-title" style="margin-bottom: 0;">Supplier Purchase Order Ledger</h2>
+            <div style="display: flex; gap: 0.75rem; flex-wrap: wrap;">
+              <div class="search-box">
+                <i data-lucide="search" class="search-icon"></i>
+                <input type="text" id="search-vendor-po" placeholder="Search POs…" class="search-input" />
+              </div>
+              <select id="filter-status-vendor" class="filter-select">
+                <option value="">All Statuses</option>
+                <option value="Pending">Pending</option>
+                <option value="Shipped">Shipped</option>
+                <option value="Delivered">Delivered</option>
+                <option value="Delayed">Delayed</option>
+              </select>
+            </div>
+          </div>
+          <div class="table-wrapper">
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th>Purchase Order</th>
+                  <th>Project Name</th>
+                  <th>Order Date</th>
+                  <th>Estimated Arrival</th>
+                  <th>Amount</th>
+                  <th>Fulfillment</th>
+                </tr>
+              </thead>
+              <tbody id="vendor-orders-body"></tbody>
+            </table>
+          </div>
+        </section>
+
+      </main>
+
+    </div><!-- /.page -->
+  </div><!-- /.main -->
+
+</div><!-- /.app -->
+
+<!-- ============================
+     MODAL: ADD NEW VENDOR
+     ============================ -->
+<div id="modal-vendor" class="modal-overlay">
+  <div class="modal-window">
+    <div class="modal-header">
+      <h3>Create New Supplier Profile</h3>
+      <button class="modal-close-btn">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="form-vendor">
+        <div class="form-group">
+          <label class="form-label" for="vendor-name">Vendor Company Name</label>
+          <input type="text" id="vendor-name" class="form-input" placeholder="e.g. Atlas Foundry" required autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="vendor-category">Supplier Category</label>
+          <select id="vendor-category" class="form-select" style="width: 100%;" required>
+            <option value="" disabled selected>Select Category</option>
+            <option value="Raw Materials">Raw Materials</option>
+            <option value="Shipping &amp; Freight">Shipping &amp; Freight</option>
+            <option value="Electronics &amp; Chips">Electronics &amp; Chips</option>
+            <option value="Precision Engineering">Precision Engineering</option>
+            <option value="Support Services">Support Services</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="vendor-contact">Contact Email Address</label>
+          <input type="email" id="vendor-contact" class="form-input" placeholder="e.g. delivery@atlas.com" required autocomplete="off">
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary btn-close-modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Register Vendor</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- ============================
+     MODAL: CREATE PURCHASE ORDER
+     ============================ -->
+<div id="modal-order" class="modal-overlay">
+  <div class="modal-window">
+    <div class="modal-header">
+      <h3>Create Purchase Requisition</h3>
+      <button class="modal-close-btn">&times;</button>
+    </div>
+    <div class="modal-body">
+      <form id="form-order">
+        <div class="form-group">
+          <label class="form-label" for="order-project">Associated Project</label>
+          <select id="order-project" class="form-select" style="width: 100%;" required>
+            <!-- Dynamically Populated -->
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="order-vendor">Assigned Supplier</label>
+          <select id="order-vendor" class="form-select" style="width: 100%;" required>
+            <!-- Dynamically Populated -->
+          </select>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="order-amount">Requisition Amount ($)</label>
+          <input type="number" id="order-amount" class="form-input" min="1" placeholder="e.g. 15000" required autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="order-date">Requisition Order Date</label>
+          <input type="date" id="order-date" class="form-input" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="order-duedate">Target Delivery Date (Due Date)</label>
+          <input type="date" id="order-duedate" class="form-input" required>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="order-status">Initial Order Status</label>
+          <select id="order-status" class="form-select" style="width: 100%;" required>
+            <option value="Pending">Pending</option>
+            <option value="Shipped">Shipped</option>
+            <option value="Delivered">Delivered (Completed)</option>
+          </select>
+        </div>
+        <div class="form-actions">
+          <button type="button" class="btn btn-secondary btn-close-modal">Cancel</button>
+          <button type="submit" class="btn btn-primary">Generate PO</button>
+        </div>
+      </form>
+    </div>
+  </div>
+</div>
+
+<!-- Main JS -->
+<script src="app.js"></script>
+
+</body>
+</html>

@@ -1,0 +1,7 @@
+node_modules/
+server/cache/
+vendor dashboard/uploads/
+*.pdf
+*.png
+*.jpg
+*.jpeg
