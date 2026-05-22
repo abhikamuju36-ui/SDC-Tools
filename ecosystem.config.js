@@ -190,10 +190,14 @@ module.exports = {
     },
 
     // ── Vendor Tracker ──────────────────────────────────────────────────────
+    // cwd is relative to this ecosystem.config.js (the repo root).
+    // On the server: copy the "Vendors tracking dashboard" folder next to
+    // the repo root so it sits at  <repo-parent>\Vendors tracking dashboard
+    // e.g.  C:\AI Projects\Vendors tracking dashboard
     {
       name:          'sdc-vendor',
       script:        'server/server.js',
-      cwd:           'C:/Transfer/Projects/Vendors tracking dashboard',
+      cwd:           '../Vendors tracking dashboard',
       env: {
         PORT:             '4006',
         NODE_ENV:         'production',
