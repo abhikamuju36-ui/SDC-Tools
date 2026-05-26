@@ -26,9 +26,9 @@ jobs:
         working-directory: shell
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4.1.0
         with:
           node-version: '20'
           cache: npm
@@ -49,9 +49,9 @@ jobs:
         working-directory: SDC_Scheduler
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4.1.0
         with:
           node-version: '22'          # node:sqlite requires ≥ 22.5
           cache: npm
@@ -78,9 +78,9 @@ jobs:
         working-directory: "Assembilies library main"
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4.1.0
         with:
           node-version: '20'
           cache: npm
@@ -103,9 +103,9 @@ jobs:
         working-directory: Build_Readiness_Report
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4.1.0
         with:
           node-version: '20'
           cache: npm
@@ -129,9 +129,9 @@ jobs:
         working-directory: state_logic_builder
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4.2.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v4.1.0
         with:
           node-version: '20'
           cache: npm
