@@ -15,14 +15,27 @@ const authRouter        = require('./auth');
 const adminRouter       = require('./routes/admin');
 const schedulerRouter       = require('./routes/scheduler');
 const eventsRouter          = require('./routes/events');
+const employeesRouter       = require('./routes/employees');
 const notificationsRouter   = require('./routes/notifications');
 const NotificationService = require('./notificationService');
 
 NotificationService.start();
 
+const fs       = require('fs');
 const app      = express();
 const API_PORT = process.env.PORT        || 3001;
-const STATIC_DIR = path.join(__dirname, '..', 'frontend');
+
+// ── Static file strategy ────────────────────────────────────────────────────
+// Prefer the Vite production build (dist/) when it exists — self-contained,
+// hashed assets, no CDN dependency.
+// Fall back to the legacy frontend/ folder (CDN + Babel mode) when dist/ is
+// absent — keeps the app alive even when the Vite build hasn't run yet or
+// the dist/ was cleared.
+const distDir    = path.join(__dirname, '..', 'dist');
+const legacyDir  = path.join(__dirname, '..', 'frontend');
+const hasDistBuild = fs.existsSync(path.join(distDir, 'index.html'));
+const STATIC_DIR   = hasDistBuild ? distDir : legacyDir;
+logger.info(`[calendar] Serving frontend from: ${hasDistBuild ? 'dist/ (Vite build)' : 'frontend/ (legacy CDN)'}`);
 
 // ── Middleware ────────────────────────────────────────────
 // ALLOWED_ORIGINS: comma-separated list in .env for production deployments
@@ -65,12 +78,24 @@ app.use('/auth',             authRouter);
 app.use('/api/admin',        adminRouter);
 app.use('/api/scheduler',      schedulerRouter);
 app.use('/api/events',         eventsRouter);
+app.use('/api/employees',      employeesRouter);
 app.use('/api/notifications',  notificationsRouter);
 app.get('/health',     (_req, res) => res.json({ status: 'ok', service: 'calendar', uptime: process.uptime() }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
 // ── Serve static calendar files ───────────────────────────
 app.use(express.static(STATIC_DIR));
+
+// In production the Vite build outputs to dist/ (publicDir:false), so icons/
+// and assets/ from frontend/ are not copied there. Serve them separately so
+// logos, favicons and images resolve correctly regardless of build mode.
+// When serving the Vite build (dist/), icons/ and assets/ from frontend/ must
+// still be reachable — publicDir:false means Vite doesn't copy them into dist/.
+if (hasDistBuild) {
+  app.use('/icons',  express.static(path.join(legacyDir, 'icons')));
+  app.use('/assets', express.static(path.join(legacyDir, 'assets')));
+}
+
 // Catch-all: serve the calendar HTML for any unknown path
 app.get('*', (_req, res) => {
   res.sendFile(path.join(STATIC_DIR, 'index.html'));

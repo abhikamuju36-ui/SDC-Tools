@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SDC Centralized Calendar</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+  <link rel="icon" href="/icons/sdc-calendar-icon-C.ico" type="image/x-icon" />
+</head>
+<body>
+  <div id="pre-loader" style="position:fixed;inset:0;background:#0A1628;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:16px;z-index:9999">
+    <div style="width:200px;height:3px;background:rgba(255,255,255,0.1);border-radius:2px;overflow:hidden">
+      <div style="height:100%;width:40%;background:#0066CC;border-radius:2px" id="pre-bar"></div>
+    </div>
+    <div style="color:rgba(255,255,255,0.4);font-family:Inter,sans-serif;font-size:13px">Loading calendar…</div>
+    <style>#pre-bar{animation:slide 1.2s ease-in-out infinite}@keyframes slide{0%{transform:translateX(-100%)}100%{transform:translateX(550%)}}</style>
+  </div>
+  <div id="root"></div>
+  <script type="module" src="/main.jsx"></script>
+</body>
+</html>

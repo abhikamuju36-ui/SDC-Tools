@@ -173,6 +173,22 @@ async function ensureSchema() {
     END
   `);
 
+  await pool.request().query(`
+    IF NOT EXISTS (SELECT 1 FROM INFORMATION_SCHEMA.TABLES
+                   WHERE TABLE_SCHEMA='calendar' AND TABLE_NAME='employees')
+    CREATE TABLE [calendar].[employees] (
+      id            NVARCHAR(50)   NOT NULL PRIMARY KEY,
+      name          NVARCHAR(255)  NOT NULL,
+      role          NVARCHAR(255)  NULL,
+      email         NVARCHAR(255)  NULL,
+      birth_month   INT            NULL,
+      birth_day     INT            NULL,
+      phone         NVARCHAR(50)   NULL,
+      department    NVARCHAR(255)  NULL,
+      created_at    DATETIME2      NOT NULL DEFAULT GETUTCDATE()
+    );
+  `);
+
   console.log('[azureDb] Schema ready.');
 }
 

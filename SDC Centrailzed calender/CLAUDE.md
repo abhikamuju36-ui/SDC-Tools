@@ -5,15 +5,31 @@
 The app is managed by the SDC Tools shell launcher (port 4005). For standalone dev:
 
 ```bash
+# Terminal 1 — Express API server (port 4005)
 cd server
 npm run dev        # node --watch server.js
+
+# Terminal 2 — Vite dev server with HMR (port 5174, proxies /api → 4005)
+cd client
+npm run dev
 ```
 
-Then open http://localhost:4005 in a browser.
+Then open http://localhost:5174 in a browser during development.
+
+**Production build** (output goes to `dist/`, served by Express):
+
+```bash
+cd client
+npm run build      # runs: vite build --config ../vite.config.js
+```
+
+Then start the server with `NODE_ENV=production node server.js` and open http://localhost:4005.
 
 ## Key architecture decisions
 
-**No build step.** The frontend loads React 18 and Babel Standalone from bundled files. Edit `frontend/app.jsx` and reload — no compile step.
+**Vite build pipeline.** `src/` contains proper ES modules. `client/package.json` manages Vite dev/build dependencies (separate from the root `package.json` which is for Electron). The legacy `frontend/` directory is still served in dev mode (`NODE_ENV !== 'production'`) for backward compatibility.
+
+**Component structure.** `src/App.jsx` is the entry component; `src/components/` contains all sub-components extracted from the original monolithic `frontend/app.jsx`. `src/utils.js`, `src/data.js`, and `src/constants.js` are the ES module versions of `frontend/utils.js`, `frontend/data.js`, and inline constants.
 
 **Auth bypass.** When run via the shell, `SKIP_AUTH=true` is injected into the process environment. `server/middleware/requireAuth.js` detects this and injects a hardcoded `SHELL_USER` admin context instead of checking JWT tokens. `frontend/app.jsx` has `LOCAL_MODE = true` which skips the login screen. Do not change these.
 
@@ -36,16 +52,27 @@ Then open http://localhost:4005 in a browser.
 
 **Add a new API route** — Create `server/routes/myroute.js`, import it in `server/server.js`, mount with `app.use('/api/myroute', require('./routes/myroute'))`.
 
+**Employee directory** — Employees are stored in `[calendar].[employees]` (Azure SQL). On first run the frontend posts DEFAULT_EMPLOYEES to `POST /api/employees/seed` automatically. Edit employees via the Directory modal in the UI (admin/HR only writes; all users can read).
+
 ## Files to know
 
 | File | Purpose |
 |------|---------|
-| `frontend/app.jsx` | Entire React UI (~3000 lines) |
-| `frontend/utils.js` | Date helpers, ICS export, recurring event expansion |
-| `frontend/data.js` | Seeded events (holidays, pay days, birthdays) |
+| `src/App.jsx` | Main React entry (auth shell + CalendarApp) |
+| `src/components/` | Individual React components (20 files) |
+| `src/utils.js` | ES module version of frontend/utils.js |
+| `src/data.js` | ES module version of frontend/data.js (seeded events) |
+| `src/constants.js` | API_URL, LOCAL_MODE, Icon, TWEAK_DEFAULTS, ACCENT_SWATCHES |
+| `frontend/app.jsx` | Legacy monolithic UI (still works in direct-file mode) |
+| `frontend/utils.js` | Date helpers, ICS export, recurring event expansion (legacy) |
+| `frontend/data.js` | Seeded events + DEFAULT_EMPLOYEES (legacy) |
+| `client/package.json` | Vite build dependencies (separate from Electron root) |
+| `vite.config.js` | Vite config — root=src, outDir=dist, proxy /api → 4005 |
 | `server/server.js` | Express app entry point |
 | `server/middleware/requireAuth.js` | JWT auth + SKIP_AUTH shell bypass |
 | `server/routes/events.js` | CRUD for shared events |
+| `server/routes/employees.js` | CRUD for [calendar].[employees] table |
 | `server/routes/scheduler.js` | Read-only bridge to SDC Scheduler DB |
-| `server/sqlite.js` | SQLite helpers for the shared events table |
+| `server/azureDb.js` | Azure SQL pool, ensureSchema (creates all tables) |
+| `server/sqlite.js` | Azure SQL adapter (named sqlite for historical reasons) |
 | `server/db.js` | NeDB user/role stores |
