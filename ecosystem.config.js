@@ -42,12 +42,13 @@ module.exports = {
 
     // ── SDC Tools Server Auto-Updater ───────────────────────────────────────
     // Polls GitHub every 5 min for new commits on master.
-    // On change: git pull → npm install → npm run deploy (build + pm2 restart all).
-    // Covers all 5 server-hosted apps automatically.
+    // On change: selectively checkouts only monorepo-owned files (skips
+    // SDC_Scheduler/ and state_logic_builder/ — managed by per-app updaters),
+    // then restarts: assemblies, readiness, calendar, vendor.
     // Electron shell gets OTA updates separately via electron-updater + release.yml.
     {
       name:          'sdc-updater',
-      script:        'scripts/server-auto-update.js',
+      script:        'scripts/sdc-main-updater.js',
       cwd:           '.',
       env: {
         NODE_ENV:         'production',
@@ -81,12 +82,12 @@ module.exports = {
     },
 
     // ── Build Readiness Report — Auto-Updater ──────────────────────────────
-    // Polls abhikamuju36-ui/Build_Readiness_Report every 5 min for new commits.
-    // Replaces client/, server/routes/, server/services/, server/lib/ and restarts sdc-build-readiness.
+    // Polls abhikamuju36-ui/Build_Readiness_Report every 2 min for new commits.
+    // Replaces client/, server/routes/, server/services/, server/lib/ and restarts sdc-readiness.
     // Preserves server/index.js (health endpoint, startServer export) and server/cache/.
     {
       name:          'sdc-brr-updater',
-      script:        'scripts/server-auto-update.js',
+      script:        'scripts/sdc-brr-updater.js',
       cwd:           './Build_Readiness_Report',
       env: {
         NODE_ENV:         'production',
