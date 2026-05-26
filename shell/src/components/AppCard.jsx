@@ -72,11 +72,6 @@ export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs, 
       {/* Colored top stripe */}
       <div className="card-accent" />
 
-      {/* Update flag badge (top-right, for updatable apps) */}
-      {UPDATABLE_APPS[id] && (
-        <span className="card-update-flag">Update</span>
-      )}
-
       <div className="card-body">
 
         {/* Icon + name + shortcut */}
@@ -85,7 +80,12 @@ export default function AppCard({ app, lastOpened, onOpen, onRetry, onShowLogs, 
             <AppLogo appId={id} size={44} />
           </div>
           <div className="card-info">
-            <h2 className="card-name">{name}</h2>
+            <div className="card-name-row">
+              <h2 className="card-name">{name}</h2>
+              {UPDATABLE_APPS[id] && (
+                <span className="card-update-flag">UPDATE</span>
+              )}
+            </div>
             {shortcut && (
               <div className="card-shortcut">
                 <span>Ctrl</span>
