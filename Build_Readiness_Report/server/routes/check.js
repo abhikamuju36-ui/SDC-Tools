@@ -21,13 +21,17 @@ router.get('/:projectId', async (req, res) => {
     findScheduleSheet(projectId),
   ]);
 
-  const project = etoResult.status === 'fulfilled' ? etoResult.value : null;
-  const sheet   = ssResult.status  === 'fulfilled' ? ssResult.value  : null;
+  const project  = etoResult.status === 'fulfilled' ? etoResult.value : null;
+  const etoError = etoResult.status === 'rejected'  ? etoResult.reason?.message : null;
+  const sheet    = ssResult.status  === 'fulfilled' ? ssResult.value  : null;
+
+  if (etoError) console.error(`[check] ETO error for project ${projectId}:`, etoError);
 
   res.json({
     totalEto: {
       found:       !!project,
       projectName: project?.ProjectName || null,
+      error:       etoError || null,
     },
     smartsheet: {
       found:     !!sheet,

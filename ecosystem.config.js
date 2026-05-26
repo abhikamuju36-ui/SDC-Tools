@@ -105,7 +105,7 @@ module.exports = {
       script:        'server/index.js',
       cwd:           './Build_Readiness_Report',
       env: {
-        PORT:             '3000',
+        PORT:             '4002',
         NODE_ENV:         'production',
         NODE_NO_WARNINGS: '1',
       },
