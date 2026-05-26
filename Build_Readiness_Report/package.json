@@ -5,7 +5,10 @@
   "main": "server/index.js",
   "scripts": {
     "start": "node server/index.js",
-    "dev": "node --watch server/index.js"
+    "dev": "node server/index.js",
+    "dev:client": "cd client && npx vite",
+    "build:client": "cd client && npx vite build",
+    "build": "npm run build:client"
   },
   "dependencies": {
     "dotenv": "^16.4.5",

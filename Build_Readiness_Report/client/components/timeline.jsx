@@ -1,4 +1,5 @@
-const { useState, useMemo, useRef, useEffect } = React;
+import React, { useState, useMemo, useRef, useEffect } from 'react';
+import { VendorAvatar } from './primitives.jsx';
 
 // ── PO classification relative to build start ──────────────────────────
 const CLS = {
@@ -112,7 +113,7 @@ function TimelineDrawer({ marker, buildStart, onClose, onDrillDown }) {
                 {/* PO row */}
                 <div style={{ padding: '11px 24px 11px 20px', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12, background: CLS[poCls].bg, borderBottom: '1px solid #e5e7eb', borderLeft: `3px solid ${CLS[poCls].color}` }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 10, minWidth: 0, flex: 1 }}>
-                    <window.VendorAvatar vendor={entry.supplier || 'Unknown'} size={28} />
+                    <VendorAvatar vendor={entry.supplier || 'Unknown'} size={28} />
                     <div style={{ minWidth: 0 }}>
                       <div style={{ fontSize: 13, fontWeight: 600, color: '#111', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{entry.supplier || 'Unknown'}</div>
                       <div className="mono" style={{ fontSize: 10, color: '#6b7280', marginTop: 1 }}>PO #{po?.poId}{po?.poDate ? ` · ${fmt(po.poDate)}` : ''}</div>
@@ -583,7 +584,7 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
             {/* Vendor rows */}
             {swimlaneVendors.map(({ vendor, entries, worstCls }, vi) => (
               <div key={vi} style={{ height: SWIM_VH, flexShrink: 0, borderBottom: '1px solid var(--border-subtle)', background: vi % 2 === 0 ? 'var(--bg-raised)' : 'var(--bg-sunken)', padding: '0 12px', display: 'flex', alignItems: 'center', gap: 8 }}>
-                <window.VendorAvatar vendor={vendor} size={20} />
+                <VendorAvatar vendor={vendor} size={20} />
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ fontSize: 11, fontWeight: 600, color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{vendor}</div>
                   <div style={{ fontSize: 9, color: 'var(--ink-4)' }}>{entries.length} PO{entries.length !== 1 ? 's' : ''}</div>
@@ -1161,4 +1162,4 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
   );
 }
 
-window.TimelineRibbon = TimelineRibbon;
+export default TimelineRibbon;

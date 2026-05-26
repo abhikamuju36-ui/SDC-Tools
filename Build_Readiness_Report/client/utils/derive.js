@@ -1,6 +1,6 @@
 // Part-line generator + vendor aggregator — derived data
 
-window.generatePartLines = function(assembly, jobId) {
+export function generatePartLines(assembly, jobId) {
   // Generate plausible part lines for an assembly based on its ready/total/noPo counts
   const seed = (assembly.name + jobId).split('').reduce((a, c) => a + c.charCodeAt(0), 0);
   const rand = (n) => { const x = Math.sin(seed + n) * 10000; return x - Math.floor(x); };
@@ -42,9 +42,9 @@ window.generatePartLines = function(assembly, jobId) {
     });
   }
   return lines;
-};
+}
 
-window.aggregateVendors = function(nopo, emails) {
+export function aggregateVendors(nopo, emails) {
   const m = {};
   for (const p of nopo) {
     const v = (p.vendor && typeof p.vendor === 'string' && !p.vendor.includes('-')) ? p.vendor : 'Unassigned';
@@ -60,4 +60,4 @@ window.aggregateVendors = function(nopo, emails) {
     m[e.vendor].pos = e.pos;
   }
   return Object.values(m).sort((a, b) => b.value - a.value);
-};
+}

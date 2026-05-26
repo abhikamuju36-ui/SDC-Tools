@@ -1,5 +1,10 @@
 // PO Action List — Parts view + Vendor lens
-const { useState, useMemo, useEffect } = React;
+import React, { useState, useMemo, useEffect } from 'react';
+import { AssemblyList } from './tab-readiness.jsx';
+import {
+  IconSearch, IconX, IconCaretRight, IconMail, IconCopy,
+  VendorAvatar, StatusBadge,
+} from '../primitives.jsx';
 
 // Recursively collect every leaf part from a node tree, tagging each part with
 // the nearest assembly's PN and desc so the "Assembly / Source" column is accurate.
@@ -72,7 +77,7 @@ function PoTab({ data, highlightPoIds = [], onClearHighlight }) {
           </div>
         </div>
         <div className="search" style={{ width: 240, height: 32 }}>
-          <window.IconSearch size={14}/>
+          <IconSearch size={14}/>
           <input
             style={{ fontSize: 12 }}
             placeholder="Search POs, parts, vendors..."
@@ -84,7 +89,7 @@ function PoTab({ data, highlightPoIds = [], onClearHighlight }) {
               onClick={() => setQuery('')}
               style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: 'var(--fg-3)', display: 'flex', alignItems: 'center' }}
             >
-              <window.IconX size={14} />
+              <IconX size={14} />
             </button>
           )}
         </div>
@@ -120,7 +125,7 @@ function PoTab({ data, highlightPoIds = [], onClearHighlight }) {
         <div className="panel" style={{ height: '100%', overflow: 'auto', background: 'var(--bg-1)', border: '1px solid var(--border-soft)' }}>
           {view === 'parts'   && <PartsFlatView parts={data.readiness.flatMap(s => s.assemblies.flatMap(a => collectAllParts(a.node, a.code || a.pn, a.desc)))} query={query} job={data.job}/>}
           {view === 'emails'  && <EmailsPanel emails={data.emails || []} job={data.job}/>}
-          {view === 'assemblies_split' && <window.AssemblyList data={data} query={query} setQuery={setQuery} />}
+          {view === 'assemblies_split' && <AssemblyList data={data} query={query} setQuery={setQuery} />}
         </div>
       </div>
     </div>
@@ -214,7 +219,7 @@ function PartsFlatView({ parts, query, job }) {
                 {unitPrice > 0 ? `$${unitPrice >= 1000 ? (unitPrice / 1000).toFixed(1) + 'K' : unitPrice.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
               </span>
               <div style={{ display: 'flex', alignItems: 'center', gap: 4, overflow: 'hidden' }}>
-                <window.VendorAvatar vendor={p.manufacturer || 'SDC'} size={14} />
+                <VendorAvatar vendor={p.manufacturer || 'SDC'} size={14} />
                 <span style={{ fontSize: 10, color: 'var(--fg-2)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                   {p.manufacturer === 'SDC' ? 'In-house (SDC)' : (p.manufacturer || 'SDC')}
                 </span>
@@ -264,16 +269,16 @@ function PoDrawer({ po, supplier, onClose }) {
         <div style={{ padding: '20px 24px 16px', borderBottom: '1px solid var(--border)', background: 'var(--bg-raised)', flexShrink: 0 }}>
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 14 }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: 12, minWidth: 0 }}>
-              <window.VendorAvatar vendor={supplier} size={40} />
+              <VendorAvatar vendor={supplier} size={40} />
               <div style={{ minWidth: 0 }}>
                 <div style={{ fontSize: 16, fontWeight: 700, color: 'var(--fg-0)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{supplier}</div>
                 <div className="mono" style={{ fontSize: 12, color: 'var(--fg-3)', marginTop: 2 }}>PO #{po.poId}</div>
               </div>
             </div>
             <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexShrink: 0 }}>
-              <window.StatusBadge status={poStatus} />
+              <StatusBadge status={poStatus} />
               <button onClick={onClose} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--fg-3)', padding: 4, display: 'flex', alignItems: 'center', borderRadius: 4 }}>
-                <window.IconX size={18} />
+                <IconX size={18} />
               </button>
             </div>
           </div>
@@ -379,7 +384,7 @@ function VendorCard({ v, highlightPoIds, onPoClick, isHighlighted }) {
       <div className="vendor-card-header">
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: 10 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
-            <window.VendorAvatar vendor={v.supplier} size={28} />
+            <VendorAvatar vendor={v.supplier} size={28} />
             <div style={{ minWidth: 0 }}>
               <h3 style={{ fontSize: 12, fontWeight: 700, margin: 0, color: 'var(--fg-0)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{v.supplier}</h3>
               <div style={{ fontSize: 10, color: 'var(--fg-3)', display: 'flex', gap: 6, marginTop: 1 }}>
@@ -389,7 +394,7 @@ function VendorCard({ v, highlightPoIds, onPoClick, isHighlighted }) {
               </div>
             </div>
           </div>
-          <window.StatusBadge status={status} />
+          <StatusBadge status={status} />
         </div>
 
         <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
@@ -415,7 +420,7 @@ function VendorCard({ v, highlightPoIds, onPoClick, isHighlighted }) {
               style={{ borderLeft: poHighlight ? '3px solid var(--sdc-blue)' : 'none', cursor: 'pointer' }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                <window.IconCaretRight size={10} style={{ color: 'var(--fg-4)' }} />
+                <IconCaretRight size={10} style={{ color: 'var(--fg-4)' }} />
                 <span className="mono" style={{ fontSize: 12, fontWeight: 600, color: poHighlight ? 'var(--sdc-blue)' : 'var(--fg-1)' }}>{po.poId}</span>
               </div>
               <div style={{ fontSize: 10, color: 'var(--fg-3)', fontWeight: 500 }}>{poRcvd}/{poLines} rcvd</div>
@@ -533,11 +538,11 @@ function EmailRow({ e, job, open, onToggle }) {
     <div style={{ borderBottom: '1px solid var(--border-soft)' }}>
       <div className="row-hover" onClick={onToggle} style={{ display: 'grid', gridTemplateColumns: '3px 40px 1.5fr 1fr auto auto', gap: 16, padding: '12px 20px', alignItems: 'center', cursor: 'pointer' }}>
         <div style={{ width: 3, height: 40, borderRadius: 1.5, background: e.overdue ? 'var(--threat)' : 'var(--sdc-blue)' }}/>
-        <window.VendorAvatar vendor={e.vendor} size={30} />
+        <VendorAvatar vendor={e.vendor} size={30} />
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-0)' }}>{e.vendor}</span>
-            {e.overdue && <window.StatusBadge status="OVERDUE" />}
+            {e.overdue && <StatusBadge status="OVERDUE" />}
           </div>
           <span className="mono" style={{ fontSize: 11, color: 'var(--fg-2)' }}>{e.pos} PO{e.pos > 1 ? 's' : ''}</span>
         </div>
@@ -545,10 +550,10 @@ function EmailRow({ e, job, open, onToggle }) {
           {e.contacts?.length ? e.contacts.join(', ') : 'No contact email in ERP'}
         </span>
         <button className="btn-secondary" onClick={ev => { ev.stopPropagation(); onToggle(); }} style={{ padding: '4px 10px', fontSize: 11, gap: 4 }}>
-          <window.IconMail size={12} /> {open ? 'Close' : 'Preview'}
+          <IconMail size={12} /> {open ? 'Close' : 'Preview'}
         </button>
         <button className="btn-secondary" onClick={onCopy} style={{ padding: '4px 10px', fontSize: 11, gap: 4 }}>
-          <window.IconCopy size={12} /> {copied ? 'Copied' : 'Copy'}
+          <IconCopy size={12} /> {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
       {open && (
@@ -561,11 +566,11 @@ function EmailRow({ e, job, open, onToggle }) {
             <pre className="mono" style={{ margin: 0, padding: 16, fontSize: 12, lineHeight: 1.6, color: 'var(--fg-1)', whiteSpace: 'pre-wrap', background: 'transparent' }}>{body}</pre>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn-secondary" onClick={onCopy}><window.IconCopy size={14} /> {copied ? 'Copied to Clipboard' : 'Copy Email Body'}</button>
+            <button className="btn-secondary" onClick={onCopy}><IconCopy size={14} /> {copied ? 'Copied to Clipboard' : 'Copy Email Body'}</button>
             <a href={`mailto:${(e.contacts || []).join(',')}?subject=${encodeURIComponent(`SDC Job ${job?.id || ''} — Expedite Request`)}&body=${encodeURIComponent(body)}`}
                className="btn-primary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', fontSize: 13, borderRadius: 6 }}
                onClick={ev => ev.stopPropagation()}>
-              <window.IconMail size={14} stroke="white" /> Open in Mail Client
+              <IconMail size={14} stroke="white" /> Open in Mail Client
             </a>
           </div>
         </div>
@@ -589,7 +594,7 @@ function EmailsPanel({ emails, job }) {
           {emails.length} supplier follow-ups ready · <span style={{ color: 'var(--threat-ink)', fontWeight: 600 }}>{overdueCount} overdue</span> · auto-drafted from open POs
         </span>
         <button className="btn-secondary" onClick={onCopyAll} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', fontSize: 12 }}>
-          <window.IconCopy size={13}/> {copied === 'all' ? 'Copied' : 'Copy All'}
+          <IconCopy size={13}/> {copied === 'all' ? 'Copied' : 'Copy All'}
         </button>
       </div>
       <div style={{ flex: 1, overflowY: 'auto' }}>
@@ -602,6 +607,5 @@ function EmailsPanel({ emails, job }) {
   );
 }
 
-window.PoTracker = PoTracker;
-window.VendorCard = VendorCard;
-window.PoTab = PoTab;
+export { PoTracker, VendorCard };
+export default PoTab;

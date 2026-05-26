@@ -1,12 +1,13 @@
 // Costing & Margins tab
+import React, { useState, useMemo } from 'react';
 
 function CostTab({ data }) {
   const job = data.job || {};
   const costing = data.costing || [];
-  const [sortBy, setSortBy] = React.useState('total');
-  const [sortDir, setSortDir] = React.useState('desc');
+  const [sortBy, setSortBy] = useState('total');
+  const [sortDir, setSortDir] = useState('desc');
 
-  const sorted = React.useMemo(() => {
+  const sorted = useMemo(() => {
     const arr = [...costing];
     arr.sort((a,b) => {
       const va = a[sortBy], vb = b[sortBy];
@@ -132,4 +133,4 @@ function CostTab({ data }) {
   );
 }
 
-window.CostTab = CostTab;
+export default CostTab;

@@ -1,5 +1,11 @@
 // Build Readiness Tab — Premium SDC Design
-const { useState, useMemo, useEffect } = React;
+import React, { useState, useMemo, useEffect } from 'react';
+import TimelineRibbon from '../timeline.jsx';
+import { PoTracker } from '../tabs/tab-po.jsx';
+import {
+  IconSearch, IconX, IconCaretDown, IconCaretRight,
+  IconCircleX, IconCheck, IconAlert, IconClock, VendorAvatar,
+} from '../primitives.jsx';
 
 function useColResize(initial) {
   const [widths, setWidths] = useState(initial);
@@ -291,14 +297,14 @@ function ReadinessTab({ data, onDrillDown, highlightPoIds = [], onClearHighlight
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-      <window.TimelineRibbon job={job} poActions={data.poActions} smartsheet={data.buildDates} onDrillDown={onDrillDown} />
+      <TimelineRibbon job={job} poActions={data.poActions} smartsheet={data.buildDates} onDrillDown={onDrillDown} />
 
       <RiskPartsPanel nopo={data.nopo} poActions={data.poActions} />
 
       {/* Vendor Cards — always shown at bottom */}
       <div style={{ marginTop: 4 }}>
         <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: '0.08em', textTransform: 'uppercase', color: 'var(--ink-4)', marginBottom: 10 }}>Vendor Status</div>
-        <window.PoTracker poActions={data.poActions} query="" highlightPoIds={highlightPoIds} onClearHighlight={onClearHighlight} />
+        <PoTracker poActions={data.poActions} query="" highlightPoIds={highlightPoIds} onClearHighlight={onClearHighlight} />
       </div>
     </div>
   );
@@ -387,7 +393,7 @@ function AssemblyRow({ a, jobId, isLast, depth = 0, expandAction }) {
           }} />
         )}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "center", color: "var(--ink-4)" }}>
-          {open ? <window.IconCaretDown size={11} /> : <window.IconCaretRight size={11} />}
+          {open ? <IconCaretDown size={11} /> : <IconCaretRight size={11} />}
         </div>
 
         <span className="mono" style={{
@@ -529,10 +535,10 @@ function AssemblyRow({ a, jobId, isLast, depth = 0, expandAction }) {
                 {/* Status */}
                 <div style={{ display: "flex", alignItems: "center", ...cell }}>
                   <span style={{ color: statusColor, fontWeight: 800, fontSize: 8, letterSpacing: '0.04em', display: "inline-flex", alignItems: "center", gap: 2 }}>
-                    {isNoPo  ? <><window.IconCircleX size={9} sw={2.5} /> NO PO</>
-                    : isRcvd ? <><window.IconCheck size={9} sw={2.5} /> RCVD</>
-                    : isLate ? <><window.IconAlert size={9} sw={2} /> LATE</>
-                              : <><window.IconClock size={9} sw={2} /> ON ORDER</>}
+                    {isNoPo  ? <><IconCircleX size={9} sw={2.5} /> NO PO</>
+                    : isRcvd ? <><IconCheck size={9} sw={2.5} /> RCVD</>
+                    : isLate ? <><IconAlert size={9} sw={2} /> LATE</>
+                              : <><IconClock size={9} sw={2} /> ON ORDER</>}
                   </span>
                 </div>
 
@@ -560,7 +566,7 @@ function AssemblyRow({ a, jobId, isLast, depth = 0, expandAction }) {
 
                 {/* Supplier */}
                 <div style={{ display: "flex", alignItems: "center", gap: 4, overflow: 'hidden', ...cell }}>
-                  {po.supplier && <window.VendorAvatar vendor={po.supplier} size={14} />}
+                  {po.supplier && <VendorAvatar vendor={po.supplier} size={14} />}
                   <span style={{ color: "var(--ink-2)", fontSize: 10, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
                     {po.supplier || '—'}
                   </span>
@@ -649,7 +655,7 @@ function AssemblyList({ data }) {
     <div style={{ display: 'flex', flexDirection: 'column', gap: 16, padding: '0 20px 20px' }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 12, marginTop: 16 }}>
         <div className="search" style={{ flex: 1 }}>
-          <window.IconSearch size={14} />
+          <IconSearch size={14} />
           <input
             placeholder="Search parts, assemblies, suppliers…"
             value={query}
@@ -657,7 +663,7 @@ function AssemblyList({ data }) {
           />
           {query && (
             <button onClick={() => setQuery('')} style={{ background: 'none', border: 'none', padding: 4, cursor: 'pointer', color: 'var(--ink-4)' }}>
-              <window.IconX size={14} />
+              <IconX size={14} />
             </button>
           )}
         </div>
@@ -721,5 +727,5 @@ function AssemblyList({ data }) {
   );
 }
 
-window.AssemblyList = AssemblyList;
-window.ReadinessTab = ReadinessTab;
+export { AssemblyList };
+export default ReadinessTab;

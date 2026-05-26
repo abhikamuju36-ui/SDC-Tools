@@ -1,5 +1,6 @@
 // TopBar Component — SDC Premium Design
-const { useState, useEffect } = React;
+import React, { useState, useEffect } from 'react';
+import { IconSearch } from './primitives.jsx';
 
 function TopBar({ jobId, setJobId, job, setActiveTab, loading }) {
   const [draft, setDraft] = useState(jobId);
@@ -20,12 +21,12 @@ function TopBar({ jobId, setJobId, job, setActiveTab, loading }) {
           </div>
         </div>
       </div>
-      
+
       <div className="topbar-center">
         <div className="job-picker">
           <label>Job #</label>
-          <input 
-            value={draft} 
+          <input
+            value={draft}
             onChange={e => setDraft(e.target.value)}
             onKeyDown={e => e.key === 'Enter' && !loading && onLoad()}
           />
@@ -33,7 +34,7 @@ function TopBar({ jobId, setJobId, job, setActiveTab, loading }) {
         </div>
         <div style={{ width: 1, height: 22, background: "var(--border)" }}/>
         <button className="btn btn-ghost" style={{ height: 34, gap: 8 }}>
-          <window.IconSearch size={13}/>
+          <IconSearch size={13}/>
           <span style={{ color: "var(--ink-4)" }}>Search anywhere…</span>
           <span className="kbd">⌘K</span>
         </button>
@@ -50,4 +51,4 @@ function TopBar({ jobId, setJobId, job, setActiveTab, loading }) {
   );
 }
 
-window.TopBar = TopBar;
+export default TopBar;

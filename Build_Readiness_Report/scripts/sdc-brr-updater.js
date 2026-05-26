@@ -184,7 +184,23 @@ async function checkAndUpdate() {
       }
     }
 
-    // 5. Restart PM2 app
+    // 5. Rebuild Vite client bundle so dist/ is available for production serving.
+    //    The updater wipes and replaces client/ from the tarball (which has no
+    //    dist/ since it's gitignored). Without this step the server falls back
+    //    to CDN mode because hasDistBuild=false.
+    const clientPkgPath = path.join(APP_DIR, 'client', 'package.json');
+    if (fs.existsSync(clientPkgPath)) {
+      log('Building Vite client bundle…');
+      try {
+        run('npm ci --prefer-offline', path.join(APP_DIR, 'client'));
+        run('npm run build', path.join(APP_DIR, 'client'));
+        log('Client build complete — dist/ ready.');
+      } catch (buildErr) {
+        log(`Client build failed: ${buildErr.message} — server will fall back to CDN mode.`);
+      }
+    }
+
+    // 6. Restart PM2 app
     log(`Restarting ${PM2_APP_NAME}…`);
     try { run(`pm2 restart ${PM2_APP_NAME} --update-env`); }
     catch (e) { log(`pm2 restart warning: ${e.message}`); }

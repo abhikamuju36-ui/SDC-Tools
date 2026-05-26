@@ -1,5 +1,12 @@
 // App shell — top bar, left rail sidebar, and main content routing
-const { useState, useEffect, useRef } = React;
+import React, { useState, useEffect, useRef } from 'react';
+import { generatePartLines, aggregateVendors } from './utils/derive.js';
+import TopBar from './components/topbar.jsx';
+import TimelineRibbon from './components/timeline.jsx';
+import ReadinessTab from './components/tabs/tab-readiness.jsx';
+import PoTab from './components/tabs/tab-po.jsx';
+import CostTab from './components/tabs/tab-cost.jsx';
+import { IconLayers, IconTruck, IconDollar, IconSearch } from './components/primitives.jsx';
 
 // ─── Error Boundary ──────────────────────────────────────────────────────────
 class ErrorBoundary extends React.Component {
@@ -479,14 +486,14 @@ function App() {
 
   // ── Dashboard ──
   const navItems = [
-    { id: 'readiness', label: 'Build Readiness', icon: <window.IconLayers size={14}/> },
-    { id: 'po',        label: 'Procurement',      icon: <window.IconTruck size={14}/>, count: data.poActions?.critical?.length || 0, countAccent: 'threat' },
-    { id: 'cost',      label: 'Financials',       icon: <window.IconDollar size={14}/> },
+    { id: 'readiness', label: 'Build Readiness', icon: <IconLayers size={14}/> },
+    { id: 'po',        label: 'Procurement',      icon: <IconTruck size={14}/>, count: data.poActions?.critical?.length || 0, countAccent: 'threat' },
+    { id: 'cost',      label: 'Financials',       icon: <IconDollar size={14}/> },
   ];
 
   return (
     <div className="app">
-      <window.TopBar jobId={jobId} setJobId={id => { setData(null); setJobId(id); }} job={data.job} setActiveTab={setTab} loading={loading}/>
+      <TopBar jobId={jobId} setJobId={id => { setData(null); setJobId(id); }} job={data.job} setActiveTab={setTab} loading={loading}/>
 
       <aside className="rail">
         <div className="rail-section">
@@ -524,7 +531,7 @@ function App() {
             style={{ marginTop: 4, color: 'var(--sdc-blue)', fontWeight: 500 }}
           >
             <span style={{ display: 'flex', alignItems: 'center' }}>
-              <span className="ico"><window.IconSearch size={12}/></span>
+              <span className="ico"><IconSearch size={12}/></span>
               Open Different Job…
             </span>
           </button>
@@ -534,9 +541,9 @@ function App() {
       <main className="main">
         <div className="main-inner">
           <ErrorBoundary>
-            {tab === 'readiness' && <window.ReadinessTab data={data} onDrillDown={ids => setHighlightPoIds(ids)} highlightPoIds={highlightPoIds} onClearHighlight={() => setHighlightPoIds([])}/>}
-            {tab === 'po' && <window.PoTab data={data} highlightPoIds={highlightPoIds} onClearHighlight={() => setHighlightPoIds([])}/>}
-            {tab === 'cost' && <window.CostTab data={data}/>}
+            {tab === 'readiness' && <ReadinessTab data={data} onDrillDown={ids => setHighlightPoIds(ids)} highlightPoIds={highlightPoIds} onClearHighlight={() => setHighlightPoIds([])}/>}
+            {tab === 'po' && <PoTab data={data} highlightPoIds={highlightPoIds} onClearHighlight={() => setHighlightPoIds([])}/>}
+            {tab === 'cost' && <CostTab data={data}/>}
           </ErrorBoundary>
         </div>
       </main>
@@ -544,4 +551,4 @@ function App() {
   );
 }
 
-ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+export default App;

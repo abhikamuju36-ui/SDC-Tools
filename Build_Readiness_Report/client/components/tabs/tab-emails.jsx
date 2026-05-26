@@ -1,4 +1,6 @@
 // Draft Emails tab — vendor list w/ inline expand
+import React from 'react';
+import { IconCopy, IconSparkle, IconMail, VendorAvatar, StatusBadge } from '../primitives.jsx';
 
 function buildEmailBody(e, job) {
   return `Subject: SDC Job ${job?.id || ''} — Expedite Request\n\n${e.vendor} Procurement Team,\n\nReference: SDC Job ${job?.id || ''} (${job?.name || ''})\nBuild Start (firm baseline): ${job?.buildStart || ''}\n\nWe have ${e.pos} open purchase order${e.pos>1?'s':''} with promised dates that conflict with our firm build start. Please confirm whether expedite is achievable, and provide updated promise dates within 48 hours.\n\nIf expedite is not feasible, please propose alternates. We can split-ship partial qtys against the build start date.\n\nRegards,\n${job?.buyer || 'Procurement'}\nProcurement, Stevens Design & Controls`;
@@ -30,10 +32,10 @@ function EmailsTab({ data, job }) {
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
           <button className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: 12 }} onClick={onCopyAll}>
-            <window.IconCopy size={14} /> {copied === 'all' ? 'Copied' : 'Copy All'}
+            <IconCopy size={14} /> {copied === 'all' ? 'Copied' : 'Copy All'}
           </button>
           <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: 12 }}>
-            <window.IconSparkle size={14} /> Send Wave
+            <IconSparkle size={14} /> Send Wave
           </button>
         </div>
       </div>
@@ -64,15 +66,15 @@ function EmailRow({ e, job, open, onToggle }) {
       }}>
         {/* Status Line */}
         <div style={{ width: 3, height: 40, borderRadius: 1.5, background: e.overdue ? 'var(--threat)' : 'var(--sdc-blue)' }}/>
-        
+
         {/* Avatar */}
-        <window.VendorAvatar vendor={e.vendor} size={30} />
+        <VendorAvatar vendor={e.vendor} size={30} />
 
         {/* Vendor Info */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--fg-0)' }}>{e.vendor}</span>
-            {e.overdue && <window.StatusBadge status="OVERDUE" />}
+            {e.overdue && <StatusBadge status="OVERDUE" />}
           </div>
           <span className="mono" style={{ fontSize: 11, color: 'var(--fg-2)' }}>{e.pos} PO{e.pos>1?'s':''}</span>
         </div>
@@ -84,10 +86,10 @@ function EmailRow({ e, job, open, onToggle }) {
 
         {/* Actions */}
         <button className="btn-secondary" onClick={(ev) => { ev.stopPropagation(); onToggle(); }} style={{ padding: '4px 10px', fontSize: 11, gap: 4 }}>
-          <window.IconMail size={12} /> {open ? 'Close' : 'Preview'}
+          <IconMail size={12} /> {open ? 'Close' : 'Preview'}
         </button>
         <button className="btn-secondary" onClick={onCopy} style={{ padding: '4px 10px', fontSize: 11, gap: 4 }}>
-          <window.IconCopy size={12} /> {copied ? 'Copied' : 'Copy'}
+          <IconCopy size={12} /> {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
 
@@ -106,12 +108,12 @@ function EmailRow({ e, job, open, onToggle }) {
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
             <button className="btn-secondary" onClick={onCopy}>
-              <window.IconCopy size={14} /> {copied ? 'Copied to Clipboard' : 'Copy Email Body'}
+              <IconCopy size={14} /> {copied ? 'Copied to Clipboard' : 'Copy Email Body'}
             </button>
             <a href={`mailto:${(e.contacts || []).join(',')}?subject=${encodeURIComponent(`SDC Job ${job?.id||''} — Expedite Request`)}&body=${encodeURIComponent(body)}`}
                className="btn-primary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', fontSize: 13, borderRadius: 6 }}
                onClick={ev => ev.stopPropagation()}>
-              <window.IconMail size={14} stroke="white" /> Open in Mail Client
+              <IconMail size={14} stroke="white" /> Open in Mail Client
             </a>
           </div>
         </div>
@@ -120,4 +122,4 @@ function EmailRow({ e, job, open, onToggle }) {
   );
 }
 
-window.EmailsTab = EmailsTab;
+export default EmailsTab;
