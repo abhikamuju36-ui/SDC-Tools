@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react'
+import sdcLogo from './assets/sdc-logo.png'
 import AppGrid from './components/AppGrid'
 import StatusBar from './components/StatusBar'
 import LogPanel from './components/LogPanel'
@@ -287,9 +288,7 @@ export default function App() {
       <header className="app-header">
         {/* Brand (left) */}
         <div className="header-brand">
-          <div className="brand-mark">
-            <span className="brand-mark-label">SDC</span>
-          </div>
+          <img src={sdcLogo} alt="Steven Douglas Corp." className="brand-mark-img" />
           <div className="header-wordmark">
             <div className="header-title">Steven Douglas Corp.</div>
             <div className="header-subtitle">Engineering Applications Suite</div>

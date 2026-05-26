@@ -235,32 +235,14 @@ button { cursor: pointer; }
   flex-shrink: 0;
 }
 
-/* Blue circle SDC mark */
-.brand-mark {
-  width: 54px;
+/* SDC logo image in header — square crop centred on the oval */
+.brand-mark-img {
   height: 54px;
-  border-radius: 8px;
-  background: var(--blue);
-  display: grid;
-  place-items: center;
-  position: relative;
-  box-shadow: 0 4px 14px rgba(21,116,196,.28);
+  width: 54px;
+  border-radius: 10px;
   flex-shrink: 0;
-}
-.brand-mark::before {
-  content: "";
-  position: absolute;
-  inset: 6px;
-  border-radius: 50%;
-  border: 2.5px solid #fff;
-}
-.brand-mark-label {
-  position: relative;
-  font-family: 'Montserrat', sans-serif;
-  font-weight: 800;
-  color: #fff;
-  font-size: 14px;
-  letter-spacing: .5px;
+  object-fit: cover;
+  object-position: center 10%;
 }
 
 .header-wordmark {
