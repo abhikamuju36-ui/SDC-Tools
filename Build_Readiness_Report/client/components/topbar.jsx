@@ -1,6 +1,7 @@
 // TopBar Component — SDC Premium Design
 import React, { useState, useEffect } from 'react';
 import { IconSearch } from './primitives.jsx';
+import logoUrl from '../assets/sdc-logo.png';
 
 function TopBar({ jobId, setJobId, job, setActiveTab, loading }) {
   const [draft, setDraft] = useState(jobId);
@@ -14,7 +15,7 @@ function TopBar({ jobId, setJobId, job, setActiveTab, loading }) {
     <header className="topbar">
       <div className="topbar-brand">
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, cursor: 'pointer' }} onClick={() => setActiveTab?.('readiness')}>
-          <img src="assets/sdc-logo-blue.png" alt="SDC" style={{ height: 32 }}/>
+          <img src={logoUrl} alt="SDC" style={{ height: 32 }}/>
           <div className="topbar-brand-text">
             <span className="t1">Build Readiness</span>
             <span className="t2">Designed to Outperform</span>
