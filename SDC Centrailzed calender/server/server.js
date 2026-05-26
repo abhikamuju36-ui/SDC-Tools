@@ -66,6 +66,7 @@ app.use('/api/admin',        adminRouter);
 app.use('/api/scheduler',      schedulerRouter);
 app.use('/api/events',         eventsRouter);
 app.use('/api/notifications',  notificationsRouter);
+app.get('/health',     (_req, res) => res.json({ status: 'ok', service: 'calendar', uptime: process.uptime() }));
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
 // ── Serve static calendar files ───────────────────────────
@@ -83,6 +84,10 @@ function startServer({ port } = {}) {
   });
   server.on('error', (err) => {
     logger.error(`[calendar] Server error on port ${p}: ${err.message}`);
+  });
+  process.on('SIGTERM', () => {
+    logger.info('[calendar] SIGTERM — shutting down gracefully');
+    server.close(() => process.exit(0));
   });
   return server;
 }

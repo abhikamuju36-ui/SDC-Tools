@@ -168,8 +168,8 @@ module.exports = {
         PORT:             '4004',
         NODE_ENV:         'production',
         NODE_NO_WARNINGS: '1',
-        // Update this path if the standards drive is mapped differently on the server
-        STANDARDS_DIR:    'N:\\AI Folder\\State Logic Diagrams\\standards',
+        // UNC path so PM2 Windows Service can reach the share without N: drive mapped
+        STANDARDS_DIR:    '\\\\stevendouglas.local\\dfs\\Company\\Job Folder\\AI Folder\\State Logic Diagrams\\standards',
       },
       watch:         false,
       max_restarts:  10,

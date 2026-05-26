@@ -473,7 +473,11 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
 
 // Standalone mode: node server.js
 if (require.main === module) {
-  startServer();
+  const server = startServer();
+  process.on('SIGTERM', () => {
+    console.log('[statelogic] SIGTERM — shutting down gracefully');
+    server.close(() => process.exit(0));
+  });
 }
 
 module.exports = { startServer };
