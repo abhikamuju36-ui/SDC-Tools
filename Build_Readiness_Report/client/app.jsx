@@ -290,7 +290,7 @@ function JobLandingScreen({ onLoad }) {
   // PHASE: idle — job number entry form
   // ─────────────────────────────────────────────────────────────────
   return (
-    <Page>
+    <LandingPage>
       <div style={{ background: 'var(--bg-raised)', border: '1px solid var(--border)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', padding: '44px 52px', width: 500, display: 'flex', flexDirection: 'column', gap: 28 }}>
 
         <LandingBrand />
@@ -347,7 +347,7 @@ function JobLandingScreen({ onLoad }) {
           </div>
         )}
       </div>
-    </Page>
+    </LandingPage>
   );
 }
 
