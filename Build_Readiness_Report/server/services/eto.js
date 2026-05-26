@@ -154,15 +154,23 @@ async function getPoDetails(projectId) {
 
 async function getProjectInfo(projectId) {
   const db = await getPool();
-  // vwProjects may exclude closed/archived jobs — fall back to tblProject directly
-  const result = await db.request()
+
+  // Try active projects first
+  const active = await db.request()
     .input('projectId', sql.Int, projectId)
-    .query(`
-      SELECT TOP 1 ProjectID, PDescription AS ProjectName
-      FROM tblProject
-      WHERE ProjectID = @projectId
-    `);
-  return result.recordset[0] || null;
+    .query(`SELECT TOP 1 ProjectID, PDescription AS ProjectName FROM vwProjects WHERE ProjectID = @projectId`);
+  if (active.recordset[0]) return active.recordset[0];
+
+  // vwProjects excludes closed/archived jobs — check tblSpec as a fallback
+  // If specs exist the project is real, just not active in the view
+  const specCheck = await db.request()
+    .input('projectId2', sql.Int, projectId)
+    .query(`SELECT TOP 1 ProjectID FROM tblSpec WHERE ProjectID = @projectId2`);
+  if (specCheck.recordset[0]) {
+    return { ProjectID: projectId, ProjectName: `Project ${projectId} (closed/archived)` };
+  }
+
+  return null;
 }
 
 async function getProjectCosting(projectId) {
