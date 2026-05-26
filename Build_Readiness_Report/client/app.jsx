@@ -70,19 +70,21 @@ function saveRecentJob(id, name) {
 
 // Single system status row used in the check card
 function SystemRow({ badge, badgeBg, name, subtitle, status, detail }) {
-  // status: 'loading' | 'found' | 'missing' | 'na'
+  // status: 'loading' | 'found' | 'missing' | 'error' | 'na'
   const isLoading = status === 'loading';
   const isFound   = status === 'found';
   const isMissing = status === 'missing';
+  const isError   = status === 'error';
 
-  const stColor = isFound ? '#16a34a' : isMissing ? '#dc2626' : status === 'na' ? '#ca8a04' : 'var(--ink-4)';
-  const rowBg   = isFound ? 'rgba(22,163,74,0.05)' : isMissing ? 'rgba(220,38,38,0.04)' : status === 'na' ? 'rgba(202,138,4,0.04)' : 'var(--bg-sunken)';
-  const border  = isFound ? 'rgba(22,163,74,0.22)' : isMissing ? 'rgba(220,38,38,0.22)' : status === 'na' ? 'rgba(202,138,4,0.22)' : 'var(--border)';
+  const stColor = isFound ? '#16a34a' : isMissing ? '#dc2626' : isError ? '#d97706' : status === 'na' ? '#ca8a04' : 'var(--ink-4)';
+  const rowBg   = isFound ? 'rgba(22,163,74,0.05)' : isMissing ? 'rgba(220,38,38,0.04)' : isError ? 'rgba(217,119,6,0.05)' : status === 'na' ? 'rgba(202,138,4,0.04)' : 'var(--bg-sunken)';
+  const border  = isFound ? 'rgba(22,163,74,0.22)' : isMissing ? 'rgba(220,38,38,0.22)' : isError ? 'rgba(217,119,6,0.25)' : status === 'na' ? 'rgba(202,138,4,0.22)' : 'var(--border)';
 
-  const statusIcon = isLoading ? null : isFound ? '✓' : isMissing ? '✕' : '—';
+  const statusIcon = isLoading ? null : isFound ? '✓' : isMissing ? '✕' : isError ? '⚠' : '—';
   const statusText = isLoading ? 'Checking…'
     : isFound   ? (detail || 'Connected')
     : isMissing ? 'Not found'
+    : isError   ? (detail || 'Server unreachable')
     : 'No schedule linked';
 
   return (
@@ -128,6 +130,11 @@ function JobLandingScreen({ onLoad }) {
     setCheckData(null);
     try {
       const res  = await fetch(`/api/check/${id}`);
+      if (!res.ok) {
+        setCheckData({ totalEto: { found: false, dbError: true }, smartsheet: { found: false } });
+        setPhase('notfound');
+        return;
+      }
       const data = await res.json();
       setCheckData(data);
       if (data.totalEto?.found) {
@@ -137,7 +144,8 @@ function JobLandingScreen({ onLoad }) {
         setPhase('notfound');
       }
     } catch {
-      setCheckData({ totalEto: { found: false }, smartsheet: { found: false } });
+      // Network error — BRR server is unreachable
+      setCheckData({ totalEto: { found: false, dbError: true }, smartsheet: { found: false } });
       setPhase('notfound');
     }
   };
@@ -167,10 +175,12 @@ function JobLandingScreen({ onLoad }) {
   // PHASE: checking / found / notfound — show system status card
   // ─────────────────────────────────────────────────────────────────
   if (phase !== 'idle') {
-    const etoStatus = phase === 'checking' ? 'loading' : checkData?.totalEto?.found ? 'found' : 'missing';
+    const etoStatus = phase === 'checking' ? 'loading'
+      : checkData?.totalEto?.found    ? 'found'
+      : checkData?.totalEto?.dbError  ? 'error'
+      : 'missing';
     const ssStatus  = phase === 'checking' ? 'loading'
-      : !checkData?.totalEto?.found ? 'na'           // don't report SS if ETO already failed
-      : checkData?.smartsheet?.found ? 'found' : 'na';
+      : checkData?.smartsheet?.found  ? 'found' : 'na';
 
     return (
       <Page>
@@ -225,14 +235,25 @@ function JobLandingScreen({ onLoad }) {
           {/* Not found error + actions */}
           {phase === 'notfound' && (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 12 }}>
-              <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '12px 14px' }}>
-                <div style={{ fontSize: 12, fontWeight: 700, color: '#991b1b', marginBottom: 4 }}>
-                  Job #{pendingId} not found in TotalETO
+              {checkData?.totalEto?.dbError ? (
+                <div style={{ background: '#fffbeb', border: '1px solid #fcd34d', borderRadius: 8, padding: '12px 14px' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#92400e', marginBottom: 4 }}>
+                    Cannot reach TotalETO database
+                  </div>
+                  <div style={{ fontSize: 11, color: '#b45309', lineHeight: 1.5 }}>
+                    The BRR server is offline or cannot connect to SQL Server. Check that PM2 is running on SERVER-APP1 and try again.
+                  </div>
                 </div>
-                <div style={{ fontSize: 11, color: '#b91c1c', lineHeight: 1.5 }}>
-                  Verify the job number and try again. If this is a new project it may not be set up in TotalETO yet.
+              ) : (
+                <div style={{ background: '#fef2f2', border: '1px solid #fecaca', borderRadius: 8, padding: '12px 14px' }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: '#991b1b', marginBottom: 4 }}>
+                    Job #{pendingId} not found in TotalETO
+                  </div>
+                  <div style={{ fontSize: 11, color: '#b91c1c', lineHeight: 1.5 }}>
+                    Verify the job number and try again. If this is a new project it may not be set up in TotalETO yet.
+                  </div>
                 </div>
-              </div>
+              )}
               <button
                 onClick={() => { setPhase('idle'); setCheckData(null); setInput(pendingId); }}
                 style={{ height: 40, padding: '0 18px', background: 'var(--bg-sunken)', border: '1px solid var(--border)', borderRadius: 8, fontSize: 13, fontWeight: 600, color: 'var(--ink-2)', cursor: 'pointer', display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6 }}

@@ -119,7 +119,10 @@ function createMainWindow() {
 }
 
 function createTray() {
-  const icon = nativeImage.createEmpty();
+  const trayIconPath = path.join(__dirname, '../build/icon.ico');
+  const icon = fs.existsSync(trayIconPath)
+    ? nativeImage.createFromPath(trayIconPath).resize({ width: 16, height: 16 })
+    : nativeImage.createEmpty();
   tray = new Tray(icon);
   tray.setToolTip('SDC Tools');
   _rebuildTrayMenu();
@@ -307,6 +310,7 @@ ipcMain.handle('app-check-for-updates', (e) => {
 });
 
 app.whenReady().then(() => {
+  Menu.setApplicationMenu(null);
   createMainWindow();
   createTray();
 

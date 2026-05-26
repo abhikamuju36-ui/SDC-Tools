@@ -1,0 +1,112 @@
+name: Manual Release — SDC Tools
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Trigger a release from the GitHub Actions UI without manually editing
+# package.json.  Go to Actions → Manual Release → Run workflow, pick a bump
+# type (patch / minor / major) or supply an exact version, then click Run.
+#
+# What it does:
+#   1. Bumps the version in shell/package.json
+#   2. Commits & pushes the bump (triggers release.yml via the push)
+#   3. Builds the Windows installer immediately in this same run
+#   4. Publishes to GitHub Releases (electron-updater picks it up automatically)
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Version bump type"
+        required: true
+        default: patch
+        type: choice
+        options: [patch, minor, major]
+      version:
+        description: "Exact version override (e.g. 2.0.0) — leave blank to use bump type"
+        required: false
+        default: ""
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Bump version, build & publish
+    runs-on: windows-latest
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # Need push access — use a token with write permission
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "npm"
+          cache-dependency-path: package-lock.json
+
+      # ── Bump version in shell/package.json ─────────────────────────────────
+      - name: Bump version
+        id: bump
+        shell: bash
+        run: |
+          cd shell
+          if [ -n "${{ inputs.version }}" ]; then
+            NEW_VER="${{ inputs.version }}"
+            node -e "
+              const pkg = require('./package.json');
+              pkg.version = '$NEW_VER';
+              require('fs').writeFileSync('./package.json', JSON.stringify(pkg, null, 2) + '\n');
+            "
+          else
+            npm version ${{ inputs.bump }} --no-git-tag-version
+            NEW_VER=$(node -p "require('./package.json').version")
+          fi
+          echo "version=$NEW_VER" >> $GITHUB_OUTPUT
+          echo "Releasing v$NEW_VER"
+
+      # ── Commit & push the version bump ─────────────────────────────────────
+      - name: Commit version bump
+        shell: bash
+        run: |
+          git config user.name  "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add shell/package.json
+          git commit -m "chore: release v${{ steps.bump.outputs.version }}"
+          git push
+
+      # ── Write .env ──────────────────────────────────────────────────────────
+      - name: Write shell/.env
+        shell: bash
+        run: |
+          cat > shell/.env <<EOF
+          SDC_SERVER_HOST=${{ secrets.SDC_SERVER_HOST || 'SERVER-APP1' }}
+          AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
+          AZURE_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}
+          EOF
+
+      # ── Install & build ─────────────────────────────────────────────────────
+      - name: Install shell deps
+        working-directory: shell
+        run: npm install
+
+      - name: Build Vite launcher UI
+        working-directory: shell
+        run: npm run build
+
+      # ── Package & publish ───────────────────────────────────────────────────
+      - name: Package & publish installer
+        working-directory: shell
+        run: npx electron-builder --win --publish always
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      # ── Archive installer as artifact ───────────────────────────────────────
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: SDC-Tools-v${{ steps.bump.outputs.version }}
+          path: shell/dist-electron/*.exe
+          retention-days: 90

@@ -13,9 +13,9 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
   name: {
     assemblies: 'Assemblies Library',
     readiness:  'Build Readiness Report',
-    scheduler:  'SDC Scheduler',
+    scheduler:  'Project Scheduler',
     statelogic: 'State Logic Builder',
-    calendar:   'SDC Calendar',
+    calendar:   'Calendar',
     vendor:     'Vendor Tracker',
   }[id],
   description: {
@@ -498,11 +498,6 @@ export default function App() {
                 <div className="shortcuts-grid">
                   {[
                     ['Quick open', 'Ctrl', 'K'],
-                    ['Restart all', 'Ctrl', 'R'],
-                    ['Toggle theme', 'Ctrl', 'D'],
-                    ['View logs', 'Ctrl', 'L'],
-                    ['Settings', 'Ctrl', ','],
-                    ['Help', 'F1'],
                   ].map(([label, ...keys]) => (
                     <div key={label} className="shortcut-row">
                       <span>{label}</span>

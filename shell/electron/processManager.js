@@ -65,7 +65,7 @@ class ProcessManager extends EventEmitter {
       },
       scheduler: {
         id:          'scheduler',
-        name:        'SDC Scheduler',
+        name:        'Project Scheduler',
         description: 'Project Gantt charts & Smartsheet sync',
         port:        4003,
         url:         url(4003),
@@ -87,7 +87,7 @@ class ProcessManager extends EventEmitter {
       },
       calendar: {
         id:          'calendar',
-        name:        'SDC Calendar',
+        name:        'Calendar',
         description: 'Company-wide calendar — events, birthdays, paydays & Scheduler sync',
         port:        4005,
         url:         url(4005),

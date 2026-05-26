@@ -10,13 +10,6 @@ export default function WindowChrome() {
           <span className="dot" />
           SDC Tools
         </div>
-        <nav className="winbar-menu">
-          <button>File</button>
-          <button>Edit</button>
-          <button>View</button>
-          <button>Window</button>
-          <button>Help</button>
-        </nav>
       </div>
       <div className="winbar-controls">
         <button
