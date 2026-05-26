@@ -1,12 +1,15 @@
 const express = require('express');
 const router = express.Router();
 const eto = require('../services/eto');
+const demo = require('../services/demoData');
+
+function db() { return demo.isDemoMode() ? demo : eto; }
 
 // GET /api/emails/:projectId — generate draft follow-up emails
 router.get('/:projectId', async (req, res) => {
   try {
     const projectId = parseInt(req.params.projectId);
-    const src = eto;
+    const src = db();
     const [project, poRows] = await Promise.all([
       src.getProjectInfo(projectId),
       src.getPoDetails(projectId),
@@ -81,8 +84,7 @@ ${po.urgencyLine}
 
 Outstanding items:
 ${po.partsTable}
-`).join('\n---\n\n')}
-Please confirm:
+`).join('\n---\n\n')}Please confirm:
 1. Ship date / tracking if already shipped
 2. Updated ETA if there is a delay
 

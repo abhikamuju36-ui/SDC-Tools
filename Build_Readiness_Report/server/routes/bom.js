@@ -1,13 +1,16 @@
 const express = require('express');
 const router = express.Router();
 const eto = require('../services/eto');
+const demo = require('../services/demoData');
 const { buildTree, buildNestedTree } = require('../lib/bomTree');
+
+function db() { return demo.isDemoMode() ? demo : eto; }
 
 // GET /api/bom/:projectId/specs
 router.get('/:projectId/specs', async (req, res) => {
   try {
     const projectId = parseInt(req.params.projectId);
-    const src = eto;
+    const src = db();
     const [project, specs] = await Promise.all([
       src.getProjectInfo(projectId),
       src.getSpecs(projectId),
@@ -26,8 +29,8 @@ router.get('/:projectId/:specId/tree', async (req, res) => {
     const specId = parseInt(req.params.specId);
 
     const [topNode, bomRows] = await Promise.all([
-      eto.getTopNode(projectId, specId),
-      eto.getBomRows(projectId, specId),
+      db().getTopNode(projectId, specId),
+      db().getBomRows(projectId, specId),
     ]);
 
     if (!topNode) {
@@ -49,7 +52,7 @@ router.get('/:projectId/:specId/flat', async (req, res) => {
   try {
     const projectId = parseInt(req.params.projectId);
     const specId = parseInt(req.params.specId);
-    const bomRows = await eto.getBomRows(projectId, specId);
+    const bomRows = await db().getBomRows(projectId, specId);
     res.json({ rows: bomRows });
   } catch (err) {
     console.error('Error fetching BOM rows:', err);
