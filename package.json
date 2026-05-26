@@ -10,7 +10,7 @@
   ],
   "scripts": {
     "dev": "npm run dev --workspace=shell",
-    "build:apps": "npm run build --workspace=\"Assembilies library main\" && npm run build --workspace=state_logic_builder",
+    "build:apps": "npm run build --prefix \"Assembilies library main\" && npm run build --prefix state_logic_builder",
     "build": "npm run build:apps && npm run electron:build --workspace=shell",
     "install:all": "npm install --workspaces && npm install --prefix \"SDC Centrailzed calender/server\"",
     "start:assemblies": "npm run start --workspace=\"Assembilies library main\"",

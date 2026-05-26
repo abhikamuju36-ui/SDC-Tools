@@ -108,6 +108,13 @@ module.exports = {
         PORT:             '4002',
         NODE_ENV:         'production',
         NODE_NO_WARNINGS: '1',
+        ETO_HOST:         'SERVER-APP1.stevendouglas.local',
+        ETO_DATABASE:     'SDC',
+        ETO_USER:         'akamuju',
+        ETO_PASSWORD:     'Voltages84gilds$',
+        ETO_DOMAIN:       'stevendouglas',
+        ETO_PORT:         '1433',
+        SMARTSHEET_API_KEY: 'pcqWtWqlXGJfagKlXBaTCDiWMCgMAdFP0i7TA',
       },
       watch:         false,
       max_restarts:  10,
@@ -190,10 +197,6 @@ module.exports = {
     },
 
     // ── Vendor Tracker ──────────────────────────────────────────────────────
-    // cwd is relative to this ecosystem.config.js (the repo root).
-    // On the server: copy the "Vendors tracking dashboard" folder next to
-    // the repo root so it sits at  <repo-parent>\Vendors tracking dashboard
-    // e.g.  C:\AI Projects\Vendors tracking dashboard
     {
       name:          'sdc-vendor',
       script:        'server/server.js',
@@ -202,6 +205,13 @@ module.exports = {
         PORT:             '4006',
         NODE_ENV:         'production',
         NODE_NO_WARNINGS: '1',
+        ETO_HOST:         'SERVER-APP1.stevendouglas.local',
+        ETO_DATABASE:     'SDC',
+        ETO_USER:         'akamuju',
+        ETO_PASSWORD:     'Voltages84gilds$',
+        ETO_DOMAIN:       'stevendouglas',
+        ETO_PORT:         '1433',
+        SMARTSHEET_API_KEY: 'pcqWtWqlXGJfagKlXBaTCDiWMCgMAdFP0i7TA',
       },
       watch:         false,
       max_restarts:  10,
