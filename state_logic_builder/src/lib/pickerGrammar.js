@@ -198,15 +198,19 @@ export const DEFAULT_GRAMMAR = [
   },
 
   // ── Vision ───────────────────────────────────────────────────────────────
+  // v3.5 — Job + Tool detail. Pick a Job to decide on its overall Pass/Fail,
+  // OR drill into a specific Tool within the job (Cam1 → Part_Inspect →
+  // LineDetect). Tool detail values come from pickerSubjectsFromProject:
+  // formatted as "{Job}.{Tool}" so the user sees the qualified name.
   {
     id: 'vision',
     category: 'vision',
     family: 'Vision System',
     subject: 'Device name (camera)',
-    detail:  'Job name',
+    detail:  'Job name, Tool name',
     actions: 'Trigger, Inspect',
     inputs:  'Pass, Fail',
-    notes: '"Inspect" = pulse trigger + wait result + log to PT (a compound Action).',
+    notes: '"Inspect" = pulse trigger + wait result + log to PT (a compound Action). Tool name (optional) drills into a specific check within the job.',
   },
 
   // ── Robot ────────────────────────────────────────────────────────────────
@@ -452,6 +456,19 @@ function migrateRow(persisted) {
   // Vacuum: add eject-on action; old defaults had only on/off.
   if (merged.id === 'vacuum') {
     if (merged.actions === 'Turn On, Turn Off') merged.actions = 'Vac On, Vac Off, Vac Eject On';
+  }
+
+  // v3.5 — vision row: add "Tool name" to the detail list when missing.
+  // Cached grammars from earlier versions only had "Job name"; without
+  // this, the Tool-name dropdown never renders in the picker even though
+  // tools are defined on the device. Idempotent — only writes if Tool
+  // name is absent.
+  if (merged.id === 'vision' && typeof merged.detail === 'string') {
+    const parts = merged.detail.split(',').map(s => s.trim()).filter(Boolean);
+    if (!parts.includes('Tool name')) {
+      parts.push('Tool name');
+      merged.detail = parts.join(', ');
+    }
   }
 
   return merged;
