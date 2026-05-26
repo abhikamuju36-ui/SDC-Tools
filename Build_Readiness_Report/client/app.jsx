@@ -7,6 +7,7 @@ import ReadinessTab from './components/tabs/tab-readiness.jsx';
 import PoTab from './components/tabs/tab-po.jsx';
 import CostTab from './components/tabs/tab-cost.jsx';
 import { IconLayers, IconTruck, IconDollar, IconSearch } from './components/primitives.jsx';
+import logoUrl from './assets/sdc-logo.png';
 
 // ─── Error Boundary ──────────────────────────────────────────────────────────
 class ErrorBoundary extends React.Component {
@@ -112,6 +113,31 @@ function SystemRow({ badge, badgeBg, name, subtitle, status, detail }) {
   );
 }
 
+// ── Shared layout components — defined at MODULE scope so React never
+//    treats them as new types across renders (which would unmount children
+//    and cause the job-number input to lose focus on every keystroke).
+function LandingPage({ children }) {
+  return (
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(160deg, var(--bg) 0%, var(--bg-sunken) 100%)' }}>
+      {children}
+      <div style={{ marginTop: 24, fontSize: 11, color: 'var(--ink-4)' }}>
+        Live data from TotalETO · SDC Automation
+      </div>
+    </div>
+  );
+}
+function LandingBrand({ subtitle }) {
+  return (
+    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
+      <img src={logoUrl} alt="SDC" style={{ height: 34 }} onError={e => e.target.style.display = 'none'} />
+      <div style={{ textAlign: 'center' }}>
+        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)', letterSpacing: '-0.02em' }}>SDC Command</div>
+        <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 3 }}>{subtitle || 'Build Readiness · PO Tracker · Project Costs'}</div>
+      </div>
+    </div>
+  );
+}
+
 function JobLandingScreen({ onLoad }) {
   const [input, setInput]         = useState('');
   const [recentJobs, setRecentJobs] = useState(getRecentJobs);
@@ -150,26 +176,9 @@ function JobLandingScreen({ onLoad }) {
     }
   };
 
-  // ── shared page wrapper ──
-  const Page = ({ children }) => (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', background: 'linear-gradient(160deg, var(--bg) 0%, var(--bg-sunken) 100%)' }}>
-      {children}
-      <div style={{ marginTop: 24, fontSize: 11, color: 'var(--ink-4)' }}>
-        Live data from TotalETO · SDC Automation
-      </div>
-    </div>
-  );
-
-  // ── shared brand header ──
-  const Brand = ({ subtitle }) => (
-    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10 }}>
-      <img src="assets/sdc-logo-blue.png" style={{ height: 34 }} onError={e => e.target.style.display = 'none'} />
-      <div style={{ textAlign: 'center' }}>
-        <div style={{ fontSize: 20, fontWeight: 700, color: 'var(--ink)', letterSpacing: '-0.02em' }}>SDC Command</div>
-        <div style={{ fontSize: 11, color: 'var(--ink-4)', marginTop: 3 }}>{subtitle || 'Build Readiness · PO Tracker · Project Costs'}</div>
-      </div>
-    </div>
-  );
+  // Page and Brand are defined at module scope (below) to prevent
+  // React from treating them as new component types on every render,
+  // which would unmount the input and lose focus on each keystroke.
 
   // ─────────────────────────────────────────────────────────────────
   // PHASE: checking / found / notfound — show system status card
@@ -183,10 +192,10 @@ function JobLandingScreen({ onLoad }) {
       : checkData?.smartsheet?.found  ? 'found' : 'na';
 
     return (
-      <Page>
+      <LandingPage>
         <div style={{ background: 'var(--bg-raised)', border: '1px solid var(--border)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', padding: '36px 44px', width: 500, display: 'flex', flexDirection: 'column', gap: 24 }}>
 
-          <Brand subtitle={
+          <LandingBrand subtitle={
             phase === 'checking' ? `Searching connected systems for job #${pendingId}…`
             : phase === 'found'   ? `Job #${pendingId} found — loading project…`
             : `Job #${pendingId} · not found`
@@ -273,7 +282,7 @@ function JobLandingScreen({ onLoad }) {
             </button>
           )}
         </div>
-      </Page>
+      </LandingPage>
     );
   }
 
@@ -284,7 +293,7 @@ function JobLandingScreen({ onLoad }) {
     <Page>
       <div style={{ background: 'var(--bg-raised)', border: '1px solid var(--border)', borderRadius: 16, boxShadow: 'var(--shadow-lg)', padding: '44px 52px', width: 500, display: 'flex', flexDirection: 'column', gap: 28 }}>
 
-        <Brand />
+        <LandingBrand />
 
         {/* Input */}
         <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
