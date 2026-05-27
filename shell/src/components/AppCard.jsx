@@ -16,9 +16,10 @@ function timeAgo(ts) {
   return `${d}d ago`
 }
 
-export default function AppCard({ app, lastOpened }) {
+export default function AppCard({ app, lastOpened, onOpen }) {
   const { id, name, description, status, color } = app
   const openedAgo = timeAgo(lastOpened?.[id])
+  const canOpen = status === 'running'
 
   const statusLabels = {
     starting: 'Starting…',
@@ -31,10 +32,13 @@ export default function AppCard({ app, lastOpened }) {
   return (
     <div
       className="app-card"
-      style={{ '--card-accent': color }}
+      style={{ '--card-accent': color, cursor: canOpen ? 'pointer' : 'default' }}
       tabIndex={0}
-      role="article"
+      role="button"
       aria-label={`${name} — ${statusLabels[status] ?? status}`}
+      onClick={() => canOpen && onOpen(id)}
+      onDoubleClick={() => canOpen && onOpen(id)}
+      onKeyDown={e => (e.key === 'Enter' || e.key === ' ') && canOpen && onOpen(id)}
     >
       {/* Colored top stripe */}
       <div className="card-accent" />
@@ -49,9 +53,6 @@ export default function AppCard({ app, lastOpened }) {
           <div className="card-info">
             <div className="card-name-row">
               <h2 className="card-name">{name}</h2>
-              {UPDATABLE_APPS[id] && (
-                <span className="card-update-flag">UPDATE</span>
-              )}
             </div>
           </div>
         </div>

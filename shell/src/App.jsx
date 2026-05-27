@@ -291,7 +291,7 @@ export default function App() {
           <img src={sdcLogo} alt="Steven Douglas Corp." className="brand-mark-img" />
           <div className="header-wordmark">
             <div className="header-title">Steven Douglas Corp.</div>
-            <div className="header-subtitle">Engineering Applications Suite</div>
+            <div className="header-subtitle">Engineering Excellence · Trusted Partnerships</div>
           </div>
         </div>
 
