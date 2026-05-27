@@ -82,9 +82,6 @@ export default function Header({
           )}
         </button>
 
-        <div className="avatar" style={{ width: 32, height: 32, borderRadius: '999px', background: 'var(--sdc-blue-tint)', color: 'var(--sdc-blue-ink)', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: 12, fontWeight: 700 }}>
-          MC
-        </div>
       </div>
     </div>
   );
