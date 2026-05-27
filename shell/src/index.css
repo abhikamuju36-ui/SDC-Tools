@@ -235,14 +235,11 @@ button { cursor: pointer; }
   flex-shrink: 0;
 }
 
-/* SDC logo image in header — square crop centred on the oval */
 .brand-mark-img {
-  height: 54px;
-  width: 54px;
-  border-radius: 10px;
+  height: 52px;
+  width: auto;
   flex-shrink: 0;
-  object-fit: cover;
-  object-position: center 10%;
+  object-fit: contain;
 }
 
 .header-wordmark {
@@ -862,9 +859,8 @@ button { cursor: pointer; }
   letter-spacing: -.2px;
   color: var(--navy);
   line-height: 1.2;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  white-space: normal;
+  word-break: break-word;
 }
 [data-theme="dark"] .card-name { color: #e2e8f0; }
 

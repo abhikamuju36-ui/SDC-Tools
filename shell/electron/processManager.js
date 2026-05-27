@@ -54,7 +54,7 @@ class ProcessManager extends EventEmitter {
       },
       readiness: {
         id:          'readiness',
-        name:        'Build Readiness Report',
+        name:        'Project Build Status Dashboard',
         description: 'ETO project build status dashboard',
         port:        4002,
         url:         url(4002),
