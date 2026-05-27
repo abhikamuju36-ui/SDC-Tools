@@ -65,7 +65,7 @@ class ProcessManager extends EventEmitter {
       },
       scheduler: {
         id:          'scheduler',
-        name:        'Project Scheduler',
+        name:        'Resource Management',
         description: 'Project Gantt charts & Smartsheet sync',
         port:        4003,
         url:         url(4003),
@@ -77,7 +77,7 @@ class ProcessManager extends EventEmitter {
       statelogic: {
         id:          'statelogic',
         name:        'State Logic Builder',
-        description: 'PLC state machine → Allen-Bradley L5X',
+        description: 'Seq diagrams → PLC generation',
         port:        4004,
         url:         url(4004),
         healthPath:  '/health',
