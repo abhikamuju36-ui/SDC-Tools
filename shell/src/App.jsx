@@ -442,13 +442,6 @@ export default function App() {
         />
       )}
 
-      <StatusBar
-        apps={apps}
-        runningCount={runningCount}
-        email={authUser.email}
-        serverHost={serverHost}
-        version={appVersion}
-      />
     </div>
   )
 }
