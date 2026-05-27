@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Canvas - React Flow diagram editor for state logic diagrams.
  * Features:
  *   - onConnectEnd: drag handle to empty canvas → create node + auto-connect
@@ -552,8 +552,8 @@ export function Canvas() {
       e.preventDefault();
 
       const vp = getViewport();
-      // Scroll up (deltaY < 0) → zoom out; one click ~= 10% zoom
-      const factor = e.deltaY < 0 ? 1 / 1.1 : 1.1;
+      // Scroll up (deltaY < 0) → zoom in; scroll down → zoom out
+      const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
       const nextZoom = Math.max(0.05, Math.min(2, vp.zoom * factor));
 
       // Keep the point under the mouse fixed during zoom
