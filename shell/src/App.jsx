@@ -298,6 +298,15 @@ export default function App() {
 
         {/* Controls (right) */}
         <div className="header-controls">
+          <button
+            className="btn btn-header"
+            onClick={handleCheckForUpdates}
+            disabled={checkingUpdate}
+            title="Check for SDC Tools app updates now"
+          >
+            ↑ {checkingUpdate ? 'Checking…' : 'Check updates'}
+          </button>
+
           <NotificationCenter />
 
           <button
@@ -360,32 +369,6 @@ export default function App() {
             </div>
           </div>
 
-          {/* Right: system status card + action buttons */}
-          <div className="system-row">
-            <div className="sys-actions">
-              <button
-                className={`action-btn${launchOnStartup ? ' action-btn--active' : ''}`}
-                onClick={handleToggleStartup}
-                title={launchOnStartup ? 'Disable launch on Windows startup' : 'Enable launch on Windows startup'}
-              >
-                ⬤ Auto-start
-              </button>
-              <button
-                className="action-btn"
-                onClick={handleCheckForUpdates}
-                disabled={checkingUpdate}
-                title="Check for SDC Tools app updates now"
-              >
-                ↑ {checkingUpdate ? 'Checking…' : 'Check updates'}
-              </button>
-              <button className="action-btn" onClick={handleRestartAll} disabled={busy} title="Restart all servers">
-                ↺ Restart all
-              </button>
-              <button className="action-btn action-btn--stop" onClick={handleStopAll} disabled={busy} title="Stop all servers">
-                ■ Stop all
-              </button>
-            </div>
-          </div>
         </div>
       </section>
 
