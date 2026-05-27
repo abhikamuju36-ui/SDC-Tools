@@ -237,11 +237,11 @@ button { cursor: pointer; }
 
 .brand-mark-img {
   height: 46px;
-  width: 92px;
+  width: 46px;
+  border-radius: 8px;
   flex-shrink: 0;
   object-fit: cover;
-  object-position: center top;
-  overflow: hidden;
+  object-position: center;
 }
 
 .header-wordmark {
