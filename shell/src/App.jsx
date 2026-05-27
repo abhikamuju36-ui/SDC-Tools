@@ -295,24 +295,6 @@ export default function App() {
           </div>
         </div>
 
-        {/* Search (center) */}
-        <div className="header-search-wrap">
-          <div className="header-search">
-            <svg className="search-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="11" cy="11" r="7"/><path d="m21 21-4.3-4.3"/>
-            </svg>
-            <input
-              ref={searchRef}
-              className="search-input"
-              type="text"
-              placeholder="Search applications, logs, recent activity..."
-              value={searchQuery}
-              onChange={e => setSearchQuery(e.target.value)}
-              onKeyDown={e => e.key === 'Escape' && setSearchQuery('')}
-            />
-            <span className="search-hint">Ctrl K</span>
-          </div>
-        </div>
 
         {/* Controls (right) */}
         <div className="header-controls">
@@ -367,12 +349,6 @@ export default function App() {
         <div className="hero-inner">
           {/* Left: greeting */}
           <div className="greeting">
-            <div className="eyebrow-badge">
-              <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/>
-              </svg>
-              Workstation · {serverHost || 'SERVER-APP1'}
-            </div>
             <h1 className="greeting-h1">
               {getGreeting(now)}, <span className="greeting-accent">{firstName}.</span>
             </h1>
@@ -381,25 +357,11 @@ export default function App() {
                 <span className="date-dot" />
                 {formatHeaderDate(now)}
               </span>
-              <span className="greeting-status-text">
-                {allOnline ? 'Your suite is healthy and ready.' : `${runningCount} of ${apps.length} services online`}
-              </span>
             </div>
           </div>
 
           {/* Right: system status card + action buttons */}
           <div className="system-row">
-            <div className="system-status">
-              <div className="system-status-icon">✓</div>
-              <div>
-                <div className="system-status-label">
-                  {allOnline ? `All ${apps.length} services online` : `${runningCount} / ${apps.length} running`}
-                </div>
-                {lastSync && (
-                  <div className="system-status-sub">Last sync · {timeAgo(lastSync)}</div>
-                )}
-              </div>
-            </div>
             <div className="sys-actions">
               <button
                 className={`action-btn${launchOnStartup ? ' action-btn--active' : ''}`}
@@ -467,47 +429,6 @@ export default function App() {
               />
             </section>
 
-            {/* Right rail */}
-            <aside className="activity-sidebar">
-              {/* Tip callout */}
-              {updatableCount > 0 && (
-                <div className="tip-callout">
-                  <div className="tip-icon">ℹ</div>
-                  <div className="tip-callout-body">
-                    <strong className="tip-callout-title">{updatableCount} updates ready</strong>
-                    Apply them together to keep your suite in sync.
-                  </div>
-                </div>
-              )}
-
-              {/* Recent activity panel */}
-              <div className="rail-panel">
-                <div className="rail-panel-header">
-                  <span className="rail-panel-header-title">Recent Activity</span>
-                  <span className="rail-panel-header-badge">Today</span>
-                </div>
-                <RecentActivity activity={activity} apps={apps} />
-              </div>
-
-              {/* Keyboard shortcuts panel */}
-              <div className="rail-panel">
-                <div className="rail-panel-header">
-                  <span className="rail-panel-header-title">Keyboard Shortcuts</span>
-                </div>
-                <div className="shortcuts-grid">
-                  {[
-                    ['Quick open', 'Ctrl', 'K'],
-                  ].map(([label, ...keys]) => (
-                    <div key={label} className="shortcut-row">
-                      <span>{label}</span>
-                      <div className="shortcut-keys">
-                        {keys.map(k => <span key={k}>{k}</span>)}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </aside>
           </div>
         </div>
       </main>
