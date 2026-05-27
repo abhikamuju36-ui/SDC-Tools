@@ -65,7 +65,7 @@ class ProcessManager extends EventEmitter {
       },
       scheduler: {
         id:          'scheduler',
-        name:        'Resource Management',
+        name:        'Project Planner',
         description: 'Project Gantt charts & Smartsheet sync',
         port:        4003,
         url:         url(4003),
