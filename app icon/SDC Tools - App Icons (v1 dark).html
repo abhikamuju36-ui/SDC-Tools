@@ -1,0 +1,331 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>SDC Tools — App Icons</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
+
+  <script src="https://unpkg.com/react@18.3.1/umd/react.development.js" integrity="sha384-hD6/rw4ppMLGNu3tX5cjIb+uRZ7UkRJ6BPkLpg4hAu/6onKUg4lLsHAs9EBPT82L" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18.3.1/umd/react-dom.development.js" integrity="sha384-u6aeetuaXnQ38mYT8rp6sbXaQe3NL9t+IBXmnYxwkUI2Hw4bsp2Wvmx4yRQF1uAm" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone@7.29.0/babel.min.js" integrity="sha384-m08KidiNqLdpJqLq95G/LEi8Qvjl/xUYll3QILypMoQ65QorJ9Lvtp2RXYGBFj1y" crossorigin="anonymous"></script>
+
+  <style>
+    html, body, #root { height: 100%; margin: 0; }
+    body { font-family: "Montserrat", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f0eee9; }
+    .mono { font-family: "JetBrains Mono", monospace; }
+
+    /* Icon card on the canvas */
+    .icon-card {
+      width: 100%; height: 100%;
+      display: grid; grid-template-rows: 1fr auto; gap: 18px;
+      padding: 28px; box-sizing: border-box;
+      background: #ffffff;
+      border-radius: 14px;
+    }
+    .icon-card .stage {
+      display: grid; place-items: center;
+      background:
+        radial-gradient(circle at 50% 0%, rgba(0,0,0,0.04), transparent 60%),
+        #f6f5f1;
+      border-radius: 12px;
+      padding: 28px;
+    }
+    .icon-card .meta { display: grid; gap: 4px; }
+    .icon-card .meta .name { font-weight: 700; font-size: 15px; color: #18181f; letter-spacing: -0.01em; }
+    .icon-card .meta .sub  { font-size: 12px; color: #6b6b78; font-family: "JetBrains Mono", monospace; }
+    .icon-card .meta .spec { font-size: 10.5px; color: #a0a0ad; font-family: "JetBrains Mono", monospace; letter-spacing: 0.04em; }
+
+    /* Launcher mock */
+    .launcher {
+      width: 100%; height: 100%;
+      background: linear-gradient(180deg, #0a0a14 0%, #050509 100%);
+      border-radius: 14px; overflow: hidden; color: #e7e8ee;
+      display: grid; grid-template-rows: auto 1fr auto;
+      font-family: "Montserrat", sans-serif;
+    }
+    .launcher .titlebar {
+      display: flex; align-items: center; gap: 10px;
+      padding: 14px 18px;
+      background: rgba(255,255,255,0.02);
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+    }
+    .launcher .lights { display: flex; gap: 7px; }
+    .launcher .lights span { width: 12px; height: 12px; border-radius: 999px; background: #3a3f5c; }
+    .launcher .lights span:first-child { background: #ff5f57; }
+    .launcher .lights span:nth-child(2) { background: #febc2e; }
+    .launcher .lights span:nth-child(3) { background: #28c840; }
+    .launcher .titlebar .title { font-weight: 600; font-size: 13px; letter-spacing: 0.02em; color: #c7cae0; margin-left: 6px; }
+    .launcher .titlebar .crumbs { margin-left: auto; font-family: "JetBrains Mono", monospace; font-size: 11px; color: #5b6390; }
+
+    .launcher .body { padding: 28px 36px; display: grid; gap: 22px; align-content: start; }
+    .launcher .greet { display: grid; gap: 2px; }
+    .launcher .greet h1 { font-size: 22px; font-weight: 700; margin: 0; color: #ffffff; letter-spacing: -0.01em; }
+    .launcher .greet p  { margin: 0; font-size: 12.5px; color: #8c93b4; font-family: "JetBrains Mono", monospace; }
+
+    .launcher .section-label {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 10.5px; letter-spacing: 0.16em; color: #5b6390; text-transform: uppercase;
+      margin-bottom: -6px;
+    }
+
+    .launcher .grid {
+      display: grid; grid-template-columns: repeat(5, 1fr); gap: 18px;
+    }
+    .launcher .tile {
+      display: grid; gap: 10px; justify-items: center;
+      padding: 14px 8px 10px;
+      border-radius: 14px;
+      transition: background .15s, transform .15s;
+      cursor: pointer;
+    }
+    .launcher .tile:hover { background: rgba(255,255,255,0.03); transform: translateY(-1px); }
+    .launcher .tile .icon-wrap { width: 96px; height: 96px; }
+    .launcher .tile .label { font-size: 11.5px; color: #c7cae0; font-weight: 500; text-align: center; line-height: 1.25; }
+    .launcher .tile .badge {
+      font-family: "JetBrains Mono", monospace;
+      font-size: 9.5px; color: #5b6390;
+      letter-spacing: 0.04em;
+    }
+
+    .launcher .footer {
+      display: flex; align-items: center; gap: 14px;
+      padding: 12px 18px;
+      border-top: 1px solid rgba(255,255,255,0.04);
+      background: rgba(255,255,255,0.015);
+      font-family: "JetBrains Mono", monospace; font-size: 11px; color: #5b6390;
+    }
+    .launcher .footer .dot { width: 6px; height: 6px; border-radius: 999px; background: #00c2a8; box-shadow: 0 0 8px rgba(0,194,168,0.6); }
+    .launcher .footer .right { margin-left: auto; color: #3a3f5c; }
+
+    /* Size-test panel */
+    .size-test {
+      width: 100%; height: 100%;
+      background: #ffffff;
+      border-radius: 14px;
+      padding: 28px;
+      box-sizing: border-box;
+      display: grid; gap: 22px; align-content: start;
+    }
+    .size-test h3 { margin: 0; font-size: 13px; letter-spacing: 0.06em; color: #18181f; text-transform: uppercase; font-weight: 700; }
+    .size-test h3 .hint { color: #a0a0ad; font-weight: 500; font-family: "JetBrains Mono", monospace; font-size: 11px; letter-spacing: 0; text-transform: none; margin-left: 8px; }
+    .size-test .row { display: flex; align-items: end; gap: 14px; flex-wrap: wrap; }
+    .size-test .sample { display: grid; gap: 6px; justify-items: center; }
+    .size-test .sample .px { font-family: "JetBrains Mono", monospace; font-size: 10px; color: #a0a0ad; }
+
+    /* Spec sheet */
+    .spec-sheet {
+      width: 100%; height: 100%;
+      background: #ffffff; border-radius: 14px; padding: 30px 32px; box-sizing: border-box;
+      display: grid; gap: 18px; align-content: start;
+      color: #18181f;
+    }
+    .spec-sheet h2 { margin: 0; font-size: 18px; font-weight: 800; letter-spacing: -0.01em; }
+    .spec-sheet h2 small { font-weight: 500; color: #6b6b78; font-family: "JetBrains Mono", monospace; font-size: 12px; margin-left: 10px; letter-spacing: 0; }
+    .spec-sheet .row { display: flex; gap: 22px; align-items: flex-start; }
+    .spec-sheet .stage {
+      width: 240px; height: 240px; flex: 0 0 240px; border-radius: 12px;
+      background: repeating-linear-gradient(45deg, #f6f5f1, #f6f5f1 8px, #f0eee9 8px, #f0eee9 16px);
+      display: grid; place-items: center;
+      padding: 18px; box-sizing: border-box;
+    }
+    .spec-sheet .swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; }
+    .spec-sheet .sw { display: grid; gap: 4px; }
+    .spec-sheet .sw .chip { width: 100%; aspect-ratio: 1.5; border-radius: 8px; border: 1px solid rgba(0,0,0,0.06); }
+    .spec-sheet .sw .nm   { font-size: 10.5px; font-family: "JetBrains Mono", monospace; color: #18181f; }
+    .spec-sheet .sw .hx   { font-size: 10px; font-family: "JetBrains Mono", monospace; color: #6b6b78; }
+    .spec-sheet .notes { font-size: 12.5px; color: #18181f; line-height: 1.55; }
+    .spec-sheet .notes strong { color: #18181f; }
+    .spec-sheet .notes ul { margin: 6px 0 0; padding-left: 18px; color: #4a4a55; }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel" src="design-canvas.jsx"></script>
+  <script type="text/babel" src="icons-v1.jsx"></script>
+  <script type="text/babel" data-presets="env,react">
+    const { useMemo } = React;
+
+    function IconCard({ id, name, sub, Cmp, size = 360 }) {
+      return (
+        <div className="icon-card">
+          <div className="stage">
+            <div style={{ width: size, height: size }}>
+              <Cmp />
+            </div>
+          </div>
+          <div className="meta">
+            <div className="name">{name}</div>
+            <div className="sub">{sub}</div>
+            <div className="spec">512 × 512 · PNG · TRANSPARENT</div>
+          </div>
+        </div>
+      );
+    }
+
+    function Launcher() {
+      return (
+        <div className="launcher">
+          <div className="titlebar">
+            <div className="lights"><span></span><span></span><span></span></div>
+            <div className="title">SDC Tools</div>
+            <div className="crumbs">v2.4.1 · concord, oh</div>
+          </div>
+          <div className="body">
+            <div className="greet">
+              <h1>Good morning, Andrew.</h1>
+              <p>3 builds in progress · 2 reviews awaiting sign-off</p>
+            </div>
+
+            <div>
+              <div className="section-label">Applications</div>
+              <div className="grid" style={{ marginTop: 14 }}>
+                {ICONS.map(({ id, name, Cmp }) => (
+                  <div className="tile" key={id}>
+                    <div className="icon-wrap"><Cmp /></div>
+                    <div className="label">{name}</div>
+                    <div className="badge">⌘{ICONS.findIndex(x => x.id === id) + 1}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+          <div className="footer">
+            <span className="dot"></span>
+            <span>VAULT · CONNECTED</span>
+            <span style={{ color: "#3a3f5c" }}>·</span>
+            <span>SCHEDULER · SYNCED 2 min ago</span>
+            <span className="right">STEVEN DOUGLAS CORP. · ENG-EXCELLENCE</span>
+          </div>
+        </div>
+      );
+    }
+
+    function SizeTest({ Cmp, name }) {
+      return (
+        <div className="size-test">
+          <h3>{name} <span className="hint">// legibility @ small sizes</span></h3>
+          <div className="row">
+            {[256, 128, 96, 64, 48, 32].map((px) => (
+              <div className="sample" key={px}>
+                <div style={{ width: px, height: px }}><Cmp /></div>
+                <div className="px">{px}px</div>
+              </div>
+            ))}
+          </div>
+        </div>
+      );
+    }
+
+    function SpecSheet() {
+      const colors = [
+        ["BG",       "#0d0d1a", "Squircle fill"],
+        ["BLUE",     "#3b6ef5", "Primary accent · active states"],
+        ["TEAL",     "#00c2a8", "Secondary · success / highlight"],
+        ["AMBER",    "#f59e0b", "Warnings · milestones · sparingly"],
+        ["WHITE",    "#ffffff", "Key shapes & edge highlights"],
+        ["NAVY-2",   "#1c1f3a", "Layer surfaces"],
+        ["INK",      "#8c93b4", "Muted line work"],
+        ["INK-DIM",  "#3a3f5c", "Tertiary line work · grid"],
+      ];
+      return (
+        <div className="spec-sheet">
+          <h2>System <small>shared by all 5 icons</small></h2>
+          <div className="row">
+            <div className="stage">
+              <div style={{ width: "100%", height: "100%" }}>
+                <SquircleFrame id="spec-frame" glow="#3b6ef5">
+                  {/* a tiny diagram of the safe area */}
+                  <rect x="76.8" y="76.8" width="358.4" height="358.4" rx="60" fill="none" stroke="rgba(255,255,255,0.18)" strokeDasharray="6 8" strokeWidth="2" />
+                  <text x="256" y="266" textAnchor="middle" fontFamily="JetBrains Mono, monospace" fontSize="22" fill="rgba(255,255,255,0.55)">SAFE AREA</text>
+                  <text x="256" y="296" textAnchor="middle" fontFamily="JetBrains Mono, monospace" fontSize="14" fill="rgba(255,255,255,0.35)">352 × 352 · 15% pad</text>
+                </SquircleFrame>
+              </div>
+            </div>
+            <div style={{ display: "grid", gap: 14, flex: 1, minWidth: 0 }}>
+              <div className="swatches">
+                {colors.map(([nm, hx, _]) => (
+                  <div className="sw" key={nm}>
+                    <div className="chip" style={{ background: hx }}></div>
+                    <div className="nm">{nm}</div>
+                    <div className="hx">{hx}</div>
+                  </div>
+                ))}
+              </div>
+              <div className="notes">
+                <strong>Visual rules</strong>
+                <ul>
+                  <li>iOS-style squircle container (rx ≈ 0.224 × side); same for all five.</li>
+                  <li>Subtle radial inner glow only — no drop shadows, no gradients on shapes.</li>
+                  <li>15% padding (≈77px on a 512 grid); critical content stays in 358 × 358 safe area.</li>
+                  <li>White used sparingly — only on the single most important shape edge per icon.</li>
+                  <li>Amber strictly for warnings / milestone markers, never as a primary color.</li>
+                </ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      );
+    }
+
+    function App() {
+      return (
+        <DesignCanvas
+          title="SDC Tools — App Icons"
+          subtitle="5-icon set · 512 × 512 · dark launcher · flat with subtle inner glow"
+        >
+          <DCSection
+            id="set"
+            title="Icon Set"
+            subtitle="Five icons at presentation size, with name and function"
+          >
+            {ICONS.map(({ id, name, sub, Cmp }) => (
+              <DCArtboard key={id} id={id} label={name} width={460} height={580}>
+                <IconCard id={id} name={name} sub={sub} Cmp={Cmp} size={380} />
+              </DCArtboard>
+            ))}
+          </DCSection>
+
+          <DCSection
+            id="launcher"
+            title="In context — SDC Tools launcher"
+            subtitle="Dark desktop launcher window the icons live inside"
+          >
+            <DCArtboard id="dock-window" label="Main launcher window" width={1100} height={620}>
+              <Launcher />
+            </DCArtboard>
+          </DCSection>
+
+          <DCSection
+            id="size-test"
+            title="Size & legibility"
+            subtitle="Each icon held up at 256 → 32px to verify it survives small surfaces"
+          >
+            {ICONS.map(({ id, name, Cmp }) => (
+              <DCArtboard key={`s-${id}`} id={`size-${id}`} label={`${name} · sizes`} width={680} height={220}>
+                <SizeTest Cmp={Cmp} name={name} />
+              </DCArtboard>
+            ))}
+          </DCSection>
+
+          <DCSection
+            id="system"
+            title="Shared visual system"
+            subtitle="Palette, padding & safe area used across all 5"
+          >
+            <DCArtboard id="spec" label="System sheet" width={820} height={360}>
+              <SpecSheet />
+            </DCArtboard>
+          </DCSection>
+        </DesignCanvas>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById("root"));
+    root.render(<App />);
+  </script>
+</body>
+</html>
