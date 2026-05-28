@@ -30,15 +30,30 @@ function healthToStatus(h) {
 // ── Multi-select Project Picker ───────────────────────────────────────────────
 
 const ProjectMultiPicker = ({ allProjects, selectedIds, onChange, showActive, onToggleActive, typeFilter, onTypeFilter }) => {
-  const [open, setOpen] = React.useState(false);
-  const ref = React.useRef(null);
+  const [open, setOpen]   = React.useState(false);
+  const [dropPos, setDropPos] = React.useState({ top: 0, left: 0, width: 320 });
+  const triggerRef = React.useRef(null);
+  const panelRef   = React.useRef(null);
 
   // Close on outside click
   React.useEffect(() => {
-    const handler = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const handler = e => {
+      if (triggerRef.current && !triggerRef.current.contains(e.target) &&
+          panelRef.current   && !panelRef.current.contains(e.target)) {
+        setOpen(false);
+      }
+    };
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
   }, []);
+
+  const openDropdown = () => {
+    if (triggerRef.current) {
+      const r = triggerRef.current.getBoundingClientRect();
+      setDropPos({ top: r.bottom + 4, left: r.left, width: Math.max(r.width, 340) });
+    }
+    setOpen(v => !v);
+  };
 
   const visible = allProjects
     .filter(p => !showActive || p.isActive !== false)
@@ -63,20 +78,25 @@ const ProjectMultiPicker = ({ allProjects, selectedIds, onChange, showActive, on
       : `${selectedIds.length} projects selected`;
 
   return (
-    <div ref={ref} style={{ position: 'relative', display: 'inline-block' }}>
+    <div style={{ position: 'relative', display: 'inline-block' }}>
       {/* Trigger button */}
-      <button className="select" onClick={() => setOpen(!open)}
+      <button ref={triggerRef} className="select" onClick={openDropdown}
         style={{ minWidth: 220, display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-          gap: 8, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit' }}>
+          gap: 8, cursor: 'pointer', textAlign: 'left', fontFamily: 'inherit',
+          background: open ? 'var(--bg-elevated)' : undefined,
+          borderColor: open ? 'var(--sdc-blue)' : undefined }}>
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', maxWidth: 200 }}>{label}</span>
         <span style={{ fontSize: 10, opacity: 0.6 }}>{open ? '▲' : '▼'}</span>
       </button>
 
-      {/* Dropdown panel */}
+      {/* Dropdown panel — fixed so it floats above all page content */}
       {open && (
-        <div style={{ position: 'absolute', top: '100%', left: 0, zIndex: 200, marginTop: 4,
-          background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 10,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.18)', minWidth: 320, maxHeight: 420, display: 'flex', flexDirection: 'column' }}>
+        <div ref={panelRef} style={{
+          position: 'fixed', top: dropPos.top, left: dropPos.left,
+          zIndex: 1200, minWidth: dropPos.width, maxWidth: 460,
+          maxHeight: 440, display: 'flex', flexDirection: 'column',
+          background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10,
+          boxShadow: '0 12px 40px rgba(0,0,0,0.28)' }}>
           {/* Filters */}
           <div style={{ padding: '10px 14px', borderBottom: '1px solid var(--border)', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
             <label style={{ display: 'flex', alignItems: 'center', gap: 5, fontSize: 12, cursor: 'pointer' }}>
@@ -148,7 +168,7 @@ const ProjectMultiPicker = ({ allProjects, selectedIds, onChange, showActive, on
   );
 };
 
-// ── Overview Sub-tab ──────────────────────────────────────────────────────────
+// ── Overview Sub-tab ─────────────────────────────────────────────────────────
 
 const ProjectOverview = ({ projects, selectedIds, dateFrom, dateTo }) => {
   const [schedule, setSchedule] = React.useState(null);
