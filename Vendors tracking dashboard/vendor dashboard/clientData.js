@@ -56,7 +56,7 @@
 
   function fmtEta(dateStr) {
     if (!dateStr) return 'TBD';
-    const d = new Date(dateStr);
+    const d = new Date(dateStr.length === 10 ? dateStr + 'T12:00:00' : dateStr);
     if (isNaN(d.getTime())) return 'TBD';
     return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
   }
@@ -105,7 +105,7 @@
 
   function daysAgo(dateStr) {
     if (!dateStr) return 0;
-    const d = new Date(dateStr);
+    const d = new Date(dateStr.length === 10 ? dateStr + 'T12:00:00' : dateStr);
     if (isNaN(d.getTime())) return 0;
     return Math.max(0, Math.floor((Date.now() - d.getTime()) / 86400000));
   }
@@ -231,15 +231,21 @@
   // ----------------------------------------------------------------
 
   function buildVendors(allOrders, pos) {
+    // Pre-index contact info keyed by vendor name (can't use parallel idx — pos is sorted differently)
+    const contactMap = {};
+    allOrders.forEach(o => {
+      const n = o.vendorName || o.vendor || '';
+      if (n && !contactMap[n]) contactMap[n] = o.vendorContact || '';
+    });
+
     const map = {};
 
-    pos.forEach((po, idx) => {
-      const raw = allOrders[idx] || {};
+    pos.forEach(po => {
       const name = po.vendor;
       if (!map[name]) {
         map[name] = {
           name,
-          contact:         raw.vendorContact || '',
+          contact:         contactMap[name] || '',
           city:            '',
           spend:           0,
           orders:          0,
@@ -260,7 +266,9 @@
       }
 
       if (po._orderDate && po._shipDate) {
-        const lead = Math.round((new Date(po._shipDate) - new Date(po._orderDate)) / 86400000);
+        const lead = Math.round(
+          (new Date(po._shipDate + 'T12:00:00') - new Date(po._orderDate + 'T12:00:00')) / 86400000
+        );
         if (lead > 0 && lead < 365) {
           vm.leadDaysTotal += lead;
           vm.leadDaysCount += 1;

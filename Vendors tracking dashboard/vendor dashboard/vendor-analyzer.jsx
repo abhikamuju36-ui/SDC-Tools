@@ -140,7 +140,7 @@ const VendorAnalyzer = () => {
     }
     vendorRaw.forEach(po => {
       if (!po._receivedDate) return;
-      const d = new Date(po._receivedDate);
+      const d = new Date(po._receivedDate.length === 10 ? po._receivedDate + 'T12:00:00' : po._receivedDate);
       if (isNaN(d.getTime())) return;
       const slot = months.find(s => s.year === d.getFullYear() && s.mon === d.getMonth());
       if (!slot) return;
@@ -164,7 +164,7 @@ const VendorAnalyzer = () => {
     }
     vendorRaw.forEach(po => {
       if (!po._orderDate) return;
-      const d = new Date(po._orderDate);
+      const d = new Date(po._orderDate.length === 10 ? po._orderDate + 'T12:00:00' : po._orderDate);
       if (isNaN(d.getTime())) return;
       const lbl = 'Q' + (Math.floor(d.getMonth() / 3) + 1) + " '" + String(d.getFullYear()).slice(2);
       if (qtrs[lbl]) qtrs[lbl].actual += po.amount / 1000;
@@ -182,7 +182,7 @@ const VendorAnalyzer = () => {
   const revisedCount = vendorRaw.filter(p => p._revisedDate && p._revisedDate !== p._requiredDate).length;
   const leadTimes    = vendorRaw
     .filter(p => p._orderDate && p._receivedDate)
-    .map(p => Math.round((new Date(p._receivedDate) - new Date(p._orderDate)) / 86400000))
+    .map(p => Math.round((new Date(p._receivedDate + 'T12:00:00') - new Date(p._orderDate + 'T12:00:00')) / 86400000))
     .filter(d => d > 0 && d < 365);
   const avgLead      = leadTimes.length ? Math.round(leadTimes.reduce((s, d) => s + d, 0) / leadTimes.length) : v.leadDays;
   const fullFillRate = totalPOs > 0 ? Math.round(delivered.length / totalPOs * 100) : 0;
@@ -336,7 +336,15 @@ const VendorAnalyzer = () => {
       {/* ── Order history ── */}
       <Card title="Order History"
         sub={'All POs · ' + v.name + ' · ' + vendorPOs.length.toLocaleString() + ' orders · ' + fmtUSD(v.spend, true) + ' total'}
-        actions={<button className="btn btn-secondary">{Icon.download} Export</button>}
+        actions={<button className="btn btn-secondary" onClick={() => {
+          const esc = val => { const s = String(val ?? ''); return (s.includes(',') || s.includes('"')) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+          const hdrs = ['PO#','Project','Part','Category','Qty Ordered','Qty Received','Amount','Issued','Expected','Status'];
+          const csv  = [hdrs.join(','), ...vendorPOs.map(p =>
+            [p.po, p.project, p.partDesc || p.partNumber || '', p.category, p.purchaseQty || '', p.receivedQty || 0, p.amount, p.issued || '', p.expected || '', p.status].map(esc).join(',')
+          )].join('\n');
+          const a = document.createElement('a'); a.href = 'data:text/csv,' + encodeURIComponent(csv);
+          a.download = (v.name.replace(/\s+/g,'-') + '-orders.csv').toLowerCase(); a.click();
+        }}>{Icon.download} Export</button>}
         bodyClass="flush">
         <div className="table-wrap">
           <table className="data">
@@ -379,7 +387,7 @@ const VendorAnalyzer = () => {
                     <td style={{ fontSize: 12 }}>
                       {raw._receivedDate
                         ? <span style={{ color: isLate ? 'var(--danger)' : 'var(--positive)', fontWeight: 600 }}>
-                            {new Date(raw._receivedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
+                            {new Date(raw._receivedDate.length === 10 ? raw._receivedDate + 'T12:00:00' : raw._receivedDate).toLocaleDateString('en-US', { month: 'short', day: 'numeric' })}
                             {isLate && ' ⚠'}
                           </span>
                         : <span style={{ color: 'var(--text-tertiary)' }}>—</span>}

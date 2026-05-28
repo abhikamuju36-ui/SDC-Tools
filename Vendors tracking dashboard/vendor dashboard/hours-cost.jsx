@@ -137,7 +137,7 @@ const HoursCostAnalysis = ({ projectIds, projectTypeFilter }) => {
           background: 'var(--sdc-light-blue-tint)', border: '1px solid var(--sdc-blue)',
           fontSize: 13, display: 'flex', gap: 20, flexWrap: 'wrap', alignItems: 'center' }}>
           <span style={{ fontFamily: 'var(--font-display)', fontWeight: 700, fontSize: 11.5,
-            letterSpacing: 1, textTransform: 'uppercase', color: 'var(--sdc-blue-700)' }}>
+            letterSpacing: 1, textTransform: 'uppercase', color: '#0f5a9c' }}>
             Future Projection
           </span>
           <span>
@@ -193,7 +193,7 @@ const HoursCostAnalysis = ({ projectIds, projectTypeFilter }) => {
                     </span>
                   </td>
                   <td>{hrsBar(r.estEngHrs, r.actEngHrs, 'var(--sdc-blue)')}</td>
-                  <td>{hrsBar(r.estMfgHrs, r.actMfgHrs, 'var(--sdc-blue-700, #0f5a9c)')}</td>
+                  <td>{hrsBar(r.estMfgHrs, r.actMfgHrs, '#0f5a9c')}</td>
                   <td className="num">{r.estEngLabor > 0 ? fmtUSD(r.estEngLabor, true) : '—'}</td>
                   <td className="num">
                     {r.actEngLabor > 0
@@ -260,7 +260,7 @@ const HoursCostAnalysis = ({ projectIds, projectTypeFilter }) => {
               <div style={{ display: 'grid', gridTemplateColumns: `repeat(${byType.length}, 1fr)`, gap: 16 }}>
                 {byType.map(bt => (
                   <div key={bt.type} style={{ padding: '16px 20px', borderRadius: 10,
-                    border: '1px solid var(--border)', background: 'var(--card-bg)' }}>
+                    border: '1px solid var(--border)', background: 'var(--bg-elevated)' }}>
                     <div style={{ fontFamily: 'var(--font-display)', fontWeight: 800, fontSize: 13,
                       letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8,
                       color: bt.type === 'Duplicate' ? '#2B6EA8' : bt.type === 'Hybrid' ? '#8a6700' : 'var(--sdc-blue)' }}>

@@ -6,14 +6,14 @@
 
 function fmtSchedDate(iso) {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = new Date(iso.length === 10 ? iso + 'T12:00:00' : iso);
   if (isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
 function fmtSchedShort(iso) {
   if (!iso) return '—';
-  const d = new Date(iso);
+  const d = new Date(iso.length === 10 ? iso + 'T12:00:00' : iso);
   if (isNaN(d.getTime())) return '—';
   return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
 }
@@ -252,7 +252,7 @@ const ProjectOverview = ({ projects, selectedIds, dateFrom, dateTo }) => {
             <button key={p.id}
               onClick={() => setFocusId(focusId === p.id ? null : p.id)}
               style={{ display: 'flex', gap: 6, alignItems: 'center', padding: '4px 10px',
-                borderRadius: 6, border: '1px solid var(--border)', background: focusId === p.id ? 'var(--sdc-blue)' : 'var(--card-bg)',
+                borderRadius: 6, border: '1px solid var(--border)', background: focusId === p.id ? 'var(--sdc-blue)' : 'var(--bg-elevated)',
                 color: focusId === p.id ? '#fff' : 'var(--text)', cursor: 'pointer', fontSize: 11.5, fontWeight: 600 }}>
               <span style={{ opacity: 0.7, fontFamily: 'monospace', fontSize: 10.5 }}>{p.id}</span>
               <span style={{ maxWidth: 130, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.name}</span>
@@ -526,16 +526,31 @@ const ProjectAnalyzer = () => {
           )}
         </div>
 
-        {/* Summary chips */}
+        {/* Summary chips — clickable to filter by project type */}
         <div style={{ marginLeft: 'auto', display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
           {['Custom','Duplicate','Hybrid'].map(t => {
             const cnt = allProjects.filter(p => p.projectType === t).length;
             if (cnt === 0) return null;
             const sel = selectedProjects.filter(p => p.projectType === t).length;
+            const isActive = typeFilter === t && selectedIds.length === 0;
+            const baseColor = t === 'Duplicate' ? '#2B6EA8' : t === 'Hybrid' ? '#8a6700' : 'var(--sdc-blue)';
+            const baseBg    = t === 'Duplicate' ? 'rgba(170,206,232,0.25)' : t === 'Hybrid' ? 'rgba(255,222,81,0.2)' : 'rgba(21,116,196,0.1)';
             return (
-              <span key={t} style={{ padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
-                background: t === 'Duplicate' ? 'rgba(170,206,232,0.25)' : t === 'Hybrid' ? 'rgba(255,222,81,0.2)' : 'rgba(21,116,196,0.1)',
-                color: t === 'Duplicate' ? '#2B6EA8' : t === 'Hybrid' ? '#8a6700' : 'var(--sdc-blue)' }}>
+              <span key={t}
+                onClick={() => {
+                  if (isActive) {
+                    setTypeFilter('All');     // toggle off
+                  } else {
+                    setTypeFilter(t);
+                    setSelectedIds([]);        // clear project picks, let type filter drive
+                  }
+                }}
+                title={isActive ? `Clear ${t} filter` : `Show all ${t} projects`}
+                style={{ padding: '3px 10px', borderRadius: 12, fontSize: 11, fontWeight: 600,
+                  cursor: 'pointer', transition: 'all 0.12s',
+                  background: isActive ? baseColor : baseBg,
+                  color: isActive ? '#fff' : baseColor,
+                  boxShadow: isActive ? '0 0 0 2px ' + baseColor + '55' : undefined }}>
                 {t}: {sel}/{cnt}
               </span>
             );
@@ -575,12 +590,12 @@ const ProjectAnalyzer = () => {
       )}
 
       {subTab === 'delivery' && (
-        <DeliveryAnalysis projectIds={selectedIds} />
+        <DeliveryAnalysis projectIds={selectedProjects.map(p => p.id)} />
       )}
 
       {subTab === 'hours' && (
         <HoursCostAnalysis
-          projectIds={selectedIds}
+          projectIds={selectedProjects.map(p => p.id)}
           projectTypeFilter={typeFilter} />
       )}
     </>

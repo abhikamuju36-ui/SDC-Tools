@@ -89,7 +89,7 @@ const DeliveryCalendarReport = () => {
   filteredRawPos.forEach(po => {
     const due = po._revisedDate || po._requiredDate;
     if (!due) return;
-    const d = new Date(due);
+    const d = new Date(due.length === 10 ? due + 'T12:00:00' : due);
     if (isNaN(d.getTime())) return;
     if (d.getFullYear() === year && d.getMonth() === month) {
       if (!poByDay[due]) poByDay[due] = [];
@@ -284,7 +284,7 @@ const DeliveryCalendarReport = () => {
       {/* Legend */}
       <div style={{ display: 'flex', gap: 14, marginBottom: 12, fontSize: 12, color: 'var(--text-tertiary)', alignItems: 'center', flexWrap: 'wrap' }}>
         <span>Legend:</span>
-        {[['Overdue (open)','#B42318'], ['Due Today','#1574C4'], ['Due Soon (≤3d)','#E8A020'], ['Scheduled','#74C415'], ['Delivered','#74C415']].map(([l, c]) => (
+        {[['Overdue (open)','#B42318'], ['Due Today','#1574C4'], ['Due Soon (≤3d)','#E8A020'], ['Scheduled','#74C415'], ['Delivered','#0D9488']].map(([l, c]) => (
           <span key={l} style={{ display: 'flex', alignItems: 'center', gap: 5 }}>
             <span style={{ width: 10, height: 10, borderRadius: 2, background: c, display: 'inline-block', opacity: 0.8 }} />
             {l}

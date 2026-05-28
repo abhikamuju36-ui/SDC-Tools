@@ -70,7 +70,7 @@ const SupplierRiskReport = () => {
   // ── KPIs ──
   const highRisk   = riskRows.filter(v => v.risks.some(r => r.severity === 'High')).length;
   const medRisk    = riskRows.filter(v => v.risks.every(r => r.severity !== 'High')).length;
-  const topConc    = vendors[0] ? (vendors[0].spend / totalSpend * 100).toFixed(0) : 0;
+  const topConc    = vendors[0] ? Math.round(vendors[0].spend / totalSpend * 100) : 0;
   const totalOverdue = Object.values(overdueByVendor).reduce((s, n) => s + n, 0);
 
   // ── Multi-project dependency ──

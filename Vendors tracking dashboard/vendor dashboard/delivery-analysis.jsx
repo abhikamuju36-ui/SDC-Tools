@@ -15,8 +15,8 @@ const DeliveryAnalysis = ({ projectIds }) => {
 
   function fmtD(d) {
     if (!d) return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
-    const dt = new Date(d);
-    if (isNaN(dt)) return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
+    const dt = new Date(d.length === 10 ? d + 'T12:00:00' : d);
+    if (isNaN(dt.getTime())) return <span style={{ color: 'var(--text-tertiary)' }}>—</span>;
     return dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: '2-digit' });
   }
 

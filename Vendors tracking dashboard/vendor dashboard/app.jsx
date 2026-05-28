@@ -20,6 +20,38 @@ const App = () => {
   const [tabNavKey, setTabNavKey] = React.useState({});
   const [showVendorModal, setShowVendorModal] = React.useState(false);
   const [showOrderModal, setShowOrderModal] = React.useState(false);
+  const [searchQuery, setSearchQuery] = React.useState('');
+  const [showSearch, setShowSearch] = React.useState(false);
+  const searchRef = React.useRef(null);
+
+  // Close search dropdown on outside click
+  React.useEffect(() => {
+    const h = e => { if (searchRef.current && !searchRef.current.contains(e.target)) setShowSearch(false); };
+    document.addEventListener('mousedown', h);
+    return () => document.removeEventListener('mousedown', h);
+  }, []);
+
+  // Live search results across Projects, Vendors, POs
+  const searchResults = React.useMemo(() => {
+    const q = searchQuery.trim().toLowerCase();
+    if (!q || q.length < 2) return [];
+    const results = [];
+    (window.PROJECTS || []).forEach(p => {
+      if (p.id.toLowerCase().includes(q) || (p.name || '').toLowerCase().includes(q))
+        results.push({ type: 'project', id: p.id, label: p.name, sub: p.id + ' · ' + fmtUSD(p.spent, true) + ' spend',
+          nav: () => { window.navigateTo && window.navigateTo('project', p.id); setShowSearch(false); setSearchQuery(''); } });
+    });
+    (window.VENDORS || []).forEach(v => {
+      if ((v.name || '').toLowerCase().includes(q))
+        results.push({ type: 'vendor', id: v.name, label: v.name, sub: v.orders + ' POs · ' + fmtUSD(v.spend, true),
+          nav: () => { window.navigateTo && window.navigateTo('vendor', v.name); setShowSearch(false); setSearchQuery(''); } });
+    });
+    (window.PURCHASE_ORDERS || []).filter(p => (p.po || '').toLowerCase().includes(q)).slice(0, 6).forEach(p =>
+      results.push({ type: 'po', id: p.po, label: p.po, sub: p.vendor + ' · ' + p.project + ' · ' + fmtUSD(p.amount),
+        nav: () => { setTab('overview'); setShowSearch(false); setSearchQuery(''); } })
+    );
+    return results.slice(0, 14);
+  }, [searchQuery]);
 
   // Global navigation — components call window.navigateTo(tab, params)
   React.useEffect(() => {
@@ -96,7 +128,7 @@ const App = () => {
 
   // Tab config — workspace + reports
   const workspaceTabs = [
-    { id: "overview",        label: "Overview",          icon: Icon.layers,   badge: window.PROJECTS.length, Component: Overview },
+    { id: "overview",        label: "Overview",          icon: Icon.layers,   badge: (window.PROJECTS || []).length, Component: Overview },
     { id: "project",         label: "Project Analyzer",  icon: Icon.sliders,                                 Component: ProjectAnalyzer },
     { id: "vendor",          label: "Vendor Analyzer",   icon: Icon.users,                                   Component: VendorAnalyzer },
   ];
@@ -175,9 +207,55 @@ const App = () => {
             <span>›</span>
             <strong>{tabMeta.title}</strong>
           </div>
-          <div className="search">
+          <div className="search" ref={searchRef} style={{ position: 'relative' }}>
             {Icon.search}
-            <input placeholder="Search POs, projects, vendors…" />
+            <input
+              placeholder="Search POs, projects, vendors…"
+              value={searchQuery}
+              onChange={e => { setSearchQuery(e.target.value); setShowSearch(true); }}
+              onFocus={() => setShowSearch(true)}
+              onKeyDown={e => e.key === 'Escape' && (setShowSearch(false), setSearchQuery(''))}
+            />
+            {searchQuery && (
+              <button onClick={() => { setSearchQuery(''); setShowSearch(false); }}
+                style={{ background: 'none', border: 'none', cursor: 'pointer',
+                  color: 'var(--text-tertiary)', padding: '0 6px', fontSize: 14, lineHeight: 1 }}>✕</button>
+            )}
+            {showSearch && searchResults.length > 0 && (
+              <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0, minWidth: 360,
+                background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.22)', zIndex: 2000, maxHeight: 380, overflowY: 'auto' }}>
+                {['project','vendor','po'].map(type => {
+                  const items = searchResults.filter(r => r.type === type);
+                  if (items.length === 0) return null;
+                  const sectionLabel = type === 'project' ? 'Projects' : type === 'vendor' ? 'Vendors' : 'Purchase Orders';
+                  return (
+                    <div key={type}>
+                      <div style={{ padding: '8px 14px 4px', fontSize: 10, fontWeight: 700,
+                        color: 'var(--text-tertiary)', textTransform: 'uppercase', letterSpacing: 1 }}>{sectionLabel}</div>
+                      {items.map(r => (
+                        <div key={r.id} onClick={r.nav}
+                          style={{ padding: '8px 14px', cursor: 'pointer', display: 'flex', flexDirection: 'column', gap: 2,
+                            borderBottom: '1px solid var(--border)', transition: 'background 0.1s' }}
+                          onMouseEnter={e => e.currentTarget.style.background = 'rgba(21,116,196,0.07)'}
+                          onMouseLeave={e => e.currentTarget.style.background = 'transparent'}>
+                          <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{r.label}</div>
+                          <div style={{ fontSize: 11.5, color: 'var(--text-tertiary)' }}>{r.sub}</div>
+                        </div>
+                      ))}
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+            {showSearch && searchQuery.length >= 2 && searchResults.length === 0 && (
+              <div style={{ position: 'absolute', top: 'calc(100% + 6px)', left: 0, right: 0,
+                background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10,
+                boxShadow: '0 8px 32px rgba(0,0,0,0.22)', zIndex: 2000,
+                padding: '16px 14px', fontSize: 13, color: 'var(--text-tertiary)', textAlign: 'center' }}>
+                No results for "{searchQuery}"
+              </div>
+            )}
           </div>
           <div className="topbar-actions">
             <button className="icon-btn" title="Notifications">{Icon.bell}</button>
@@ -208,7 +286,17 @@ const App = () => {
                 <option>YTD</option>
                 <option>Last 12 Months</option>
               </select>
-              <button className="btn btn-secondary">{Icon.download} Export</button>
+              <button className="btn btn-secondary" onClick={() => {
+                const esc = val => { const s = String(val ?? ''); return (s.includes(',') || s.includes('"')) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+                const hdrs = ['PO#','Project','Vendor','Category','Amount','Issued','Expected','Status'];
+                const pos = window.PURCHASE_ORDERS || [];
+                const csv = [hdrs.join(','), ...pos.map(p =>
+                  [p.po, p.project, p.vendor, p.category, p.amount, p.issued || '', p.expected || '', p.status].map(esc).join(',')
+                )].join('\n');
+                const a = document.createElement('a'); a.href = 'data:text/csv,' + encodeURIComponent(csv);
+                const period = (window._ACTIVE_PERIOD || 'all').replace(/\s+/g,'-').toLowerCase();
+                a.download = 'purchase-orders-' + period + '.csv'; a.click();
+              }}>{Icon.download} Export</button>
             </div>
           </div>
 
@@ -291,7 +379,7 @@ const App = () => {
                   <label className="form-label" htmlFor="order-project">Associated Project</label>
                   <select id="order-project" className="form-select" style={{ width: '100%' }} required>
                     <option value="" disabled>Select Project</option>
-                    {window.PROJECTS.map(p => (
+                    {(window.PROJECTS || []).map(p => (
                       <option key={p.id} value={p.id.replace('P-', '')}>{p.id} — {p.name}</option>
                     ))}
                   </select>
@@ -300,7 +388,7 @@ const App = () => {
                   <label className="form-label" htmlFor="order-vendor">Assigned Supplier</label>
                   <select id="order-vendor" className="form-select" style={{ width: '100%' }} required>
                     <option value="" disabled>Select Vendor</option>
-                    {window.VENDORS.map(v => (
+                    {(window.VENDORS || []).map(v => (
                       <option key={v.name} value={v.name}>{v.name}</option>
                     ))}
                   </select>

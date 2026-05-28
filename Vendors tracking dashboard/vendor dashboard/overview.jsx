@@ -67,7 +67,7 @@ const Overview = () => {
     }
     (window.PURCHASE_ORDERS_RAW || []).forEach(po => {
       if (!po._orderDate) return;
-      const d = new Date(po._orderDate);
+      const d = new Date(po._orderDate.length === 10 ? po._orderDate + 'T12:00:00' : po._orderDate);
       if (isNaN(d.getTime())) return;
       const slot = slots.find(s => s.year === d.getFullYear() && s.mon === d.getMonth());
       if (slot) slot.value += po.amount;
@@ -318,7 +318,7 @@ const Overview = () => {
           {window.VENDORS.slice(0, 8).map((v, i) => (
             <div className="score-row" key={i} style={{ cursor: 'pointer' }}
               onClick={() => window.navigateTo && window.navigateTo('vendor', v.name)}>
-              <span className="score-rank">0{i + 1}</span>
+              <span className="score-rank">{String(i + 1).padStart(2, '0')}</span>
               <div style={{ flex: 1 }}>
                 <div className="score-name">{v.name}</div>
                 <div className="score-meta">{v.orders} orders · {fmtUSD(v.spend, true)} · {fmtPct(v.onTime)} on time</div>
@@ -357,7 +357,15 @@ const Overview = () => {
                 </span>
               )}
             </button>
-            <button className="btn btn-secondary">{Icon.download} Export</button>
+            <button className="btn btn-secondary" onClick={() => {
+              const esc = v => { const s = String(v ?? ''); return (s.includes(',') || s.includes('"')) ? '"' + s.replace(/"/g, '""') + '"' : s; };
+              const hdrs = ['PO#','Project','Vendor','Category','Amount','Issued','Expected','Status'];
+              const csv  = [hdrs.join(','), ...filteredPOs.map(p =>
+                [p.po, p.project, p.vendor, p.category, p.amount, p.issued || '', p.expected || '', p.status].map(esc).join(',')
+              )].join('\n');
+              const a = document.createElement('a'); a.href = 'data:text/csv,' + encodeURIComponent(csv);
+              a.download = 'purchase-orders.csv'; a.click();
+            }}>{Icon.download} Export</button>
           </>
         }
         bodyClass="flush">

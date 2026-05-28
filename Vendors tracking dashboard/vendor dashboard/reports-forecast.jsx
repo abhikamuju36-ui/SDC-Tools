@@ -27,9 +27,13 @@ const SpendForecastReport = () => {
   const totalSpend  = rows.reduce((s, r) => s + r.spend,  0);
   const atRiskCount = rows.filter(r => r.atRisk).length;
 
-  const fmt = v => '$' + (v >= 1_000_000
-    ? (v / 1_000_000).toFixed(1) + 'M'
-    : v >= 1_000 ? (v / 1_000).toFixed(0) + 'K' : v.toFixed(0));
+  const fmt = v => {
+    const abs = Math.abs(v);
+    const str = abs >= 1_000_000 ? (abs / 1_000_000).toFixed(1) + 'M'
+              : abs >= 1_000     ? (abs / 1_000).toFixed(0) + 'K'
+              : abs.toFixed(0);
+    return (v < 0 ? '-$' : '$') + str;
+  };
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
@@ -42,7 +46,7 @@ const SpendForecastReport = () => {
           { label: 'At-Risk Projects', value: atRiskCount,      sub: '>85% budget consumed' },
         ].map(k => (
           <div key={k.label} style={{
-            background: 'var(--card-bg, var(--bg-elevated))',
+            background: 'var(--bg-elevated)',
             border: '1px solid var(--border)',
             borderRadius: 12, padding: '20px 24px',
           }}>
@@ -55,7 +59,7 @@ const SpendForecastReport = () => {
 
       {/* Budget burn table */}
       <div style={{
-        background: 'var(--card-bg, var(--bg-elevated))',
+        background: 'var(--bg-elevated)',
         border: '1px solid var(--border)',
         borderRadius: 12, overflow: 'hidden',
       }}>
