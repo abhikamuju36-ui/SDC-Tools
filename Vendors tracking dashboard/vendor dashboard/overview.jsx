@@ -483,8 +483,14 @@ const Overview = () => {
                     {p.category}
                   </td>
                   <td className="num strong">{fmtUSD(p.amount)}</td>
-                  <td className="muted">{p.issued}</td>
-                  <td className="muted">{p.expected}</td>
+                  <td className="muted" style={{ whiteSpace: 'nowrap' }}>
+                    {p.issued || <span style={{ color: 'var(--text-tertiary)' }}>—</span>}
+                    {p._issuedFallback && p.issued && (
+                      <span title="PurchaseDate not set in TotalETO — showing DateRequired as issued date (fallback)"
+                        style={{ marginLeft: 5, cursor: 'help', color: 'var(--warning)', fontSize: 11 }}>⚠</span>
+                    )}
+                  </td>
+                  <td className="muted">{p.expected || <span style={{ color: 'var(--text-tertiary)' }}>—</span>}</td>
                   <td><StatusPill s={p.status} /></td>
                 </tr>
                 );

@@ -39,9 +39,12 @@
 
   function fmtShortDate(dateStr) {
     if (!dateStr) return '';
-    const d = new Date(dateStr);
+    // Use T12:00:00 (local noon) so UTC-midnight ISO strings never roll back one day in US timezones
+    const d = new Date(dateStr.length === 10 ? dateStr + 'T12:00:00' : dateStr);
     if (isNaN(d.getTime())) return '';
-    return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+    const opts = { month: 'short', day: 'numeric' };
+    if (d.getFullYear() !== new Date().getFullYear()) opts.year = 'numeric'; // show year when cross-year
+    return d.toLocaleDateString('en-US', opts);
   }
 
   function fmtEta(dateStr) {
@@ -133,8 +136,9 @@
           amount:       o.amount || 0,
           category:     inferCategory(o.vendorName, o.partDesc || o.partNumber || ''),
           status:       mapPoStatus(o.status, o.requiredDate || o.dueDate),
-          issued:       fmtShortDate(o.orderDate),
-          expected:     fmtShortDate(o.requiredDate || o.dueDate),
+          issued:         fmtShortDate(o.orderDate),
+          expected:       fmtShortDate(o.requiredDate || o.dueDate),
+          _issuedFallback: !!o.issuedFromFallback,   // server flagged PurchaseDate was null
           orderMonth:   od ? od.toLocaleDateString('en-US', { month: 'short' }) : '',
           orderYear:    od ? od.getFullYear() : 0,
           // Keep raw dates for downstream calcs
