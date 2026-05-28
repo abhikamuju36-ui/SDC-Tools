@@ -33,7 +33,7 @@ const VendorPicker = ({ vendors, selected, onChange }) => {
       {/* Trigger button */}
       <div ref={triggerRef} onClick={handleOpen}
         style={{ display: 'flex', gap: 6, alignItems: 'center', border: '1px solid var(--border)',
-          borderRadius: 8, padding: '7px 12px', background: 'var(--card-bg)', cursor: 'pointer',
+          borderRadius: 8, padding: '7px 12px', background: 'var(--bg-elevated)', cursor: 'pointer',
           boxShadow: open ? '0 0 0 2px rgba(21,116,196,0.25)' : undefined,
           borderColor: open ? 'var(--sdc-blue)' : undefined, transition: 'all 0.12s' }}>
         <span style={{ flex: 1, fontSize: 13, fontWeight: 600, overflow: 'hidden',
@@ -49,7 +49,7 @@ const VendorPicker = ({ vendors, selected, onChange }) => {
         <div style={{
           position: 'fixed', top: dropPos.top, right: dropPos.right,
           zIndex: 1000, width: 340, maxHeight: 440,
-          background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 10,
+          background: 'var(--bg-elevated)', border: '1px solid var(--border)', borderRadius: 10,
           boxShadow: '0 12px 40px rgba(0,0,0,0.22)', display: 'flex', flexDirection: 'column',
         }}>
           {/* Search header */}
