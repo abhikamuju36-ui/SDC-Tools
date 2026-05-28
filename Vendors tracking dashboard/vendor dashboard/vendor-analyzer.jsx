@@ -2,61 +2,94 @@
 
 // ── Searchable picker ─────────────────────────────────────────────────────────
 const VendorPicker = ({ vendors, selected, onChange }) => {
-  const [query, setQuery] = React.useState('');
-  const [open,  setOpen]  = React.useState(false);
-  const ref = React.useRef(null);
+  const [query,   setQuery]   = React.useState('');
+  const [open,    setOpen]    = React.useState(false);
+  const [dropPos, setDropPos] = React.useState({ top: 0, right: 0 });
+  const wrapRef    = React.useRef(null);
+  const triggerRef = React.useRef(null);
 
+  // Close on outside click — wrapRef covers both trigger and the fixed dropdown
+  // because the fixed div is still a DOM child of wrapRef even though CSS-positioned at viewport level
   React.useEffect(() => {
-    const h = e => { if (ref.current && !ref.current.contains(e.target)) setOpen(false); };
+    const h = e => { if (wrapRef.current && !wrapRef.current.contains(e.target)) setOpen(false); };
     document.addEventListener('mousedown', h);
     return () => document.removeEventListener('mousedown', h);
   }, []);
+
+  const handleOpen = () => {
+    if (!open && triggerRef.current) {
+      const rect = triggerRef.current.getBoundingClientRect();
+      // Anchor to right edge of trigger; clamp so it never goes off-screen left
+      setDropPos({ top: rect.bottom + 6, right: Math.max(8, window.innerWidth - rect.right) });
+    }
+    setOpen(o => !o);
+  };
 
   const filtered = vendors.filter(v => !query || v.name.toLowerCase().includes(query.toLowerCase()));
   const select   = name => { onChange(name); setQuery(''); setOpen(false); };
 
   return (
-    <div ref={ref} style={{ position: 'relative', marginLeft: 'auto', minWidth: 260 }}>
-      <div onClick={() => setOpen(!open)}
+    <div ref={wrapRef} style={{ position: 'relative', marginLeft: 'auto', minWidth: 260 }}>
+      {/* Trigger button */}
+      <div ref={triggerRef} onClick={handleOpen}
         style={{ display: 'flex', gap: 6, alignItems: 'center', border: '1px solid var(--border)',
-          borderRadius: 8, padding: '7px 12px', background: 'var(--card-bg)', cursor: 'pointer' }}>
+          borderRadius: 8, padding: '7px 12px', background: 'var(--card-bg)', cursor: 'pointer',
+          boxShadow: open ? '0 0 0 2px rgba(21,116,196,0.25)' : undefined,
+          borderColor: open ? 'var(--sdc-blue)' : undefined, transition: 'all 0.12s' }}>
         <span style={{ flex: 1, fontSize: 13, fontWeight: 600, overflow: 'hidden',
           textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{selected}</span>
         <span style={{ fontSize: 11, color: 'var(--text-tertiary)', background: 'var(--bg-subtle)',
           borderRadius: 4, padding: '1px 6px' }}>{vendors.length}</span>
-        <span style={{ fontSize: 10, color: 'var(--text-tertiary)' }}>{open ? '▲' : '▼'}</span>
+        <span style={{ fontSize: 10, color: 'var(--text-tertiary)', transition: 'transform 0.15s',
+          display: 'inline-block', transform: open ? 'rotate(180deg)' : 'none' }}>▼</span>
       </div>
+
+      {/* Dropdown — fixed to viewport so it never overlaps page content */}
       {open && (
-        <div style={{ position: 'absolute', right: 0, top: '100%', marginTop: 4, zIndex: 300,
+        <div style={{
+          position: 'fixed', top: dropPos.top, right: dropPos.right,
+          zIndex: 1000, width: 340, maxHeight: 440,
           background: 'var(--card-bg)', border: '1px solid var(--border)', borderRadius: 10,
-          boxShadow: '0 8px 32px rgba(0,0,0,0.18)', width: 340, display: 'flex', flexDirection: 'column',
-          maxHeight: 420 }}>
+          boxShadow: '0 12px 40px rgba(0,0,0,0.22)', display: 'flex', flexDirection: 'column',
+        }}>
+          {/* Search header */}
           <div style={{ padding: '8px 10px', borderBottom: '1px solid var(--border)',
             display: 'flex', alignItems: 'center', gap: 6 }}>
             {Icon.search}
             <input autoFocus value={query} onChange={e => setQuery(e.target.value)}
               placeholder={`Search ${vendors.length} vendors…`}
               style={{ flex: 1, border: 'none', background: 'transparent', fontSize: 13, outline: 'none', color: 'var(--text)' }} />
-            {query && <button onClick={() => setQuery('')}
-              style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 14 }}>✕</button>}
+            {query
+              ? <button onClick={() => setQuery('')}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 14 }}>✕</button>
+              : <button onClick={() => setOpen(false)}
+                  style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--text-tertiary)', fontSize: 14, lineHeight: 1 }}>✕</button>
+            }
           </div>
+          {/* Results */}
           <div style={{ overflowY: 'auto', flex: 1 }}>
             {filtered.length === 0 && (
-              <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>No match for "{query}"</div>
+              <div style={{ padding: 16, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+                No match for "{query}"
+              </div>
             )}
             {filtered.map(v => (
               <div key={v.name} onClick={() => select(v.name)}
                 style={{ padding: '8px 14px', cursor: 'pointer', display: 'flex',
                   justifyContent: 'space-between', alignItems: 'center',
                   background: v.name === selected ? 'rgba(21,116,196,0.07)' : undefined,
-                  borderBottom: '1px solid var(--border)' }}>
+                  borderBottom: '1px solid var(--border)', transition: 'background 0.1s' }}>
                 <div>
                   <div style={{ fontSize: 12.5, fontWeight: v.name === selected ? 700 : 500 }}>{v.name}</div>
-                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{v.orders} PO{v.orders !== 1 ? 's' : ''} · {fmtUSD(v.spend, true)}</div>
+                  <div style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>
+                    {v.orders} PO{v.orders !== 1 ? 's' : ''} · {fmtUSD(v.spend, true)}
+                  </div>
                 </div>
                 <span style={{ padding: '2px 7px', borderRadius: 4, fontSize: 10.5, fontWeight: 600,
                   background: v.score >= 88 ? 'rgba(116,196,21,0.13)' : v.score >= 75 ? 'rgba(21,116,196,0.1)' : 'rgba(180,35,24,0.08)',
-                  color: v.score >= 88 ? 'var(--positive)' : v.score >= 75 ? 'var(--sdc-blue)' : 'var(--danger)' }}>{v.score}</span>
+                  color: v.score >= 88 ? 'var(--positive)' : v.score >= 75 ? 'var(--sdc-blue)' : 'var(--danger)' }}>
+                  {v.score}
+                </span>
               </div>
             ))}
           </div>
