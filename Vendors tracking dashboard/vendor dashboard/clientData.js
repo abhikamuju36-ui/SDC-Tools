@@ -18,6 +18,8 @@
     'Spare Parts': '#9FB4C9',
     'Electrical':  '#B97A0E',
     'Structural':  '#4A5567',
+    'Warranty':    '#8B5CF6',   // purple  — warranty replacement costs
+    'Service':     '#0D9488',   // teal    — field service / maintenance
     'Other':       '#D0D6DF',
   };
 
@@ -27,14 +29,19 @@
 
   function inferCategory(vendorName, partDesc) {
     const s = ((vendorName || '') + ' ' + (partDesc || '')).toLowerCase();
-    if (/pneum|cylinder|valve|actuator|air\s|compressor/.test(s)) return 'Pneumatics';
-    if (/sensor|transducer|detector|proximity|photo/.test(s))     return 'Sensors';
-    if (/plc|hmi|control|panel|relay|drive|vfd|servo|encoder/.test(s)) return 'Controls';
-    if (/tool|fixture|jig|die|mold/.test(s))                      return 'Tooling';
-    if (/machine|weld|fabricat|sheet.?metal|structur|steel|alum/.test(s)) return 'Machined';
-    if (/spare|repair|replac|consumable/.test(s))                 return 'Spare Parts';
-    if (/wire|cable|harness|conduit|electric/.test(s))            return 'Electrical';
-    return 'Assemblies';
+    // Warranty and Service checked first — they override hardware categories
+    if (/warrant/.test(s))                                                           return 'Warranty';
+    if (/\bservice\b|\bsvc\b|field.?serv|maintenance|\bmaint\b|\blabor\b/.test(s))  return 'Service';
+    // Hardware categories
+    if (/pneum|cylinder|valve|actuator|air\s|compressor/.test(s))                   return 'Pneumatics';
+    if (/sensor|transducer|detector|proximity|photo/.test(s))                        return 'Sensors';
+    if (/plc|hmi|control|panel|relay|drive|vfd|servo|encoder/.test(s))              return 'Controls';
+    if (/tool|fixture|jig|die|mold/.test(s))                                         return 'Tooling';
+    if (/machine|weld|fabricat|sheet.?metal|structur|steel|alum/.test(s))           return 'Machined';
+    if (/spare|repair|replac|consumable/.test(s))                                    return 'Spare Parts';
+    if (/wire|cable|harness|conduit|electric/.test(s))                               return 'Electrical';
+    if (/assembl|sub.?assembl|motor|gear|bearing|shaft|bracket|mount|frame|enclos|cabinet/.test(s)) return 'Assemblies';
+    return 'Other';   // genuine unknowns — no longer inflates Assemblies
   }
 
   function fmtShortDate(dateStr) {
