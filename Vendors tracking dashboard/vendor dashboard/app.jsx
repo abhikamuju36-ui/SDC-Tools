@@ -10,16 +10,33 @@ const TWEAKS_DEFAULTS = /*EDITMODE-BEGIN*/{
 const App = () => {
   const [tab, setTab] = React.useState("overview");
   const [tweaks, setTweak] = useTweaks(TWEAKS_DEFAULTS);
-  
-  // Dynamic loading state
   const [loading, setLoading] = React.useState(true);
   const [refreshKey, setRefreshKey] = React.useState(0);
-  
-  // Modals state
+  // Keep-alive: tracks which tabs have been mounted at least once
+  const [mounted, setMounted] = React.useState({ overview: true });
+  // For analyzer tabs that need fresh params on each navigation, bump their key to force remount
+  const [tabNavKey, setTabNavKey] = React.useState({});
   const [showVendorModal, setShowVendorModal] = React.useState(false);
   const [showOrderModal, setShowOrderModal] = React.useState(false);
 
-  // Sync with fullstack APIs
+  // Global navigation — components call window.navigateTo(tab, params)
+  React.useEffect(() => {
+    window.navigateTo = (targetTab, params) => {
+      if (params) {
+        window.__navParams = params;
+        // Force remount of analyzer tabs when navigated with new params
+        setTabNavKey(k => ({ ...k, [targetTab]: (k[targetTab] || 0) + 1 }));
+      }
+      setTab(targetTab);
+    };
+    return () => { window.navigateTo = null; };
+  }, []);
+
+  // Lazy mount: first time a tab is visited, mark it as mounted
+  React.useEffect(() => {
+    setMounted(m => m[tab] ? m : { ...m, [tab]: true });
+  }, [tab]);
+
   const reloadAllData = () => {
     window.fetchFullstackData().then(() => {
       setLoading(false);
@@ -27,57 +44,39 @@ const App = () => {
     });
   };
 
-  React.useEffect(() => {
-    reloadAllData();
-  }, []);
+  React.useEffect(() => { reloadAllData(); }, []);
 
-  // Apply tweaks via data attrs
   React.useEffect(() => {
     document.documentElement.setAttribute("data-density", tweaks.density);
     document.documentElement.setAttribute("data-accent", tweaks.accent);
   }, [tweaks.density, tweaks.accent]);
 
-  // Form handlers
   const handleAddVendorSubmit = (e) => {
     e.preventDefault();
-    const name = e.target['vendor-name'].value.trim();
+    const name     = e.target['vendor-name'].value.trim();
     const category = e.target['vendor-category'].value;
-    const contact = e.target['vendor-contact'].value.trim();
-    
+    const contact  = e.target['vendor-contact'].value.trim();
     if (!name || !contact) return;
-
     const localVendors = JSON.parse(localStorage.getItem('vtd_local_vendors') || '[]');
     localVendors.push({ name, category, contact });
     localStorage.setItem('vtd_local_vendors', JSON.stringify(localVendors));
-    
     setShowVendorModal(false);
     reloadAllData();
   };
 
   const handleCreatePOSubmit = (e) => {
     e.preventDefault();
-    const projectId = e.target['order-project'].value;
+    const projectId  = e.target['order-project'].value;
     const vendorName = e.target['order-vendor'].value;
-    const amount = parseFloat(e.target['order-amount'].value) || 0;
-    const orderDate = e.target['order-date'].value;
-    const dueDate = e.target['order-duedate'].value;
-    const status = e.target['order-status'].value;
-
+    const amount     = parseFloat(e.target['order-amount'].value) || 0;
+    const orderDate  = e.target['order-date'].value;
+    const dueDate    = e.target['order-duedate'].value;
+    const status     = e.target['order-status'].value;
     if (!projectId || !vendorName || !amount) return;
-
     const localOrders = JSON.parse(localStorage.getItem('vtd_local_orders') || '[]');
     const nextId = 10242 + localOrders.length;
-    localOrders.push({
-      id: `PO-${nextId}`,
-      projectId: projectId,
-      vendorName: vendorName,
-      amount: amount,
-      orderDate: orderDate,
-      dueDate: dueDate,
-      status: status
-    });
+    localOrders.push({ id: `PO-${nextId}`, projectId, vendorName, amount, orderDate, dueDate, status });
     localStorage.setItem('vtd_local_orders', JSON.stringify(localOrders));
-
     setShowOrderModal(false);
     reloadAllData();
   };
@@ -87,32 +86,37 @@ const App = () => {
       <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', height: '100vh', background: '#061D39', color: '#FFFFFF', fontFamily: "'Montserrat', sans-serif" }}>
         <div style={{ width: 64, height: 64, border: '6px solid rgba(255,255,255,0.1)', borderTop: '6px solid #1574C4', borderRadius: '50%', animation: 'spin 1s linear infinite', marginBottom: 25 }}></div>
         <h2 style={{ letterSpacing: '3px', fontWeight: 700, margin: 0, textTransform: 'uppercase' }}>SDC Pipeline</h2>
-        <p style={{ color: '#AACEE8', fontSize: 12, letterSpacing: '1.5px', marginTop: 10 }}>Synchronizing Live ETO Database & Smartsheet Milestones...</p>
-        <style>{`
-          @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-          }
-        `}</style>
+        <p style={{ color: '#AACEE8', fontSize: 12, letterSpacing: '1.5px', marginTop: 10 }}>Synchronizing Live ETO Database & Smartsheet Milestones…</p>
+        <style>{`@keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }`}</style>
       </div>
     );
   }
 
-  const tabs = [
-    { id: "overview", label: "Overview", icon: Icon.layers, badge: window.PROJECTS.length },
-    { id: "project", label: "Project Analyzer", icon: Icon.sliders },
-    { id: "vendor", label: "Vendor Analyzer", icon: Icon.users },
+  // Tab config — workspace + reports
+  const workspaceTabs = [
+    { id: "overview",        label: "Overview",          icon: Icon.layers,   badge: window.PROJECTS.length, Component: Overview },
+    { id: "project",         label: "Project Analyzer",  icon: Icon.sliders,                                 Component: ProjectAnalyzer },
+    { id: "vendor",          label: "Vendor Analyzer",   icon: Icon.users,                                   Component: VendorAnalyzer },
   ];
+  const reportTabs = [
+    { id: "forecast",        label: "Spend Forecast",    icon: Icon.trend,    Component: SpendForecastReport },
+    { id: "receivings",      label: "Receivings Log",    icon: Icon.package,  Component: ReceivingsLogReport },
+    { id: "supplier-risk",   label: "Supplier Risk",     icon: Icon.shield,   Component: SupplierRiskReport },
+    { id: "delivery-cal",    label: "Delivery Calendar", icon: Icon.calendar, Component: DeliveryCalendarReport },
+  ];
+  const ALL_TABS = [...workspaceTabs, ...reportTabs];
 
-  const TabView = tab === "overview" ? Overview
-    : tab === "project" ? ProjectAnalyzer
-      : VendorAnalyzer;
+  const TAB_META = {
+    overview:       { title: "Procurement Overview",    sub: "All projects, suppliers and POs at a glance" },
+    project:        { title: "Project Analyzer",         sub: "Spend, vendors and schedule for selected engagements" },
+    vendor:         { title: "Vendor Analyzer",          sub: "Performance and relationship history for one supplier" },
+    forecast:       { title: "Spend Forecast",           sub: "Budget runway, burn rate, and at-risk projects" },
+    receivings:     { title: "Receivings Log",           sub: "Incoming deliveries grouped by urgency" },
+    "supplier-risk":{ title: "Supplier Risk",            sub: "Performance scatter, risk matrix, and dependency analysis" },
+    "delivery-cal": { title: "Delivery Calendar",        sub: "Month-by-month view of expected PO deliveries" },
+  };
 
-  const tabMeta = {
-    overview: { title: "Procurement Overview", sub: "All projects, suppliers and POs at a glance" },
-    project: { title: "Project Analyzer", sub: "Spend, vendors and schedule for a single engagement" },
-    vendor: { title: "Vendor Analyzer", sub: "Performance and relationship history for one supplier" },
-  }[tab];
+  const tabMeta = TAB_META[tab] || TAB_META.overview;
 
   return (
     <div className="app" key={refreshKey}>
@@ -125,7 +129,7 @@ const App = () => {
 
         <div className="sidebar-section-label">Workspace</div>
         <nav className="nav">
-          {tabs.map(t => (
+          {workspaceTabs.map(t => (
             <button key={t.id}
               className={"nav-item " + (tab === t.id ? "active" : "")}
               onClick={() => setTab(t.id)}
@@ -139,10 +143,15 @@ const App = () => {
 
         <div className="sidebar-section-label">Reports</div>
         <nav className="nav">
-          <button className="nav-item">{Icon.trend}<span>Spend Forecast</span></button>
-          <button className="nav-item">{Icon.package}<span>Receivings Log</span></button>
-          <button className="nav-item">{Icon.shield}<span>Supplier Risk</span></button>
-          <button className="nav-item">{Icon.calendar}<span>Delivery Calendar</span></button>
+          {reportTabs.map(t => (
+            <button key={t.id}
+              className={"nav-item " + (tab === t.id ? "active" : "")}
+              onClick={() => setTab(t.id)}
+              data-screen-label={t.label}>
+              {t.icon}
+              <span>{t.label}</span>
+            </button>
+          ))}
         </nav>
 
         <div className="sidebar-foot">
@@ -195,7 +204,13 @@ const App = () => {
             </div>
           </div>
 
-          <TabView />
+          {ALL_TABS.map(({ id, Component }) =>
+            mounted[id] ? (
+              <div key={id} style={{ display: tab === id ? undefined : 'none' }}>
+                <Component key={tabNavKey[id] || 0} />
+              </div>
+            ) : null
+          )}
 
           <footer style={{ marginTop: 40, paddingTop: 20, borderTop: "1px solid var(--border)", textAlign: "center", fontSize: 12, color: "var(--text-tertiary)", fontFamily: "var(--font-display)", letterSpacing: 1.5 }}>
             STEVEN DOUGLAS CORP. · ENGINEERING EXCELLENCE. TRUSTED PARTNERSHIPS.
@@ -206,20 +221,12 @@ const App = () => {
       {/* Tweaks panel */}
       <TweaksPanel title="Tweaks">
         <TweakSection label="Layout density">
-          <TweakRadio label="Density"
-            value={tweaks.density}
-            onChange={v => setTweak("density", v)}
+          <TweakRadio label="Density" value={tweaks.density} onChange={v => setTweak("density", v)}
             options={[{ value: "comfortable", label: "Comfort" }, { value: "compact", label: "Compact" }]} />
         </TweakSection>
         <TweakSection label="Brand accent">
-          <TweakColor label="Accent"
-            value={tweaks.accent}
-            onChange={v => setTweak("accent", v)}
-            options={[
-              { value: "blue", color: "#1574C4" },
-              { value: "navy", color: "#061D39" },
-              { value: "green", color: "#74C415" },
-            ]} />
+          <TweakColor label="Accent" value={tweaks.accent} onChange={v => setTweak("accent", v)}
+            options={[{ value: "blue", color: "#1574C4" }, { value: "navy", color: "#061D39" }, { value: "green", color: "#74C415" }]} />
         </TweakSection>
       </TweaksPanel>
 
@@ -253,7 +260,7 @@ const App = () => {
                   <input type="email" id="vendor-contact" className="form-input" placeholder="e.g. delivery@atlas.com" required autoComplete="off" />
                 </div>
                 <div className="form-actions">
-                  <button type="button" className="btn btn-secondary btn-close-modal" onClick={() => setShowVendorModal(false)}>Cancel</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowVendorModal(false)}>Cancel</button>
                   <button type="submit" className="btn btn-primary">Register Vendor</button>
                 </div>
               </form>
@@ -299,7 +306,7 @@ const App = () => {
                   <input type="date" id="order-date" className="form-input" required />
                 </div>
                 <div className="form-group">
-                  <label className="form-label" htmlFor="order-duedate">Target Delivery Date (Due Date)</label>
+                  <label className="form-label" htmlFor="order-duedate">Target Delivery Date</label>
                   <input type="date" id="order-duedate" className="form-input" required />
                 </div>
                 <div className="form-group">
@@ -311,7 +318,7 @@ const App = () => {
                   </select>
                 </div>
                 <div className="form-actions">
-                  <button type="button" className="btn btn-secondary btn-close-modal" onClick={() => setShowOrderModal(false)}>Cancel</button>
+                  <button type="button" className="btn btn-secondary" onClick={() => setShowOrderModal(false)}>Cancel</button>
                   <button type="submit" className="btn btn-primary">Generate PO</button>
                 </div>
               </form>
