@@ -135,9 +135,9 @@
           unitPrice:    o.unitPrice   || 0,
           amount:       o.amount || 0,
           category:     inferCategory(o.vendorName, o.partDesc || o.partNumber || ''),
-          status:       mapPoStatus(o.status, o.requiredDate || o.dueDate),
+          status:         mapPoStatus(o.status, o.revisedDate || o.requiredDate || o.dueDate),
           issued:         fmtShortDate(o.orderDate),
-          expected:       fmtShortDate(o.requiredDate || o.dueDate),
+          expected:       fmtShortDate(o.revisedDate || o.requiredDate || o.dueDate),
           _issuedFallback: !!o.issuedFromFallback,   // server flagged PurchaseDate was null
           orderMonth:   od ? od.toLocaleDateString('en-US', { month: 'short' }) : '',
           orderYear:    od ? od.getFullYear() : 0,

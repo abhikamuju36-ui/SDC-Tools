@@ -41,9 +41,9 @@ const DeliveryAnalysis = ({ projectIds }) => {
   // Stats
   const total     = rows.length;
   const revised   = rows.filter(r => r._revisedDate && r._revisedDate !== r._requiredDate).length;
-  const late      = rows.filter(r => r._receivedDate && r._requiredDate && r._receivedDate > r._requiredDate).length;
-  const pending   = rows.filter(r => !r._receivedDate && r._requiredDate && r._requiredDate < today).length;
-  const onTime    = rows.filter(r => r._receivedDate && r._requiredDate && r._receivedDate <= r._requiredDate).length;
+  const late      = rows.filter(r => { const e = r._revisedDate || r._requiredDate; return r._receivedDate && e && r._receivedDate > e; }).length;
+  const pending   = rows.filter(r => { const e = r._revisedDate || r._requiredDate; return !r._receivedDate && e && e < today; }).length;
+  const onTime    = rows.filter(r => { const e = r._revisedDate || r._requiredDate; return r._receivedDate && e && r._receivedDate <= e; }).length;
 
   return (
     <>
@@ -100,9 +100,10 @@ const DeliveryAnalysis = ({ projectIds }) => {
             </thead>
             <tbody>
               {rows.slice(0, 500).map((po, i) => {
-                const hasRevision  = po._revisedDate && po._revisedDate !== po._requiredDate;
-                const isLate       = po._receivedDate && po._requiredDate && po._receivedDate > po._requiredDate;
-                const isOverduePending = !po._receivedDate && po._requiredDate && po._requiredDate < today;
+                const hasRevision      = po._revisedDate && po._revisedDate !== po._requiredDate;
+                const effDue           = po._revisedDate || po._requiredDate;
+                const isLate           = po._receivedDate && effDue && po._receivedDate > effDue;
+                const isOverduePending = !po._receivedDate && effDue && effDue < today;
                 const rowBg = isLate
                   ? 'rgba(180,35,24,0.04)'
                   : isOverduePending

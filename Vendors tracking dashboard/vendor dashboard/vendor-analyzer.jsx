@@ -134,7 +134,8 @@ const VendorAnalyzer = () => {
       const slot = months.find(s => s.year === d.getFullYear() && s.mon === d.getMonth());
       if (!slot) return;
       slot.delivered++;
-      if (!po._requiredDate || po._receivedDate <= po._requiredDate) slot.onTime++;
+      const effD = po._revisedDate || po._requiredDate;
+      if (!effD || po._receivedDate <= effD) slot.onTime++;
     });
     return months.filter(s => s.delivered > 0).map(s => ({
       month: s.month,
@@ -165,8 +166,8 @@ const VendorAnalyzer = () => {
   // ── Real performance metrics ──
   const totalPOs     = vendorRaw.length;
   const delivered    = vendorRaw.filter(p => p.receivedQty >= p.purchaseQty && p.purchaseQty > 0);
-  const onTimeCount  = vendorRaw.filter(p => p._receivedDate && p._requiredDate && p._receivedDate <= p._requiredDate).length;
-  const overdueOpen  = vendorRaw.filter(p => !p._receivedDate && p._requiredDate && p._requiredDate < today).length;
+  const onTimeCount  = vendorRaw.filter(p => { const e = p._revisedDate || p._requiredDate; return p._receivedDate && e && p._receivedDate <= e; }).length;
+  const overdueOpen  = vendorRaw.filter(p => { const e = p._revisedDate || p._requiredDate; return !p._receivedDate && e && e < today; }).length;
   const revisedCount = vendorRaw.filter(p => p._revisedDate && p._revisedDate !== p._requiredDate).length;
   const leadTimes    = vendorRaw
     .filter(p => p._orderDate && p._receivedDate)
@@ -348,7 +349,8 @@ const VendorAnalyzer = () => {
               )}
               {vendorPOs.slice(0, 300).map((p, i) => {
                 const raw    = (window.PURCHASE_ORDERS_RAW || []).find(r => r.po === p.po) || {};
-                const isLate = raw._receivedDate && raw._requiredDate && raw._receivedDate > raw._requiredDate;
+                const effDue = raw._revisedDate || raw._requiredDate;
+                const isLate = raw._receivedDate && effDue && raw._receivedDate > effDue;
                 return (
                   <tr key={i} style={{ background: isLate ? 'rgba(180,35,24,0.03)' : undefined }}>
                     <td className="strong" style={{ fontFamily: 'monospace', fontSize: 11.5 }}>{p.po}</td>

@@ -16,7 +16,8 @@ const SupplierRiskReport = () => {
   // ── Risk flags per vendor (computed first so bubbleData can use it) ──
   const overdueByVendor = {};
   rawPos.forEach(po => {
-    if (!po._receivedDate && po._requiredDate && po._requiredDate < today) {
+    const effDue = po._revisedDate || po._requiredDate;
+    if (!po._receivedDate && effDue && effDue < today) {
       overdueByVendor[po.vendor] = (overdueByVendor[po.vendor] || 0) + 1;
     }
   });
