@@ -12,6 +12,8 @@ const App = () => {
   const [tweaks, setTweak] = useTweaks(TWEAKS_DEFAULTS);
   const [loading, setLoading] = React.useState(true);
   const [refreshKey, setRefreshKey] = React.useState(0);
+  const [dateFilter, setDateFilter] = React.useState('YTD');
+  const [filterKey, setFilterKey] = React.useState(0);
   // Keep-alive: tracks which tabs have been mounted at least once
   const [mounted, setMounted] = React.useState({ overview: true });
   // For analyzer tabs that need fresh params on each navigation, bump their key to force remount
@@ -192,7 +194,13 @@ const App = () => {
               <p className="page-subtitle">{tabMeta.sub}</p>
             </div>
             <div className="page-controls">
-              <select className="select" defaultValue="YTD">
+              <select className="select" value={dateFilter} onChange={e => {
+                const p = e.target.value;
+                window._ACTIVE_PERIOD = p;
+                window.applyDateFilter(p);
+                setDateFilter(p);
+                setFilterKey(k => k + 1);
+              }}>
                 <option>Today</option>
                 <option>This Week</option>
                 <option>This Month</option>
@@ -207,7 +215,7 @@ const App = () => {
           {ALL_TABS.map(({ id, Component }) =>
             mounted[id] ? (
               <div key={id} style={{ display: tab === id ? undefined : 'none' }}>
-                <Component key={tabNavKey[id] || 0} />
+                <Component key={(tabNavKey[id] || 0) + '-f' + filterKey} />
               </div>
             ) : null
           )}

@@ -396,6 +396,87 @@
   }
 
   // ----------------------------------------------------------------
+  // DATE FILTER — compute ISO date range from a period label
+  // ----------------------------------------------------------------
+
+  function getDateRange(period) {
+    const now   = new Date();
+    const start = new Date(now);
+    switch (period) {
+      case 'Today':
+        start.setHours(0, 0, 0, 0);
+        break;
+      case 'This Week':
+        start.setDate(now.getDate() - now.getDay());
+        start.setHours(0, 0, 0, 0);
+        break;
+      case 'This Month':
+        start.setDate(1);
+        start.setHours(0, 0, 0, 0);
+        break;
+      case 'This Quarter':
+        start.setMonth(Math.floor(now.getMonth() / 3) * 3, 1);
+        start.setHours(0, 0, 0, 0);
+        break;
+      case 'YTD':
+        start.setMonth(0, 1);
+        start.setHours(0, 0, 0, 0);
+        break;
+      case 'Last 12 Months':
+        start.setFullYear(now.getFullYear() - 1);
+        start.setHours(0, 0, 0, 0);
+        break;
+      default:
+        return null; // null = no date filter (all time)
+    }
+    const fmt = d => d.toISOString().split('T')[0];
+    return { start: fmt(start), end: fmt(now) };
+  }
+
+  // ----------------------------------------------------------------
+  // applyDateFilter — filter raw orders by period, rebuild all globals
+  // ----------------------------------------------------------------
+
+  window.applyDateFilter = function (period) {
+    const allOrders   = window._RAW_ALL_ORDERS;
+    const rawProjects = window._RAW_PROJECTS;
+    if (!allOrders || !rawProjects) return; // no-op before first fetch
+
+    const range    = getDateRange(period);
+    const filtered = range
+      ? allOrders.filter(o => { const d = o.orderDate || ''; return !d || (d >= range.start && d <= range.end); })
+      : allOrders;
+
+    const localVendors = JSON.parse(localStorage.getItem('vtd_local_vendors') || '[]');
+    const pos          = buildPurchaseOrders(filtered);
+    const projects     = buildProjects(rawProjects, pos);
+    const vendors      = buildVendors(filtered, pos);
+
+    localVendors.forEach(lv => {
+      if (!vendors.find(v => v.name === lv.name)) {
+        vendors.push({ name: lv.name, contact: lv.contact || '', city: '', spend: 0, orders: 0,
+          onTime: 90.0, leadDays: 21, defect: 0.5, score: 75, status: 'Approved' });
+      }
+    });
+
+    const cleanPos = pos.map(({ _orderDate, _shipDate, _dueDate, ...rest }) => rest);
+
+    Object.assign(window, {
+      PROJECTS:            projects,
+      VENDORS:             vendors,
+      PURCHASE_ORDERS:     cleanPos,
+      PURCHASE_ORDERS_RAW: pos,
+      SPEND_BY_CATEGORY:   buildSpendByCategory(pos),
+      SPEND_TIMELINE:      buildSpendTimeline(pos),
+      ACTIVITY:            buildActivity(pos),
+      PO_AGING:            buildPoAging(pos),
+      QUARTERLY_SPEND:     buildQuarterlySpend(pos),
+    });
+
+    console.log('[SDC] Filter "' + (period || 'All') + '": ' + filtered.length + ' / ' + allOrders.length + ' orders → ' + projects.length + ' projects · ' + vendors.length + ' vendors');
+  };
+
+  // ----------------------------------------------------------------
   // MAIN — window.fetchFullstackData
   // ----------------------------------------------------------------
 
@@ -427,52 +508,22 @@
 
       console.log('API response: ' + rawProjects.length + ' projects, ' + rawOrders.length + ' orders (' + (Date.now()-t0) + 'ms)');
 
-      const localOrders  = JSON.parse(localStorage.getItem('vtd_local_orders')  || '[]');
-      const localVendors = JSON.parse(localStorage.getItem('vtd_local_vendors') || '[]');
-      const allOrders    = [...rawOrders, ...localOrders];
+      const localOrders = JSON.parse(localStorage.getItem('vtd_local_orders') || '[]');
+      const allOrders   = [...rawOrders, ...localOrders];
 
-      console.log('Building POs …');
-      const pos      = buildPurchaseOrders(allOrders);
-      console.log('Building projects …');
-      const projects = buildProjects(rawProjects, pos);
-      console.log('Building vendors …');
-      const vendors  = buildVendors(allOrders, pos);
-
-      localVendors.forEach(lv => {
-        if (!vendors.find(v => v.name === lv.name)) {
-          vendors.push({ name: lv.name, contact: lv.contact || '', city: '', spend: 0, orders: 0,
-            onTime: 90.0, leadDays: 21, defect: 0.5, score: 75, status: 'Approved' });
-        }
-      });
-
-      const spendByCategory = buildSpendByCategory(pos);
-      const spendTimeline   = buildSpendTimeline(pos);
-      const activity        = buildActivity(pos);
-      const poAging         = buildPoAging(pos);
-      const quarterlySpend  = buildQuarterlySpend(pos);
-
-      // Strip internal underscore fields before exposing to React
-      const cleanPos = pos.map(({ _orderDate, _shipDate, _dueDate, ...rest }) => rest);
-
-      // Index costing by projectId string for fast lookup
+      // Index costing by projectId for fast lookup
       const costingMap = {};
       (rawCosting || []).forEach(c => { costingMap[c.projectId] = c; });
 
-      Object.assign(window, {
-        PROJECTS:            projects,
-        VENDORS:             vendors,
-        PURCHASE_ORDERS:     cleanPos,
-        PURCHASE_ORDERS_RAW: pos,
-        SPEND_BY_CATEGORY:   spendByCategory,
-        SPEND_TIMELINE:      spendTimeline,
-        ACTIVITY:            activity,
-        PO_AGING:            poAging,
-        QUARTERLY_SPEND:     quarterlySpend,
-        COSTING_MAP:         costingMap,
-      });
+      // Persist raw data so applyDateFilter can re-slice without a refetch
+      window._RAW_PROJECTS   = rawProjects;
+      window._RAW_ALL_ORDERS = allOrders;
+      window.COSTING_MAP     = costingMap;
 
-      console.log('✅ Loaded: ' + projects.length + ' projects · ' + vendors.length + ' vendors · ' + cleanPos.length + ' POs — total ' + (Date.now()-t0) + 'ms');
-      console.log('Top vendors:', vendors.slice(0,3).map(v=>v.name));
+      // Apply the active period (controlled by the UI dropdown; defaults to YTD)
+      window.applyDateFilter(window._ACTIVE_PERIOD || 'YTD');
+
+      console.log('✅ Loaded in ' + (Date.now() - t0) + 'ms — raw: ' + rawProjects.length + ' projects · ' + allOrders.length + ' orders');
     } catch (err) {
       console.error('❌ fetchFullstackData failed — using static fallback. Reason:', err.message, err);
     } finally {
