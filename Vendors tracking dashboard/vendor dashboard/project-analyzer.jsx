@@ -456,15 +456,29 @@ const ProjectAnalyzer = () => {
   const allProjects = window.PROJECTS || [];
   const defaultIdx  = Math.min(2, allProjects.length - 1);
 
+  // Consume navigation param (set by window.navigateTo('project', projectId))
+  const _navId = window.__navParams;
+  const navProject = _navId
+    ? allProjects.find(p =>
+        p.id === _navId ||
+        p.id === 'P-' + String(_navId).replace(/^P-/, '')
+      )
+    : null;
+
   // Filter state
   const [showActiveOnly, setShowActiveOnly] = React.useState(false);
   const [typeFilter,     setTypeFilter]     = React.useState('All');
   const [selectedIds,    setSelectedIds]    = React.useState(
-    allProjects.length > 0 ? [allProjects[defaultIdx].id] : []
+    navProject                            ? [navProject.id]
+    : allProjects.length > 0             ? [allProjects[defaultIdx].id]
+    : []
   );
   const [dateFrom, setDateFrom] = React.useState('');
   const [dateTo,   setDateTo]   = React.useState('');
   const [subTab,   setSubTab]   = React.useState('overview');
+
+  // Clear nav params after consuming so stale params don't affect future mounts
+  React.useEffect(() => { window.__navParams = null; }, []);
 
   // Derived selected projects
   const selectedProjects = selectedIds.length > 0
@@ -482,7 +496,7 @@ const ProjectAnalyzer = () => {
     <>
       {/* ── Filter bar ── */}
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap', alignItems: 'center',
-        background: 'var(--card-bg)', borderRadius: 10, border: '1px solid var(--border)',
+        background: 'var(--bg-elevated)', borderRadius: 10, border: '1px solid var(--border)',
         padding: '12px 16px', marginBottom: 16 }}>
 
         {/* Multi-project picker */}

@@ -102,7 +102,18 @@ const VendorPicker = ({ vendors, selected, onChange }) => {
 // ── Main ──────────────────────────────────────────────────────────────────────
 const VendorAnalyzer = () => {
   const vendors = window.VENDORS || [];
-  const [selectedName, setSelectedName] = React.useState(vendors.length > 0 ? vendors[0].name : '');
+
+  // Consume navigation param (set by window.navigateTo('vendor', vendorName))
+  const _navName = window.__navParams;
+  const initialVendor = (_navName && vendors.some(v => v.name === _navName))
+    ? _navName
+    : (vendors.length > 0 ? vendors[0].name : '');
+
+  const [selectedName, setSelectedName] = React.useState(initialVendor);
+
+  // Clear nav params after consuming so stale params don't affect future mounts
+  React.useEffect(() => { window.__navParams = null; }, []);
+
   React.useEffect(() => {
     if (!selectedName && vendors.length > 0) setSelectedName(vendors[0].name);
   }, [vendors.length]);
