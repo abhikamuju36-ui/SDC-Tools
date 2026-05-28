@@ -108,7 +108,7 @@ const SupplierRiskReport = () => {
 
       {/* Scatter plot */}
       <Card title="Spend vs. On-Time Performance"
-        sub="Bubble size = order volume · Click a vendor to open their profile"
+        sub="Bubble size = order volume · Y-axis log scale · Click a vendor to open their profile"
         actions={
           <div style={{ display: 'flex', gap: 8, fontSize: 11.5, alignItems: 'center' }}>
             {[
@@ -127,6 +127,7 @@ const SupplierRiskReport = () => {
         <ScatterPlot
           data={bubbleData}
           xLabel="On-Time Delivery %"
+          logY={true}
           onPointClick={(d) => window.navigateTo && window.navigateTo('vendor', d.label)}
         />
       </Card>

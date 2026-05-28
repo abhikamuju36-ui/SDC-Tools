@@ -419,21 +419,44 @@ const HealthBar = ({ score }) => (
 );
 
 /* ---------- ScatterPlot (new) ---------- */
-const ScatterPlot = ({ data, height = 290, xLabel = 'On-Time %', onPointClick }) => {
+const ScatterPlot = ({ data, height = 290, xLabel = 'On-Time %', onPointClick, logY = false }) => {
   const [hovered, setHovered] = useState(null);
   const [tip, setTip] = useState({ x: 0, y: 0, lines: null, visible: false });
   const ref = useRef(null);
   if (!data || data.length === 0) return <div style={{ height, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-tertiary)' }}>No data</div>;
-  const maxY = Math.max(...data.map(d => d.y), 1) * 1.15;
-  const maxSize = Math.max(...data.map(d => d.size || 1), 1);
+
+  const maxYRaw  = Math.max(...data.map(d => d.y), 1);
+  const maxSize  = Math.max(...data.map(d => d.size || 1), 1);
   const W = 600, H = 230;
-  const padL = 58, padR = 20, padT = 16, padB = 34;
+  const padL = 66, padR = 20, padT = 16, padB = 34;
   const innerW = W - padL - padR, innerH = H - padT - padB;
   const px = v => padL + (v / 100) * innerW;
-  const py = v => padT + (1 - v / maxY) * innerH;
-  const pr = s => 6 + (s / maxSize) * 13;
+
+  // ── Y scale: log (base-10) when logY=true, linear otherwise ──
+  const minYLog  = 1;                                      // log scale floor = $1
+  const logFloor = Math.log10(minYLog);
+  const logCeil  = Math.log10(maxYRaw * 1.5);
+  const py = logY
+    ? v => padT + (1 - (Math.log10(Math.max(v, minYLog)) - logFloor) / (logCeil - logFloor)) * innerH
+    : v => padT + (1 - v / (maxYRaw * 1.15)) * innerH;
+
+  // ── Y ticks ──
+  const yTickValues = logY
+    ? (() => {
+        // One tick per power-of-10 decade that falls within the data range
+        const ticks = [];
+        const maxExp = Math.ceil(Math.log10(maxYRaw));
+        for (let e = 0; e <= maxExp; e++) {
+          const v = Math.pow(10, e);
+          if (v <= maxYRaw * 1.5) ticks.push(v);
+        }
+        return ticks;
+      })()
+    : [0, 1, 2, 3, 4].map(i => maxYRaw * 1.15 * i / 4);
+
+  const pr = s => 5 + (s / maxSize) * 13;
   const xTicks = [0, 25, 50, 75, 100];
-  const yTicks = 4;
+
   return (
     <div ref={ref} className="chart" style={{ height, position: 'relative', overflow: 'visible' }}>
       <ChartTooltip {...tip} />
@@ -444,9 +467,9 @@ const ScatterPlot = ({ data, height = 290, xLabel = 'On-Time %', onPointClick })
             <text x={px(v)} y={H - padB + 14} textAnchor="middle" fontSize="9" fill="var(--text-tertiary)" fontFamily="Inter">{v}%</text>
           </g>
         ))}
-        {[...Array(yTicks + 1)].map((_, i) => {
-          const v = maxY * i / yTicks;
+        {yTickValues.map((v, i) => {
           const y = py(v);
+          if (y < padT - 2 || y > padT + innerH + 2) return null;
           return (
             <g key={i}>
               <line x1={padL} x2={W - padR} y1={y} y2={y} stroke="#EEF0F3" strokeWidth="1" />
@@ -462,7 +485,7 @@ const ScatterPlot = ({ data, height = 290, xLabel = 'On-Time %', onPointClick })
         <line x1={padL} x2={padL} y1={padT} y2={padT + innerH} stroke="#DDE2E9" strokeWidth="1.5" />
         <line x1={padL} x2={W - padR} y1={padT + innerH} y2={padT + innerH} stroke="#DDE2E9" strokeWidth="1.5" />
         <text x={(padL + W - padR) / 2} y={H - 3} textAnchor="middle" fontSize="10" fill="var(--text-tertiary)" fontFamily="Inter">{xLabel}</text>
-        {/* Bubbles — render in two passes so hovered is on top */}
+        {/* Bubbles — render non-hovered first, hovered last so it sits on top */}
         {data.map((d, i) => i !== hovered && (
           <circle key={i} cx={px(d.x)} cy={py(d.y)} r={pr(d.size || 1)}
             fill={d.color || '#1574C4'} fillOpacity={0.65} stroke={d.color || '#1574C4'} strokeWidth="1.5"
@@ -480,7 +503,6 @@ const ScatterPlot = ({ data, height = 290, xLabel = 'On-Time %', onPointClick })
             onClick={() => onPointClick && onPointClick(d, i)}
           />
         ))}
-        {/* Hovered bubble on top */}
         {hovered !== null && data[hovered] && (() => {
           const d = data[hovered];
           return (
