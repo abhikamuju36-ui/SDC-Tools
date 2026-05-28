@@ -21,8 +21,8 @@ const SupplierRiskReport = () => {
     }
   });
 
-  // ── Bubble chart data ──
-  const bubbleData = vendors.map(v => {
+  // ── Bubble chart data — only vendors with actual spend in the current period ──
+  const bubbleData = vendors.filter(v => v.spend > 0).map(v => {
     const color = v.score >= 88 ? '#74C415' : v.score >= 75 ? '#1574C4' : v.score >= 60 ? '#E8A020' : '#B42318';
     const overdue = overdueByVendor[v.name] || 0;
     return {

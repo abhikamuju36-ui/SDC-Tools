@@ -461,7 +461,7 @@ const ScatterPlot = ({ data, height = 290, xLabel = 'On-Time %', onPointClick })
         {/* Axes */}
         <line x1={padL} x2={padL} y1={padT} y2={padT + innerH} stroke="#DDE2E9" strokeWidth="1.5" />
         <line x1={padL} x2={W - padR} y1={padT + innerH} y2={padT + innerH} stroke="#DDE2E9" strokeWidth="1.5" />
-        <text x={(padL + W - padR) / 2} y={H} textAnchor="middle" fontSize="10" fill="var(--text-tertiary)" fontFamily="Inter">{xLabel}</text>
+        <text x={(padL + W - padR) / 2} y={H - 3} textAnchor="middle" fontSize="10" fill="var(--text-tertiary)" fontFamily="Inter">{xLabel}</text>
         {/* Bubbles — render in two passes so hovered is on top */}
         {data.map((d, i) => i !== hovered && (
           <circle key={i} cx={px(d.x)} cy={py(d.y)} r={pr(d.size || 1)}
