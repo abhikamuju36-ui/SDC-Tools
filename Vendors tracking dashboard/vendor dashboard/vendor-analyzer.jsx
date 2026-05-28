@@ -338,10 +338,13 @@ const VendorAnalyzer = () => {
         sub={'All POs · ' + v.name + ' · ' + vendorPOs.length.toLocaleString() + ' orders · ' + fmtUSD(v.spend, true) + ' total'}
         actions={<button className="btn btn-secondary" onClick={() => {
           const esc = val => { const s = String(val ?? ''); return (s.includes(',') || s.includes('"')) ? '"' + s.replace(/"/g, '""') + '"' : s; };
-          const hdrs = ['PO#','Project','Part','Category','Qty Ordered','Qty Received','Amount','Issued','Expected','Status'];
-          const csv  = [hdrs.join(','), ...vendorPOs.map(p =>
-            [p.po, p.project, p.partDesc || p.partNumber || '', p.category, p.purchaseQty || '', p.receivedQty || 0, p.amount, p.issued || '', p.expected || '', p.status].map(esc).join(',')
-          )].join('\n');
+          const hdrs = ['PO#','Detail ID','Project','Part','Category','Qty Ordered','Qty Received','Amount','Issued','Expected','Status'];
+          const csv  = [hdrs.join(','), ...vendorPOs.map(p => {
+            const pts = (p.po || '').split('-');
+            const base = pts.slice(0, 2).join('-');
+            const det  = pts[pts.length - 1] || p.po;
+            return [base, det, p.project, p.partDesc || p.partNumber || '', p.category, p.purchaseQty || '', p.receivedQty || 0, p.amount, p.issued || '', p.expected || '', p.status].map(esc).join(',');
+          })].join('\n');
           const a = document.createElement('a'); a.href = 'data:text/csv,' + encodeURIComponent(csv);
           a.download = (v.name.replace(/\s+/g,'-') + '-orders.csv').toLowerCase(); a.click();
         }}>{Icon.download} Export</button>}
@@ -351,6 +354,7 @@ const VendorAnalyzer = () => {
             <thead>
               <tr>
                 <th>PO #</th>
+                <th>Detail ID</th>
                 <th>Project</th>
                 <th>Part</th>
                 <th>Category</th>
@@ -364,15 +368,19 @@ const VendorAnalyzer = () => {
             </thead>
             <tbody>
               {vendorPOs.length === 0 && (
-                <tr><td colSpan="10" style={{ textAlign: 'center', padding: 32, color: 'var(--text-tertiary)' }}>No purchase orders for this vendor.</td></tr>
+                <tr><td colSpan="11" style={{ textAlign: 'center', padding: 32, color: 'var(--text-tertiary)' }}>No purchase orders for this vendor.</td></tr>
               )}
               {vendorPOs.slice(0, 300).map((p, i) => {
+                const poParts  = (p.po || '').split('-');
+                const poBase   = poParts.slice(0, 2).join('-');
+                const detailId = poParts[poParts.length - 1] || p.po;
                 const raw    = (window.PURCHASE_ORDERS_RAW || []).find(r => r.po === p.po) || {};
                 const effDue = raw._revisedDate || raw._requiredDate;
                 const isLate = raw._receivedDate && effDue && raw._receivedDate > effDue;
                 return (
                   <tr key={i} style={{ background: isLate ? 'rgba(180,35,24,0.03)' : undefined }}>
-                    <td className="strong" style={{ fontFamily: 'monospace', fontSize: 11.5 }}>{p.po}</td>
+                    <td className="strong" style={{ fontFamily: 'monospace', fontSize: 11.5 }}>{poBase}</td>
+                    <td className="muted" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{detailId}</td>
                     <td className="muted" style={{ fontSize: 11.5 }}>{p.project}</td>
                     <td className="muted" style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}
                       title={p.partDesc}>{p.partDesc || p.partNumber || '—'}</td>
@@ -397,7 +405,7 @@ const VendorAnalyzer = () => {
                 );
               })}
               {vendorPOs.length > 300 && (
-                <tr><td colSpan="10" style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: '10px', fontSize: 12 }}>
+                <tr><td colSpan="11" style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: '10px', fontSize: 12 }}>
                   Showing 300 of {vendorPOs.length.toLocaleString()} POs
                 </td></tr>
               )}
