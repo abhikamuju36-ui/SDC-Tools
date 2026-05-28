@@ -323,17 +323,22 @@ const Overview = () => {
           <table className="data">
             <thead>
               <tr>
-                <th>PO #</th><th>Project</th><th>Vendor</th><th>Category</th>
+                <th>PO #</th><th>Order Detail ID</th><th>Project</th><th>Vendor</th><th>Category</th>
                 <th className="num">Amount</th><th>Issued</th><th>Expected</th><th>Status</th>
               </tr>
             </thead>
             <tbody>
               {filteredPOs.length === 0 && (
-                <tr><td colSpan="8" style={{ textAlign: 'center', padding: 32, color: 'var(--text-tertiary)' }}>No purchase orders loaded yet.</td></tr>
+                <tr><td colSpan="9" style={{ textAlign: 'center', padding: 32, color: 'var(--text-tertiary)' }}>No purchase orders loaded yet.</td></tr>
               )}
-              {filteredPOs.map((p, i) => (
+              {filteredPOs.map((p, i) => {
+                const poParts  = (p.po || '').split('-');
+                const poBase   = poParts.slice(0, 2).join('-');          // e.g. PO-105361
+                const detailId = poParts[poParts.length - 1] || p.po;   // e.g. 32406
+                return (
                 <tr key={i}>
-                  <td className="strong">{p.po}</td>
+                  <td className="strong">{poBase}</td>
+                  <td className="muted" style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{detailId}</td>
                   <td className="muted" style={{ cursor: 'pointer', color: 'var(--sdc-blue)' }}
                     onClick={() => window.navigateTo && window.navigateTo('project', p.project)}>
                     {p.project}
@@ -351,7 +356,8 @@ const Overview = () => {
                   <td className="muted">{p.expected}</td>
                   <td><StatusPill s={p.status} /></td>
                 </tr>
-              ))}
+                );
+              })}
             </tbody>
           </table>
         </div>
