@@ -1,103 +1,154 @@
 /* Receivings Log Report */
 
 const ReceivingsLogReport = () => {
-  const orders = (window.ORDERS || []).filter(o => o.status === 'Received' || o.status === 'received');
+  const rawPos = window.PURCHASE_ORDERS_RAW || [];
+  const today  = new Date();
 
-  const fmt     = v => '$' + (v >= 1_000_000 ? (v / 1_000_000).toFixed(1) + 'M' : v >= 1_000 ? (v / 1_000).toFixed(0) + 'K' : v.toFixed(0));
-  const today   = new Date();
+  // Only show received POs
+  const received = rawPos.filter(o => o.status === 'Received');
 
-  const withDays = orders.map(o => {
-    const due     = o.dueDate   ? new Date(o.dueDate)   : null;
-    const ordered = o.orderDate ? new Date(o.orderDate) : null;
-    const daysDue = due ? Math.round((today - due)   / 86400000) : null;
-    const leadDays= (due && ordered) ? Math.round((due - ordered) / 86400000) : null;
-    const urgency = daysDue === null ? 'unknown' : daysDue > 7 ? 'overdue' : daysDue >= 0 ? 'recent' : 'upcoming';
-    return { ...o, daysDue, leadDays, urgency };
-  }).sort((a, b) => (b.daysDue || 0) - (a.daysDue || 0));
+  const fmtD = dateStr => {
+    if (!dateStr) return '—';
+    const d = new Date(dateStr.length === 10 ? dateStr + 'T12:00:00' : dateStr);
+    return isNaN(d.getTime()) ? '—' : d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+  };
 
-  const groups = { overdue: [], recent: [], upcoming: [], unknown: [] };
-  withDays.forEach(o => groups[o.urgency].push(o));
+  const fmt = v => '$' + (v >= 1_000_000 ? (v / 1_000_000).toFixed(1) + 'M'
+    : v >= 1_000 ? (v / 1_000).toFixed(0) + 'K' : v.toFixed(0));
 
-  const totalReceived  = orders.length;
-  const totalValue     = orders.reduce((s, o) => s + (o.amount || 0), 0);
-  const overdueCount   = groups.overdue.length;
+  const withMeta = received.map(o => {
+    // Use revised date when set — supersedes original required date
+    const effDue   = o._revisedDate || o._requiredDate;
+    const dueD     = effDue        ? new Date(effDue        + 'T12:00:00') : null;
+    const recvD    = o._receivedDate ? new Date(o._receivedDate + 'T12:00:00') : null;
+    const orderD   = o._orderDate   ? new Date(o._orderDate   + 'T12:00:00') : null;
 
-  const URGENCY_LABEL  = { overdue: 'Overdue', recent: 'Recent (≤7 days)', upcoming: 'Upcoming', unknown: 'No date' };
-  const URGENCY_COLOR  = { overdue: '#ef4444', recent: '#22c55e', upcoming: '#1574C4', unknown: '#7a9ab8' };
+    // daysDelta > 0 = received N days LATE; < 0 = received N days EARLY
+    const daysDelta = (dueD && recvD) ? Math.round((recvD - dueD) / 86400000) : null;
+    // Lead time = order → receipt
+    const leadDays  = (orderD && recvD) ? Math.round((recvD - orderD) / 86400000) : null;
+
+    const urgency = daysDelta === null ? 'unknown'
+      : daysDelta > 0 ? 'late'
+      : 'ontime';
+
+    return { ...o, effDue, daysDelta, leadDays, urgency };
+  }).sort((a, b) => (b.daysDelta || 0) - (a.daysDelta || 0));
+
+  const groups = { late: [], ontime: [], unknown: [] };
+  withMeta.forEach(o => groups[o.urgency].push(o));
+
+  const lateCount   = groups.late.length;
+  const onTimeCount = groups.ontime.length;
+  const totalValue  = received.reduce((s, o) => s + (o.amount || 0), 0);
+
+  const LABEL = { late: 'Received Late', ontime: 'Received On-Time / Early', unknown: 'No Date Info' };
+  const COLOR = { late: 'var(--danger)', ontime: 'var(--positive)', unknown: 'var(--text-tertiary)' };
 
   const Row = ({ o }) => (
-    <tr style={{ borderBottom: '1px solid var(--border, rgba(255,255,255,0.05))' }}>
-      <td style={{ padding: '10px 16px', color: 'var(--text-primary, #fff)', fontFamily: 'monospace', fontSize: 12 }}>{o.id}</td>
-      <td style={{ padding: '10px 16px', color: 'var(--text-secondary, #aacee8)', maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{o.vendorName}</td>
-      <td style={{ padding: '10px 16px', color: 'var(--text-secondary, #aacee8)', textAlign: 'right' }}>{fmt(o.amount || 0)}</td>
-      <td style={{ padding: '10px 16px', color: 'var(--text-secondary, #aacee8)', textAlign: 'center', fontSize: 12 }}>{o.dueDate || '—'}</td>
-      <td style={{ padding: '10px 16px', textAlign: 'center', fontSize: 12, color: 'var(--text-secondary, #aacee8)' }}>{o.leadDays != null ? `${o.leadDays}d` : '—'}</td>
+    <tr>
+      <td style={{ fontFamily: 'monospace', fontSize: 11.5 }}>{o.po}</td>
+      <td className="muted" style={{ fontSize: 12 }}>{o.project}</td>
+      <td>{o.vendor}</td>
+      <td className="muted" style={{ maxWidth: 180, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', fontSize: 12 }}
+        title={o.partDesc}>{o.partDesc || o.partNumber || '—'}</td>
+      <td className="num strong">{fmt(o.amount || 0)}</td>
+      <td className="muted">{fmtD(o._orderDate)}</td>
+      <td className="muted">
+        {fmtD(o.effDue)}
+        {o._revisedDate && o._revisedDate !== o._requiredDate && (
+          <span style={{ marginLeft: 4, fontSize: 10, color: 'var(--warning)', fontWeight: 600 }} title="Date was revised">▲</span>
+        )}
+      </td>
+      <td className="muted">{fmtD(o._receivedDate)}</td>
+      <td style={{ textAlign: 'center' }}>
+        {o.daysDelta === null ? (
+          <span style={{ color: 'var(--text-tertiary)', fontSize: 11 }}>—</span>
+        ) : o.daysDelta > 0 ? (
+          <span style={{ color: 'var(--danger)', fontWeight: 700, fontSize: 12 }}>+{o.daysDelta}d late</span>
+        ) : o.daysDelta === 0 ? (
+          <span style={{ color: 'var(--positive)', fontWeight: 600, fontSize: 12 }}>On time</span>
+        ) : (
+          <span style={{ color: 'var(--positive)', fontWeight: 600, fontSize: 12 }}>{Math.abs(o.daysDelta)}d early</span>
+        )}
+      </td>
+      <td className="muted" style={{ textAlign: 'center' }}>{o.leadDays != null ? `${o.leadDays}d` : '—'}</td>
     </tr>
   );
 
-  const Section = ({ key: k, items, label, color }) => items.length === 0 ? null : (
-    <div style={{
-      background: 'var(--surface-2, #0d2a4a)',
-      border: '1px solid var(--border, rgba(255,255,255,0.08))',
-      borderRadius: 12, overflow: 'hidden',
-    }}>
-      <div style={{ padding: '14px 20px', borderBottom: '1px solid var(--border, rgba(255,255,255,0.08))', display: 'flex', alignItems: 'center', gap: 10 }}>
-        <span style={{ width: 8, height: 8, borderRadius: '50%', background: color, display: 'inline-block' }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary, #fff)' }}>{label}</span>
-        <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-tertiary, #7a9ab8)' }}>{items.length} PO{items.length !== 1 ? 's' : ''}</span>
-      </div>
-      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
-        <thead>
-          <tr style={{ borderBottom: '1px solid var(--border, rgba(255,255,255,0.06))' }}>
-            {['PO #', 'Vendor', 'Amount', 'Due Date', 'Lead Time'].map(h => (
-              <th key={h} style={{ padding: '8px 16px', textAlign: h === 'Amount' ? 'right' : h === 'Due Date' || h === 'Lead Time' ? 'center' : 'left', color: 'var(--text-tertiary, #7a9ab8)', fontWeight: 500, fontSize: 11, textTransform: 'uppercase', letterSpacing: 0.8 }}>{h}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {items.map((o, i) => <Row key={i} o={o} />)}
-        </tbody>
-      </table>
-    </div>
-  );
+  const Section = ({ urgency, items }) => {
+    if (items.length === 0) return null;
+    return (
+      <Card title={LABEL[urgency]}
+        sub={`${items.length} PO${items.length !== 1 ? 's' : ''}`}
+        bodyClass="flush"
+        actions={
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ width: 8, height: 8, borderRadius: '50%', background: COLOR[urgency], display: 'inline-block' }} />
+            <span style={{ fontSize: 11, color: 'var(--text-tertiary)' }}>{LABEL[urgency]}</span>
+          </span>
+        }>
+        <div className="table-wrap">
+          <table className="data" style={{ fontSize: 12 }}>
+            <thead>
+              <tr>
+                <th>PO #</th>
+                <th>Project</th>
+                <th>Vendor</th>
+                <th>Part</th>
+                <th className="num">Amount</th>
+                <th>Ordered</th>
+                <th>Due Date</th>
+                <th>Received</th>
+                <th style={{ textAlign: 'center' }}>Variance</th>
+                <th style={{ textAlign: 'center' }}>Lead Time</th>
+              </tr>
+            </thead>
+            <tbody>
+              {items.slice(0, 200).map((o, i) => <Row key={i} o={o} />)}
+              {items.length > 200 && (
+                <tr><td colSpan={10} style={{ textAlign: 'center', color: 'var(--text-tertiary)', padding: '10px', fontSize: 12 }}>
+                  Showing 200 of {items.length.toLocaleString()} POs
+                </td></tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </Card>
+    );
+  };
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 24 }}>
-
+    <>
       {/* KPI row */}
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: 16 }}>
-        {[
-          { label: 'Total Received',   value: totalReceived,    sub: 'completed POs' },
-          { label: 'Total Value',      value: fmt(totalValue),  sub: 'received goods' },
-          { label: 'Late Deliveries',  value: overdueCount,     sub: 'past due date' },
-        ].map(k => (
-          <div key={k.label} style={{
-            background: 'var(--surface-2, #0d2a4a)',
-            border: '1px solid var(--border, rgba(255,255,255,0.08))',
-            borderRadius: 12, padding: '20px 24px',
-          }}>
-            <div style={{ fontSize: 12, color: 'var(--text-tertiary, #7a9ab8)', letterSpacing: 1, textTransform: 'uppercase', marginBottom: 8 }}>{k.label}</div>
-            <div style={{ fontSize: 28, fontWeight: 700, color: 'var(--text-primary, #fff)', fontFamily: 'var(--font-display, Montserrat, sans-serif)' }}>{k.value}</div>
-            <div style={{ fontSize: 12, color: 'var(--text-secondary, #aacee8)', marginTop: 4 }}>{k.sub}</div>
-          </div>
-        ))}
+      <div className="kpis">
+        <KPI label="Total Received" value={received.length.toLocaleString()} glyph={Icon.check}
+          caption="completed POs" />
+        <KPI label="Total Value" value={fmt(totalValue)} glyph={Icon.dollar}
+          caption="goods received" />
+        <KPI label="Received On-Time" value={onTimeCount} glyph={Icon.truck}
+          trendDir={received.length > 0 && onTimeCount / received.length >= 0.9 ? 'up' : 'down'}
+          caption={received.length > 0 ? `${Math.round(onTimeCount / received.length * 100)}% fill rate` : 'no data'} />
+        <KPI label="Received Late" value={lateCount} glyph={Icon.alert}
+          trendDir={lateCount > 0 ? 'down' : 'up'}
+          caption="past effective due date" />
       </div>
 
-      {orders.length === 0 ? (
-        <div style={{
-          background: 'var(--surface-2, #0d2a4a)',
-          border: '1px solid var(--border, rgba(255,255,255,0.08))',
-          borderRadius: 12, padding: 48, textAlign: 'center', color: 'var(--text-tertiary, #7a9ab8)',
-        }}>
-          No received POs found.
-        </div>
+      {received.length === 0 ? (
+        <Card title="Receivings Log" sub="No received POs in current period">
+          <div style={{ padding: 48, textAlign: 'center', color: 'var(--text-tertiary)', fontSize: 13 }}>
+            No received POs found. Try changing the date filter.
+          </div>
+        </Card>
       ) : (
         <>
-          {['overdue','recent','upcoming','unknown'].map(key => (
-            <Section key={key} items={groups[key]} label={URGENCY_LABEL[key]} color={URGENCY_COLOR[key]} />
-          ))}
+          <Section urgency="late"    items={groups.late}    />
+          <Section urgency="ontime"  items={groups.ontime}  />
+          <Section urgency="unknown" items={groups.unknown} />
         </>
       )}
-    </div>
+    </>
   );
 };
+
+window.ReceivingsLogReport = ReceivingsLogReport;
