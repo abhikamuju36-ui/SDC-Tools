@@ -457,6 +457,11 @@ const ScatterPlot = ({ data, height = 290, xLabel = 'On-Time %', onPointClick, l
   const pr = s => 5 + (s / maxSize) * 13;
   const xTicks = [0, 25, 50, 75, 100];
 
+  // Deterministic jitter — spreads stacked points without changing on re-render
+  const strHash = s => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) & 0xffffffff; return h; };
+  const jx = d => ((strHash(d.label || '') & 0x1FF) / 0x1FF - 0.5) * 5; // ±2.5% on x-axis
+  const jy = d => ((strHash((d.label || '') + 'y') & 0xFF) / 0xFF - 0.5) * (logY ? 0.06 : 0); // ±3% log offset
+
   return (
     <div ref={ref} className="chart" style={{ height, position: 'relative', overflow: 'visible' }}>
       <ChartTooltip {...tip} />
@@ -486,34 +491,38 @@ const ScatterPlot = ({ data, height = 290, xLabel = 'On-Time %', onPointClick, l
         <line x1={padL} x2={W - padR} y1={padT + innerH} y2={padT + innerH} stroke="#DDE2E9" strokeWidth="1.5" />
         <text x={(padL + W - padR) / 2} y={H - 3} textAnchor="middle" fontSize="10" fill="var(--text-tertiary)" fontFamily="Inter">{xLabel}</text>
         {/* Bubbles — render non-hovered first, hovered last so it sits on top */}
-        {data.map((d, i) => i !== hovered && (
-          <circle key={i} cx={px(d.x)} cy={py(d.y)} r={pr(d.size || 1)}
-            fill={d.color || '#1574C4'} fillOpacity={0.65} stroke={d.color || '#1574C4'} strokeWidth="1.5"
-            style={{ cursor: onPointClick ? 'pointer' : 'default' }}
-            onMouseEnter={e => {
-              setHovered(i);
-              const cr = ref.current?.getBoundingClientRect();
-              if (cr) setTip({ x: e.clientX - cr.left, y: e.clientY - cr.top, lines: [d.label, ...(d.meta || [])], visible: true });
-            }}
-            onMouseMove={e => {
-              const cr = ref.current?.getBoundingClientRect();
-              if (cr) setTip(t => ({ ...t, x: e.clientX - cr.left, y: e.clientY - cr.top }));
-            }}
-            onMouseLeave={() => { setHovered(null); setTip(t => ({ ...t, visible: false })); }}
-            onClick={() => onPointClick && onPointClick(d, i)}
-          />
-        ))}
+        {data.map((d, i) => {
+          const cx = px(d.x + jx(d)), cy = logY ? py(d.y) + jy(d) * innerH : py(d.y);
+          return i !== hovered && (
+            <circle key={i} cx={cx} cy={cy} r={pr(d.size || 1)}
+              fill={d.color || '#1574C4'} fillOpacity={0.65} stroke={d.color || '#1574C4'} strokeWidth="1.5"
+              style={{ cursor: onPointClick ? 'pointer' : 'default' }}
+              onMouseEnter={e => {
+                setHovered(i);
+                const cr = ref.current?.getBoundingClientRect();
+                if (cr) setTip({ x: e.clientX - cr.left, y: e.clientY - cr.top, lines: [d.label, ...(d.meta || [])], visible: true });
+              }}
+              onMouseMove={e => {
+                const cr = ref.current?.getBoundingClientRect();
+                if (cr) setTip(t => ({ ...t, x: e.clientX - cr.left, y: e.clientY - cr.top }));
+              }}
+              onMouseLeave={() => { setHovered(null); setTip(t => ({ ...t, visible: false })); }}
+              onClick={() => onPointClick && onPointClick(d, i)}
+            />
+          );
+        })}
         {hovered !== null && data[hovered] && (() => {
           const d = data[hovered];
+          const cx = px(d.x + jx(d)), cy = logY ? py(d.y) + jy(d) * innerH : py(d.y);
           return (
             <g>
-              <circle cx={px(d.x)} cy={py(d.y)} r={pr(d.size || 1) + 2}
+              <circle cx={cx} cy={cy} r={pr(d.size || 1) + 2}
                 fill={d.color || '#1574C4'} fillOpacity={0.85} stroke="white" strokeWidth="2"
                 style={{ cursor: onPointClick ? 'pointer' : 'default' }}
                 onMouseLeave={() => { setHovered(null); setTip(t => ({ ...t, visible: false })); }}
                 onClick={() => onPointClick && onPointClick(d, hovered)}
               />
-              <text x={px(d.x) + pr(d.size || 1) + 5} y={py(d.y) + 4}
+              <text x={cx + pr(d.size || 1) + 5} y={cy + 4}
                 fontSize="10" fill="var(--text)" fontFamily="Inter" fontWeight="700">
                 {d.label.length > 14 ? d.label.slice(0, 14) + '…' : d.label}
               </text>
