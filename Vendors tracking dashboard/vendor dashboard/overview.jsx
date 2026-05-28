@@ -6,6 +6,31 @@ const Overview = () => {
   const [trendPeriod,    setTrendPeriod]    = React.useState('6M');      // '3M' | '6M' | '1Y'
   const ledgerRef = React.useRef(null);
 
+  // ── Ledger filter state ──────────────────────────────────────────────────
+  const [showFilter,    setShowFilter]    = React.useState(false);
+  const [filterVendor,  setFilterVendor]  = React.useState('');
+  const [filterStatus,  setFilterStatus]  = React.useState(new Set()); // empty = all
+  const [filterAmtMin,  setFilterAmtMin]  = React.useState('');
+  const [filterAmtMax,  setFilterAmtMax]  = React.useState('');
+
+  const ALL_STATUSES = ['Open', 'In Transit', 'Received', 'Delayed'];
+
+  const toggleStatus = s => setFilterStatus(prev => {
+    const next = new Set(prev);
+    next.has(s) ? next.delete(s) : next.add(s);
+    return next;
+  });
+
+  const activeFilterCount = (filterVendor.trim() ? 1 : 0)
+    + (filterStatus.size > 0 ? 1 : 0)
+    + (filterAmtMin.trim() || filterAmtMax.trim() ? 1 : 0)
+    + (categoryFilter ? 1 : 0);
+
+  const clearAllFilters = () => {
+    setFilterVendor(''); setFilterStatus(new Set());
+    setFilterAmtMin(''); setFilterAmtMax(''); setCategoryFilter(null);
+  };
+
   const totalSpend  = window.PROJECTS.reduce((a, b) => a + b.spent, 0);
   const avgOrder    = window.PURCHASE_ORDERS.length > 0
     ? Math.round(window.PURCHASE_ORDERS.reduce((a, b) => a + b.amount, 0) / window.PURCHASE_ORDERS.length) : 0;
@@ -116,10 +141,15 @@ const Overview = () => {
     return lines;
   };
 
-  // PO ledger filtered by category
-  const filteredPOs = categoryFilter
-    ? window.PURCHASE_ORDERS.filter(p => p.category === categoryFilter)
-    : window.PURCHASE_ORDERS;
+  // PO ledger — apply all active filters
+  const filteredPOs = window.PURCHASE_ORDERS.filter(p => {
+    if (categoryFilter && p.category !== categoryFilter)                            return false;
+    if (filterVendor.trim() && !p.vendor.toLowerCase().includes(filterVendor.trim().toLowerCase())) return false;
+    if (filterStatus.size > 0 && !filterStatus.has(p.status))                      return false;
+    if (filterAmtMin.trim() && p.amount < parseFloat(filterAmtMin))                return false;
+    if (filterAmtMax.trim() && p.amount > parseFloat(filterAmtMax))                return false;
+    return true;
+  });
 
   return (
     <>
@@ -314,11 +344,112 @@ const Overview = () => {
             {categoryFilter && (
               <button className="btn btn-ghost" onClick={() => setCategoryFilter(null)}>✕ Clear filter</button>
             )}
-            <button className="btn btn-ghost">{Icon.filter} Filter</button>
+            <button className="btn btn-ghost" onClick={() => setShowFilter(s => !s)}
+              style={{ position: 'relative', background: showFilter ? 'rgba(21,116,196,0.08)' : undefined,
+                color: showFilter ? 'var(--sdc-blue)' : undefined, borderColor: showFilter ? 'var(--sdc-blue)' : undefined }}>
+              {Icon.filter} Filter
+              {activeFilterCount > 0 && (
+                <span style={{ position: 'absolute', top: -6, right: -6, minWidth: 16, height: 16,
+                  borderRadius: 8, background: 'var(--sdc-blue)', color: '#fff',
+                  fontSize: 10, fontWeight: 700, display: 'flex', alignItems: 'center',
+                  justifyContent: 'center', padding: '0 4px', lineHeight: 1 }}>
+                  {activeFilterCount}
+                </span>
+              )}
+            </button>
             <button className="btn btn-secondary">{Icon.download} Export</button>
           </>
         }
         bodyClass="flush">
+
+        {/* ── Filter panel ── */}
+        {showFilter && (
+          <div style={{ padding: '14px 18px', borderBottom: '1px solid var(--border)',
+            background: 'var(--bg-subtle)', display: 'flex', flexWrap: 'wrap', gap: 20, alignItems: 'flex-start' }}>
+
+            {/* Status checkboxes */}
+            <div>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-tertiary)',
+                textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>Status</div>
+              <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+                {ALL_STATUSES.map(s => {
+                  const active = filterStatus.has(s);
+                  return (
+                    <button key={s} onClick={() => toggleStatus(s)}
+                      style={{ padding: '3px 10px', borderRadius: 5, fontSize: 11.5, cursor: 'pointer',
+                        fontWeight: active ? 700 : 400, border: '1px solid var(--border)',
+                        background: active ? 'var(--sdc-blue)' : 'var(--bg-elevated)',
+                        color: active ? '#fff' : 'var(--text-secondary)', transition: 'all .12s' }}>
+                      {s}
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Vendor search */}
+            <div>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-tertiary)',
+                textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>Vendor</div>
+              <div style={{ position: 'relative' }}>
+                <input
+                  type="text"
+                  placeholder="Search vendor name…"
+                  value={filterVendor}
+                  onChange={e => setFilterVendor(e.target.value)}
+                  style={{ padding: '4px 28px 4px 9px', borderRadius: 5, border: '1px solid var(--border)',
+                    background: 'var(--bg-elevated)', color: 'var(--text-primary)',
+                    fontSize: 12, width: 180, outline: 'none' }}
+                />
+                {filterVendor && (
+                  <button onClick={() => setFilterVendor('')}
+                    style={{ position: 'absolute', right: 6, top: '50%', transform: 'translateY(-50%)',
+                      background: 'none', border: 'none', cursor: 'pointer',
+                      color: 'var(--text-tertiary)', fontSize: 13, lineHeight: 1, padding: 0 }}>✕</button>
+                )}
+              </div>
+            </div>
+
+            {/* Amount range */}
+            <div>
+              <div style={{ fontSize: 10.5, fontWeight: 700, color: 'var(--text-tertiary)',
+                textTransform: 'uppercase', letterSpacing: 0.6, marginBottom: 6 }}>Amount ($)</div>
+              <div style={{ display: 'flex', gap: 6, alignItems: 'center' }}>
+                <input
+                  type="number"
+                  placeholder="Min"
+                  value={filterAmtMin}
+                  onChange={e => setFilterAmtMin(e.target.value)}
+                  style={{ padding: '4px 8px', borderRadius: 5, border: '1px solid var(--border)',
+                    background: 'var(--bg-elevated)', color: 'var(--text-primary)',
+                    fontSize: 12, width: 90, outline: 'none' }}
+                />
+                <span style={{ color: 'var(--text-tertiary)', fontSize: 12 }}>–</span>
+                <input
+                  type="number"
+                  placeholder="Max"
+                  value={filterAmtMax}
+                  onChange={e => setFilterAmtMax(e.target.value)}
+                  style={{ padding: '4px 8px', borderRadius: 5, border: '1px solid var(--border)',
+                    background: 'var(--bg-elevated)', color: 'var(--text-primary)',
+                    fontSize: 12, width: 90, outline: 'none' }}
+                />
+              </div>
+            </div>
+
+            {/* Clear all */}
+            <div style={{ display: 'flex', alignItems: 'flex-end', paddingBottom: 1 }}>
+              <button onClick={clearAllFilters}
+                style={{ padding: '4px 12px', borderRadius: 5, border: '1px solid var(--border)',
+                  background: 'transparent', color: 'var(--text-tertiary)', fontSize: 12,
+                  cursor: 'pointer', opacity: activeFilterCount > 0 ? 1 : 0.4 }}>
+                Clear all
+              </button>
+            </div>
+
+          </div>
+        )}
+
         <div className="table-wrap">
           <table className="data">
             <thead>
