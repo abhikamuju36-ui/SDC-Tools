@@ -195,7 +195,8 @@ app.get('/api/orders', async (req, res) => {
           unitPrice:     po.PurchasePrice || 0,
           amount:        (po.PurchaseQty || 1) * (po.PurchasePrice || 0),
           // Dates — explicit & distinct
-          orderDate:     orderDateStr || '2026-01-01',
+          orderDate:          orderDateStr,                        // blank when both PurchaseDate and DateRequired are null
+          issuedFromFallback: !po.PurchaseDate && !!orderDateStr,  // true = PurchaseDate was null, showing DateRequired as issued
           requiredDate:  formatDate(po.DateRequired)         || '',   // line-level required date
           revisedDate:   formatDate(po.PurchaseDateRequired) || '',   // header-level revised date
           receivedDate:  formatDate(po.LastReceivedDate)     || '',   // actual received date (NOT ship date)
