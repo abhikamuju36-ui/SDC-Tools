@@ -86,3 +86,6 @@ coverage/
 # ── Vite cache ────────────────────────────────────────────────────────────────
 .vite/
 **/.vite/
+
+# ── Auto-updater sync state (runtime, not source) ─────────────────────────────
+**/.update-sha
