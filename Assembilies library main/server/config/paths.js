@@ -39,8 +39,11 @@ if (!fs.existsSync(PS_EXTRACTOR)) {
 
 module.exports = {
     DRIVES: {
-        N: process.env.DRIVE_N || 'N:/',
-        L: process.env.DRIVE_L || 'L:/',
+        // Default to UNC paths so the scanner works in the PM2 service session
+        // where N: and L: drive letters are not mapped. Override via DRIVE_N /
+        // DRIVE_L env vars if running in a session that has the letters mapped.
+        N: process.env.DRIVE_N || '\\\\stevendouglas.local\\dfs\\Company\\Job Folder',
+        L: process.env.DRIVE_L || '\\\\stevendouglas.local\\dfs\\Company\\Job Archive',
     },
     SQLITE_PATH,
     THUMB_DIR,

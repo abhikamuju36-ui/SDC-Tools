@@ -45,6 +45,12 @@ app.use('/api/bom', bomRoutes);
 app.use('/api/readiness', readinessRoutes);
 app.use('/api/emails', emailRoutes);
 
+// Unmatched /api/* — return JSON 404 so callers get a structured error instead
+// of silently receiving the SPA HTML (which is what the catch-all below sends).
+app.all('/api/*', (req, res) => {
+  res.status(404).json({ error: `No API route: ${req.method} ${req.path}` });
+});
+
 app.get('*', (req, res) => {
   res.sendFile(path.join(staticDir, 'index.html'));
 });

@@ -70,9 +70,11 @@ module.exports = {
         PORT:             '4001',
         NODE_ENV:         'production',
         NODE_NO_WARNINGS: '1',
-        // UNC path so PM2 (which runs in its own session) can reach the share
-        // without needing N: drive mapped in the service session.
+        // UNC paths so PM2 (which runs in its own session) can reach the shares
+        // without needing drive letters mapped in the service session.
         SHARED_BASE: '\\\\stevendouglas.local\\dfs\\Company\\Job Folder\\_Assembilies_Library_Application',
+        DRIVE_N:     '\\\\stevendouglas.local\\dfs\\Company\\Job Folder',
+        DRIVE_L:     '\\\\stevendouglas.local\\dfs\\Company\\Job Archive',
       },
       watch:         false,
       max_restarts:  10,
@@ -190,6 +192,11 @@ module.exports = {
         NODE_NO_WARNINGS: '1',
         // UNC path so PM2 Windows Service can reach the share without N: drive mapped
         STANDARDS_DIR:    '\\\\stevendouglas.local\\dfs\\Company\\Job Folder\\AI Folder\\State Logic Diagrams\\standards',
+        // Azure SQL — same instance used by all SDC services
+        AZURE_SQL_SERVER:   'sdc-automation.database.windows.net',
+        AZURE_SQL_DATABASE: 'free-sql-db-7038618',
+        AZURE_SQL_USER:     'sdcadmin',
+        AZURE_SQL_PASSWORD: 'Voltages84gilds$',
       },
       watch:         false,
       max_restarts:  10,

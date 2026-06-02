@@ -63,6 +63,15 @@ const sqlite = {
     return { ...ev, id };
   },
 
+  getEventById: async (id) => {
+    const r = await request();
+    r.input('id', sql.NVarChar(50), id);
+    const result = await r.query(`SELECT * FROM [calendar].[events] WHERE id = @id`);
+    if (!result.recordset.length) return null;
+    const row = result.recordset[0];
+    return { ...row, allDay: !!row.allDay, pinned: !!row.pinned, approved: !!row.approved };
+  },
+
   updateEvent: async (id, ev) => {
     const r = await request();
     r.input('id',          sql.NVarChar(50),  id);

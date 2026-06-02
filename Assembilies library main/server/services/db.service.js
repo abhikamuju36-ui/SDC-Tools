@@ -147,7 +147,10 @@ class DbService {
     }
 
     readAll() {
-        return this.db.prepare('SELECT * FROM assemblies ORDER BY job_id DESC').all();
+        // Exclude soft-deleted records from sync processing. Deleted records are
+        // still protected from re-insertion by the UNIQUE(partno, job_id) constraint
+        // and the model_link path dedup in sync.service.js.
+        return this.db.prepare('SELECT * FROM assemblies WHERE deleted_at IS NULL ORDER BY job_id DESC').all();
     }
 
     getOne(partno) {
@@ -482,6 +485,29 @@ class DbService {
         }
 
         return backupPath;
+    }
+
+    // ── Hard delete single record by partno ───────────────────────────────────
+    deleteOne(partno) {
+        const result = this.db.prepare(
+            `DELETE FROM assemblies WHERE partno = ?`
+        ).run(partno);
+        if (result.changes > 0) {
+            this.logAudit(partno, 'delete', null, null, null, 'User');
+            this._clearDistinctCache();
+        }
+        return result.changes;
+    }
+
+    // ── Hard delete multiple records by partno list ───────────────────────────
+    bulkDelete(partnos) {
+        if (!partnos || partnos.length === 0) return 0;
+        const placeholders = partnos.map(() => '?').join(', ');
+        const result = this.db.prepare(
+            `DELETE FROM assemblies WHERE partno IN (${placeholders})`
+        ).run(...partnos);
+        this._clearDistinctCache();
+        return result.changes;
     }
 
     static get ALLOWED_WRITE_FIELDS() { return ALLOWED_WRITE_FIELDS; }

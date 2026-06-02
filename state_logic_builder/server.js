@@ -437,6 +437,12 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
       return sendJson(res, 405, { error: 'Method not allowed' });
     }
 
+    // Unmatched /api/* — return JSON 404 instead of silently falling through to
+    // the SPA HTML, so callers get a structured error they can act on.
+    if (pathname.startsWith('/api/')) {
+      return sendJson(res, 404, { error: `No API route: ${method} ${pathname}` });
+    }
+
     if (fs.existsSync(DIST_DIR_)) return serveStatic(res, pathname);
 
     res.writeHead(503, { 'Content-Type': 'text/html; charset=utf-8' });

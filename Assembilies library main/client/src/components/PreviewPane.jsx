@@ -165,7 +165,6 @@ export default function PreviewPane({ assembly, onClose, onEdit }) {
           <div style={{ marginTop: 32 }}>
             <h4 className="section-title">Technical Comments</h4>
             <div className="comment" style={{ background: 'var(--bg-alt)', borderRadius: 10, padding: '16px', border: '1px solid var(--border)' }}>
-              <div className="avatar" style={{ fontSize: 10, fontWeight: 800 }}>MC</div>
               <div className="body">{assembly.comments}</div>
             </div>
           </div>

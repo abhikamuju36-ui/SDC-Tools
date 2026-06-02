@@ -38,6 +38,15 @@ router.post('/', requireAuth, async (req, res) => {
       creatorName: req.user.name || req.user.email,
       approved: (isPrivileged || isVacationImport) ? 1 : 0
     };
+
+    // Idempotency: if the caller supplied a stable id (e.g. Paylocity sync), return
+    // the existing event instead of creating a duplicate. Auto-generated ids (no id
+    // in the request body) always create a new event — intentional calendar behaviour.
+    if (req.body.id) {
+      const existing = await sqlite.getEventById(req.body.id);
+      if (existing) return res.status(200).json(existing);
+    }
+
     const created = await sqlite.addEvent(ev);
 
     // ── Trigger Attendee Emails ──

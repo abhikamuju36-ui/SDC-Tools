@@ -71,6 +71,15 @@ function fetchJson(url) {
   });
 }
 
+function fetchJsonWithRetry(url, retries = 3, delayMs = 10000) {
+  return fetchJson(url).catch(err => {
+    if (retries <= 0) throw err;
+    log(`Network error (${err.message}) — retrying in ${delayMs / 1000}s… (${retries} left)`);
+    return new Promise(res => setTimeout(res, delayMs))
+      .then(() => fetchJsonWithRetry(url, retries - 1, delayMs));
+  });
+}
+
 function downloadFile(url, dest) {
   return new Promise((resolve, reject) => {
     const doGet = (u) => {
@@ -121,7 +130,7 @@ async function checkAndUpdate() {
 
   let release;
   try {
-    release = await fetchJson(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
+    release = await fetchJsonWithRetry(`https://api.github.com/repos/${GITHUB_REPO}/releases/latest`);
   } catch (e) {
     log(`GitHub API error: ${e.message}`);
     return;

@@ -24,6 +24,16 @@ function Highlight({ text, search }) {
   return <>{content}</>;
 }
 
+// Some job_id values contain the full folder name, e.g. "023 GKN TAPPING MACHINE"
+// because the L: drive scanner stores the raw folder name. These helpers split
+// the numeric prefix from the descriptive name so each column shows correctly.
+function splitJobId(jobId) {
+  if (!jobId) return { num: null, name: null };
+  const m = String(jobId).match(/^(\d+)([\s_](.+))?/);
+  if (!m) return { num: null, name: jobId }; // no leading digits — treat as name only
+  return { num: m[1], name: m[3] ? m[3].trim() : null };
+}
+
 function StandardBadge({ value }) {
   if (value === 'Yes') return <span className="std-badge std-yes">SDC STANDARD</span>;
   if (value === 'No')  return <span className="std-badge std-no">NO</span>;
@@ -108,8 +118,8 @@ function AssemblyRow({
       </td>
       <td><span className="pn-cell" onClick={(e) => { e.stopPropagation(); onEdit(a); }}>{cleanValue(a.partno)}</span></td>
       {showCol('file_name') && <td className="muted mono" style={{ fontSize: 11.5 }}>{cleanValue(a.file_name)}</td>}
-      <td style={{ textAlign: 'center' }}><span className="muted mono" style={{ fontSize: 12 }}>{cleanValue(a.job_id)}</span></td>
-      {showCol('job_name') && <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ink-2)' }}>{cleanValue(a.job_name)}</td>}
+      <td style={{ textAlign: 'center' }}><span className="muted mono" style={{ fontSize: 12 }}>{cleanValue(splitJobId(a.job_id).num || a.job_id)}</span></td>
+      {showCol('job_name') && <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ink-2)' }}>{cleanValue(a.job_name || splitJobId(a.job_id).name)}</td>}
       <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         <Highlight text={cleanValue(a.description)} search={search} />
       </td>

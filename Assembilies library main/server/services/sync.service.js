@@ -105,11 +105,23 @@ class SyncService {
             if (!this.status.nCache || !this.status.lCache || cacheStale) {
                 this.status.currentJob = 'Scanning N: Drive...';
                 this.status.nCache = await scanner.scanNDrive();
-                this.status.nScanned = true;
+                // Only mark N: as scanned when it returned at least one job folder.
+                // An empty result almost always means the drive letter isn't mapped
+                // in this session (PM2 service context) rather than a genuinely
+                // empty drive — treating it as "scanned" would trigger stale-link
+                // cleanup and wipe every model_link in the database.
+                this.status.nScanned = Object.keys(this.status.nCache).length > 0;
+                if (!this.status.nScanned) {
+                    console.warn(`[Sync] N: drive scan returned 0 job folders — treating as inaccessible (path: ${require('../config/paths').DRIVES.N})`);
+                }
 
                 this.status.currentJob = 'Scanning L: Drive...';
                 this.status.lCache = await scanner.scanLDrive();
-                this.status.lScanned = true;
+                // Same guard for L: drive.
+                this.status.lScanned = this.status.lCache.size > 0;
+                if (!this.status.lScanned) {
+                    console.warn(`[Sync] L: drive scan returned 0 files — treating as inaccessible (path: ${require('../config/paths').DRIVES.L})`);
+                }
 
                 this.status.cacheTime = now;
             } else {
@@ -149,6 +161,17 @@ class SyncService {
                 records.map(r => this._makeKey(r.partno, r.job_id, r.file_name))
             );
 
+            // Secondary dedup by normalised model_link path — catches cases where
+            // the same physical file is already linked under a different job_id
+            // format (e.g. '016 VENTURE' vs '16' vs 'Unknown').  This prevents
+            // the same file from being inserted again just because the job_id key
+            // doesn't match the stored value.
+            const existingPaths = new Set(
+                records
+                    .filter(r => r.model_link)
+                    .map(r => r.model_link.toLowerCase().replace(/\\/g, '/'))
+            );
+
             // ── 4. Discover new records on N: drive ───────────────────────────
             this.status.currentJob = 'Discovering new files on N: drive...';
             for (const [jobId, swDir] of Object.entries(nJobDirMap)) {
@@ -156,9 +179,11 @@ class SyncService {
                 const sldFiles = entries.filter(f => /\.sldasm$/i.test(f) && !f.startsWith('~$'));
 
                 for (const f of sldFiles) {
-                    const name = f.replace(/\.sldasm$/i, '').trim();
-                    const key  = this._makeKey(name, jobId, name);
-                    if (!existingKeys.has(key)) {
+                    const name      = f.replace(/\.sldasm$/i, '').trim();
+                    const key       = this._makeKey(name, jobId, name);
+                    const filePath  = path.join(swDir, f);
+                    const normPath  = filePath.toLowerCase().replace(/\\/g, '/');
+                    if (!existingKeys.has(key) && !existingPaths.has(normPath)) {
                         records.push({
                             job_id:       jobId,
                             job_name:     path.basename(path.dirname(swDir)),
@@ -170,7 +195,7 @@ class SyncService {
                             updated_by:   'Auto Sync',
                             created_at:   new Date().toISOString(),
                             updated_at:   new Date().toISOString(),
-                            model_link:   path.join(swDir, f),
+                            model_link:   filePath,
                             picture_link: '',
                             preference:   'No',
                             sdc_standard: 'No',
@@ -178,19 +203,31 @@ class SyncService {
                         });
                         this.status.newRecords++;
                         existingKeys.add(key);
+                        existingPaths.add(normPath);
                     }
                 }
             }
 
             // ── 5. Discover new records on L: drive ───────────────────────────
             this.status.currentJob = 'Discovering new files on L: drive...';
+            // Extract the project folder from the full path by stripping the DRIVE_L
+            // root prefix. This works with both drive letters (L:\folder\...) and
+            // UNC paths (\\server\share\Job Archive\folder\...).
+            const lRoot = config.DRIVES.L.replace(/[/\\]+$/, ''); // strip trailing slashes
+            const _lJobId = (fullPath) => {
+                const rel = fullPath.startsWith(lRoot)
+                    ? fullPath.slice(lRoot.length).replace(/^[/\\]+/, '')
+                    : fullPath.replace(/^[/\\]+/, '');
+                return rel.split(/[/\\]/)[0] || 'Unknown';
+            };
+
             for (const [name, fullPath] of lFileMap.entries()) {
-                const match    = fullPath.match(/L:[\\/]+([^\\/]+)/i);
-                const jobId    = match ? match[1] : 'Unknown';
+                const jobId    = _lJobId(fullPath);
                 const fileName = path.basename(fullPath).replace(/\.sldasm$/i, '');
                 const key      = this._makeKey(name, jobId, fileName);
+                const normPath = fullPath.toLowerCase().replace(/\\/g, '/');
 
-                if (!existingKeys.has(key)) {
+                if (!existingKeys.has(key) && !existingPaths.has(normPath)) {
                     records.push({
                         job_id:       jobId,
                         job_name:     '',
@@ -210,6 +247,7 @@ class SyncService {
                     });
                     this.status.newRecords++;
                     existingKeys.add(key);
+                    existingPaths.add(normPath);
                 }
             }
 
