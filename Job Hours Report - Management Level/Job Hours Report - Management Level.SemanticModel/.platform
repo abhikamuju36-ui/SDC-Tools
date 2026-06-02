@@ -1,0 +1,11 @@
+{
+  "$schema": "https://developer.microsoft.com/json-schemas/fabric/gitIntegration/platformProperties/2.0.0/schema.json",
+  "metadata": {
+    "type": "SemanticModel",
+    "displayName": "Job Hours Report - Management Level"
+  },
+  "config": {
+    "version": "2.0",
+    "logicalId": "944c50d4-85b3-4ccc-bdb9-c68b7b9d8c97"
+  }
+}
