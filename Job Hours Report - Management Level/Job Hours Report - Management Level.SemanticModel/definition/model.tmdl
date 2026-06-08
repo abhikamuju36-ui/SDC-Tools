@@ -19,7 +19,7 @@ annotation PBI_QueryOrder = ["Employee from Hours Actual","Function Department I
 
 annotation __PBI_TimeIntelligenceEnabled = 1
 
-annotation PBI_ProTooling = ["DevMode"]
+annotation PBI_ProTooling = ["DevMode","TMDLView_Desktop"]
 
 ref table Job
 ref table 'Hours Actual'

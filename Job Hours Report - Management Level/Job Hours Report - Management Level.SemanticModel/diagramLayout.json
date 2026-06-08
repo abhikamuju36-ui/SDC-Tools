@@ -46,7 +46,7 @@
             "height": 128,
             "width": 234
           },
-          "zIndex": 19,
+          "zIndex": 28,
           "expandedHeight": 224
         },
         {
@@ -64,7 +64,7 @@
         },
         {
           "location": {
-            "x": 27.625525262527134,
+            "x": 20.681080818082691,
             "y": 0
           },
           "nodeIndex": "Hours Actual",
@@ -73,7 +73,7 @@
             "height": 200,
             "width": 234
           },
-          "zIndex": 21
+          "zIndex": 20
         },
         {
           "location": {
@@ -86,7 +86,7 @@
             "height": 224,
             "width": 234
           },
-          "zIndex": 24,
+          "zIndex": 23,
           "expandedHeight": 300
         },
         {
@@ -105,8 +105,8 @@
         },
         {
           "location": {
-            "x": 26.567714022269442,
-            "y": 257.03890371323735
+            "x": 29.345491800047213,
+            "y": 237.59445926879289
           },
           "nodeIndex": "Hours Estimated",
           "nodeLineageTag": "3c3de025-dd23-44ad-a415-bebbba6ccc03",
@@ -114,7 +114,7 @@
             "height": 200,
             "width": 234
           },
-          "zIndex": 20
+          "zIndex": 19
         },
         {
           "location": {
@@ -166,12 +166,12 @@
             "height": 200,
             "width": 234
           },
-          "zIndex": 22
+          "zIndex": 21
         },
         {
           "location": {
             "x": 30.056262985446864,
-            "y": 432.16207164487872
+            "y": 457.16207164487872
           },
           "nodeIndex": "Cost Estimated",
           "nodeLineageTag": "c2211307-5b27-4f6b-bcb3-42b59e45b4e0",
@@ -179,7 +179,7 @@
             "height": 152,
             "width": 234
           },
-          "zIndex": 27
+          "zIndex": 26
         },
         {
           "location": {
@@ -205,7 +205,7 @@
             "height": 300,
             "width": 234
           },
-          "zIndex": 28
+          "zIndex": 27
         },
         {
           "location": {
@@ -244,7 +244,7 @@
             "height": 152,
             "width": 234
           },
-          "zIndex": 23
+          "zIndex": 22
         },
         {
           "location": {
@@ -257,7 +257,7 @@
             "height": 248,
             "width": 237.31471591823754
           },
-          "zIndex": 26
+          "zIndex": 25
         },
         {
           "location": {
@@ -295,7 +295,7 @@
             "height": 300,
             "width": 234
           },
-          "zIndex": 25
+          "zIndex": 24
         },
         {
           "location": {
