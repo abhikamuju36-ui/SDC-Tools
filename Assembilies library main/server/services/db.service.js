@@ -421,6 +421,7 @@ class DbService {
         const value = this.db.prepare(`
             SELECT COALESCE(NULLIF(${column}, ''), 'None') as value, COUNT(*) as count
             FROM assemblies
+            WHERE deleted_at IS NULL
             GROUP BY value
             ORDER BY count DESC
         `).all();
@@ -539,6 +540,18 @@ class DbService {
             this.logAudit(partno, 'delete', null, null, null, 'User');
             this._clearDistinctCache();
         }
+        return result.changes;
+    }
+
+    // ── Bulk update a single field across multiple records ────────────────────
+    bulkUpdate(partnos, field, value) {
+        if (!partnos || partnos.length === 0) return 0;
+        if (!ALLOWED_WRITE_FIELDS.has(field)) throw new Error(`Field "${field}" is not writable`);
+        const placeholders = partnos.map(() => '?').join(', ');
+        const result = this.db.prepare(
+            `UPDATE assemblies SET ${field} = ?, updated_at = datetime('now') WHERE partno IN (${placeholders}) AND deleted_at IS NULL`
+        ).run(value, ...partnos);
+        this._clearDistinctCache();
         return result.changes;
     }
 
