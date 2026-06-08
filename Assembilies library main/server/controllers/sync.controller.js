@@ -3,6 +3,7 @@
  */
 
 const syncService = require('../services/sync.service');
+const db          = require('../services/db.service');
 
 class SyncController {
     getStatus(req, res) {
@@ -26,6 +27,10 @@ class SyncController {
         syncService.runSync().catch(err => console.error('Unhandled sync error:', err));
 
         res.json({ message: 'Sync started' });
+    }
+    getHistory(req, res) {
+        const limit = Math.min(parseInt(req.query.limit) || 20, 100);
+        res.json(db.getSyncHistory(limit));
     }
 }
 

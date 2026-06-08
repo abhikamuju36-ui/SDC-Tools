@@ -18,5 +18,11 @@ router.post('/start', (req, res) => {
         res.status(500).json({ error: 'Failed to start sync', detail: err.message });
     }
 });
+router.get('/history', (req, res) => {
+    try { controller.getHistory(req, res); } catch (err) {
+        console.error('Sync history route error:', err);
+        res.status(500).json({ error: 'Sync history unavailable', detail: err.message });
+    }
+});
 
 module.exports = router;

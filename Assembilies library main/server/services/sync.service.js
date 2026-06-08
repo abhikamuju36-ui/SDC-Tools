@@ -28,21 +28,33 @@ class SyncService {
             already:    0,
             failed:     0,
             skipped:    0,
-            stale:      0,   // model_links cleared because file no longer exists
+            stale:      0,
             linked:     0,
             newRecords: 0,
             lastRun:    null,
             lastError:  null,
             currentJob: '',
-            // Drive discovery cache
             nCache:    null,
             lCache:    null,
             cacheTime: null,
-            // Track which drives were successfully scanned this cycle
             nScanned:  false,
             lScanned:  false,
         };
-        this._syncLock = false;
+        this._syncLock  = false;
+        this._startTime = null;
+
+        // Restore last run time from DB so the pill never shows "Never" after a restart
+        try {
+            const last = db.getLastSyncRun();
+            if (last) {
+                this.status.lastRun    = new Date(last.ran_at);
+                this.status.newRecords = last.new_records;
+                this.status.extracted  = last.extracted;
+                this.status.stale      = last.stale;
+                this.status.failed     = last.failed;
+                this.status.lastError  = last.error || null;
+            }
+        } catch (_) {}
     }
 
     getStatus() {
@@ -50,8 +62,8 @@ class SyncService {
             ...this.status,
             isScanning: this.status.running,
             lastScan:   this.status.lastRun,
-            // Friendly summary for the last completed sync
-            summary: !this.status.running && this.status.lastRun ? {
+            // Always show summary if we have a last run, even during an active sync
+            summary: this.status.lastRun ? {
                 newRecords: this.status.newRecords,
                 extracted:  this.status.extracted,
                 stale:      this.status.stale,
@@ -81,7 +93,8 @@ class SyncService {
     async runSync() {
         // Mutex check — both the flag and the lock prevent concurrent syncs
         if (this.status.running || this._syncLock) return;
-        this._syncLock = true;
+        this._syncLock  = true;
+        this._startTime = Date.now();
         this.status.running    = true;
         this.status.progress   = 0;
         this.status.percent    = 0;
@@ -413,18 +426,40 @@ class SyncService {
             this.status.percent    = 100;
             this.status.currentJob = 'Complete';
 
+            db.logSyncRun({
+                newRecords: this.status.newRecords,
+                extracted:  this.status.extracted,
+                stale:      this.status.stale,
+                failed:     this.status.failed,
+                linked:     this.status.linked,
+                total:      this.status.total,
+                durationS:  ((Date.now() - this._startTime) / 1000).toFixed(1),
+                error:      null,
+            });
+
         } catch (err) {
-            // Categorise the error for a friendlier message
             let msg = err.message || 'Unknown error';
             if (err.code === 'ENOENT' && msg.includes('mkdir')) msg = `N: drive path not accessible — check network share`;
             else if (err.code === 'ENOENT')   msg = `File not found: ${msg}`;
-            else if (err.code === 'EACCES') msg = `Permission denied: ${msg}`;
+            else if (err.code === 'EACCES')   msg = `Permission denied: ${msg}`;
             else if (err.code === 'ETIMEDOUT' || msg.includes('timeout')) msg = `Network timeout: ${msg}`;
-            else if (msg.includes('SQLITE')) msg = `Database error: ${msg}`;
+            else if (msg.includes('SQLITE'))  msg = `Database error: ${msg}`;
 
             console.error('[Sync] Failed:', err);
             this.status.currentJob = `Error: ${msg}`;
             this.status.lastError  = msg;
+            this.status.lastRun    = new Date();
+
+            db.logSyncRun({
+                newRecords: this.status.newRecords,
+                extracted:  this.status.extracted,
+                stale:      this.status.stale,
+                failed:     this.status.failed,
+                linked:     this.status.linked,
+                total:      this.status.total,
+                durationS:  this._startTime ? ((Date.now() - this._startTime) / 1000).toFixed(1) : null,
+                error:      msg,
+            });
         } finally {
             this._syncLock      = false;
             this.status.running = false;

@@ -103,6 +103,20 @@ class DbService {
                 changed_at TEXT DEFAULT (datetime('now'))
             )`);
         } catch (_) {}
+        try {
+            this.db.exec(`CREATE TABLE IF NOT EXISTS sync_history (
+                id          INTEGER PRIMARY KEY AUTOINCREMENT,
+                ran_at      TEXT DEFAULT (datetime('now')),
+                new_records INTEGER DEFAULT 0,
+                extracted   INTEGER DEFAULT 0,
+                stale       INTEGER DEFAULT 0,
+                failed      INTEGER DEFAULT 0,
+                linked      INTEGER DEFAULT 0,
+                total       INTEGER DEFAULT 0,
+                duration_s  REAL,
+                error       TEXT
+            )`);
+        } catch (_) {}
     }
 
     init() {
@@ -466,6 +480,35 @@ class DbService {
     getLastScanTimestamp() {
         const row = this.db.prepare('SELECT MAX(updated_at) as last_scan FROM assemblies').get();
         return row ? row.last_scan : null;
+    }
+
+    logSyncRun({ newRecords, extracted, stale, failed, linked, total, durationS, error }) {
+        try {
+            this.db.prepare(`
+                INSERT INTO sync_history (new_records, extracted, stale, failed, linked, total, duration_s, error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            `).run(newRecords ?? 0, extracted ?? 0, stale ?? 0, failed ?? 0, linked ?? 0, total ?? 0, durationS ?? null, error ?? null);
+            // Keep last 100 runs only
+            this.db.prepare(`
+                DELETE FROM sync_history WHERE id NOT IN (
+                    SELECT id FROM sync_history ORDER BY id DESC LIMIT 100
+                )
+            `).run();
+        } catch (_) {}
+    }
+
+    getSyncHistory(limit = 20) {
+        try {
+            return this.db.prepare(
+                `SELECT * FROM sync_history ORDER BY id DESC LIMIT ?`
+            ).all(limit);
+        } catch (_) { return []; }
+    }
+
+    getLastSyncRun() {
+        try {
+            return this.db.prepare(`SELECT * FROM sync_history ORDER BY id DESC LIMIT 1`).get() || null;
+        } catch (_) { return null; }
     }
 
     async backup() {
