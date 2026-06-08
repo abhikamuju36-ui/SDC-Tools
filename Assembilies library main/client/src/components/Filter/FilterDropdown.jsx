@@ -50,8 +50,10 @@ export default function FilterDropdown({ label, options, selected, onChange, sea
   }, [isOpen]);
 
   const filtered = options.filter(o => {
-    const val = typeof o === 'object' ? o.label || o.value : o;
-    return String(val).toLowerCase().includes(search.toLowerCase());
+    const label = typeof o === 'object' ? o.label || o.value : o;
+    const rawVal = typeof o === 'object' ? String(o.value ?? '') : String(o);
+    const q = search.toLowerCase();
+    return String(label).toLowerCase().includes(q) || rawVal.toLowerCase().includes(q);
   });
 
   const toggle = (val) => {
