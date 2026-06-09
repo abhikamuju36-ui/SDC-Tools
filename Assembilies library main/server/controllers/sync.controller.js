@@ -28,9 +28,9 @@ class SyncController {
 
         res.json({ message: 'Sync started' });
     }
-    getHistory(req, res) {
+    async getHistory(req, res) {
         const limit = Math.min(parseInt(req.query.limit) || 20, 100);
-        res.json(db.getSyncHistory(limit));
+        res.json(await db.getSyncHistory(limit));
     }
 }
 

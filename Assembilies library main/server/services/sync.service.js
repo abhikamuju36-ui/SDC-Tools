@@ -44,8 +44,7 @@ class SyncService {
         this._startTime = null;
 
         // Restore last run time from DB so the pill never shows "Never" after a restart
-        try {
-            const last = db.getLastSyncRun();
+        db.getLastSyncRun().then(last => {
             if (last) {
                 this.status.lastRun    = new Date(last.ran_at);
                 this.status.newRecords = last.new_records;
@@ -54,7 +53,7 @@ class SyncService {
                 this.status.failed     = last.failed;
                 this.status.lastError  = last.error || null;
             }
-        } catch (_) {}
+        }).catch(() => {});
     }
 
     getStatus() {

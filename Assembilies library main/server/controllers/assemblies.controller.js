@@ -174,7 +174,7 @@ class AssembliesController {
                 return res.status(400).json({ error: 'No valid fields provided' });
             }
             await db.updateRecord(partno, sanitised);
-            const updated = db.getOne(partno);
+            const updated = await db.getOne(partno);
             res.json({ success: true, updated });
         } catch (err) {
             console.error('[Controller] update:', err.message);

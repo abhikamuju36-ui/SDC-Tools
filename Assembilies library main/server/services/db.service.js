@@ -1,337 +1,217 @@
 /**
- * db.service.js
- * High-performance SQLite database service using better-sqlite3.
+ * db.service.js — MySQL edition.
+ *
+ * Replaces better-sqlite3 with mysql2/promise.
+ * All methods are async. The exported API is identical to the SQLite version
+ * so controllers and services need only minor await additions.
+ *
+ * Database: sdc_assemblies
  */
 
-const Database = require('better-sqlite3');
-const fs = require('fs');
-const path = require('path');
-const config = require('../config/paths');
+const mysql = require('mysql2/promise');
 
-// Columns callers are allowed to search against (SQL-injection prevention)
-const ALLOWED_SEARCH_FIELDS = new Set(['description', 'partno', 'file_name', 'job_id', 'job_name', 'comments', 'category', 'updated_by']);
-
-// Columns callers are allowed to sort by
+// ── Whitelists (SQL-injection prevention) ─────────────────────────────────────
+const ALLOWED_SEARCH_FIELDS = new Set([
+    'description', 'partno', 'file_name', 'job_id', 'job_name', 'comments', 'category', 'updated_by',
+]);
 const ALLOWED_SORT_FIELDS = new Set(['job_id', 'updated_at', 'partno', 'category']);
-
-// Columns allowed in updateRecord / create
 const ALLOWED_WRITE_FIELDS = new Set([
     'job_id', 'job_name', 'file_name', 'partno', 'description', 'category',
     'comments', 'updated_by', 'model_link', 'picture_link', 'preference',
     'sdc_standard', 'library', 'status',
 ]);
 
+// ── In-process fuzzy scorer (same algorithm as the original SQLite UDF) ───────
+function computeScore(text, term) {
+    if (!text || !term) return 0;
+    const t = String(text).toLowerCase();
+    const q = String(term).toLowerCase();
+    if (t === q) return 100;
+    if (t.includes(q)) return 80;
+
+    const words = t.split(/[^a-z0-9]+/).filter(Boolean);
+    let maxScore = 0;
+    for (const w of words) {
+        if (w === q)                                          { maxScore = Math.max(maxScore, 90); continue; }
+        if (w.includes(q) || (w.length >= 3 && q.includes(w))) { maxScore = Math.max(maxScore, 70); continue; }
+        if (q.length < 3) continue;
+        const alen = w.length, blen = q.length;
+        if (Math.abs(alen - blen) > 2) continue;
+        const tmp = Array.from({ length: alen + 1 }, (_, i) => [i]);
+        for (let j = 0; j <= blen; j++) tmp[0][j] = j;
+        for (let i = 1; i <= alen; i++)
+            for (let j = 1; j <= blen; j++) {
+                const cost = w[i - 1] === q[j - 1] ? 0 : 1;
+                tmp[i][j] = Math.min(tmp[i - 1][j] + 1, tmp[i][j - 1] + 1, tmp[i - 1][j - 1] + cost);
+            }
+        const dist      = tmp[alen][blen];
+        const maxErrors = blen >= 7 ? 2 : blen >= 4 ? 1 : 0;
+        if (dist <= maxErrors) maxScore = Math.max(maxScore, 60 - dist * 10);
+    }
+    return maxScore;
+}
+
+function fuzzyMatch(text, term) { return computeScore(text, term) >= 40; }
+
+// ── Connection pool ───────────────────────────────────────────────────────────
+let _pool = null;
+function getPool() {
+    if (!_pool) {
+        _pool = mysql.createPool({
+            host:               process.env.MYSQL_HOST     || 'localhost',
+            port:               Number(process.env.MYSQL_PORT) || 3306,
+            user:               process.env.MYSQL_USER     || 'root',
+            password:           process.env.MYSQL_PASSWORD || '',
+            database:           process.env.MYSQL_DATABASE || 'sdc_assemblies',
+            waitForConnections: true,
+            connectionLimit:    10,
+            timezone:           'Z',
+            decimalNumbers:     true,
+            multipleStatements: false,
+        });
+    }
+    return _pool;
+}
+
+async function q(sql, params = []) {
+    const [rows] = await getPool().execute(sql, params);
+    return rows;
+}
+
+// ── DbService ─────────────────────────────────────────────────────────────────
 class DbService {
     constructor() {
-        this.db = new Database(config.SQLITE_PATH);
-        this._distinctCache = new Map(); // { column → { value, expiresAt } }
-        this._CACHE_TTL = 30_000;        // 30-second TTL for distinct queries
-
-        const computeScore = (text, term) => {
-            if (!text || !term) return 0;
-            const t = String(text).toLowerCase();
-            const q = String(term).toLowerCase();
-            if (t === q) return 100;
-            if (t.includes(q)) return 80;
-
-            const words = t.split(/[^a-z0-9]+/).filter(Boolean);
-            let maxScore = 0;
-            for (const w of words) {
-                if (w === q) { maxScore = Math.max(maxScore, 90); continue; }
-                if (w.includes(q) || (w.length >= 3 && q.includes(w))) { maxScore = Math.max(maxScore, 70); continue; }
-                if (q.length < 3) continue;
-                const alen = w.length, blen = q.length;
-                if (Math.abs(alen - blen) > 2) continue;
-
-                const tmp = [];
-                for (let i = 0; i <= alen; i++) tmp[i] = [i];
-                for (let j = 0; j <= blen; j++) tmp[0][j] = j;
-                for (let i = 1; i <= alen; i++) {
-                    for (let j = 1; j <= blen; j++) {
-                        const cost = (w[i - 1] === q[j - 1]) ? 0 : 1;
-                        tmp[i][j] = Math.min(tmp[i - 1][j] + 1, tmp[i][j - 1] + 1, tmp[i - 1][j - 1] + cost);
-                    }
-                }
-                const dist = tmp[alen][blen];
-                const maxErrors = blen >= 7 ? 2 : (blen >= 4 ? 1 : 0);
-                if (dist <= maxErrors) {
-                    maxScore = Math.max(maxScore, 60 - (dist * 10));
-                }
-            }
-            return maxScore;
-        };
-
-        this.db.function('fuzzy_score', (text, term) => computeScore(text, term));
-        this.db.function('fuzzy_match', (text, term) => computeScore(text, term) >= 40 ? 1 : 0);
-
-        this.init();
-        this._migrate();
+        this._distinctCache = new Map();
+        this._CACHE_TTL     = 30_000;
     }
 
-    _migrate() {
-        try {
-            const cleanup = this.db.prepare(`
-                DELETE FROM assemblies
-                WHERE id NOT IN (
-                    SELECT MAX(id)
-                    FROM assemblies
-                    GROUP BY COALESCE(job_id, ''), partno
-                )
-            `).run();
-            if (cleanup.changes > 0) {
-                console.log(`[DB] Migration: Cleaned up ${cleanup.changes} duplicate records.`);
-            }
-        } catch (e) {
-            console.error('[DB] Migration cleanup failed:', e.message);
-        }
+    // ── Read ──────────────────────────────────────────────────────────────────
+    async readAll() {
+        return q('SELECT * FROM assemblies WHERE deleted_at IS NULL ORDER BY CAST(job_id AS UNSIGNED) DESC, job_id DESC');
+    }
+
+    async getOne(partno) {
+        const rows = await q('SELECT * FROM assemblies WHERE partno = ? LIMIT 1', [partno]);
+        return rows[0] || null;
+    }
+
+    // ── Write (upsert batch) ──────────────────────────────────────────────────
+    async writeAll(records) {
+        if (!records || records.length === 0) return;
+        const pool = getPool();
+        const conn = await pool.getConnection();
+        const newPartnos = [];
 
         try {
-            this.db.exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_job_part ON assemblies(job_id, partno)`);
-        } catch (_) {}
+            await conn.beginTransaction();
 
-        try { this.db.exec(`ALTER TABLE assemblies ADD COLUMN status TEXT DEFAULT 'Active'`); } catch (_) {}
-        try { this.db.exec(`ALTER TABLE assemblies ADD COLUMN deleted_at TEXT`); } catch (_) {}
-        try {
-            this.db.exec(`CREATE TABLE IF NOT EXISTS audit_log (
-                id         INTEGER PRIMARY KEY AUTOINCREMENT,
-                partno     TEXT NOT NULL,
-                action     TEXT NOT NULL,
-                field      TEXT,
-                old_value  TEXT,
-                new_value  TEXT,
-                changed_by TEXT,
-                changed_at TEXT DEFAULT (datetime('now'))
-            )`);
-        } catch (_) {}
-        try {
-            this.db.exec(`CREATE TABLE IF NOT EXISTS sync_history (
-                id          INTEGER PRIMARY KEY AUTOINCREMENT,
-                ran_at      TEXT DEFAULT (datetime('now')),
-                new_records INTEGER DEFAULT 0,
-                extracted   INTEGER DEFAULT 0,
-                stale       INTEGER DEFAULT 0,
-                failed      INTEGER DEFAULT 0,
-                linked      INTEGER DEFAULT 0,
-                total       INTEGER DEFAULT 0,
-                duration_s  REAL,
-                error       TEXT
-            )`);
-        } catch (_) {}
-    }
-
-    init() {
-        this.db.pragma('busy_timeout = 5000');
-        this.db.pragma('synchronous  = NORMAL');
-        this.db.pragma('journal_mode = WAL');
-        this.db.pragma('cache_size   = -8000');
-        this.db.pragma('foreign_keys = ON');
-
-        this.db.exec(`
-            CREATE TABLE IF NOT EXISTS assemblies (
-                id            INTEGER PRIMARY KEY AUTOINCREMENT,
-                job_id        TEXT,
-                job_name      TEXT,
-                file_name     TEXT,
-                partno        TEXT,
-                description   TEXT,
-                category      TEXT,
-                comments      TEXT,
-                updated_by    TEXT,
-                created_at    TEXT,
-                updated_at    TEXT,
-                model_link    TEXT,
-                picture_link  TEXT,
-                preference    TEXT,
-                sdc_standard  TEXT,
-                library       TEXT,
-                thumbnail     TEXT,
-                path          TEXT,
-                last_modified TEXT,
-                size          INTEGER,
-                UNIQUE(partno, job_id)
-            );
-
-            CREATE INDEX IF NOT EXISTS idx_partno      ON assemblies(partno);
-            CREATE INDEX IF NOT EXISTS idx_job_id      ON assemblies(job_id);
-            CREATE INDEX IF NOT EXISTS idx_description ON assemblies(description);
-            CREATE INDEX IF NOT EXISTS idx_category    ON assemblies(category);
-            CREATE INDEX IF NOT EXISTS idx_updated_at  ON assemblies(updated_at);
-            CREATE INDEX IF NOT EXISTS idx_library     ON assemblies(library);
-        `);
-    }
-
-    readAll() {
-        // Exclude soft-deleted records from sync processing. Deleted records are
-        // still protected from re-insertion by the UNIQUE(partno, job_id) constraint
-        // and the model_link path dedup in sync.service.js.
-        return this.db.prepare('SELECT * FROM assemblies WHERE deleted_at IS NULL ORDER BY job_id DESC').all();
-    }
-
-    getOne(partno) {
-        return this.db.prepare('SELECT * FROM assemblies WHERE partno = ?').get(partno) || null;
-    }
-
-    writeAll(records) {
-        const insertNew = this.db.prepare(`
-            INSERT OR IGNORE INTO assemblies (
-                job_id, job_name, file_name, partno, description, category,
-                comments, updated_by, created_at, updated_at, model_link,
-                picture_link, preference, sdc_standard, library,
-                thumbnail, path, last_modified, size
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
-
-        const updateFsFields = this.db.prepare(`
-            UPDATE assemblies
-            SET    model_link    = ?,
-                   picture_link  = ?,
-                   thumbnail     = ?,
-                   path          = ?,
-                   last_modified = ?,
-                   size          = ?
-            WHERE  partno     = ?
-              AND  COALESCE(job_id,    '') = COALESCE(?, '')
-        `);
-
-        const newPartnoSet = new Set();
-
-        const transaction = this.db.transaction((items) => {
-            for (const item of items) {
-                const result = insertNew.run(
-                    item.job_id,       item.job_name,   item.file_name,    item.partno,
-                    item.description,  item.category,   item.comments,     item.updated_by,
-                    item.created_at,   item.updated_at, item.model_link,
-                    item.picture_link, item.preference, item.sdc_standard, item.library,
-                    item.thumbnail,    item.path,       item.last_modified, item.size
+            for (const item of records) {
+                // Try INSERT IGNORE (inserts only if job_id+partno pair is new)
+                const [ins] = await conn.execute(
+                    `INSERT IGNORE INTO assemblies
+                       (job_id, job_name, file_name, partno, description, category,
+                        comments, updated_by, created_at, updated_at, model_link,
+                        picture_link, preference, sdc_standard, \`library\`,
+                        thumbnail, \`path\`, last_modified, size_bytes)
+                     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+                    [
+                        item.job_id       ?? null,
+                        item.job_name     ?? null,
+                        item.file_name    ?? null,
+                        item.partno,
+                        item.description  ?? null,
+                        item.category     ?? null,
+                        item.comments     ?? null,
+                        item.updated_by   ?? null,
+                        item.created_at   ?? null,
+                        item.updated_at   ?? null,
+                        item.model_link   ?? null,
+                        item.picture_link ?? null,
+                        item.preference   ?? null,
+                        item.sdc_standard ?? null,
+                        item.library      ?? null,
+                        item.thumbnail    ?? null,
+                        item.path         ?? null,
+                        item.last_modified ?? null,
+                        item.size         ?? item.size_bytes ?? null,
+                    ]
                 );
 
-                if (result.changes > 0) {
-                    newPartnoSet.add(item.partno);
+                if (ins.affectedRows > 0) {
+                    newPartnos.push(item.partno);
                 } else {
-                    updateFsFields.run(
-                        item.model_link,    item.picture_link, item.thumbnail,
-                        item.path,          item.last_modified, item.size,
-                        item.partno,        item.job_id
+                    // Existing row — refresh file system fields only
+                    await conn.execute(
+                        `UPDATE assemblies
+                         SET model_link = ?, picture_link = ?, thumbnail = ?,
+                             \`path\` = ?, last_modified = ?, size_bytes = ?
+                         WHERE partno = ? AND COALESCE(job_id, '') = COALESCE(?, '')`,
+                        [
+                            item.model_link    ?? null,
+                            item.picture_link  ?? null,
+                            item.thumbnail     ?? null,
+                            item.path          ?? null,
+                            item.last_modified ?? null,
+                            item.size          ?? item.size_bytes ?? null,
+                            item.partno,
+                            item.job_id        ?? null,
+                        ]
                     );
                 }
             }
-        });
 
-        transaction(records);
+            await conn.commit();
+        } catch (err) {
+            await conn.rollback();
+            throw err;
+        } finally {
+            conn.release();
+        }
+
         this._clearDistinctCache();
 
-        for (const item of records) {
-            if (newPartnoSet.has(item.partno)) {
-                this.logAudit(item.partno, 'create', null, null, null, item.updated_by || null);
-            }
+        // Audit log new records (outside transaction — non-critical)
+        for (const partno of newPartnos) {
+            const rec = records.find(r => r.partno === partno);
+            await this.logAudit(partno, 'create', null, null, null, rec?.updated_by || null);
         }
     }
 
-    clearStaleLink(partno, jobId, fileName) {
-        this.db.prepare(`
-            UPDATE assemblies
-            SET   model_link = NULL, path = NULL
-            WHERE partno     = ?
-              AND COALESCE(job_id,    '') = COALESCE(?, '')
-        `).run(partno, jobId ?? '');
-        this.logAudit(partno, 'stale-link-cleared', 'model_link', null, null, 'Sync');
-    }
-
-    backfillThumbnailColumn() {
-        const rows = this.db.prepare(`
-            SELECT partno, job_id, file_name, picture_link
-            FROM   assemblies
-            WHERE  picture_link IS NOT NULL AND picture_link != ''
-              AND  (thumbnail IS NULL OR thumbnail = '')
-        `).all();
-
-        const update = this.db.prepare(`
-            UPDATE assemblies SET thumbnail = ?
-            WHERE  partno = ?
-              AND  COALESCE(job_id,    '') = COALESCE(?, '')
-        `);
-
-        const tx = this.db.transaction((items) => {
-            for (const row of items) {
-                const thumb = row.picture_link.split('/').pop().split('\\').pop();
-                if (thumb) update.run(thumb, row.partno, row.job_id);
-            }
-        });
-        tx(rows);
-        return rows.length;
-    }
-
-    query(params = {}) {
+    // ── Complex query with fuzzy search + filters + pagination ────────────────
+    async query(params = {}) {
         const {
-            search, searchFields = ['description', 'partno', 'file_name', 'job_id', 'job_name'],
-            sortBy = 'job_id', sortOrder = 'DESC',
-            limit = 40, offset = 0,
+            search,
+            searchFields = ['description', 'partno', 'file_name', 'job_id', 'job_name'],
+            sortBy       = 'job_id',
+            sortOrder    = 'DESC',
+            limit        = 40,
+            offset       = 0,
             libraries, jobs, categories,
-            modelFilter, imageFilter, sdcStandards, preferences,
+            modelFilter, imageFilter,
+            sdcStandards, preferences,
             statusFilter, updatedAfter, updatedBefore,
             includeDeleted = false,
         } = params;
 
-        let sql      = 'SELECT * FROM assemblies WHERE 1=1';
-        let countSql = 'SELECT COUNT(*) as total FROM assemblies WHERE 1=1';
-        const values      = [];
-        const countValues = [];
+        // Build base WHERE clause (filters — no search yet)
+        let where  = '1=1';
+        const vals = [];
 
-        let relevanceClause = '';
-        const relevanceValues = [];
-
-        if (search) {
-            const rawFields = Array.isArray(searchFields) ? searchFields : searchFields.split(',');
-            const fields = rawFields.map(f => f.trim()).filter(f => ALLOWED_SEARCH_FIELDS.has(f));
-            if (fields.length === 0) fields.push('description');
-
-            const searchTerms = search.trim().split(/\s+/).filter(Boolean);
-
-            searchTerms.forEach(term => {
-                const searchClause = ` AND (${fields.map(f => `fuzzy_match(${f}, ?)`).join(' OR ')})`;
-                sql += searchClause;
-                countSql += searchClause;
-                fields.forEach(() => { values.push(term); countValues.push(term); });
-            });
-
-            const scoreExprs = [];
-            searchTerms.forEach(term => {
-                fields.forEach(f => {
-                    scoreExprs.push(`fuzzy_score(${f}, ?)`);
-                    relevanceValues.push(term);
-                });
-            });
-
-            if (scoreExprs.length > 0) {
-                relevanceClause = `(${scoreExprs.join(' + ')}) DESC, `;
-            }
-        }
-
-        const addFilter = (column, items) => {
+        const addFilter = (col, items) => {
             if (!items) return;
-            const list = (Array.isArray(items) ? items : items.split(',')).filter(Boolean);
+            const list = (Array.isArray(items) ? items : items.split(',')).map(s => s.trim()).filter(Boolean);
             if (!list.length) return;
-
             const hasNone = list.includes('None');
             const others  = list.filter(i => i !== 'None');
-            let clause    = '';
-            const params  = [];
-
+            const parts   = [];
             if (others.length) {
-                clause = `${column} IN (${others.map(() => '?').join(',')})`;
-                params.push(...others);
+                parts.push(`\`${col}\` IN (${others.map(() => '?').join(',')})`);
+                vals.push(...others);
             }
             if (hasNone) {
-                const noneClause = `(${column} IS NULL OR ${column} = '' OR ${column} = 'None')`;
-                clause = clause ? `(${clause} OR ${noneClause})` : noneClause;
+                parts.push(`(\`${col}\` IS NULL OR \`${col}\` = '' OR \`${col}\` = 'None')`);
             }
-            if (clause) {
-                const finalClause = ` AND ${clause}`;
-                sql      += finalClause;
-                countSql += finalClause;
-                values.push(...params);
-                countValues.push(...params);
-            }
+            if (parts.length) where += ` AND (${parts.join(' OR ')})`;
         };
 
         addFilter('library',      libraries);
@@ -340,66 +220,88 @@ class DbService {
         addFilter('sdc_standard', sdcStandards);
         addFilter('preference',   preferences);
 
-        const addBinary = (column, filter) => {
-            if (filter === 'Yes') {
-                const c = ` AND ${column} IS NOT NULL AND ${column} != ''`;
-                sql += c; countSql += c;
-            } else if (filter === 'No') {
-                const c = ` AND (${column} IS NULL OR ${column} = '')`;
-                sql += c; countSql += c;
-            }
+        const addBinary = (col, filter) => {
+            if (filter === 'Yes')      { where += ` AND \`${col}\` IS NOT NULL AND \`${col}\` != ''`; }
+            else if (filter === 'No')  { where += ` AND (\`${col}\` IS NULL OR \`${col}\` = '')`; }
         };
-
         addBinary('model_link',   modelFilter);
         addBinary('picture_link', imageFilter);
 
-        if (!includeDeleted) {
-            const c = ' AND (deleted_at IS NULL)';
-            sql += c; countSql += c;
+        if (!includeDeleted) where += ' AND deleted_at IS NULL';
+        if (statusFilter)    { where += ' AND status = ?';      vals.push(statusFilter); }
+        if (updatedAfter)    { where += ' AND updated_at >= ?'; vals.push(updatedAfter); }
+        if (updatedBefore)   { where += ' AND updated_at <= ?'; vals.push(updatedBefore); }
+
+        // ── No search → pure SQL pagination ──────────────────────────────────
+        if (!search || !search.trim()) {
+            const finalSort = ALLOWED_SORT_FIELDS.has(sortBy) ? sortBy : 'job_id';
+            const dir       = sortOrder === 'ASC' ? 'ASC' : 'DESC';
+            const orderBy   = finalSort === 'job_id'
+                ? `CAST(job_id AS UNSIGNED) ${dir}, job_id ${dir}`
+                : `\`${finalSort}\` ${dir}`;
+
+            // LIMIT/OFFSET must be inlined — mysql2 prepared statements reject them as params
+            const safeLimit  = parseInt(limit,  10) || 40;
+            const safeOffset = parseInt(offset, 10) || 0;
+            const [rows]   = await getPool().execute(`SELECT * FROM assemblies WHERE ${where} ORDER BY ${orderBy} LIMIT ${safeLimit} OFFSET ${safeOffset}`, vals);
+            const [totRow] = await getPool().execute(`SELECT COUNT(*) AS total FROM assemblies WHERE ${where}`, vals);
+            return { records: rows, total: totRow[0].total };
         }
 
-        if (statusFilter) {
-            const c = ' AND status = ?';
-            sql += c; countSql += c;
-            values.push(statusFilter); countValues.push(statusFilter);
+        // ── Search: get candidates via LIKE, then JS fuzzy-score + paginate ──
+        const rawFields = Array.isArray(searchFields) ? searchFields : searchFields.split(',');
+        const fields    = rawFields.map(f => f.trim()).filter(f => ALLOWED_SEARCH_FIELDS.has(f));
+        if (!fields.length) fields.push('description');
+
+        const searchTerms = search.trim().split(/\s+/).filter(Boolean);
+
+        // Build LIKE clause: each term must match at least one field
+        const termClauses = [];
+        const termVals    = [];
+        for (const term of searchTerms) {
+            const fieldClauses = fields.map(f => `\`${f}\` LIKE ?`);
+            termClauses.push(`(${fieldClauses.join(' OR ')})`);
+            fields.forEach(() => termVals.push(`%${term}%`));
         }
+        const searchWhere = termClauses.join(' AND ');
 
-        if (updatedAfter) {
-            const c = ' AND updated_at >= ?';
-            sql += c; countSql += c;
-            values.push(updatedAfter); countValues.push(updatedAfter);
-        }
-        if (updatedBefore) {
-            const c = ' AND updated_at <= ?';
-            sql += c; countSql += c;
-            values.push(updatedBefore); countValues.push(updatedBefore);
-        }
+        const candidateVals = [...vals, ...termVals];
+        const candidateSQL  = `SELECT * FROM assemblies WHERE ${where} AND ${searchWhere}`;
+        const [candidates]  = await getPool().execute(candidateSQL, candidateVals);
 
-        const finalSort = ALLOWED_SORT_FIELDS.has(sortBy) ? sortBy : 'job_id';
-        const dir = sortOrder === 'ASC' ? 'ASC' : 'DESC';
-        const orderBy = finalSort === 'job_id'
-            ? `CAST(job_id AS INTEGER) ${dir}, job_id ${dir}`
-            : `${finalSort} ${dir}`;
+        // Score each candidate in JS
+        const scored = candidates.map(row => {
+            let score = 0;
+            for (const term of searchTerms)
+                for (const f of fields)
+                    score += computeScore(row[f], term);
+            return { row, score };
+        });
 
-        sql += ` ORDER BY ${relevanceClause}${orderBy} LIMIT ? OFFSET ?`;
-        values.push(...relevanceValues, limit, offset);
+        // Filter to rows that have at least one field matching the fuzzy threshold
+        const matched = scored.filter(({ row }) =>
+            searchTerms.every(term => fields.some(f => fuzzyMatch(row[f], term)))
+        );
 
-        const records = this.db.prepare(sql).all(...values);
-        const total   = this.db.prepare(countSql).get(...countValues).total;
+        // Sort by relevance DESC
+        matched.sort((a, b) => b.score - a.score);
 
+        const total   = matched.length;
+        const records = matched.slice(offset, offset + limit).map(({ row }) => row);
         return { records, total };
     }
 
-    updateRecord(partno, updates) {
+    // ── Update single record ──────────────────────────────────────────────────
+    async updateRecord(partno, updates) {
         const keys = Object.keys(updates).filter(k => ALLOWED_WRITE_FIELDS.has(k));
         if (!keys.length) return;
 
         let current = {};
-        try { current = this.db.prepare('SELECT * FROM assemblies WHERE partno = ?').get(partno) || {}; } catch (_) {}
+        try { current = await this.getOne(partno) || {}; } catch (_) {}
 
-        const sql    = `UPDATE assemblies SET ${keys.map(k => `${k} = ?`).join(', ')}, updated_at = ? WHERE partno = ?`;
-        const values = [...keys.map(k => updates[k]), new Date().toISOString(), partno];
-        this.db.prepare(sql).run(...values);
+        const setClauses = [...keys.map(k => `\`${k}\` = ?`), 'updated_at = ?'].join(', ');
+        const values     = [...keys.map(k => updates[k]), new Date().toISOString(), partno];
+        await q(`UPDATE assemblies SET ${setClauses} WHERE partno = ?`, values);
         this._clearDistinctCache();
 
         const changedBy = updates.updated_by || null;
@@ -408,169 +310,196 @@ class DbService {
             const oldVal = current[k] ?? null;
             const newVal = updates[k] ?? null;
             if (String(oldVal) !== String(newVal)) {
-                this.logAudit(partno, 'update', k, oldVal, newVal, changedBy);
+                await this.logAudit(partno, 'update', k, oldVal, newVal, changedBy);
             }
         }
     }
 
-    getDistinct(column) {
+    // ── Distinct values (with 30-second in-memory cache) ─────────────────────
+    async getDistinct(column) {
         const now    = Date.now();
         const cached = this._distinctCache.get(column);
         if (cached && cached.expiresAt > now) return cached.value;
 
-        const value = this.db.prepare(`
-            SELECT COALESCE(NULLIF(${column}, ''), 'None') as value, COUNT(*) as count
-            FROM assemblies
-            WHERE deleted_at IS NULL
-            GROUP BY value
-            ORDER BY count DESC
-        `).all();
-
-        this._distinctCache.set(column, { value, expiresAt: now + this._CACHE_TTL });
-        return value;
+        const rows = await q(
+            `SELECT COALESCE(NULLIF(\`${column}\`, ''), 'None') AS \`value\`, COUNT(*) AS \`count\`
+             FROM assemblies
+             WHERE deleted_at IS NULL
+             GROUP BY \`value\`
+             ORDER BY \`count\` DESC`
+        );
+        this._distinctCache.set(column, { value: rows, expiresAt: now + this._CACHE_TTL });
+        return rows;
     }
 
-    getCounts() {
-        const row = this.db.prepare(`
+    async getCounts() {
+        const rows = await q(`
             SELECT
-                COUNT(*) as globalTotal,
-                SUM(CASE WHEN sdc_standard = 'Yes' THEN 1 ELSE 0 END) as sdcStandardCount,
-                SUM(CASE WHEN preference = 'Yes' THEN 1 ELSE 0 END) as preferredCount
+                COUNT(*) AS globalTotal,
+                SUM(CASE WHEN sdc_standard = 'Yes' THEN 1 ELSE 0 END) AS sdcStandardCount,
+                SUM(CASE WHEN preference   = 'Yes' THEN 1 ELSE 0 END) AS preferredCount
             FROM assemblies
-        `).get();
+        `);
+        const row = rows[0] || {};
         return {
-            globalTotal: row.globalTotal || 0,
-            sdcStandardCount: row.sdcStandardCount || 0,
-            preferredCount: row.preferredCount || 0,
+            globalTotal:      Number(row.globalTotal)      || 0,
+            sdcStandardCount: Number(row.sdcStandardCount) || 0,
+            preferredCount:   Number(row.preferredCount)   || 0,
         };
     }
 
-    _clearDistinctCache() {
-        this._distinctCache.clear();
-    }
+    _clearDistinctCache() { this._distinctCache.clear(); }
 
-    softDelete(partno) {
-        this.db.prepare(`UPDATE assemblies SET deleted_at = datetime('now') WHERE partno = ?`).run(partno);
+    // ── Soft delete / restore ─────────────────────────────────────────────────
+    async softDelete(partno) {
+        await q(`UPDATE assemblies SET deleted_at = ? WHERE partno = ?`, [new Date().toISOString(), partno]);
         this._clearDistinctCache();
-        this.logAudit(partno, 'archive', null, null, null, null);
+        await this.logAudit(partno, 'archive', null, null, null, null);
     }
 
-    restore(partno) {
-        this.db.prepare(`UPDATE assemblies SET deleted_at = NULL WHERE partno = ?`).run(partno);
+    async restore(partno) {
+        await q('UPDATE assemblies SET deleted_at = NULL WHERE partno = ?', [partno]);
         this._clearDistinctCache();
-        this.logAudit(partno, 'restore', null, null, null, null);
+        await this.logAudit(partno, 'restore', null, null, null, null);
     }
 
-    logAudit(partno, action, field, oldValue, newValue, changedBy) {
+    // ── Hard delete ───────────────────────────────────────────────────────────
+    async deleteOne(partno) {
+        const result = await q('DELETE FROM assemblies WHERE partno = ?', [partno]);
+        if (result.affectedRows > 0) {
+            await this.logAudit(partno, 'delete', null, null, null, 'User');
+            this._clearDistinctCache();
+        }
+        return result.affectedRows;
+    }
+
+    // ── Bulk update ───────────────────────────────────────────────────────────
+    async bulkUpdate(partnos, field, value) {
+        if (!partnos || !partnos.length) return 0;
+        if (!ALLOWED_WRITE_FIELDS.has(field)) throw new Error(`Field "${field}" is not writable`);
+        const placeholders = partnos.map(() => '?').join(', ');
+        const result = await q(
+            `UPDATE assemblies SET \`${field}\` = ?, updated_at = ? WHERE partno IN (${placeholders}) AND deleted_at IS NULL`,
+            [value, new Date().toISOString(), ...partnos]
+        );
+        this._clearDistinctCache();
+        return result.affectedRows;
+    }
+
+    // ── Bulk delete ───────────────────────────────────────────────────────────
+    async bulkDelete(partnos) {
+        if (!partnos || !partnos.length) return 0;
+        const placeholders = partnos.map(() => '?').join(', ');
+        const result = await q(`DELETE FROM assemblies WHERE partno IN (${placeholders})`, partnos);
+        this._clearDistinctCache();
+        return result.affectedRows;
+    }
+
+    // ── Stale link clearing ───────────────────────────────────────────────────
+    async clearStaleLink(partno, jobId, _fileName) {
+        await q(
+            `UPDATE assemblies SET model_link = NULL, \`path\` = NULL
+             WHERE partno = ? AND COALESCE(job_id, '') = COALESCE(?, '')`,
+            [partno, jobId ?? null]
+        );
+        await this.logAudit(partno, 'stale-link-cleared', 'model_link', null, null, 'Sync');
+    }
+
+    // ── Backfill thumbnail column (one-time maintenance) ──────────────────────
+    async backfillThumbnailColumn() {
+        const rows = await q(
+            `SELECT partno, job_id, picture_link FROM assemblies
+             WHERE picture_link IS NOT NULL AND picture_link != ''
+               AND (thumbnail IS NULL OR thumbnail = '')`
+        );
+        if (!rows.length) return 0;
+
+        const pool = getPool();
+        const conn = await pool.getConnection();
         try {
-            this.db.prepare(`
-                INSERT INTO audit_log (partno, action, field, old_value, new_value, changed_by)
-                VALUES (?, ?, ?, ?, ?, ?)
-            `).run(partno, action, field ?? null, oldValue ?? null, newValue ?? null, changedBy ?? null);
+            await conn.beginTransaction();
+            for (const row of rows) {
+                const thumb = row.picture_link.split('/').pop().split('\\').pop();
+                if (thumb) {
+                    await conn.execute(
+                        `UPDATE assemblies SET thumbnail = ?
+                         WHERE partno = ? AND COALESCE(job_id, '') = COALESCE(?, '')`,
+                        [thumb, row.partno, row.job_id ?? null]
+                    );
+                }
+            }
+            await conn.commit();
+        } catch (err) {
+            await conn.rollback();
+            throw err;
+        } finally {
+            conn.release();
+        }
+        return rows.length;
+    }
+
+    // ── Audit log ─────────────────────────────────────────────────────────────
+    async logAudit(partno, action, field, oldValue, newValue, changedBy) {
+        try {
+            await q(
+                'INSERT INTO audit_log (partno, action, field, old_value, new_value, changed_by) VALUES (?, ?, ?, ?, ?, ?)',
+                [partno, action, field ?? null, oldValue ?? null, newValue ?? null, changedBy ?? null]
+            );
         } catch (_) {}
     }
 
-    getAuditLog(partno) {
+    async getAuditLog(partno) {
         try {
-            return this.db.prepare(
-                `SELECT * FROM audit_log WHERE partno = ? ORDER BY changed_at DESC LIMIT 50`
-            ).all(partno);
+            return q('SELECT * FROM audit_log WHERE partno = ? ORDER BY changed_at DESC LIMIT 50', [partno]);
         } catch (_) { return []; }
     }
 
-    getLastScanTimestamp() {
-        const row = this.db.prepare('SELECT MAX(updated_at) as last_scan FROM assemblies').get();
-        return row ? row.last_scan : null;
+    // ── Sync history ──────────────────────────────────────────────────────────
+    async getLastScanTimestamp() {
+        const rows = await q('SELECT MAX(updated_at) AS last_scan FROM assemblies');
+        return rows[0]?.last_scan || null;
     }
 
-    logSyncRun({ newRecords, extracted, stale, failed, linked, total, durationS, error }) {
+    async logSyncRun({ newRecords, extracted, stale, failed, linked, total, durationS, error }) {
         try {
-            this.db.prepare(`
-                INSERT INTO sync_history (new_records, extracted, stale, failed, linked, total, duration_s, error)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-            `).run(newRecords ?? 0, extracted ?? 0, stale ?? 0, failed ?? 0, linked ?? 0, total ?? 0, durationS ?? null, error ?? null);
-            // Keep last 100 runs only
-            this.db.prepare(`
-                DELETE FROM sync_history WHERE id NOT IN (
-                    SELECT id FROM sync_history ORDER BY id DESC LIMIT 100
-                )
-            `).run();
+            await q(
+                'INSERT INTO sync_history (new_records, extracted, stale, failed, linked, total, duration_s, error) VALUES (?, ?, ?, ?, ?, ?, ?, ?)',
+                [newRecords ?? 0, extracted ?? 0, stale ?? 0, failed ?? 0, linked ?? 0, total ?? 0, durationS ?? null, error ?? null]
+            );
+            // Keep last 100 runs
+            await q(
+                `DELETE FROM sync_history WHERE id NOT IN (
+                    SELECT id FROM (SELECT id FROM sync_history ORDER BY id DESC LIMIT 100) t
+                )`
+            );
         } catch (_) {}
     }
 
-    getSyncHistory(limit = 20) {
+    async getSyncHistory(limit = 20) {
         try {
-            return this.db.prepare(
-                `SELECT * FROM sync_history ORDER BY id DESC LIMIT ?`
-            ).all(limit);
+            const n = parseInt(limit, 10) || 20;
+            return q(`SELECT * FROM sync_history ORDER BY id DESC LIMIT ${n}`);
         } catch (_) { return []; }
     }
 
-    getLastSyncRun() {
+    async getLastSyncRun() {
         try {
-            return this.db.prepare(`SELECT * FROM sync_history ORDER BY id DESC LIMIT 1`).get() || null;
+            const rows = await q('SELECT * FROM sync_history ORDER BY id DESC LIMIT 1');
+            return rows[0] || null;
         } catch (_) { return null; }
     }
 
+    // ── Backup (MySQL — no-op, use mysqldump externally) ─────────────────────
     async backup() {
-        const backupDir = path.join(config.SHARED_BASE, 'backups');
-        if (!fs.existsSync(backupDir)) fs.mkdirSync(backupDir, { recursive: true });
-
-        const ts         = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-        const backupPath = path.join(backupDir, `assemblies-${ts}.db`);
-
-        await this.db.backup(backupPath);
-
-        const files = fs.readdirSync(backupDir)
-            .filter(f => f.startsWith('assemblies-') && f.endsWith('.db'))
-            .sort();
-        while (files.length > 7) {
-            try { fs.unlinkSync(path.join(backupDir, files.shift())); } catch (_) {}
-        }
-
-        return backupPath;
+        console.log('[DB] MySQL backup: use mysqldump for backups. Skipping file-level backup.');
+        return null;
     }
 
-    // ── Hard delete single record by partno ───────────────────────────────────
-    deleteOne(partno) {
-        const result = this.db.prepare(
-            `DELETE FROM assemblies WHERE partno = ?`
-        ).run(partno);
-        if (result.changes > 0) {
-            this.logAudit(partno, 'delete', null, null, null, 'User');
-            this._clearDistinctCache();
-        }
-        return result.changes;
-    }
-
-    // ── Bulk update a single field across multiple records ────────────────────
-    bulkUpdate(partnos, field, value) {
-        if (!partnos || partnos.length === 0) return 0;
-        if (!ALLOWED_WRITE_FIELDS.has(field)) throw new Error(`Field "${field}" is not writable`);
-        const placeholders = partnos.map(() => '?').join(', ');
-        const result = this.db.prepare(
-            `UPDATE assemblies SET ${field} = ?, updated_at = datetime('now') WHERE partno IN (${placeholders}) AND deleted_at IS NULL`
-        ).run(value, ...partnos);
-        this._clearDistinctCache();
-        return result.changes;
-    }
-
-    // ── Hard delete multiple records by partno list ───────────────────────────
-    bulkDelete(partnos) {
-        if (!partnos || partnos.length === 0) return 0;
-        const placeholders = partnos.map(() => '?').join(', ');
-        const result = this.db.prepare(
-            `DELETE FROM assemblies WHERE partno IN (${placeholders})`
-        ).run(...partnos);
-        this._clearDistinctCache();
-        return result.changes;
+    close() {
+        if (_pool) { _pool.end().catch(() => {}); _pool = null; }
     }
 
     static get ALLOWED_WRITE_FIELDS() { return ALLOWED_WRITE_FIELDS; }
-
-    close() {
-        try { this.db.close(); } catch (_) {}
-    }
 }
 
 module.exports = new DbService();

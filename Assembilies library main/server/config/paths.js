@@ -21,8 +21,7 @@ if (!fs.existsSync(SHARED_BASE)) {
     console.warn(`[WARN] Network path not accessible: ${SHARED_BASE}. Database operations will fail until the drive is available.`);
 }
 
-const SQLITE_PATH = path.join(SHARED_BASE, 'assemblies.db');
-const THUMB_DIR   = path.join(SHARED_BASE, 'thumbnails');
+const THUMB_DIR = path.join(SHARED_BASE, 'thumbnails');
 
 if (!fs.existsSync(THUMB_DIR)) {
     try { fs.mkdirSync(THUMB_DIR, { recursive: true }); } catch (_) {}
@@ -39,13 +38,9 @@ if (!fs.existsSync(PS_EXTRACTOR)) {
 
 module.exports = {
     DRIVES: {
-        // Default to UNC paths so the scanner works in the PM2 service session
-        // where N: and L: drive letters are not mapped. Override via DRIVE_N /
-        // DRIVE_L env vars if running in a session that has the letters mapped.
         N: process.env.DRIVE_N || '\\\\stevendouglas.local\\dfs\\Company\\Job Folder',
         L: process.env.DRIVE_L || '\\\\stevendouglas.local\\dfs\\Company\\Job Archive',
     },
-    SQLITE_PATH,
     THUMB_DIR,
     PS_EXTRACTOR,
     PORT: process.env.PORT || 3001,

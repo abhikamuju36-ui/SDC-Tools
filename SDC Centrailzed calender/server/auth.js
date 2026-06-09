@@ -1,6 +1,5 @@
 require('dotenv').config();
 const express = require('express');
-const msal    = require('@azure/msal-node');
 const jwt     = require('jsonwebtoken');
 const db      = require('./db');
 
@@ -11,18 +10,25 @@ const FRONTEND_URL = process.env.FRONTEND_URL || 'http://localhost:3000';
 const JWT_SECRET   = process.env.JWT_SECRET;
 const SCOPES       = ['User.Read'];
 
-// Only initialise MSAL when all Azure credentials are present
+// Only initialise MSAL when all Azure AD credentials are present AND the package is installed.
+// In shell mode (SKIP_AUTH=true) this block is never reached.
 const AZURE_READY = !!(process.env.CLIENT_ID && process.env.TENANT_ID && process.env.CLIENT_SECRET);
-const pca = AZURE_READY
-  ? new msal.ConfidentialClientApplication({
+let pca = null;
+if (AZURE_READY) {
+  try {
+    const msal = require('@azure/msal-node');
+    pca = new msal.ConfidentialClientApplication({
       auth: {
         clientId:     process.env.CLIENT_ID,
         authority:    `https://login.microsoftonline.com/${process.env.TENANT_ID}`,
         clientSecret: process.env.CLIENT_SECRET,
       },
-      system: { loggerOptions: { loggerCallback: () => {}, piiLoggingEnabled: false } }
-    })
-  : null;
+      system: { loggerOptions: { loggerCallback: () => {}, piiLoggingEnabled: false } },
+    });
+  } catch {
+    console.warn('[auth] @azure/msal-node not installed — Azure AD login disabled.');
+  }
+}
 
 // Step 1 — redirect to Microsoft login
 router.get('/login', async (_req, res) => {

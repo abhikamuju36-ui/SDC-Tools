@@ -106,14 +106,11 @@ function startServer({ port } = {}) {
     const p = port || PORT;
     const server = app.listen(p, '0.0.0.0', () => {
         logger(`[assemblies] Running at http://0.0.0.0:${p}`);
-        logger(`Database: SQLite — ${config.SQLITE_PATH}`);
+        logger(`Database: MySQL — ${process.env.MYSQL_DATABASE || 'sdc_assemblies'}@${process.env.MYSQL_HOST || 'localhost'}`);
 
-        try {
-            const { globalTotal } = dbService.getCounts();
-            logger(`Database OK — ${globalTotal} records.`);
-        } catch (e) {
-            logger(`Database check FAILED: ${e.message}`, 'ERROR');
-        }
+        dbService.getCounts()
+            .then(({ globalTotal }) => logger(`Database OK — ${globalTotal} records.`))
+            .catch(e => logger(`Database check FAILED: ${e.message}`, 'ERROR'));
 
         ['N', 'L'].forEach(drive => {
             const drivePath = config.DRIVES[drive];

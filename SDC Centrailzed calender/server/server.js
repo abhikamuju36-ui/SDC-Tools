@@ -6,11 +6,11 @@ const corsMiddleware = require('cors');
 const path    = require('path');
 const logger  = require('./logger');
 
-// Initialise Azure SQL schema on startup (idempotent — safe to run every boot)
-const { ensureSchema } = require('./azureDb');
-ensureSchema()
-  .then(() => logger.info('[DB] Azure SQL schema ready.'))
-  .catch(err => logger.error('[DB] Schema init failed — check AZURE_SQL_* env vars:', err.message));
+// Verify MySQL connection on startup
+const { testConnection } = require('./mysqlDb');
+testConnection()
+  .then(v => logger.info(`[DB] MySQL ${v} connected (sdc_calendar).`))
+  .catch(err => logger.error('[DB] MySQL connection failed — check MYSQL_* env vars:', err.message));
 const authRouter        = require('./auth');
 const adminRouter       = require('./routes/admin');
 const schedulerRouter       = require('./routes/scheduler');

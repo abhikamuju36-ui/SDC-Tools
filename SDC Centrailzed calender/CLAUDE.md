@@ -52,7 +52,7 @@ Then start the server with `NODE_ENV=production node server.js` and open http://
 
 **Add a new API route** — Create `server/routes/myroute.js`, import it in `server/server.js`, mount with `app.use('/api/myroute', require('./routes/myroute'))`.
 
-**Employee directory** — Employees are stored in `[calendar].[employees]` (Azure SQL). On first run the frontend posts DEFAULT_EMPLOYEES to `POST /api/employees/seed` automatically. Edit employees via the Directory modal in the UI (admin/HR only writes; all users can read).
+**Employee directory** — Employees are stored in `sdc_calendar.employees` (MySQL). On first run the frontend posts DEFAULT_EMPLOYEES to `POST /api/employees/seed` automatically. Edit employees via the Directory modal in the UI (admin/HR only writes; all users can read).
 
 ## Files to know
 
@@ -73,6 +73,6 @@ Then start the server with `NODE_ENV=production node server.js` and open http://
 | `server/routes/events.js` | CRUD for shared events |
 | `server/routes/employees.js` | CRUD for [calendar].[employees] table |
 | `server/routes/scheduler.js` | Read-only bridge to SDC Scheduler DB |
-| `server/azureDb.js` | Azure SQL pool, ensureSchema (creates all tables) |
-| `server/sqlite.js` | Azure SQL adapter (named sqlite for historical reasons) |
-| `server/db.js` | NeDB user/role stores |
+| `server/mysqlDb.js` | MySQL connection pool (replaces azureDb.js) |
+| `server/sqlite.js` | Events data layer — MySQL adapter (name kept for compatibility) |
+| `server/db.js` | Users & roles data layer — MySQL adapter |

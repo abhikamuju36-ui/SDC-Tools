@@ -1,150 +1,148 @@
 /**
  * server/routes/employees.js
- * REST API for the [calendar].[employees] table.
+ * REST API for the sdc_calendar.employees table (MySQL edition).
  *
- * GET    /api/employees          — list all employees
- * POST   /api/employees          — add one employee (admin only)
- * PUT    /api/employees/:id      — update an employee (admin only)
- * DELETE /api/employees/:id      — delete an employee (admin only)
- * POST   /api/employees/seed     — bulk-insert DEFAULT_EMPLOYEES (admin only, only when table is empty)
+ * GET    /api/employees        — list all (public)
+ * POST   /api/employees/seed   — bulk-insert DEFAULT_EMPLOYEES (admin, only when empty)
+ * POST   /api/employees        — add one (admin or hr)
+ * PUT    /api/employees/:id    — update one (admin or hr)
+ * DELETE /api/employees/:id    — delete one (admin)
  */
 
 const express = require('express');
 const { requireAuth } = require('../middleware/requireAuth');
-const { getPool, sql } = require('../azureDb');
+const { query } = require('../mysqlDb');
 
 const router = express.Router();
 
-// ── GET /api/employees — public read so frontend can load directory without auth ──
-router.get('/', async (req, res) => {
+function toEmp(row) {
+  return {
+    id:          row.id,
+    name:        row.name,
+    role:        row.job_title,    // frontend calls this field "role"
+    email:       row.email,
+    birth_month: row.birth_month,
+    birth_day:   row.birth_day,
+    phone:       row.phone,
+    department:  row.department,
+  };
+}
+
+// GET /api/employees — public read
+router.get('/', async (_req, res) => {
   try {
-    const pool = await getPool();
-    const result = await pool.request().query(`
-      SELECT id, name, role, email, birth_month, birth_day, phone, department
-      FROM [calendar].[employees]
-      ORDER BY name ASC
-    `);
-    res.json(result.recordset);
+    const [rows] = await query('SELECT * FROM employees ORDER BY name ASC');
+    res.json(rows.map(toEmp));
   } catch (err) {
     console.error('[employees] GET error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── POST /api/employees/seed — bulk insert DEFAULT_EMPLOYEES (only when table is empty) ──
-// Must be declared before /:id routes so Express matches it first
+// POST /api/employees/seed — bulk-insert only when table is empty
 router.post('/seed', requireAuth, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
 
-  const employees = req.body; // array of employee objects from frontend DEFAULT_EMPLOYEES
+  const employees = req.body;
   if (!Array.isArray(employees) || employees.length === 0) {
     return res.status(400).json({ error: 'employees array required in body' });
   }
 
   try {
-    const pool = await getPool();
-
-    // Only seed when the table is truly empty
-    const countResult = await pool.request().query(`SELECT COUNT(*) AS cnt FROM [calendar].[employees]`);
-    const count = countResult.recordset[0].cnt;
-    if (count > 0) {
-      // Return current employees instead of re-seeding
-      const current = await pool.request().query(`SELECT id, name, role, email, birth_month, birth_day FROM [calendar].[employees] ORDER BY name ASC`);
-      return res.json(current.recordset);
+    const [[{ cnt }]] = await query('SELECT COUNT(*) AS cnt FROM employees');
+    if (cnt > 0) {
+      const [rows] = await query('SELECT * FROM employees ORDER BY name ASC');
+      return res.json(rows.map(toEmp));
     }
 
-    // Insert each employee
     for (const emp of employees) {
-      const r = pool.request();
-      r.input('id',          sql.NVarChar(50),  emp.id || String(Date.now() + Math.random()));
-      r.input('name',        sql.NVarChar(255), emp.name || '');
-      r.input('role',        sql.NVarChar(255), emp.role || '');
-      r.input('email',       sql.NVarChar(255), emp.email || null);
-      r.input('birth_month', sql.Int,           emp.bMonth || emp.birth_month || null);
-      r.input('birth_day',   sql.Int,           emp.bDay   || emp.birth_day   || null);
-      r.input('phone',       sql.NVarChar(50),  emp.phone  || null);
-      r.input('department',  sql.NVarChar(255), emp.department || null);
-      await r.query(`
-        INSERT INTO [calendar].[employees] (id, name, role, email, birth_month, birth_day, phone, department)
-        VALUES (@id, @name, @role, @email, @birth_month, @birth_day, @phone, @department)
-      `);
+      const id = emp.id || `emp-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+      await query(
+        `INSERT INTO employees (id, name, job_title, email, birth_month, birth_day, phone, department)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          id,
+          emp.name        || '',
+          emp.role        || null,   // frontend sends "role" meaning job title
+          emp.email       || null,
+          emp.bMonth      || emp.birth_month || null,
+          emp.bDay        || emp.birth_day   || null,
+          emp.phone       || null,
+          emp.department  || null,
+        ]
+      );
     }
 
-    // Return the full list
-    const result = await pool.request().query(`SELECT id, name, role, email, birth_month, birth_day FROM [calendar].[employees] ORDER BY name ASC`);
-    console.log(`[employees] Seeded ${result.recordset.length} employees.`);
-    res.status(201).json(result.recordset);
+    const [rows] = await query('SELECT * FROM employees ORDER BY name ASC');
+    console.log(`[employees] Seeded ${rows.length} employees.`);
+    res.status(201).json(rows.map(toEmp));
   } catch (err) {
     console.error('[employees] seed error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── POST /api/employees — add one employee ──
+// POST /api/employees — add one
 router.post('/', requireAuth, async (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'hr') {
     return res.status(403).json({ error: 'Admin or HR access required' });
   }
   try {
-    const pool = await getPool();
     const emp = req.body;
     const id = emp.id || `emp-${Date.now()}`;
-    const r = pool.request();
-    r.input('id',          sql.NVarChar(50),  id);
-    r.input('name',        sql.NVarChar(255), emp.name || '');
-    r.input('role',        sql.NVarChar(255), emp.role || '');
-    r.input('email',       sql.NVarChar(255), emp.email || null);
-    r.input('birth_month', sql.Int,           emp.bMonth || emp.birth_month || null);
-    r.input('birth_day',   sql.Int,           emp.bDay   || emp.birth_day   || null);
-    r.input('phone',       sql.NVarChar(50),  emp.phone  || null);
-    r.input('department',  sql.NVarChar(255), emp.department || null);
-    await r.query(`
-      INSERT INTO [calendar].[employees] (id, name, role, email, birth_month, birth_day, phone, department)
-      VALUES (@id, @name, @role, @email, @birth_month, @birth_day, @phone, @department)
-    `);
+    await query(
+      `INSERT INTO employees (id, name, job_title, email, birth_month, birth_day, phone, department)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        emp.name        || '',
+        emp.role        || null,
+        emp.email       || null,
+        emp.bMonth      || emp.birth_month || null,
+        emp.bDay        || emp.birth_day   || null,
+        emp.phone       || null,
+        emp.department  || null,
+      ]
+    );
     res.status(201).json({ ...emp, id });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── PUT /api/employees/:id — update an employee ──
+// PUT /api/employees/:id — update one
 router.put('/:id', requireAuth, async (req, res) => {
   if (req.user.role !== 'admin' && req.user.role !== 'hr') {
     return res.status(403).json({ error: 'Admin or HR access required' });
   }
   try {
-    const pool = await getPool();
     const emp = req.body;
-    const r = pool.request();
-    r.input('id',          sql.NVarChar(50),  req.params.id);
-    r.input('name',        sql.NVarChar(255), emp.name || '');
-    r.input('role',        sql.NVarChar(255), emp.role || '');
-    r.input('email',       sql.NVarChar(255), emp.email || null);
-    r.input('birth_month', sql.Int,           emp.bMonth || emp.birth_month || null);
-    r.input('birth_day',   sql.Int,           emp.bDay   || emp.birth_day   || null);
-    r.input('phone',       sql.NVarChar(50),  emp.phone  || null);
-    r.input('department',  sql.NVarChar(255), emp.department || null);
-    await r.query(`
-      UPDATE [calendar].[employees]
-      SET name=@name, role=@role, email=@email, birth_month=@birth_month,
-          birth_day=@birth_day, phone=@phone, department=@department
-      WHERE id=@id
-    `);
+    await query(
+      `UPDATE employees
+       SET name=?, job_title=?, email=?, birth_month=?, birth_day=?, phone=?, department=?
+       WHERE id=?`,
+      [
+        emp.name        || '',
+        emp.role        || null,
+        emp.email       || null,
+        emp.bMonth      || emp.birth_month || null,
+        emp.bDay        || emp.birth_day   || null,
+        emp.phone       || null,
+        emp.department  || null,
+        req.params.id,
+      ]
+    );
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// ── DELETE /api/employees/:id ──
+// DELETE /api/employees/:id
 router.delete('/:id', requireAuth, async (req, res) => {
   if (req.user.role !== 'admin') return res.status(403).json({ error: 'Admin only' });
   try {
-    const pool = await getPool();
-    const r = pool.request();
-    r.input('id', sql.NVarChar(50), req.params.id);
-    await r.query(`DELETE FROM [calendar].[employees] WHERE id=@id`);
+    await query('DELETE FROM employees WHERE id = ?', [req.params.id]);
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });

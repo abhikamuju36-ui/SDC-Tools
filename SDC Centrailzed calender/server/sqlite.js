@@ -1,117 +1,122 @@
 /**
- * sqlite.js — Events data layer (Azure SQL edition).
+ * sqlite.js — Events data layer (MySQL edition).
  *
- * Exports the same API as the original SQLite version so all routes
- * (routes/events.js) work without any changes.
+ * Exports the same API as the original Azure SQL version so routes/events.js
+ * needs zero changes. The file is named sqlite.js for historical compatibility.
  *
- * Table: [calendar].[events]
+ * Table: sdc_calendar.events
  */
 
 const crypto = require('crypto');
-const { request, sql } = require('./azureDb');
+const { query } = require('./mysqlDb');
+
+// Map a raw DB row to the shape routes expect (booleans, camelCase aliases)
+function toEvent(row) {
+  if (!row) return null;
+  return {
+    id:           row.id,
+    title:        row.title,
+    date:         row.date,
+    endDate:      row.end_date   || null,
+    category:     row.category,
+    allDay:       !!row.all_day,
+    time:         row.time       || null,
+    endTime:      row.end_time   || null,
+    location:     row.location   || null,
+    description:  row.description || null,
+    repeat:       row.repeat_rule,
+    notify:       row.notify_mins || null,
+    pinned:       !!row.pinned,
+    creatorEmail: row.creator_email || null,
+    creatorName:  row.creator_name  || null,
+    approved:     !!row.approved,
+    created_at:   row.created_at,
+  };
+}
 
 const sqlite = {
 
-  // Optional { month: 'YYYY-MM' } filter — applied server-side to keep payloads small
   getAllEvents: async ({ month } = {}) => {
-    const r = await request();
-    const whereClause = month
-      ? `WHERE date LIKE @monthPrefix + '%'`
-      : '';
-    if (month) r.input('monthPrefix', sql.NVarChar(10), month);
-    const result = await r.query(`
-      SELECT * FROM [calendar].[events] ${whereClause} ORDER BY date
-    `);
-    return result.recordset.map(row => ({
-      ...row,
-      allDay:   !!row.allDay,
-      pinned:   !!row.pinned,
-      approved: !!row.approved,
-    }));
+    let sql = 'SELECT * FROM events';
+    const params = [];
+    if (month) {
+      sql += ' WHERE date LIKE ?';
+      params.push(`${month}%`);
+    }
+    sql += ' ORDER BY date ASC';
+    const [rows] = await query(sql, params);
+    return rows.map(toEvent);
   },
 
   addEvent: async (ev) => {
-    // Generate a unique ID if the caller didn't supply one
     const id = ev.id || `evt-${Date.now()}-${crypto.randomBytes(4).toString('hex')}`;
-    const r = await request();
-    r.input('id',           sql.NVarChar(50),  id);
-    r.input('title',        sql.NVarChar(500), ev.title);
-    r.input('date',         sql.NVarChar(20),  ev.date);
-    r.input('endDate',      sql.NVarChar(20),  ev.endDate   || null);
-    r.input('category',     sql.NVarChar(50),  ev.category);
-    r.input('allDay',       sql.Bit,           ev.allDay ? 1 : 0);
-    r.input('time',         sql.NVarChar(10),  ev.time      || null);
-    r.input('endTime',      sql.NVarChar(10),  ev.endTime   || null);
-    r.input('location',     sql.NVarChar(500), ev.location  || null);
-    r.input('description',  sql.NVarChar(sql.MAX), ev.description || null);
-    r.input('repeat',       sql.NVarChar(20),  ev.repeat    || 'none');
-    r.input('notify',       sql.Int,           ev.notify    || null);
-    r.input('pinned',       sql.Bit,           ev.pinned ? 1 : 0);
-    r.input('creatorEmail', sql.NVarChar(255), ev.creatorEmail || null);
-    r.input('creatorName',  sql.NVarChar(255), ev.creatorName  || null);
-    r.input('approved',     sql.Bit,           ev.approved ? 1 : 0);
-
-    await r.query(`
-      INSERT INTO [calendar].[events]
-        (id, title, date, endDate, category, allDay, time, endTime,
-         location, description, repeat, notify, pinned, creatorEmail, creatorName, approved)
-      VALUES
-        (@id, @title, @date, @endDate, @category, @allDay, @time, @endTime,
-         @location, @description, @repeat, @notify, @pinned, @creatorEmail, @creatorName, @approved)
-    `);
-
+    await query(
+      `INSERT INTO events
+         (id, title, date, end_date, category, all_day, time, end_time,
+          location, description, repeat_rule, notify_mins, pinned,
+          creator_email, creator_name, approved)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        ev.title,
+        ev.date,
+        ev.endDate    || null,
+        ev.category,
+        ev.allDay ? 1 : 0,
+        ev.time       || null,
+        ev.endTime    || null,
+        ev.location   || null,
+        ev.description || null,
+        ev.repeat     || 'none',
+        ev.notify     || null,
+        ev.pinned ? 1 : 0,
+        ev.creatorEmail || null,
+        ev.creatorName  || null,
+        ev.approved ? 1 : 0,
+      ]
+    );
     return { ...ev, id };
   },
 
   getEventById: async (id) => {
-    const r = await request();
-    r.input('id', sql.NVarChar(50), id);
-    const result = await r.query(`SELECT * FROM [calendar].[events] WHERE id = @id`);
-    if (!result.recordset.length) return null;
-    const row = result.recordset[0];
-    return { ...row, allDay: !!row.allDay, pinned: !!row.pinned, approved: !!row.approved };
+    const [rows] = await query('SELECT * FROM events WHERE id = ?', [id]);
+    return toEvent(rows[0]);
   },
 
   updateEvent: async (id, ev) => {
-    const r = await request();
-    r.input('id',          sql.NVarChar(50),  id);
-    r.input('title',       sql.NVarChar(500), ev.title);
-    r.input('date',        sql.NVarChar(20),  ev.date);
-    r.input('endDate',     sql.NVarChar(20),  ev.endDate  || null);
-    r.input('category',    sql.NVarChar(50),  ev.category);
-    r.input('allDay',      sql.Bit,           ev.allDay ? 1 : 0);
-    r.input('time',        sql.NVarChar(10),  ev.time     || null);
-    r.input('endTime',     sql.NVarChar(10),  ev.endTime  || null);
-    r.input('location',    sql.NVarChar(500), ev.location || null);
-    r.input('description', sql.NVarChar(sql.MAX), ev.description || null);
-    r.input('repeat',      sql.NVarChar(20),  ev.repeat   || 'none');
-    r.input('notify',      sql.Int,           ev.notify   || null);
-    r.input('pinned',      sql.Bit,           ev.pinned ? 1 : 0);
-    r.input('approved',    sql.Bit,           ev.approved ? 1 : 0);
-
-    await r.query(`
-      UPDATE [calendar].[events] SET
-        title=@title, date=@date, endDate=@endDate, category=@category,
-        allDay=@allDay, time=@time, endTime=@endTime, location=@location,
-        description=@description, repeat=@repeat, notify=@notify,
-        pinned=@pinned, approved=@approved
-      WHERE id=@id
-    `);
-
+    await query(
+      `UPDATE events SET
+         title=?, date=?, end_date=?, category=?, all_day=?,
+         time=?, end_time=?, location=?, description=?,
+         repeat_rule=?, notify_mins=?, pinned=?, approved=?
+       WHERE id=?`,
+      [
+        ev.title,
+        ev.date,
+        ev.endDate    || null,
+        ev.category,
+        ev.allDay ? 1 : 0,
+        ev.time       || null,
+        ev.endTime    || null,
+        ev.location   || null,
+        ev.description || null,
+        ev.repeat     || 'none',
+        ev.notify     || null,
+        ev.pinned ? 1 : 0,
+        ev.approved ? 1 : 0,
+        id,
+      ]
+    );
     return { success: true };
   },
 
   deleteEvent: async (id) => {
-    const r = await request();
-    r.input('id', sql.NVarChar(50), id);
-    await r.query(`DELETE FROM [calendar].[events] WHERE id=@id`);
+    await query('DELETE FROM events WHERE id = ?', [id]);
     return { success: true };
   },
 
   approveEvent: async (id) => {
-    const r = await request();
-    r.input('id', sql.NVarChar(50), id);
-    await r.query(`UPDATE [calendar].[events] SET approved=1 WHERE id=@id`);
+    await query('UPDATE events SET approved = 1 WHERE id = ?', [id]);
     return { success: true };
   },
 };
