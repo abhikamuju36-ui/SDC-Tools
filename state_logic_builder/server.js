@@ -1,7 +1,7 @@
 /**
  * SDC State Logic Builder — Project Server
- * Storage: Azure SQL [statelogic] schema (projects + standards tables).
- * Falls back to local JSON files if Azure SQL is unavailable.
+ * Storage: MySQL `sdc_statelogic` database (projects + standards tables).
+ * Falls back to local JSON files if MySQL is unavailable.
  *
  * Standalone:  node server.js           (port 3131)
  *              PORT=8080 node server.js
@@ -26,6 +26,11 @@ const fs   = require('fs');
 const path = require('path');
 const url  = require('url');
 const os   = require('os');
+
+// Load .env so standalone `node server.js` resolves STANDARDS_DIR / MYSQL_* the
+// same way PM2 does. dotenv does NOT override vars already in the environment,
+// so PM2's injected ecosystem env still wins in production.
+require('dotenv').config({ path: path.join(__dirname, '.env') });
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',
@@ -60,22 +65,22 @@ function readBody(req) {
   });
 }
 
-// ── Azure SQL module (lazy-loaded so server still starts without it) ──────────
-let azureDb = null;
-let azureReady = false;
+// ── MySQL module (lazy-loaded so server still starts without it) ──────────────
+let mysqlDb = null;
+let dbReady = false;
 
-async function getAzure() {
-  if (!azureDb) {
-    azureDb = require('./azureDb');
+async function getDb() {
+  if (!mysqlDb) {
+    mysqlDb = require('./mysqlDb');
   }
-  if (!azureReady) {
-    await azureDb.ensureSchema();
-    azureReady = true;
+  if (!dbReady) {
+    await mysqlDb.ensureSchema();
+    dbReady = true;
   }
-  return azureDb;
+  return mysqlDb;
 }
 
-// ── File-based fallback helpers (used when Azure SQL is unavailable) ──────────
+// ── File-based fallback helpers (used when MySQL is unavailable) ──────────────
 function fileFallbackList(dataDir) {
   const files = fs.existsSync(dataDir)
     ? fs.readdirSync(dataDir).filter(f => f.endsWith('.json'))
@@ -108,32 +113,30 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
     console.warn('[standards] Could not create', STANDARDS_DIR_, '—', e.message);
   }
 
-  // Connect to Azure SQL in the background; don't block server start
-  getAzure()
-    .then(() => console.log('[Azure SQL] Connected — using cloud storage.'))
-    .catch(e  => console.warn('[Azure SQL] Unavailable — using local JSON files as fallback.', e.message));
+  // Connect to MySQL in the background; don't block server start
+  getDb()
+    .then(() => console.log('[MySQL] Connected — using sdc_statelogic database.'))
+    .catch(e  => console.warn('[MySQL] Unavailable — using local JSON files as fallback.', e.message));
 
   // ── Projects ───────────────────────────────────────────────────────────────
 
   async function handleList(res) {
     try {
-      if (azureReady) {
-        const pool = (await getAzure()).getPool ? (await getAzure()).getPool() : null;
-        if (pool) {
-          const r = await (await pool).request().query(
-            'SELECT filename, name, last_modified, sm_count FROM [statelogic].[projects] ORDER BY last_modified DESC'
-          );
-          const list = r.recordset.map(row => ({
-            filename:     row.filename,
-            name:         row.name,
-            lastModified: Number(row.last_modified) || 0,
-            smCount:      row.sm_count || 0,
-          }));
-          return sendJson(res, 200, list);
-        }
+      if (dbReady) {
+        const pool = (await getDb()).getPool();
+        const [rows] = await pool.query(
+          'SELECT filename, name, last_modified, sm_count FROM projects ORDER BY last_modified DESC'
+        );
+        const list = rows.map(row => ({
+          filename:     row.filename,
+          name:         row.name,
+          lastModified: Number(row.last_modified) || 0,
+          smCount:      row.sm_count || 0,
+        }));
+        return sendJson(res, 200, list);
       }
     } catch (e) {
-      console.warn('[projects/list] Azure SQL failed, using files:', e.message);
+      console.warn('[projects/list] MySQL failed, using files:', e.message);
     }
     sendJson(res, 200, fileFallbackList(DATA_DIR_));
   }
@@ -143,18 +146,16 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
     if (!safe) return sendJson(res, 400, { error: 'Invalid filename' });
 
     try {
-      if (azureReady) {
-        const az  = await getAzure();
-        const req = await az.request();
-        req.input('filename', az.sql.NVarChar(200), safe);
-        const r = await req.query('SELECT data FROM [statelogic].[projects] WHERE filename = @filename');
-        if (r.recordset.length > 0) {
-          return sendJson(res, 200, JSON.parse(r.recordset[0].data));
+      if (dbReady) {
+        const pool = (await getDb()).getPool();
+        const [rows] = await pool.query('SELECT data FROM projects WHERE filename = ?', [safe]);
+        if (rows.length > 0) {
+          return sendJson(res, 200, JSON.parse(rows[0].data));
         }
         return sendJson(res, 404, { error: 'Not found' });
       }
     } catch (e) {
-      console.warn('[projects/load] Azure SQL failed, using file:', e.message);
+      console.warn('[projects/load] MySQL failed, using file:', e.message);
     }
 
     // File fallback
@@ -174,34 +175,25 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
       const smCount = Array.isArray(data.stateMachines) ? data.stateMachines.length : 0;
       const now     = Date.now();
 
-      if (azureReady) {
+      if (dbReady) {
         try {
-          const az  = await getAzure();
-          const req2 = await az.request();
-          req2.input('filename',      az.sql.NVarChar(200),     safe);
-          req2.input('name',          az.sql.NVarChar(500),     name);
-          req2.input('data',          az.sql.NVarChar(az.sql.MAX), body);
-          req2.input('sm_count',      az.sql.Int,               smCount);
-          req2.input('last_modified', az.sql.BigInt,            now);
-          await req2.query(`
-            MERGE [statelogic].[projects] AS target
-            USING (SELECT @filename AS filename) AS src ON target.filename = src.filename
-            WHEN MATCHED THEN UPDATE SET
-              name=@name, data=@data, sm_count=@sm_count,
-              last_modified=@last_modified, updated_at=GETUTCDATE()
-            WHEN NOT MATCHED THEN INSERT
-              (filename, name, data, sm_count, last_modified)
-            VALUES (@filename, @name, @data, @sm_count, @last_modified);
-          `);
+          const pool = (await getDb()).getPool();
+          await pool.query(`
+            INSERT INTO projects (filename, name, data, sm_count, last_modified)
+            VALUES (?, ?, ?, ?, ?)
+            ON DUPLICATE KEY UPDATE
+              name=VALUES(name), data=VALUES(data), sm_count=VALUES(sm_count),
+              last_modified=VALUES(last_modified)
+          `, [safe, name, body, smCount, now]);
           // Also write to local file as backup
           fs.writeFileSync(path.join(DATA_DIR_, safe), body, 'utf8');
           return sendJson(res, 200, { ok: true, filename: safe });
         } catch (e) {
-          console.warn('[projects/save] Azure SQL failed, saving to file only:', e.message);
+          console.warn('[projects/save] MySQL failed, saving to file only:', e.message);
         }
       }
 
-      // File fallback (also runs if Azure SQL is down)
+      // File fallback (also runs if MySQL is down)
       const filePath = path.join(DATA_DIR_, safe);
       if (fs.existsSync(filePath)) {
         const backupDir = path.join(DATA_DIR_, '_backups');
@@ -222,18 +214,16 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
     if (!safe) return sendJson(res, 400, { error: 'Invalid filename' });
 
     try {
-      if (azureReady) {
-        const az  = await getAzure();
-        const req = await az.request();
-        req.input('filename', az.sql.NVarChar(200), safe);
-        await req.query('DELETE FROM [statelogic].[projects] WHERE filename = @filename');
+      if (dbReady) {
+        const pool = (await getDb()).getPool();
+        await pool.query('DELETE FROM projects WHERE filename = ?', [safe]);
         // Also delete local file if it exists
         const fp = path.join(DATA_DIR_, safe);
         if (fs.existsSync(fp)) fs.unlinkSync(fp);
         return sendJson(res, 200, { ok: true });
       }
     } catch (e) {
-      console.warn('[projects/delete] Azure SQL failed, deleting file only:', e.message);
+      console.warn('[projects/delete] MySQL failed, deleting file only:', e.message);
     }
 
     const fp = path.join(DATA_DIR_, safe);
@@ -272,18 +262,16 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
 
   async function handleStandardsList(res) {
     try {
-      if (azureReady) {
-        const az = await getAzure();
-        const r  = await (await az.request()).query(
-          'SELECT data FROM [statelogic].[standards] ORDER BY updated_at'
-        );
-        const arr = r.recordset.map(row => {
+      if (dbReady) {
+        const pool = (await getDb()).getPool();
+        const [rows] = await pool.query('SELECT data FROM standards ORDER BY updated_at');
+        const arr = rows.map(row => {
           try { return JSON.parse(row.data); } catch { return null; }
         }).filter(Boolean);
         return sendJson(res, 200, arr);
       }
     } catch (e) {
-      console.warn('[standards/list] Azure SQL failed, using file:', e.message);
+      console.warn('[standards/list] MySQL failed, using file:', e.message);
     }
     sendJson(res, 200, readStandardsArrayFromFile());
   }
@@ -294,23 +282,25 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
       const parsed = JSON.parse(body);
       if (!Array.isArray(parsed)) return sendJson(res, 400, { error: 'Body must be a JSON array' });
 
-      if (azureReady) {
+      if (dbReady) {
         try {
-          const az = await getAzure();
-          const pool = await az.getPool();
-          // Delete all existing standards then re-insert
-          await pool.request().query('DELETE FROM [statelogic].[standards]');
-          for (const s of parsed) {
-            if (!s?.id) continue;
-            const req2 = pool.request();
-            req2.input('id',   az.sql.NVarChar(200),       s.id);
-            req2.input('data', az.sql.NVarChar(az.sql.MAX), JSON.stringify(s));
-            await req2.query('INSERT INTO [statelogic].[standards] (id, data) VALUES (@id, @data)');
-          }
+          const pool = (await getDb()).getPool();
+          const conn = await pool.getConnection();
+          await conn.beginTransaction();
+          try {
+            // Replace the whole library: clear, then re-insert each entry.
+            await conn.query('DELETE FROM standards');
+            for (const s of parsed) {
+              if (!s?.id) continue;
+              await conn.query('INSERT INTO standards (id, data) VALUES (?, ?)', [s.id, JSON.stringify(s)]);
+            }
+            await conn.commit();
+          } catch (e) { await conn.rollback(); conn.release(); throw e; }
+          conn.release();
           writeStandardsFile(parsed);
           return sendJson(res, 200, { ok: true, total: parsed.length });
         } catch (e) {
-          console.warn('[standards/replace] Azure SQL failed, writing to file only:', e.message);
+          console.warn('[standards/replace] MySQL failed, writing to file only:', e.message);
         }
       }
 
@@ -327,18 +317,13 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
       if (!incoming || typeof incoming !== 'object') return sendJson(res, 400, { error: 'Body must be a JSON object' });
       incoming.id = id;
 
-      if (azureReady) {
+      if (dbReady) {
         try {
-          const az   = await getAzure();
-          const req2 = await az.request();
-          req2.input('id',   az.sql.NVarChar(200),       id);
-          req2.input('data', az.sql.NVarChar(az.sql.MAX), JSON.stringify(incoming));
-          await req2.query(`
-            MERGE [statelogic].[standards] AS target
-            USING (SELECT @id AS id) AS src ON target.id = src.id
-            WHEN MATCHED THEN UPDATE SET data=@data, updated_at=GETUTCDATE()
-            WHEN NOT MATCHED THEN INSERT (id, data) VALUES (@id, @data);
-          `);
+          const pool = (await getDb()).getPool();
+          await pool.query(
+            'INSERT INTO standards (id, data) VALUES (?, ?) ON DUPLICATE KEY UPDATE data=VALUES(data)',
+            [id, JSON.stringify(incoming)]
+          );
           // Mirror to file
           const current = readStandardsArrayFromFile();
           const idx = current.findIndex(s => s?.id === id);
@@ -346,7 +331,7 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
           writeStandardsFile(current);
           return sendJson(res, 200, { ok: true, id, total: current.length });
         } catch (e) {
-          console.warn('[standards/upsert] Azure SQL failed, using file only:', e.message);
+          console.warn('[standards/upsert] MySQL failed, using file only:', e.message);
         }
       }
 
@@ -361,18 +346,16 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
   async function handleStandardsDelete(res, id) {
     if (!id) return sendJson(res, 400, { error: 'Missing id' });
     try {
-      if (azureReady) {
+      if (dbReady) {
         try {
-          const az   = await getAzure();
-          const req2 = await az.request();
-          req2.input('id', az.sql.NVarChar(200), id);
-          await req2.query('DELETE FROM [statelogic].[standards] WHERE id = @id');
+          const pool = (await getDb()).getPool();
+          await pool.query('DELETE FROM standards WHERE id = ?', [id]);
           const current = readStandardsArrayFromFile();
           const next = current.filter(s => s?.id !== id);
           writeStandardsFile(next);
           return sendJson(res, 200, { ok: true, id, total: next.length });
         } catch (e) {
-          console.warn('[standards/delete] Azure SQL failed, using file only:', e.message);
+          console.warn('[standards/delete] MySQL failed, using file only:', e.message);
         }
       }
 
@@ -407,7 +390,7 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
     }
 
     if (pathname === '/health' && method === 'GET') {
-      return sendJson(res, 200, { ok: true, storage: azureReady ? 'azure' : 'local' });
+      return sendJson(res, 200, { ok: true, storage: dbReady ? 'mysql' : 'local' });
     }
 
     if (pathname.startsWith('/api/projects')) {
@@ -424,9 +407,9 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
       const rest = pathname.slice('/api/standards'.length);
       if (rest === '/_debug' && method === 'GET') {
         return sendJson(res, 200, {
-          storage: azureReady ? 'Azure SQL [statelogic]' : 'local JSON files (fallback)',
+          storage: dbReady ? 'MySQL sdc_statelogic' : 'local JSON files (fallback)',
           standardsFile: STANDARDS_FILE_,
-          azureReady,
+          dbReady,
         });
       }
       const id = rest.startsWith('/') ? decodeURIComponent(rest.slice(1)) : null;
@@ -470,7 +453,7 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
     ips.forEach(ip => console.log('  Network:  http://' + ip + ':' + PORT_ + '  <- share with team'));
     console.log('  Projects:  ' + DATA_DIR_);
     console.log('  Standards: ' + STANDARDS_DIR_);
-    console.log('  Storage:   Azure SQL [statelogic] (with local JSON fallback)');
+    console.log('  Storage:   MySQL sdc_statelogic (with local JSON fallback)');
     console.log('='.repeat(56) + '\n  Press Ctrl+C to stop.\n');
   });
 
