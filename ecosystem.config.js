@@ -173,6 +173,17 @@ module.exports = {
         PORT:             '4003',
         NODE_ENV:         'production',
         NODE_NO_WARNINGS: '1',
+        // ── Total ETO bridge ──
+        ETO_HOST:         'SERVER-APP1.stevendouglas.local',
+        ETO_DATABASE:     'SDC',
+        ETO_PORT:         '1433',
+        ETO_DOMAIN:       'stevendouglas',
+        ETO_USER:         'akamuju',
+        ETO_PASSWORD:     'Voltages84gilds$',
+        // ── Anthropic Claude assistant ──
+        ANTHROPIC_API_KEY:    process.env.ANTHROPIC_API_KEY || '',
+        ANTHROPIC_MODEL:      'claude-sonnet-4-6',
+        ANTHROPIC_MAX_TOKENS: '1024',
       },
       watch:         false,
       max_restarts:  10,
