@@ -1,3 +1,8 @@
+# ── SDC_Scheduler — managed as its own standalone git repo ──────────────────
+# Do NOT track this directory in the monorepo. It has its own .git pointing
+# directly at danbelliveau2/SDC_Scheduler for clean bi-directional sync.
+SDC_Scheduler/
+
 # ── Dependencies ──────────────────────────────────────────────────────────────
 node_modules/
 **/node_modules/
