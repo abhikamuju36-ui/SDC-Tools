@@ -131,6 +131,11 @@ body {
 .app-sidebar-spacer {
   flex: 1 1 auto;
 }
+.app-sidebar-sep {
+  margin: 6px 12px;
+  border: none;
+  border-top: 1px solid rgba(255,255,255,0.10);
+}
 .app-sidebar-icon {
   display: flex;
   flex-direction: column;
@@ -157,9 +162,10 @@ body {
 }
 .app-sidebar-icon:active { background: rgba(255,255,255,0.18); }
 .app-sidebar-icon.is-active {
-  background: rgba(255,255,255,0.13);
+  background: rgba(255,255,255,0.10);
   color: white;
-  box-shadow: inset 3px 0 0 var(--sdc-accent, #ffde51);
+  box-shadow: inset 4px 0 0 var(--sdc-accent, #ffde51);
+  border-radius: 0 8px 8px 0;
 }
 .app-sidebar-glyph {
   font-size: var(--fs-2xl);
@@ -191,19 +197,19 @@ body {
   color: white;
 }
 .app-sidebar-label {
-  font-size: var(--fs-xs);
-  line-height: 1.1;
-  white-space: normal;       /* multi-word labels ("Notes & Actions") wrap at the space… */
-  overflow-wrap: normal;     /* …but a single word ("Departments") never breaks mid-word */
-  letter-spacing: 0;         /* claw back width so single words fit on one line */
+  font-size: 9px;
+  line-height: 1.2;
+  white-space: normal;
+  overflow-wrap: break-word;
+  letter-spacing: 0;
   text-align: center;
   width: 100%;
 }
 .app-sidebar-revision {
-  margin-bottom: 10px;
-  border-top: 1px solid rgba(255,255,255,0.08);
-  padding-top: 6px;
-  color: rgba(255,255,255,0.45);
+  margin-bottom: 6px;
+  padding-top: 4px;
+  color: rgba(255,255,255,0.40);
+  font-size: 10px;
 }
 
 /* ==========================================================================

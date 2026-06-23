@@ -140,28 +140,30 @@ function _loginFail(email) {
 function _loginOk(email) { _loginAttempts.delete(email); }
 
 app.post('/api/auth/login', async (req, res) => {
-  const email    = (req.body.email    || '').toString().trim().toLowerCase().slice(0, 254);
-  const password = (req.body.password || '').toString().slice(0, 1024);
-  if (!email || !password) return res.status(400).json({ error: 'email and password required' });
-  if (_loginBlocked(email)) {
-    return res.status(429).json({ error: 'Too many failed attempts. Wait 15 minutes and try again.', code: 'RATE_LIMITED' });
-  }
-  const [rows] = await pool.query('SELECT * FROM users WHERE LOWER(TRIM(email)) = ?', [email]);
-  const user = rows[0] || null;
-  if (!user || !(await bcrypt.compare(password, user.password_hash))) {
-    _loginFail(email);
-    return res.status(401).json({ error: 'Invalid email or password.' });
-  }
-  if (!user.active) {
-    return res.status(403).json({ error: 'This account is disabled. Ask an admin to re-enable it (Setup → Users).', code: 'ACCOUNT_DISABLED' });
-  }
-  _loginOk(email);
-  await pool.query('UPDATE users SET last_login = ? WHERE id = ?', [new Date().toISOString().slice(0, 19).replace('T', ' '), user.id]);
-  const token = signToken(user);
-  res.json({
-    token,
-    user: { id: user.id, email: user.email, name: user.name, role: user.role, avatar_color: user.avatar_color },
-  });
+  try {
+    const email    = (req.body.email    || '').toString().trim().toLowerCase().slice(0, 254);
+    const password = (req.body.password || '').toString().slice(0, 1024);
+    if (!email || !password) return res.status(400).json({ error: 'email and password required' });
+    if (_loginBlocked(email)) {
+      return res.status(429).json({ error: 'Too many failed attempts. Wait 15 minutes and try again.', code: 'RATE_LIMITED' });
+    }
+    const [rows] = await pool.query('SELECT * FROM users WHERE LOWER(TRIM(email)) = ?', [email]);
+    const user = rows[0] || null;
+    if (!user || !(await bcrypt.compare(password, user.password_hash))) {
+      _loginFail(email);
+      return res.status(401).json({ error: 'Invalid email or password.' });
+    }
+    if (!user.active) {
+      return res.status(403).json({ error: 'This account is disabled. Ask an admin to re-enable it (Setup → Users).', code: 'ACCOUNT_DISABLED' });
+    }
+    _loginOk(email);
+    await pool.query('UPDATE users SET last_login = ? WHERE id = ?', [new Date().toISOString().slice(0, 19).replace('T', ' '), user.id]);
+    const token = signToken(user);
+    res.json({
+      token,
+      user: { id: user.id, email: user.email, name: user.name, role: user.role, avatar_color: user.avatar_color },
+    });
+  } catch (e) { res.status(500).json({ error: 'Login failed: ' + e.message }); }
 });
 
 app.get('/api/auth/me', requireAuth, (req, res) => {
@@ -171,19 +173,21 @@ app.get('/api/auth/me', requireAuth, (req, res) => {
 });
 
 app.put('/api/auth/password', requireAuth, async (req, res) => {
-  const { current_password, new_password } = req.body || {};
-  if (!current_password || !new_password)
-    return res.status(400).json({ error: 'current_password and new_password are required' });
-  if (String(new_password).length < 1)
-    return res.status(400).json({ error: 'New password cannot be empty.' });
-  const [urows] = await pool.query('SELECT * FROM users WHERE id = ?', [req.authUser.id]);
-  const user = urows[0] || null;
-  if (!user) return res.status(404).json({ error: 'User not found' });
-  if (!(await bcrypt.compare(current_password, user.password_hash)))
-    return res.status(401).json({ error: 'Current password is incorrect' });
-  const hash = await bcrypt.hash(String(new_password), 12);
-  await pool.query('UPDATE users SET password_hash = ? WHERE id = ?', [hash, user.id]);
-  res.json({ ok: true, message: 'Password updated successfully' });
+  try {
+    const { current_password, new_password } = req.body || {};
+    if (!current_password || !new_password)
+      return res.status(400).json({ error: 'current_password and new_password are required' });
+    if (String(new_password).length < 1)
+      return res.status(400).json({ error: 'New password cannot be empty.' });
+    const [urows] = await pool.query('SELECT * FROM users WHERE id = ?', [req.authUser.id]);
+    const user = urows[0] || null;
+    if (!user) return res.status(404).json({ error: 'User not found' });
+    if (!(await bcrypt.compare(current_password, user.password_hash)))
+      return res.status(401).json({ error: 'Current password is incorrect' });
+    const hash = await bcrypt.hash(String(new_password), 12);
+    await pool.query('UPDATE users SET password_hash = ? WHERE id = ?', [hash, user.id]);
+    res.json({ ok: true, message: 'Password updated successfully' });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/auth/register', async (req, res) => {
@@ -446,11 +450,14 @@ async function logHistory(taskId, project, action, changedBy, before, after, cha
 }
 
 app.get('/api/tasks', async (req, res) => {
-  const [tasks] = await pool.query('SELECT * FROM tasks ORDER BY sort_order, id');
-  res.json(tasks);
+  try {
+    const [tasks] = await pool.query('SELECT * FROM tasks ORDER BY sort_order, id');
+    res.json(tasks);
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 app.post('/api/tasks', requireRole('editor'), async (req, res) => {
+  try {
   const { name } = req.body;
   if (!name) return res.status(400).json({ error: 'name required' });
 
@@ -500,9 +507,11 @@ app.post('/api/tasks', requireRole('editor'), async (req, res) => {
   await logHistory(task.id, task.project, 'create', null, null, task, null);
   res.json(task);
   io.emit('tasks:updated', { project: task.project || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/tasks/:id', requireRole('editor'), async (req, res) => {
+  try {
   const id = Number(req.params.id);
   const [[existing]] = await pool.query('SELECT * FROM tasks WHERE id = ?', [id]);
   if (!existing) return res.status(404).json({ error: 'not found' });
@@ -587,9 +596,11 @@ app.put('/api/tasks/:id', requireRole('editor'), async (req, res) => {
   await logHistory(id, updated.project, 'update', null, existing, updated, null);
   res.json(updated);
   io.emit('tasks:updated', { project: updated.project || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/tasks/:id', requireRole('editor'), async (req, res) => {
+  try {
   const id = Number(req.params.id);
   const [[before]] = await pool.query('SELECT * FROM tasks WHERE id = ?', [id]);
   const [[t]] = await pool.query('SELECT anchor_key, assignee FROM tasks WHERE id = ?', [id]);
@@ -628,49 +639,59 @@ app.delete('/api/tasks/:id', requireRole('editor'), async (req, res) => {
   await cascadeSchedule();
   res.json({ ok: true });
   io.emit('tasks:updated', { project: before?.project || null });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/settings', async (req, res) => {
-  const [rows] = await pool.query('SELECT `key`, value FROM settings');
-  const out = {};
-  for (const r of rows) {
-    try { out[r.key] = JSON.parse(r.value); } catch { out[r.key] = r.value; }
-  }
-  res.json(out);
+  try {
+    const [rows] = await pool.query('SELECT `key`, value FROM settings');
+    const out = {};
+    for (const r of rows) {
+      try { out[r.key] = JSON.parse(r.value); } catch { out[r.key] = r.value; }
+    }
+    res.json(out);
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 app.put('/api/settings/:key', requireRole('admin'), async (req, res) => {
-  const key = req.params.key;
-  const value = JSON.stringify(req.body);
-  await pool.query(
-    'INSERT INTO settings (`key`, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)',
-    [key, value]
-  );
-  res.json({ ok: true });
-  io.emit('settings:updated', { key });
+  try {
+    const key = req.params.key;
+    const value = JSON.stringify(req.body);
+    await pool.query(
+      'INSERT INTO settings (`key`, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)',
+      [key, value]
+    );
+    res.json({ ok: true });
+    io.emit('settings:updated', { key });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ---------- Team members ----------
 const TEAM_DISCIPLINES = new Set(['mech', 'controls', 'pm', 'build', 'wire']);
 
 app.get('/api/team', async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM team_members ORDER BY discipline, sort_order, name');
-  res.json(rows);
+  try {
+    const [rows] = await pool.query('SELECT * FROM team_members ORDER BY discipline, sort_order, name');
+    res.json(rows);
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 app.post('/api/team', requireRole('editor'), async (req, res) => {
-  const name = (req.body.name || '').trim();
-  const discipline = req.body.discipline;
-  if (!name) return res.status(400).json({ error: 'name required' });
-  if (!TEAM_DISCIPLINES.has(discipline)) return res.status(400).json({ error: 'invalid discipline' });
-  const [[maxRow]] = await pool.query('SELECT COALESCE(MAX(sort_order), 0) AS m FROM team_members WHERE discipline = ?', [discipline]);
-  const [result] = await pool.query('INSERT INTO team_members (name, discipline, sort_order) VALUES (?, ?, ?)', [name, discipline, maxRow.m + 1]);
-  const [[row]] = await pool.query('SELECT * FROM team_members WHERE id = ?', [result.insertId]);
-  res.json(row);
-  io.emit('team:updated');
+  try {
+    const name = (req.body.name || '').trim();
+    const discipline = req.body.discipline;
+    if (!name) return res.status(400).json({ error: 'name required' });
+    if (!TEAM_DISCIPLINES.has(discipline)) return res.status(400).json({ error: 'invalid discipline' });
+    const [[maxRow]] = await pool.query('SELECT COALESCE(MAX(sort_order), 0) AS m FROM team_members WHERE discipline = ?', [discipline]);
+    const [result] = await pool.query('INSERT INTO team_members (name, discipline, sort_order) VALUES (?, ?, ?)', [name, discipline, maxRow.m + 1]);
+    const [[row]] = await pool.query('SELECT * FROM team_members WHERE id = ?', [result.insertId]);
+    res.json(row);
+    io.emit('team:updated');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/team/:id', requireRole('editor'), async (req, res) => {
+  try {
   const id = Number(req.params.id);
   const [[existing]] = await pool.query('SELECT * FROM team_members WHERE id = ?', [id]);
   if (!existing) return res.status(404).json({ error: 'not found' });
@@ -694,32 +715,38 @@ app.put('/api/team/:id', requireRole('editor'), async (req, res) => {
   const [[updated]] = await pool.query('SELECT * FROM team_members WHERE id = ?', [id]);
   res.json(updated);
   io.emit('team:updated');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/team/:id', requireRole('editor'), async (req, res) => {
-  const id = Number(req.params.id);
-  await pool.query('DELETE FROM team_members WHERE id = ?', [id]);
-  res.json({ ok: true });
-  io.emit('team:updated');
+  try {
+    const id = Number(req.params.id);
+    await pool.query('DELETE FROM team_members WHERE id = ?', [id]);
+    res.json({ ok: true });
+    io.emit('team:updated');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/team/reorder', requireRole('editor'), async (req, res) => {
   const { order } = req.body;
   if (!Array.isArray(order)) return res.status(400).json({ error: 'order must be array of ids' });
-  const conn = await pool.getConnection();
-  await conn.beginTransaction();
+  let conn;
   try {
-    for (let idx = 0; idx < order.length; idx++) {
-      await conn.query('UPDATE team_members SET sort_order = ? WHERE id = ?', [idx, order[idx]]);
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+    try {
+      for (let idx = 0; idx < order.length; idx++) {
+        await conn.query('UPDATE team_members SET sort_order = ? WHERE id = ?', [idx, order[idx]]);
+      }
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      conn.release();
+      return res.status(500).json({ error: err.message });
     }
-    await conn.commit();
-  } catch (err) {
-    await conn.rollback();
     conn.release();
-    throw err;
-  }
-  conn.release();
-  res.json({ ok: true });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Shop Parts (Parts in Shop) — PM-facing list of parts at the SDC shop ─────
@@ -729,68 +756,80 @@ const _shopBool = (f) => f === 'added_to_bom' || f === 'part_complete';
 const _bt = (c) => `\`${c}\``; // backtick a column name
 
 app.get('/api/shop-parts', async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM shop_parts ORDER BY sort_order, `rank`, id');
-  res.json(rows);
+  try {
+    const [rows] = await pool.query('SELECT * FROM shop_parts ORDER BY sort_order, `rank`, id');
+    res.json(rows);
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 app.post('/api/shop-parts', requireRole('editor'), async (req, res) => {
-  const b = req.body || {};
-  const cols = [], vals = [];
-  for (const f of SHOP_PART_FIELDS) {
-    if (f in b) { cols.push(f); vals.push(_shopBool(f) ? (b[f] ? 1 : 0) : b[f]); }
-  }
-  if (!cols.includes('sort_order')) {
-    const [[m]] = await pool.query('SELECT COALESCE(MAX(sort_order), 0) AS m FROM shop_parts');
-    cols.push('sort_order'); vals.push(m.m + 1);
-  }
-  const [result] = await pool.query(`INSERT INTO shop_parts (${cols.map(_bt).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, vals);
-  const [[row]] = await pool.query('SELECT * FROM shop_parts WHERE id = ?', [result.insertId]);
-  res.json(row);
-  io.emit('shop_parts:updated');
+  try {
+    const b = req.body || {};
+    const cols = [], vals = [];
+    for (const f of SHOP_PART_FIELDS) {
+      if (f in b) { cols.push(f); vals.push(_shopBool(f) ? (b[f] ? 1 : 0) : b[f]); }
+    }
+    if (!cols.includes('sort_order')) {
+      const [[m]] = await pool.query('SELECT COALESCE(MAX(sort_order), 0) AS m FROM shop_parts');
+      cols.push('sort_order'); vals.push(m.m + 1);
+    }
+    const [result] = await pool.query(`INSERT INTO shop_parts (${cols.map(_bt).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, vals);
+    const [[row]] = await pool.query('SELECT * FROM shop_parts WHERE id = ?', [result.insertId]);
+    res.json(row);
+    io.emit('shop_parts:updated');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/shop-parts/:id', requireRole('editor'), async (req, res) => {
-  const id = Number(req.params.id);
-  const [[existing]] = await pool.query('SELECT * FROM shop_parts WHERE id = ?', [id]);
-  if (!existing) return res.status(404).json({ error: 'not found' });
-  const updates = {};
-  for (const f of SHOP_PART_FIELDS) {
-    if (f in req.body) updates[f] = _shopBool(f) ? (req.body[f] ? 1 : 0) : req.body[f];
-  }
-  if (Object.keys(updates).length === 0) return res.json(existing);
-  // Stamp / clear the completion timestamp when part_complete flips.
-  if ('part_complete' in updates) {
-    if (updates.part_complete && !existing.part_complete) updates.completed_on = new Date().toISOString();
-    else if (!updates.part_complete) updates.completed_on = null;
-  }
-  const setClause = Object.keys(updates).map(k => `${_bt(k)} = ?`).join(', ');
-  await pool.query(`UPDATE shop_parts SET ${setClause} WHERE id = ?`, [...Object.values(updates), id]);
-  const [[row]] = await pool.query('SELECT * FROM shop_parts WHERE id = ?', [id]);
-  res.json(row);
-  io.emit('shop_parts:updated');
+  try {
+    const id = Number(req.params.id);
+    const [[existing]] = await pool.query('SELECT * FROM shop_parts WHERE id = ?', [id]);
+    if (!existing) return res.status(404).json({ error: 'not found' });
+    const updates = {};
+    for (const f of SHOP_PART_FIELDS) {
+      if (f in req.body) updates[f] = _shopBool(f) ? (req.body[f] ? 1 : 0) : req.body[f];
+    }
+    if (Object.keys(updates).length === 0) return res.json(existing);
+    if ('part_complete' in updates) {
+      if (updates.part_complete && !existing.part_complete) updates.completed_on = new Date().toISOString();
+      else if (!updates.part_complete) updates.completed_on = null;
+    }
+    const setClause = Object.keys(updates).map(k => `${_bt(k)} = ?`).join(', ');
+    await pool.query(`UPDATE shop_parts SET ${setClause} WHERE id = ?`, [...Object.values(updates), id]);
+    const [[row]] = await pool.query('SELECT * FROM shop_parts WHERE id = ?', [id]);
+    res.json(row);
+    io.emit('shop_parts:updated');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/shop-parts/:id', requireRole('editor'), async (req, res) => {
-  await pool.query('DELETE FROM shop_parts WHERE id = ?', [Number(req.params.id)]);
-  res.json({ ok: true });
-  io.emit('shop_parts:updated');
+  try {
+    await pool.query('DELETE FROM shop_parts WHERE id = ?', [Number(req.params.id)]);
+    res.json({ ok: true });
+    io.emit('shop_parts:updated');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/shop-parts/reorder', requireRole('editor'), async (req, res) => {
   const { order } = req.body;
   if (!Array.isArray(order)) return res.status(400).json({ error: 'order must be array of ids' });
-  const conn = await pool.getConnection();
-  await conn.beginTransaction();
+  let conn;
   try {
-    for (let idx = 0; idx < order.length; idx++) {
-      await conn.query('UPDATE shop_parts SET sort_order = ? WHERE id = ?', [idx, order[idx]]);
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+    try {
+      for (let idx = 0; idx < order.length; idx++) {
+        await conn.query('UPDATE shop_parts SET sort_order = ? WHERE id = ?', [idx, order[idx]]);
+      }
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      conn.release();
+      return res.status(500).json({ error: err.message });
     }
-    await conn.commit();
-  } catch (err) {
-    await conn.rollback(); conn.release(); throw err;
-  }
-  conn.release();
-  res.json({ ok: true });
+    conn.release();
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Vendor POs (Vendor PO Track) — POs sent to outside vendors ──────────────
@@ -798,43 +837,51 @@ const VPO_FIELDS = ['priority', 'po', 'job', 'vendor', 'po_date', 'lead_time', '
 const _vpoBool = (f) => f === 'partial' || f === 'complete';
 
 app.get('/api/vendor-pos', async (req, res) => {
-  const [rows] = await pool.query('SELECT * FROM vendor_pos ORDER BY sort_order, priority, id');
-  res.json(rows);
+  try {
+    const [rows] = await pool.query('SELECT * FROM vendor_pos ORDER BY sort_order, priority, id');
+    res.json(rows);
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 app.post('/api/vendor-pos', requireRole('editor'), async (req, res) => {
-  const b = req.body || {};
-  const cols = [], vals = [];
-  for (const f of VPO_FIELDS) { if (f in b) { cols.push(f); vals.push(_vpoBool(f) ? (b[f] ? 1 : 0) : b[f]); } }
-  if (!cols.includes('sort_order')) { const [[m]] = await pool.query('SELECT COALESCE(MAX(sort_order),0) AS m FROM vendor_pos'); cols.push('sort_order'); vals.push(m.m + 1); }
-  const [result] = await pool.query(`INSERT INTO vendor_pos (${cols.map(_bt).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, vals);
-  const [[row]] = await pool.query('SELECT * FROM vendor_pos WHERE id = ?', [result.insertId]);
-  res.json(row);
-  io.emit('vendor_pos:updated');
+  try {
+    const b = req.body || {};
+    const cols = [], vals = [];
+    for (const f of VPO_FIELDS) { if (f in b) { cols.push(f); vals.push(_vpoBool(f) ? (b[f] ? 1 : 0) : b[f]); } }
+    if (!cols.includes('sort_order')) { const [[m]] = await pool.query('SELECT COALESCE(MAX(sort_order),0) AS m FROM vendor_pos'); cols.push('sort_order'); vals.push(m.m + 1); }
+    const [result] = await pool.query(`INSERT INTO vendor_pos (${cols.map(_bt).join(', ')}) VALUES (${cols.map(() => '?').join(', ')})`, vals);
+    const [[row]] = await pool.query('SELECT * FROM vendor_pos WHERE id = ?', [result.insertId]);
+    res.json(row);
+    io.emit('vendor_pos:updated');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/vendor-pos/:id', requireRole('editor'), async (req, res) => {
-  const id = Number(req.params.id);
-  const [[existing]] = await pool.query('SELECT * FROM vendor_pos WHERE id = ?', [id]);
-  if (!existing) return res.status(404).json({ error: 'not found' });
-  const updates = {};
-  for (const f of VPO_FIELDS) { if (f in req.body) updates[f] = _vpoBool(f) ? (req.body[f] ? 1 : 0) : req.body[f]; }
-  if (Object.keys(updates).length === 0) return res.json(existing);
-  if ('complete' in updates) {
-    if (updates.complete && !existing.complete) updates.completed_on = new Date().toISOString();
-    else if (!updates.complete) updates.completed_on = null;
-  }
-  const setClause = Object.keys(updates).map(k => `${_bt(k)} = ?`).join(', ');
-  await pool.query(`UPDATE vendor_pos SET ${setClause} WHERE id = ?`, [...Object.values(updates), id]);
-  const [[row]] = await pool.query('SELECT * FROM vendor_pos WHERE id = ?', [id]);
-  res.json(row);
-  io.emit('vendor_pos:updated');
+  try {
+    const id = Number(req.params.id);
+    const [[existing]] = await pool.query('SELECT * FROM vendor_pos WHERE id = ?', [id]);
+    if (!existing) return res.status(404).json({ error: 'not found' });
+    const updates = {};
+    for (const f of VPO_FIELDS) { if (f in req.body) updates[f] = _vpoBool(f) ? (req.body[f] ? 1 : 0) : req.body[f]; }
+    if (Object.keys(updates).length === 0) return res.json(existing);
+    if ('complete' in updates) {
+      if (updates.complete && !existing.complete) updates.completed_on = new Date().toISOString();
+      else if (!updates.complete) updates.completed_on = null;
+    }
+    const setClause = Object.keys(updates).map(k => `${_bt(k)} = ?`).join(', ');
+    await pool.query(`UPDATE vendor_pos SET ${setClause} WHERE id = ?`, [...Object.values(updates), id]);
+    const [[row]] = await pool.query('SELECT * FROM vendor_pos WHERE id = ?', [id]);
+    res.json(row);
+    io.emit('vendor_pos:updated');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/vendor-pos/:id', requireRole('editor'), async (req, res) => {
-  await pool.query('DELETE FROM vendor_pos WHERE id = ?', [Number(req.params.id)]);
-  res.json({ ok: true });
-  io.emit('vendor_pos:updated');
+  try {
+    await pool.query('DELETE FROM vendor_pos WHERE id = ?', [Number(req.params.id)]);
+    res.json({ ok: true });
+    io.emit('vendor_pos:updated');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Total ETO bridge (read-only ERP integration, optional) ───────────────────
@@ -1069,20 +1116,23 @@ app.get('/api/hours/:job', async (req, res) => {
 app.post('/api/tasks/reorder', requireRole('editor'), async (req, res) => {
   const { order } = req.body;
   if (!Array.isArray(order)) return res.status(400).json({ error: 'order must be array of ids' });
-  const conn = await pool.getConnection();
-  await conn.beginTransaction();
+  let conn;
   try {
-    for (let idx = 0; idx < order.length; idx++) {
-      await conn.query('UPDATE tasks SET sort_order = ? WHERE id = ?', [idx, order[idx]]);
+    conn = await pool.getConnection();
+    await conn.beginTransaction();
+    try {
+      for (let idx = 0; idx < order.length; idx++) {
+        await conn.query('UPDATE tasks SET sort_order = ? WHERE id = ?', [idx, order[idx]]);
+      }
+      await conn.commit();
+    } catch (err) {
+      await conn.rollback();
+      conn.release();
+      return res.status(500).json({ error: err.message });
     }
-    await conn.commit();
-  } catch (err) {
-    await conn.rollback();
     conn.release();
-    throw err;
-  }
-  conn.release();
-  res.json({ ok: true });
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ---------- Smartsheet (Excel) import ----------
@@ -1682,25 +1732,30 @@ function classifyTask(t) {
 // /api/estimate/create time. Returns null when the project wasn't created from
 // an estimate.
 app.get('/api/project/:project/quote', async (req, res) => {
-  const key = `project_quote:${req.params.project}`;
-  const [[row]] = await pool.query('SELECT value FROM settings WHERE `key` = ?', [key]);
-  if (!row) return res.json(null);
-  try { res.json(JSON.parse(row.value)); }
-  catch { res.json(null); }
+  try {
+    const key = `project_quote:${req.params.project}`;
+    const [[row]] = await pool.query('SELECT value FROM settings WHERE `key` = ?', [key]);
+    if (!row) return res.json(null);
+    try { res.json(JSON.parse(row.value)); } catch { res.json(null); }
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 app.post('/api/project/:project/quote', requireRole('editor'), async (req, res) => {
-  const key = `project_quote:${req.params.project}`;
-  const value = JSON.stringify(req.body || {});
-  await pool.query(
-    'INSERT INTO settings (`key`, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)',
-    [key, value]
-  );
-  res.json({ ok: true });
+  try {
+    const key = `project_quote:${req.params.project}`;
+    const value = JSON.stringify(req.body || {});
+    await pool.query(
+      'INSERT INTO settings (`key`, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)',
+      [key, value]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 app.delete('/api/project/:project/quote', requireRole('editor'), async (req, res) => {
-  await pool.query('DELETE FROM settings WHERE `key` = ?', [`project_quote:${req.params.project}`]);
-  res.json({ ok: true });
+  try {
+    await pool.query('DELETE FROM settings WHERE `key` = ?', [`project_quote:${req.params.project}`]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Persist the actual estimate .xlsx (base64) WITH the project, separate from the
@@ -1708,43 +1763,51 @@ app.delete('/api/project/:project/quote', requireRole('editor'), async (req, res
 // be re-parsed on demand ("Update numbers from estimate"). Stored in its own
 // settings key so the (frequently-loaded) quote payload stays small.
 app.get('/api/project/:project/estimate-file', async (req, res) => {
-  const key = `project_estimate:${req.params.project}`;
-  const [[row]] = await pool.query('SELECT value FROM settings WHERE `key` = ?', [key]);
-  if (!row) return res.json(null);
-  try { res.json(JSON.parse(row.value)); } catch { res.json(null); }
+  try {
+    const key = `project_estimate:${req.params.project}`;
+    const [[row]] = await pool.query('SELECT value FROM settings WHERE `key` = ?', [key]);
+    if (!row) return res.json(null);
+    try { res.json(JSON.parse(row.value)); } catch { res.json(null); }
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 app.post('/api/project/:project/estimate-file', requireRole('editor'), async (req, res) => {
-  const key = `project_estimate:${req.params.project}`;
-  const value = JSON.stringify({
-    name: (req.body && req.body.name) || 'estimate.xlsx',
-    data: (req.body && req.body.data) || '',
-    uploaded_at: new Date().toISOString(),
-  });
-  await pool.query(
-    'INSERT INTO settings (`key`, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)',
-    [key, value]
-  );
-  res.json({ ok: true });
+  try {
+    const key = `project_estimate:${req.params.project}`;
+    const value = JSON.stringify({
+      name: (req.body && req.body.name) || 'estimate.xlsx',
+      data: (req.body && req.body.data) || '',
+      uploaded_at: new Date().toISOString(),
+    });
+    await pool.query(
+      'INSERT INTO settings (`key`, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)',
+      [key, value]
+    );
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Project notes — meeting "sessions" (collapsible, dated) + starred key info.
 // Stored as one JSON blob per project: { sessions: [{ id, title, date,
 // collapsed, items: [{ id, text, starred }] }] }.
 app.get('/api/project/:project/notes', async (req, res) => {
-  const key = `project_notes:${req.params.project}`;
-  const [[row]] = await pool.query('SELECT value FROM settings WHERE `key` = ?', [key]);
-  if (!row) return res.json(null);
-  try { res.json(JSON.parse(row.value)); } catch { res.json(null); }
+  try {
+    const key = `project_notes:${req.params.project}`;
+    const [[row]] = await pool.query('SELECT value FROM settings WHERE `key` = ?', [key]);
+    if (!row) return res.json(null);
+    try { res.json(JSON.parse(row.value)); } catch { res.json(null); }
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 app.post('/api/project/:project/notes', requireRole('editor'), async (req, res) => {
-  const key = `project_notes:${req.params.project}`;
-  const value = JSON.stringify(req.body || { sessions: [] });
-  await pool.query(
-    'INSERT INTO settings (`key`, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)',
-    [key, value]
-  );
-  res.json({ ok: true });
-  io.emit('notes:updated', { project: req.params.project });
+  try {
+    const key = `project_notes:${req.params.project}`;
+    const value = JSON.stringify(req.body || { sessions: [] });
+    await pool.query(
+      'INSERT INTO settings (`key`, value, updated_at) VALUES (?, ?, CURRENT_TIMESTAMP) ON DUPLICATE KEY UPDATE value = VALUES(value), updated_at = VALUES(updated_at)',
+      [key, value]
+    );
+    res.json({ ok: true });
+    io.emit('notes:updated', { project: req.params.project });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/estimate/create', requireRole('admin'), async (req, res) => {
@@ -2395,23 +2458,27 @@ app.post('/api/import/schedule', requireRole('admin'), async (req, res) => {
 // moved relative to the snapshot.
 
 app.post('/api/baseline/set', requireRole('editor'), async (req, res) => {
-  const project = (req.body.project || '').toString().trim();
-  if (!project) return res.status(400).json({ error: 'project required' });
-  const [result] = await pool.query(
-    'UPDATE tasks SET baseline_start_date = start_date, baseline_end_date = end_date WHERE project = ?',
-    [project]
-  );
-  res.json({ ok: true, baselined: result.affectedRows });
+  try {
+    const project = (req.body.project || '').toString().trim();
+    if (!project) return res.status(400).json({ error: 'project required' });
+    const [result] = await pool.query(
+      'UPDATE tasks SET baseline_start_date = start_date, baseline_end_date = end_date WHERE project = ?',
+      [project]
+    );
+    res.json({ ok: true, baselined: result.affectedRows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/baseline/clear', requireRole('editor'), async (req, res) => {
-  const project = (req.body.project || '').toString().trim();
-  if (!project) return res.status(400).json({ error: 'project required' });
-  const [result] = await pool.query(
-    'UPDATE tasks SET baseline_start_date = NULL, baseline_end_date = NULL WHERE project = ?',
-    [project]
-  );
-  res.json({ ok: true, cleared: result.affectedRows });
+  try {
+    const project = (req.body.project || '').toString().trim();
+    if (!project) return res.status(400).json({ error: 'project required' });
+    const [result] = await pool.query(
+      'UPDATE tasks SET baseline_start_date = NULL, baseline_end_date = NULL WHERE project = ?',
+      [project]
+    );
+    res.json({ ok: true, cleared: result.affectedRows });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ---------- Multi-machine: duplicate one machine's tasks into another ----------
@@ -2434,6 +2501,7 @@ app.post('/api/baseline/clear', requireRole('editor'), async (req, res) => {
 // ("M2.Wire waits for M1.Wire"). The override is treated as-is (already
 // expressed as task IDs), so it points at exactly what the user typed.
 app.post('/api/projects/:project/duplicate-machine', requireRole('editor'), async (req, res) => {
+  try {
   const project = req.params.project;
   const {
     sourceMachine,
@@ -2560,6 +2628,7 @@ app.post('/api/projects/:project/duplicate-machine', requireRole('editor'), asyn
     await logHistory(r.id, r.project, 'create', null, null, r, ['cloned_from:' + sourceMachine]);
   }
   res.json({ ok: true, cloned: sourceTasks.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // DELETE /api/projects/:project/machines/:machine
@@ -2621,21 +2690,25 @@ app.delete('/api/projects/:project/machines/:machine', requireRole('editor'), as
 // Per-project comment counts in one query — fuels the small badge on
 // each grid row without N+1 fetches.
 app.get('/api/tasks/comment-counts', async (req, res) => {
-  const project = (req.query.project || '').toString().trim();
-  if (!project) return res.json({});
-  const [rows] = await pool.query(
-    'SELECT c.task_id, COUNT(*) AS cnt FROM task_comments c JOIN tasks t ON t.id = c.task_id WHERE t.project = ? GROUP BY c.task_id',
-    [project]
-  );
-  const map = {};
-  for (const r of rows) map[r.task_id] = r.cnt;
-  res.json(map);
+  try {
+    const project = (req.query.project || '').toString().trim();
+    if (!project) return res.json({});
+    const [rows] = await pool.query(
+      'SELECT c.task_id, COUNT(*) AS cnt FROM task_comments c JOIN tasks t ON t.id = c.task_id WHERE t.project = ? GROUP BY c.task_id',
+      [project]
+    );
+    const map = {};
+    for (const r of rows) map[r.task_id] = r.cnt;
+    res.json(map);
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 app.get('/api/tasks/:id/comments', async (req, res) => {
-  const taskId = Number(req.params.id);
-  const [rows] = await pool.query('SELECT * FROM task_comments WHERE task_id = ? ORDER BY created_at ASC', [taskId]);
-  res.json(rows);
+  try {
+    const taskId = Number(req.params.id);
+    const [rows] = await pool.query('SELECT * FROM task_comments WHERE task_id = ? ORDER BY created_at ASC', [taskId]);
+    res.json(rows);
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 // Post a new comment. Auth (Phase 3) will set req.authUser; until then
@@ -2643,6 +2716,7 @@ app.get('/api/tasks/:id/comments', async (req, res) => {
 // team_members. Notifications are dropped to a notification_log row
 // for future email delivery (Phase 6).
 app.post('/api/tasks/:id/comments', requireRole('viewer'), async (req, res) => {
+  try {
   const taskId = Number(req.params.id);
   const [[task]] = await pool.query('SELECT name, project FROM tasks WHERE id = ?', [taskId]);
   if (!task) return res.status(404).json({ error: 'task not found' });
@@ -2700,16 +2774,19 @@ app.post('/api/tasks/:id/comments', requireRole('viewer'), async (req, res) => {
       }
     } catch (_) {}
   }
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Delete a comment. Until auth lands anyone can delete (single-user
 // trust model); Phase 3 adds an own-comment-or-admin gate.
 app.delete('/api/comments/:id', requireRole('viewer'), async (req, res) => {
-  const id = Number(req.params.id);
-  const [[comment]] = await pool.query('SELECT * FROM task_comments WHERE id = ?', [id]);
-  if (!comment) return res.status(404).json({ error: 'not found' });
-  await pool.query('DELETE FROM task_comments WHERE id = ?', [id]);
-  res.json({ ok: true });
+  try {
+    const id = Number(req.params.id);
+    const [[comment]] = await pool.query('SELECT * FROM task_comments WHERE id = ?', [id]);
+    if (!comment) return res.status(404).json({ error: 'not found' });
+    await pool.query('DELETE FROM task_comments WHERE id = ?', [id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ---------- Audit trail (task_history) ----------
@@ -2722,14 +2799,16 @@ app.delete('/api/comments/:id', requireRole('viewer'), async (req, res) => {
 //   project — required; filter to one project.
 //   limit   — optional; max rows to return (default 200, max 1000).
 app.get('/api/tasks/history', async (req, res) => {
-  const project = (req.query.project || '').toString().trim();
-  if (!project) return res.status(400).json({ error: 'project required' });
-  const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 200));
-  const [rows] = await pool.query(
-    'SELECT * FROM task_history WHERE project = ? ORDER BY changed_at DESC LIMIT ?',
-    [project, limit]
-  );
-  res.json(rows);
+  try {
+    const project = (req.query.project || '').toString().trim();
+    if (!project) return res.status(400).json({ error: 'project required' });
+    const limit = Math.min(1000, Math.max(1, Number(req.query.limit) || 200));
+    const [rows] = await pool.query(
+      'SELECT * FROM task_history WHERE project = ? ORDER BY changed_at DESC LIMIT ?',
+      [project, limit]
+    );
+    res.json(rows);
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 // ---------- Project financial milestones ----------
@@ -2739,75 +2818,85 @@ app.get('/api/tasks/history', async (req, res) => {
 const FIN_FIELDS = ['name', 'percent', 'amount', 'due_date', 'paid', 'predecessors', 'sync_to_anchor', 'sort_order'];
 
 app.get('/api/financials', async (req, res) => {
-  const project = (req.query.project || '').toString();
-  const [rows] = project
-    ? await pool.query('SELECT * FROM project_financials WHERE project = ? ORDER BY sort_order, id', [project])
-    : await pool.query('SELECT * FROM project_financials ORDER BY project, sort_order, id');
-  res.json(rows);
+  try {
+    const project = (req.query.project || '').toString();
+    const [rows] = project
+      ? await pool.query('SELECT * FROM project_financials WHERE project = ? ORDER BY sort_order, id', [project])
+      : await pool.query('SELECT * FROM project_financials ORDER BY project, sort_order, id');
+    res.json(rows);
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 app.post('/api/financials', requireRole('editor'), async (req, res) => {
-  const project = (req.body.project || '').toString().trim();
-  if (!project) return res.status(400).json({ error: 'project required' });
-  const name = (req.body.name || '').toString().trim();
-  const [[maxRow]] = await pool.query('SELECT COALESCE(MAX(sort_order), -1) AS m FROM project_financials WHERE project = ?', [project]);
-  const [result] = await pool.query(
-    'INSERT INTO project_financials (project, name, percent, amount, due_date, paid, predecessors, sync_to_anchor, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
-    [project, name,
-     req.body.percent != null ? Number(req.body.percent) : null,
-     req.body.amount  != null ? Number(req.body.amount)  : null,
-     req.body.due_date || null,
-     req.body.paid ? 1 : 0,
-     req.body.predecessors || null,
-     req.body.sync_to_anchor || null,
-     maxRow.m + 1]
-  );
-  const [[row]] = await pool.query('SELECT * FROM project_financials WHERE id = ?', [result.insertId]);
-  res.json(row);
+  try {
+    const project = (req.body.project || '').toString().trim();
+    if (!project) return res.status(400).json({ error: 'project required' });
+    const name = (req.body.name || '').toString().trim();
+    const [[maxRow]] = await pool.query('SELECT COALESCE(MAX(sort_order), -1) AS m FROM project_financials WHERE project = ?', [project]);
+    const [result] = await pool.query(
+      'INSERT INTO project_financials (project, name, percent, amount, due_date, paid, predecessors, sync_to_anchor, sort_order) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      [project, name,
+       req.body.percent != null ? Number(req.body.percent) : null,
+       req.body.amount  != null ? Number(req.body.amount)  : null,
+       req.body.due_date || null,
+       req.body.paid ? 1 : 0,
+       req.body.predecessors || null,
+       req.body.sync_to_anchor || null,
+       maxRow.m + 1]
+    );
+    const [[row]] = await pool.query('SELECT * FROM project_financials WHERE id = ?', [result.insertId]);
+    res.json(row);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/financials/:id', requireRole('editor'), async (req, res) => {
-  const id = Number(req.params.id);
-  const [[existing]] = await pool.query('SELECT * FROM project_financials WHERE id = ?', [id]);
-  if (!existing) return res.status(404).json({ error: 'not found' });
-  const updates = {};
-  for (const f of FIN_FIELDS) {
-    if (f in req.body) {
-      if (f === 'paid') updates[f] = req.body[f] ? 1 : 0;
-      else if (f === 'percent' || f === 'amount') updates[f] = req.body[f] == null ? null : Number(req.body[f]);
-      else if (f === 'name') updates[f] = (req.body[f] || '').toString().trim();
-      else updates[f] = req.body[f] || null;
+  try {
+    const id = Number(req.params.id);
+    const [[existing]] = await pool.query('SELECT * FROM project_financials WHERE id = ?', [id]);
+    if (!existing) return res.status(404).json({ error: 'not found' });
+    const updates = {};
+    for (const f of FIN_FIELDS) {
+      if (f in req.body) {
+        if (f === 'paid') updates[f] = req.body[f] ? 1 : 0;
+        else if (f === 'percent' || f === 'amount') updates[f] = req.body[f] == null ? null : Number(req.body[f]);
+        else if (f === 'name') updates[f] = (req.body[f] || '').toString().trim();
+        else updates[f] = req.body[f] || null;
+      }
     }
-  }
-  if (Object.keys(updates).length === 0) return res.json(existing);
-  const setClause = Object.keys(updates).map(k => `${k} = ?`).join(', ');
-  await pool.query(`UPDATE project_financials SET ${setClause} WHERE id = ?`, [...Object.values(updates), id]);
-  const [[row]] = await pool.query('SELECT * FROM project_financials WHERE id = ?', [id]);
-  res.json(row);
+    if (Object.keys(updates).length === 0) return res.json(existing);
+    const setClause = Object.keys(updates).map(k => `${k} = ?`).join(', ');
+    await pool.query(`UPDATE project_financials SET ${setClause} WHERE id = ?`, [...Object.values(updates), id]);
+    const [[row]] = await pool.query('SELECT * FROM project_financials WHERE id = ?', [id]);
+    res.json(row);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/financials/:id', requireRole('editor'), async (req, res) => {
-  const id = Number(req.params.id);
-  await pool.query('DELETE FROM project_financials WHERE id = ?', [id]);
-  res.json({ ok: true });
+  try {
+    const id = Number(req.params.id);
+    await pool.query('DELETE FROM project_financials WHERE id = ?', [id]);
+    res.json({ ok: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/financials/seed', requireRole('editor'), async (req, res) => {
-  const project = (req.body.project || '').toString().trim();
-  if (!project) return res.status(400).json({ error: 'project required' });
-  const [[existingFin]] = await pool.query('SELECT COUNT(*) AS n FROM project_financials WHERE project = ?', [project]);
-  if (existingFin.n > 0) return res.json({ ok: true, seeded: 0 });
-  const [[defRow]] = await pool.query("SELECT value FROM settings WHERE `key` = 'default_financial_milestones'");
-  let defaults = [];
-  try { defaults = JSON.parse(defRow?.value || '[]'); } catch { defaults = []; }
-  for (let i = 0; i < defaults.length; i++) {
-    const d = defaults[i];
-    await pool.query(
-      'INSERT INTO project_financials (project, name, percent, amount, due_date, paid, predecessors, sync_to_anchor, sort_order) VALUES (?, ?, ?, NULL, NULL, 0, ?, ?, ?)',
-      [project, d.name, d.percent != null ? Number(d.percent) : null, d.predecessors || null, d.sync_to_anchor || null, i]
-    );
-  }
-  res.json({ ok: true, seeded: defaults.length });
+  try {
+    const project = (req.body.project || '').toString().trim();
+    if (!project) return res.status(400).json({ error: 'project required' });
+    const [[existingFin]] = await pool.query('SELECT COUNT(*) AS n FROM project_financials WHERE project = ?', [project]);
+    if (existingFin.n > 0) return res.json({ ok: true, seeded: 0 });
+    const [[defRow]] = await pool.query("SELECT value FROM settings WHERE `key` = 'default_financial_milestones'");
+    let defaults = [];
+    try { defaults = JSON.parse(defRow?.value || '[]'); } catch { defaults = []; }
+    for (let i = 0; i < defaults.length; i++) {
+      const d = defaults[i];
+      await pool.query(
+        'INSERT INTO project_financials (project, name, percent, amount, due_date, paid, predecessors, sync_to_anchor, sort_order) VALUES (?, ?, ?, NULL, NULL, 0, ?, ?, ?)',
+        [project, d.name, d.percent != null ? Number(d.percent) : null, d.predecessors || null, d.sync_to_anchor || null, i]
+      );
+    }
+    res.json({ ok: true, seeded: defaults.length });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ── Server-Sent Events — real-time push to all open browser tabs ──────────────
@@ -2840,25 +2929,30 @@ function notifyClients(type, extra = {}) {
 
 // ── Projects API ───────────────────────────────────────────────────────────────
 app.get('/api/projects', async (_req, res) => {
-  const [rows] = await pool.query('SELECT * FROM projects ORDER BY name ASC');
-  res.json(rows);
+  try {
+    const [rows] = await pool.query('SELECT * FROM projects ORDER BY name ASC');
+    res.json(rows);
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 app.post('/api/projects', requireRole('editor'), async (req, res) => {
-  const name = (req.body.name || '').toString().trim();
-  if (!name) return res.status(400).json({ error: 'name required' });
-  const [[existing]] = await pool.query('SELECT * FROM projects WHERE name = ?', [name]);
-  if (existing) return res.json(existing);
-  await pool.query(
-    'INSERT INTO projects (name, status, is_template, job_number, workspace) VALUES (?, ?, ?, ?, ?)',
-    [name, req.body.status || 'active', req.body.is_template ? 1 : 0, req.body.job_number || null, req.body.workspace || 'default']
-  );
-  const [[row]] = await pool.query('SELECT * FROM projects WHERE name = ?', [name]);
-  res.status(201).json(row);
-  notifyClients('projects_changed');
+  try {
+    const name = (req.body.name || '').toString().trim();
+    if (!name) return res.status(400).json({ error: 'name required' });
+    const [[existing]] = await pool.query('SELECT * FROM projects WHERE name = ?', [name]);
+    if (existing) return res.json(existing);
+    await pool.query(
+      'INSERT INTO projects (name, status, is_template, job_number, workspace) VALUES (?, ?, ?, ?, ?)',
+      [name, req.body.status || 'active', req.body.is_template ? 1 : 0, req.body.job_number || null, req.body.workspace || 'default']
+    );
+    const [[row]] = await pool.query('SELECT * FROM projects WHERE name = ?', [name]);
+    res.status(201).json(row);
+    notifyClients('projects_changed');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.put('/api/projects/:id', requireRole('editor'), async (req, res) => {
+  try {
   const id = Number(req.params.id);
   const [[existing]] = await pool.query('SELECT * FROM projects WHERE id = ?', [id]);
   if (!existing) return res.status(404).json({ error: 'not found' });
@@ -2887,25 +2981,30 @@ app.put('/api/projects/:id', requireRole('editor'), async (req, res) => {
   const [[row]] = await pool.query('SELECT * FROM projects WHERE id = ?', [id]);
   res.json(row);
   notifyClients('projects_changed');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.delete('/api/projects/:id', requireRole('admin'), async (req, res) => {
-  const id = Number(req.params.id);
-  const [[existing]] = await pool.query('SELECT * FROM projects WHERE id = ?', [id]);
-  if (!existing) return res.status(404).json({ error: 'not found' });
-  await pool.query('DELETE FROM tasks WHERE project = ?', [existing.name]);
-  await pool.query('DELETE FROM project_financials WHERE project = ?', [existing.name]);
-  await pool.query('DELETE FROM projects WHERE id = ?', [id]);
-  res.json({ ok: true });
-  notifyClients('projects_changed');
+  try {
+    const id = Number(req.params.id);
+    const [[existing]] = await pool.query('SELECT * FROM projects WHERE id = ?', [id]);
+    if (!existing) return res.status(404).json({ error: 'not found' });
+    await pool.query('DELETE FROM tasks WHERE project = ?', [existing.name]);
+    await pool.query('DELETE FROM project_financials WHERE project = ?', [existing.name]);
+    await pool.query('DELETE FROM projects WHERE id = ?', [id]);
+    res.json({ ok: true });
+    notifyClients('projects_changed');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.post('/api/projects/ensure', requireRole('editor'), async (req, res) => {
-  const name = (req.body.name || '').toString().trim();
-  if (!name) return res.status(400).json({ error: 'name required' });
-  await pool.query('INSERT IGNORE INTO projects (name) VALUES (?)', [name]);
-  const [[row]] = await pool.query('SELECT * FROM projects WHERE name = ?', [name]);
-  res.json(row);
+  try {
+    const name = (req.body.name || '').toString().trim();
+    if (!name) return res.status(400).json({ error: 'name required' });
+    await pool.query('INSERT IGNORE INTO projects (name) VALUES (?)', [name]);
+    const [[row]] = await pool.query('SELECT * FROM projects WHERE name = ?', [name]);
+    res.json(row);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── Sales → detailed project promotion ────────────────────────────────────
@@ -2974,6 +3073,7 @@ function _promoteDefaultAlloc(bucket) {
 }
 
 app.post('/api/project/:source/promote', requireRole('editor'), async (req, res) => {
+  try {
   const source  = (req.params.source || '').toString().trim();
   const newName = (req.body.newName || '').toString().trim();
   if (!source || !newName) return res.status(400).json({ error: 'source + newName required' });
@@ -3128,6 +3228,7 @@ app.post('/api/project/:source/promote', requireRole('editor'), async (req, res)
   res.json({ project: newName });
   io.emit('tasks:updated', { project: newName });
   sync('tasks');
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // ─── Phase 3 (Auth) — user management (admin only) ────────────────────────
@@ -3135,8 +3236,10 @@ app.post('/api/project/:source/promote', requireRole('editor'), async (req, res)
 // list, create, edit, and soft-delete (active=0) users without touching the
 // CLI. Authentication itself still flows through /api/auth/login.
 app.get('/api/users', requireRole('admin'), async (_req, res) => {
-  const [rows] = await pool.query('SELECT id,email,name,role,active,avatar_color,created_at,last_login FROM users ORDER BY name');
-  res.json(rows);
+  try {
+    const [rows] = await pool.query('SELECT id,email,name,role,active,avatar_color,created_at,last_login FROM users ORDER BY name');
+    res.json(rows);
+  } catch (e) { res.status(503).json({ error: e.message }); }
 });
 
 app.post('/api/users', requireRole('admin'), async (req, res) => {
@@ -3163,6 +3266,7 @@ app.post('/api/users', requireRole('admin'), async (req, res) => {
 });
 
 app.put('/api/users/:id', requireRole('admin'), async (req, res) => {
+  try {
   const id = Number(req.params.id);
   const [[u]] = await pool.query('SELECT * FROM users WHERE id=?', [id]);
   if (!u) return res.status(404).json({ error: 'not found' });
@@ -3184,44 +3288,48 @@ app.put('/api/users/:id', requireRole('admin'), async (req, res) => {
   io.emit('users:updated');
   const [[updUser]] = await pool.query('SELECT id,email,name,role,active,avatar_color,created_at,last_login FROM users WHERE id=?', [id]);
   res.json(updUser);
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Hard-delete a user account. Guarded: you can't delete yourself, and you can't
 // remove the last admin (that would lock everyone out of user management).
 app.delete('/api/users/:id', requireRole('admin'), async (req, res) => {
-  const id = Number(req.params.id);
-  const [[u]] = await pool.query('SELECT id, role FROM users WHERE id=?', [id]);
-  if (!u) return res.status(404).json({ error: 'User not found' });
-  if (req.authUser && Number(req.authUser.id) === id) {
-    return res.status(400).json({ error: "You can't delete your own account." });
-  }
-  if (u.role === 'admin') {
-    const [[{ n }]] = await pool.query("SELECT COUNT(*) AS n FROM users WHERE role='admin' AND id<>?", [id]);
-    if (n === 0) return res.status(400).json({ error: "Can't delete the last admin account." });
-  }
-  await pool.query('DELETE FROM users WHERE id=?', [id]);
-  _activeCache.delete(id);
-  io.emit('users:updated');
-  res.json({ ok: true, deleted: id });
+  try {
+    const id = Number(req.params.id);
+    const [[u]] = await pool.query('SELECT id, role FROM users WHERE id=?', [id]);
+    if (!u) return res.status(404).json({ error: 'User not found' });
+    if (req.authUser && Number(req.authUser.id) === id) {
+      return res.status(400).json({ error: "You can't delete your own account." });
+    }
+    if (u.role === 'admin') {
+      const [[{ n }]] = await pool.query("SELECT COUNT(*) AS n FROM users WHERE role='admin' AND id<>?", [id]);
+      if (n === 0) return res.status(400).json({ error: "Can't delete the last admin account." });
+    }
+    await pool.query('DELETE FROM users WHERE id=?', [id]);
+    _activeCache.delete(id);
+    io.emit('users:updated');
+    res.json({ ok: true, deleted: id });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Admin "unlock this person" — set a new password (or generate a temp one) and
 // re-activate the account in a single call. This is the forgot-password path:
 // an admin resets it here and reads the temp password to the user.
 app.post('/api/users/:id/reset-password', requireRole('admin'), async (req, res) => {
-  const id = Number(req.params.id);
-  const [[u]] = await pool.query('SELECT id,email,name FROM users WHERE id=?', [id]);
-  if (!u) return res.status(404).json({ error: 'User not found' });
-  let pw = (req.body && req.body.new_password ? String(req.body.new_password) : '').trim().slice(0, 1024);
-  let generated = false;
-  if (!pw) { pw = _genTempPassword(); generated = true; }
-  if (pw.length < 1) return res.status(400).json({ error: 'New password cannot be empty.' });
-  const hash = await bcrypt.hash(pw, 12);
-  await pool.query('UPDATE users SET password_hash=?, active=1 WHERE id=?', [hash, id]);
-  _activeCache.delete(id);
-  io.emit('users:updated');
-  // Always echo the password back (admin needs to relay it whether custom or generated).
-  res.json({ ok: true, email: u.email, name: u.name, reactivated: true, tempPassword: pw, generated });
+  try {
+    const id = Number(req.params.id);
+    const [[u]] = await pool.query('SELECT id,email,name FROM users WHERE id=?', [id]);
+    if (!u) return res.status(404).json({ error: 'User not found' });
+    let pw = (req.body && req.body.new_password ? String(req.body.new_password) : '').trim().slice(0, 1024);
+    let generated = false;
+    if (!pw) { pw = _genTempPassword(); generated = true; }
+    if (pw.length < 1) return res.status(400).json({ error: 'New password cannot be empty.' });
+    const hash = await bcrypt.hash(pw, 12);
+    await pool.query('UPDATE users SET password_hash=?, active=1 WHERE id=?', [hash, id]);
+    _activeCache.delete(id);
+    io.emit('users:updated');
+    res.json({ ok: true, email: u.email, name: u.name, reactivated: true, tempPassword: pw, generated });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 // Readable temp password: 3 short words + 2 digits (no ambiguous chars).
@@ -3241,13 +3349,16 @@ function _randomAvatarColor() {
 // Liveness probe (public, no auth). Light by design — pings the DB and reports
 // uptime, but no filesystem paths. Full detail is on /api/status (auth'd).
 app.get('/health', async (_req, res) => {
-  const s = await ops.getStatus(pool);
-  res.json({ ok: s.ok, service: 'scheduler', uptimeSeconds: s.uptimeSeconds, db: { ok: s.db.ok } });
+  try {
+    const s = await ops.getStatus(pool);
+    res.json({ ok: s.ok, service: 'scheduler', uptimeSeconds: s.uptimeSeconds, db: { ok: s.db.ok } });
+  } catch (e) { res.status(503).json({ ok: false, service: 'scheduler', error: e.message }); }
 });
 
 // Full reliability snapshot for the in-app Status panel.
 app.get('/api/status', requireAuth, async (_req, res) => {
-  res.json(await ops.getStatus(pool));
+  try { res.json(await ops.getStatus(pool)); }
+  catch (e) { res.status(503).json({ ok: false, error: e.message }); }
 });
 
 // On-demand DB backup (admin). The nightly cron does this automatically.

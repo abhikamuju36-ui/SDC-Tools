@@ -1653,6 +1653,7 @@ function headerRowHtml(level, label, path, collapsed, dataAttrs = {}) {
 
 function renderTable() {
   const tbody = document.getElementById('tasks-tbody');
+  if (!tbody) return;
   let filtered = applyFilters(state.tasks);
   // v4.46: Actions mode filter. Default 'schedule' hides action items
   // entirely; 'actions' shows ONLY actions; 'combined' shows both.
@@ -1677,13 +1678,15 @@ function renderTable() {
 
   if (filtered.length === 0) {
     tbody.innerHTML = '';
-    empty.classList.remove('hidden');
-    empty.textContent = state.tasks.length === 0
-      ? 'No tasks yet. Click + New Task to add one.'
-      : 'No tasks match the current filters.';
+    if (empty) {
+      empty.classList.remove('hidden');
+      empty.textContent = state.tasks.length === 0
+        ? 'No tasks yet. Click + New Task to add one.'
+        : 'No tasks match the current filters.';
+    }
     return;
   }
-  empty.classList.add('hidden');
+  if (empty) empty.classList.add('hidden');
 
   // Bucket tasks by hierarchy path. Most anchor milestones render as fixed rows
   // outside the section walk (Receipt of PO above 10, FAT between 40/50, Ship
@@ -2017,6 +2020,7 @@ function attachRowDragHandlers(tbody) {
       const movedId = draggedId;
       draggedId = null;
       clearDropMarkers();
+      try {
 
       // Resolve target section + reorder anchor.
       let phase_group = null, department = null, sub_department = null, anchorId = null, anchorBefore = false;
@@ -2061,6 +2065,7 @@ function attachRowDragHandlers(tbody) {
       }
 
       await loadTasks();
+      } catch (_) { await loadTasks().catch(() => {}); }
     });
   });
 }
@@ -2736,11 +2741,12 @@ async function saveCellEdit(id, col, value, task) {
     case 'notes':      data.notes      = (value || '').trim() || null; break;
   }
   if (Object.keys(data).length > 0) {
-    // Snapshot the task BEFORE the change so the toolbar Undo button can roll
-    // it back. We snapshot just the fields we know we might write, so undo
-    // restores precisely what the edit changed — not unrelated columns.
     pushUndoSnapshot(task, Object.keys(data), `Edit ${col} on "${task.name || 'task'}"`);
-    await api.update(id, data);
+    try {
+      await api.update(id, data);
+    } catch (e) {
+      showAlertDialog({ title: 'Save failed', message: 'Could not save the edit: ' + e.message });
+    }
   }
 }
 
@@ -3075,6 +3081,7 @@ function isTaskInCollapsedGroup(task) {
 
 function renderGantt() {
   const container = document.getElementById('gantt-container');
+  if (!container) return;
   const empty = document.getElementById('gantt-empty');
   // Same task ordering as the grid so rows align side-by-side. Tasks inside a
   // collapsed group are dropped here so the Gantt mirrors the grid's visibility.
@@ -5305,6 +5312,7 @@ function zoomToFitPersonal() {
 
 function zoomToFit() {
   const visiblePanel = document.getElementById('schedule-gantt');
+  if (!visiblePanel) return;
   const target = Math.max(300, visiblePanel.clientWidth - 24);
   const filtered = applyFilters(state.tasks).filter(t => t.start_date && t.end_date);
   if (filtered.length === 0 || target <= 0) return;
@@ -5912,6 +5920,7 @@ function drawCustomArrows() {
   const taskById = Object.fromEntries(state.tasks.map(t => [String(t.id), t]));
   const bars = [...svg.querySelectorAll('.bar-wrapper')].map(w => {
     const rect = w.querySelector('.bar');
+    if (!rect) return null;
     const id = String(w.getAttribute('data-id'));
     const x = +rect.getAttribute('x');
     const y = +rect.getAttribute('y');
@@ -5931,7 +5940,7 @@ function drawCustomArrows() {
     }
     return { id, x, y, w: ww, h: hh, milestone: false };
   });
-  const barById = Object.fromEntries(bars.map(b => [b.id, b]));
+  const barById = Object.fromEntries(bars.filter(Boolean).map(b => [b.id, b]));
 
   const arrowColor = '#334155';
   const headSize = 3; // v4.56: half size (was 6)
@@ -7861,8 +7870,10 @@ async function _shopSetPri(id, val) {
   if (!r) return;
   r.priority = String(val);
   renderShopPartsPage();
-  const upd = await api.shopParts.update(id, { priority: String(val) });
-  if (upd) Object.assign(r, upd);
+  try {
+    const upd = await api.shopParts.update(id, { priority: String(val) });
+    if (upd) Object.assign(r, upd);
+  } catch (_) {}
 }
 // Qty +/- stepper — updates in place without a full re-render (keeps scroll/pos).
 async function _shopBumpQty(id, d) {
@@ -7872,8 +7883,10 @@ async function _shopBumpQty(id, d) {
   r.qty = next;
   const inp = document.querySelector(`.sp-qty-inp[data-id="${id}"]`);
   if (inp) inp.value = next;
-  const upd = await api.shopParts.update(id, { qty: next });
-  if (upd) Object.assign(r, upd);
+  try {
+    const upd = await api.shopParts.update(id, { qty: next });
+    if (upd) Object.assign(r, upd);
+  } catch (_) {}
 }
 function _saveShopState() { try { localStorage.setItem('sdcShopPartsState', JSON.stringify(_shopPartsState)); } catch (_) {} }
 
@@ -7928,8 +7941,10 @@ async function _shopReorder(id, dir, scope) {
   const ao = a.sort_order, bo = b.sort_order;
   a.sort_order = bo; b.sort_order = ao;
   renderShopPartsPage();
-  await api.shopParts.update(a.id, { sort_order: a.sort_order });
-  await api.shopParts.update(b.id, { sort_order: b.sort_order });
+  try {
+    await api.shopParts.update(a.id, { sort_order: a.sort_order });
+    await api.shopParts.update(b.id, { sort_order: b.sort_order });
+  } catch (_) {}
 }
 
 function renderShopPartsPage() {
@@ -8155,8 +8170,12 @@ function renderShopPartsPage() {
       comments: f.comments.value.trim() || null,
       part_complete: 0,
     };
-    const created = await api.shopParts.create(data);
-    if (created && created.id) { state.shopParts.push(created); f.reset(); _shopAddOpen = true; renderShopPartsPage(); const pn = document.querySelector('.sp-add-pn'); if (pn) pn.focus(); }
+    let created;
+    try { created = await api.shopParts.create(data); } catch (e) { showAlertDialog({ title: 'Add failed', message: e.message }); return; }
+    if (created && created.id) {
+      if (!Array.isArray(state.shopParts)) state.shopParts = [];
+      state.shopParts.push(created); f.reset(); _shopAddOpen = true; renderShopPartsPage(); const pn = document.querySelector('.sp-add-pn'); if (pn) pn.focus();
+    }
   });
   // Toggle the collapsible add form
   const addToggle = root.querySelector('[data-action="toggle-add"]');
@@ -11547,7 +11566,7 @@ async function deleteProject(project) {
   // anchor_key first on those rows.
   for (const t of tasks) {
     if (t.anchor_key) {
-      await api.update(t.id, { anchor_key: null });
+      try { await api.update(t.id, { anchor_key: null }); } catch (_) {}
     }
   }
   for (const t of tasks) {
@@ -11599,7 +11618,7 @@ async function doMergeProjects(source, target) {
     + `This re-tags every row's project field; predecessors / dates / IDs are preserved.`);
   if (!ok) return;
   for (const t of sourceTasks) {
-    await api.update(t.id, { project: target });
+    try { await api.update(t.id, { project: target }); } catch (_) {}
   }
   // Switch to the merged-into project so the user sees the result.
   state.filters.project = target;
@@ -11623,7 +11642,7 @@ async function renameProject(oldName) {
   }
   const tasks = state.tasks.filter(t => t.project === oldName);
   for (const t of tasks) {
-    await api.update(t.id, { project: trimmed });
+    try { await api.update(t.id, { project: trimmed }); } catch (_) {}
   }
   // Migrate the open-tabs list, template flag, and workspace assignment so
   // the new name keeps the exact same UI state the old one had.
@@ -11738,7 +11757,7 @@ async function mergeOrphansInto(orphans, projectName, opts = {}) {
   const trimmed = String(projectName || '').trim();
   if (!trimmed || orphans.length === 0) return;
   for (const t of orphans) {
-    await api.update(t.id, { project: trimmed });
+    try { await api.update(t.id, { project: trimmed }); } catch (_) {}
   }
   if (!state.openProjects.includes(trimmed)) state.openProjects.push(trimmed);
   state.filters.project = trimmed;
@@ -11896,21 +11915,25 @@ async function duplicateProject(source, targetName = null) {
       notes: t.notes || null,
       anchor_key: t.anchor_key || null,
     };
-    const created = await api.create(payload);
-    oldToNewId[t.id] = created.id;
+    try {
+      const created = await api.create(payload);
+      if (created && created.id) oldToNewId[t.id] = created.id;
+    } catch (_) {}
   }
   // Second pass: rewrite predecessors with the new IDs.
   for (const t of sourceTasks) {
     if (!t.predecessors) continue;
+    const newId = oldToNewId[t.id];
+    if (!newId) continue;
     const remapped = String(t.predecessors).split(',').map(s => {
       const trimmedRef = s.trim();
       const m = trimmedRef.match(/^(\d+)(.*)$/);
       if (!m) return trimmedRef;
       const oldId = Number(m[1]);
-      const newId = oldToNewId[oldId];
-      return newId != null ? `${newId}${m[2]}` : trimmedRef;
+      const mappedId = oldToNewId[oldId];
+      return mappedId != null ? `${mappedId}${m[2]}` : trimmedRef;
     }).join(', ');
-    if (remapped) await api.update(oldToNewId[t.id], { predecessors: remapped });
+    if (remapped) try { await api.update(newId, { predecessors: remapped }); } catch (_) {}
   }
   // Clone the source's FINANCIAL MILESTONES too, carrying their predecessor
   // links over. Tasks were cloned in the same sort_order, so line-number
@@ -14246,6 +14269,7 @@ function newTaskInline() {
     return;
   }
   const btn = document.getElementById('btn-add');
+  if (!btn) return;
   const r = btn.getBoundingClientRect();
   showSectionPicker(r.right - 280, r.bottom + 6, async (g, d, s) => {
     const project = state.filters.project;
@@ -14403,14 +14427,16 @@ async function deleteTaskById(id) {
   // Backlog deletes like any other row.
   const t = state.tasks.find(x => x.id === id);
   if (t && inferredAnchorKey(t)) {
-    await showAlertDialog({
-      title: 'Anchor milestones are protected',
-      message: `"${t.name}" is an anchor milestone and can't be deleted. You can still edit its date, predecessors, and progress like any other task.`,
-    });
+    try {
+      await showAlertDialog({
+        title: 'Anchor milestones are protected',
+        message: `"${t.name}" is an anchor milestone and can't be deleted. You can still edit its date, predecessors, and progress like any other task.`,
+      });
+    } catch (_) {}
     return;
   }
-  await api.remove(id);
-  await loadTasks();
+  try { await api.remove(id); } catch (_) {}
+  try { await loadTasks(); } catch (_) {}
 }
 
 // Right-click on a group header → "Add task here" creates a task directly in that
@@ -14577,12 +14603,11 @@ async function createTaskBelow(taskId) {
     phase_group: t.phase_group || null,
     department: t.department || null,
     sub_department: t.sub_department || null,
-    // Inherit machine tag too — adding a row below an M2 task should put
-    // the new row IN M2, not silently make it shared.
     machine: t.machine || null,
     sort_order: sortOrder,
   };
-  const created = await api.create(payload);
+  let created;
+  try { created = await api.create(payload); } catch (e) { showAlertDialog({ title: 'Add failed', message: e.message }); return; }
   if (!created || created.error) return;
   // Record an undo entry so the topbar Undo can remove an accidental add.
   // kind:'create' → undo deletes this row; redo re-creates it from the payload.
@@ -14591,7 +14616,7 @@ async function createTaskBelow(taskId) {
   state.redoStack = [];
   syncUndoButton();
   syncRedoButton();
-  await loadTasks();
+  try { await loadTasks(); } catch (_) {}
   const newTr = document.querySelector(`tr[data-id="${created.id}"]`);
   if (newTr) {
     newTr.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
