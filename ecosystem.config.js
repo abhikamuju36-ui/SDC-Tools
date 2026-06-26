@@ -145,25 +145,6 @@ module.exports = {
       merge_logs:    true,
     },
 
-    // ── SDC Scheduler — Repo Sync ───────────────────────────────────────────
-    // After sdc-scheduler-updater pulls new files from danbelliveau2/SDC_Scheduler,
-    // this job commits and pushes those changes to the centralized library repo
-    // so the two repos stay in sync. Runs every 2 min alongside the updater.
-    {
-      name:          'sdc-scheduler-repo-sync',
-      script:        'scripts/repo-sync.js',
-      cwd:           './SDC_Scheduler',
-      env: {
-        NODE_ENV:         'production',
-        NODE_NO_WARNINGS: '1',
-      },
-      watch:         false,
-      max_restarts:  5,
-      restart_delay: 60000,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      merge_logs:    true,
-    },
-
     // ── SDC Scheduler ───────────────────────────────────────────────────────
     {
       name:          'sdc-scheduler',
@@ -184,6 +165,8 @@ module.exports = {
         ANTHROPIC_API_KEY:    process.env.ANTHROPIC_API_KEY || '',
         ANTHROPIC_MODEL:      'claude-sonnet-4-6',
         ANTHROPIC_MAX_TOKENS: '1024',
+        // mysqldump is not on PATH — use the full install path
+        MYSQLDUMP_PATH: 'C:\\Program Files\\MySQL\\MySQL Server 9.7\\bin\\mysqldump.exe',
       },
       watch:         false,
       max_restarts:  10,
