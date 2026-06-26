@@ -12,7 +12,7 @@ SDC Tools is a Windows desktop application (Electron) that bundles five internal
 |-----|------|-------------|------------|
 | **Assemblies Library** | 4001 | SolidWorks CAD assembly search, preview & vault management | SQLite (`assemblies.db`) |
 | **Build Readiness Report** | 4002 | Live ETO project build status — parts, prints, sign-offs | ETO on-prem SQL Server + Smartsheet |
-| **SDC Scheduler** | 4003 | Gantt scheduling, resource loading, Smartsheet sync | SQLite + Smartsheet |
+| **SDC Scheduler** | 4003 | Gantt scheduling, procurement tracking, job hours, SDC Assistant | MySQL + ETO on-prem SQL Server |
 | **State Logic Builder** | 4004 | Visual PLC state-machine editor → Allen-Bradley L5X export | File-based (JSON projects) |
 | **SDC Calendar** | 4005 | Company-wide calendar — events, birthdays, paydays, Scheduler sync | SQLite + Smartsheet |
 
@@ -98,8 +98,30 @@ PORT=3000
 
 ### SDC Scheduler (`SDC_Scheduler/.env`)
 ```env
-SMARTSHEET_API_TOKEN=your_token
-SESSION_SECRET=your_session_secret
+# MySQL — primary database (required)
+DB_HOST=SERVER-APP1
+DB_PORT=3306
+DB_NAME=sdc_scheduler
+DB_USER=your_user
+DB_PASSWORD=your_password
+
+# Auth (required when AUTH_ENABLED=true)
+AUTH_ENABLED=true
+JWT_SECRET=your_jwt_secret
+
+# ETO on-prem SQL Server (optional — procurement + job hours features)
+ETO_HOST=SERVER-APP1.stevendouglas.local
+ETO_DATABASE=SDC
+ETO_USER=your_user
+ETO_PASSWORD=your_password
+ETO_DOMAIN=stevendouglas
+ETO_PORT=1433
+
+# Anthropic Claude API (optional — SDC Assistant AI feature)
+ANTHROPIC_API_KEY=your_key
+
+PORT=3000
+APP_URL=http://SERVER-APP1:4003
 ```
 
 ### State Logic Builder (`state_logic_builder/.env`)
@@ -173,7 +195,13 @@ SDC-Tools/
 │
 ├── Assembilies library main/       # Assemblies Library (Express + React/Vite + SQLite)
 ├── Build_Readiness_Report/         # Build Readiness (Express + React, ETO SQL + Smartsheet)
-├── SDC_Scheduler/                  # SDC Scheduler (Express + vanilla JS + SQLite)
+├── SDC_Scheduler/                  # SDC Scheduler — standalone repo (own .git)
+│   ├── public/                     #   Vanilla JS single-page app
+│   ├── routes/                     #   Express route modules (13 files)
+│   ├── lib/                        #   Backend helpers (auth, ops, agent, email, cron, ETO, hours, MySQL)
+│   ├── scripts/                    #   Utilities (auto-updater, create-admin)
+│   ├── server.js                   #   Express + Socket.io entry
+│   └── db.js                       #   MySQL schema bootstrap
 ├── state_logic_builder/            # State Logic Builder (Express + React/Vite)
 ├── SDC Centrailzed calender/       # SDC Calendar (Express + vanilla JS)
 │
@@ -201,7 +229,7 @@ SDC-Tools/
 | Launcher UI | React 18, Vite 5 |
 | Sub-app servers | Node.js 22, Express 4 |
 | Sub-app frontends | React/Vite (Assemblies, State Logic, BRR), Vanilla JS (Scheduler, Calendar) |
-| Databases | SQLite/better-sqlite3 (Assemblies, Scheduler, Calendar), ETO on-prem MSSQL (BRR) |
+| Databases | SQLite (Assemblies, Calendar), MySQL `mysql2` (Scheduler), ETO on-prem MSSQL (BRR, Scheduler job-hours) |
 | Authentication | Azure AD — MSAL Node (shell only) |
 | External sync | Smartsheet API (Scheduler, Calendar, BRR) |
 | CI/CD | GitHub Actions → GitHub Releases (shell installer) |

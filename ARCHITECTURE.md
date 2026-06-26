@@ -271,10 +271,14 @@ The preload script exposes `window.shellAPI` to the React renderer:
 - **Key feature**: ETO project readiness checklist — pulls from Smartsheet, displays sign-off status per project
 
 ### SDC Scheduler (port 4003)
-- **Backend**: Express + SQLite (`node:sqlite` built-in) for local task data + `mssql` for Azure sync
-- **Frontend**: Vanilla HTML/JS (no build step)
-- **Key feature**: Full Gantt chart with predecessor scheduling (FS/SS/FF/SF + lag in business days), resource loading, two-way Smartsheet sync
-- **Performance**: cascade scheduler uses batched transactions; all hot queries are indexed
+- **Backend**: Express + Socket.io + MySQL (`mysql2` pool via `lib/mysqlDb.js`) — 11 tables, schema auto-migrated at boot
+- **Frontend**: Vanilla JS single-page app (`public/app.js` ~15k lines, `public/styles.css`)
+- **Routes**: 13 Express route modules in `routes/` — tasks, projects, team, users, settings, shop-parts, vendor-POs, financials, ETO, agent, hours, auth
+- **Backend helpers**: all in `lib/` — auth (JWT), ops (backups/health), agent (Claude AI), emailService, cronJobs, backfillProjects, hoursApi, etoDb, mysqlDb
+- **ETO integration**: read-only `lib/etoDb.js` (MSSQL) feeds procurement BOM, vendor PO sync, and job hours data
+- **Key features**: Gantt scheduling (predecessor FS/SS/FF/SF + lag), procurement drawer, vendor PO tracking, job hours chart (Quoted vs Actual by function/billing group), SDC Assistant (Claude AI), Socket.io real-time presence
+- **Two developers**: Dan (danbelliveau2) owns `public/`; Abhi owns backend. Documented in `CLAUDE.md`
+- **Performance**: cascade scheduler batches DB writes; hot queries indexed; ETO sync serialised to avoid overlap
 
 ### State Logic Builder (port 4004)
 - **Backend**: Express + `mssql`
@@ -356,11 +360,25 @@ SDC-Tools/
 │   ├── server/
 │   └── package.json
 │
-├── SDC_Scheduler/
-│   ├── public/                     Vanilla JS frontend
-│   ├── server.js                   Express server + all API routes
-│   ├── db.js                       SQLite schema + migrations
-│   ├── azureDb.js                  Azure SQL pool (for sync routes)
+├── SDC_Scheduler/                  Standalone repo (own .git → danbelliveau2/SDC_Scheduler)
+│   ├── public/                     Vanilla JS SPA (app.js, styles.css, index.html)
+│   ├── routes/                     13 Express route modules
+│   ├── lib/                        Backend helpers
+│   │   ├── mysqlDb.js              MySQL connection pool
+│   │   ├── auth.js                 JWT middleware
+│   │   ├── ops.js                  Backups, health, status
+│   │   ├── agent.js                Claude AI (SDC Assistant)
+│   │   ├── emailService.js         SMTP mention + digest emails
+│   │   ├── cronJobs.js             Scheduled tasks
+│   │   ├── backfillProjects.js     Project backfill from ETO
+│   │   ├── etoDb.js                ETO on-prem MSSQL (read-only)
+│   │   └── hoursApi.js             Job hours bridge
+│   ├── scripts/                    Utilities
+│   │   ├── server-auto-update.js   PM2 auto-pull + restart (port 4013)
+│   │   └── create-admin.js         CLI: create/reset admin user
+│   ├── server.js                   Express + Socket.io entry point
+│   ├── db.js                       MySQL schema bootstrap (11 tables)
+│   ├── CLAUDE.md                   AI agent working rules (two-dev workflow)
 │   └── package.json
 │
 ├── state_logic_builder/
