@@ -257,6 +257,15 @@ export default function Sidebar({
     }
     if (href === "/etc") handleEtcClick(e);
   }
+
+  // Hard-refresh the current page — same intent as Ctrl+Shift+R: reloads the
+  // route so its server components re-read the database (fresh grid data).
+  // Warns first if there are unsaved New ETC edits, matching the nav-away and
+  // sign-out guards, so a reload can't silently discard typed changes.
+  function handleRefresh() {
+    if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Refresh anyway?")) return;
+    window.location.reload();
+  }
   const collapsed = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const persistedWidth = useSyncExternalStore(subscribeWidth, getWidthSnapshot, getServerWidthSnapshot);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
@@ -358,6 +367,18 @@ export default function Sidebar({
       </nav>
 
       <AppTextSize collapsed={collapsed} />
+
+      <button
+        onClick={handleRefresh}
+        title="Refresh this page (reload — re-reads the latest data)"
+        className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3 text-xs font-medium text-sdc-blue-100/70 hover:bg-white/5 hover:text-white"
+      >
+        <Icon>
+          <path d="M12.8 5.2 A5 5 0 1 0 13.6 9.2" strokeLinecap="round" strokeLinejoin="round" />
+          <path d="M13.2 2 L13.2 5.4 L9.8 5.4" strokeLinecap="round" strokeLinejoin="round" />
+        </Icon>
+        {!collapsed && <span>Refresh</span>}
+      </button>
 
       <button
         onClick={toggleCollapsed}
