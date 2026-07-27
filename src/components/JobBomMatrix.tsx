@@ -53,7 +53,7 @@ export function JobBomMatrix({ bom }: { bom: JobBom }) {
                 <span className="ml-3 font-normal normal-case tracking-normal">
                   <button type="button" onClick={() => setCollapsed(new Set())} className="text-[11px] text-white/70 underline decoration-white/30 hover:text-white">expand all</button>
                   <span className="px-1 text-white/30">·</span>
-                  <button type="button" onClick={() => setCollapsed(new Set(allParents))} className="text-[11px] text-white/70 underline decoration-white/30 hover:text-white">collapse</button>
+                  <button type="button" onClick={() => setCollapsed(new Set(allParents))} className="text-[11px] text-white/70 underline decoration-white/30 hover:text-white">collapse all</button>
                 </span>
               </th>
               <th className="whitespace-nowrap px-3 py-2.5 text-right font-semibold">Total Cost</th>

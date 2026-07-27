@@ -25,6 +25,20 @@ export function EmployeesGrid({
   const visible = useMemo(() => (showInactive ? rows : rows.filter((r) => r.active)), [rows, showInactive]);
   const activeCount = rows.filter((r) => r.active).length;
 
+  // While searching with inactive hidden, count how many INACTIVE people match
+  // so we can offer to reveal them — otherwise a departed employee is
+  // unfindable (search only filters the visible/active rows) and reactivation,
+  // the whole point of soft-delete, is hard to discover.
+  const hiddenInactiveMatches = useMemo(() => {
+    const s = q.trim().toLowerCase();
+    if (!s || showInactive) return 0;
+    return rows.filter(
+      (r) =>
+        !r.active &&
+        [r.name, r.discipline, r.supervisor, r.department].some((v) => String(v ?? "").toLowerCase().includes(s)),
+    ).length;
+  }, [rows, q, showInactive]);
+
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-3">
@@ -47,6 +61,15 @@ export function EmployeesGrid({
         <span className="text-xs text-sdc-gray-400">
           {activeCount} active{showInactive ? ` · ${rows.length - activeCount} inactive` : ""}
         </span>
+        {hiddenInactiveMatches > 0 && (
+          <button
+            type="button"
+            onClick={() => setShowInactive(true)}
+            className="text-xs font-medium text-sdc-blue hover:underline"
+          >
+            {hiddenInactiveMatches} inactive {hiddenInactiveMatches === 1 ? "person matches" : "people match"} — show them
+          </button>
+        )}
       </div>
       <Inner rows={visible} disciplines={disciplines} supervisors={supervisors} quickFilter={q} />
     </>
