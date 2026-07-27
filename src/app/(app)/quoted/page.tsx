@@ -212,10 +212,14 @@ export default async function QuotedPage({
     // Job Id is a string column — re-sort numerically (979 before 1020 before 10000).
     jobs.sort((a, b) => (sortDir === "desc" ? -1 : 1) * compareJobIds(a.jobId, b.jobId));
   }
-  // Non-billable projects always sink to the bottom, regardless of the chosen
-  // sort — Array#sort is stable, so this only reorders across the billable/
-  // non-billable boundary and leaves each group's existing order untouched.
-  jobs.sort((a, b) => Number(!a.billable) - Number(!b.billable));
+  // SDC's own internal projects (customer "SDC" / "Steven Douglas Corp.")
+  // always sink to the very bottom, regardless of the chosen sort. This is
+  // keyed on isSdcCustomer — the SAME predicate that gives them their
+  // light-blue row highlight below — so ordering and highlight always agree,
+  // even if a row's stored billable flag is momentarily stale. Array#sort is
+  // stable, so this only reorders across the SDC / non-SDC boundary and leaves
+  // each group's existing order untouched.
+  jobs.sort((a, b) => Number(isSdcCustomer(a.customer)) - Number(isSdcCustomer(b.customer)));
 
   // Which of these jobs have a schedule in the SDC Scheduler (+ its base URL),
   // so each row can show an "open in Scheduler" icon only where it leads
