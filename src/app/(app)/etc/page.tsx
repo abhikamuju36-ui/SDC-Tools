@@ -31,6 +31,8 @@ import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/executio
 import { PageTitle } from "@/components/ui/Typography";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { MonthYearSelect } from "@/components/MonthYearSelect";
+import { SchedulerJobLink } from "@/components/SchedulerJobLink";
+import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, TABLE_HEADER_ROW, TABLE_GRID } from "@/components/ui/classnames";
 
 // Matches the real "Managers Fill Out" sheet's column shape exactly — every
@@ -481,6 +483,10 @@ export default async function MonthlyEtcPage({
       })
     : jobs;
 
+  // "Open in Scheduler" icon target + which of these jobs actually have a
+  // Scheduler project (fail-soft empty set when its DB isn't configured).
+  const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers } = await getSchedulerLinkContext();
+
   // Standard Sheet columns, shown inline only once the password gate is
   // unlocked (same cookie the /standard-sheet tab uses). Numbers mirror that
   // page exactly for this month, scoped to the jobs this grid renders — the
@@ -786,7 +792,7 @@ export default async function MonthlyEtcPage({
                     <th
                       rowSpan={5}
                       style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
-                      className="sticky left-[120px] z-10 border-r-8 border-[#808080] bg-sdc-gray-100 px-3 py-3 align-bottom"
+                      className="sticky left-[7.5rem] z-10 border-r-8 border-[#808080] bg-sdc-gray-100 px-3 py-3 align-bottom"
                     >
                       Job Name
                       <div
@@ -991,10 +997,18 @@ export default async function MonthlyEtcPage({
                       {showJobName && (
                         <td
                           style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
-                          className={`sticky left-[120px] z-10 truncate border-r-8 border-[#808080] px-3 py-1 text-center font-medium text-sdc-navy ${zebraSticky}`}
+                          className={`sticky left-[7.5rem] z-10 border-r-8 border-[#808080] px-3 py-1 text-center font-medium text-sdc-navy ${zebraSticky}`}
                           title={job.jobName}
                         >
-                          {job.jobName}
+                          <div className="flex min-w-0 items-center justify-center gap-1.5">
+                            <span className="min-w-0 truncate">{job.jobName}</span>
+                            <SchedulerJobLink
+                              jobId={job.jobId}
+                              jobName={job.jobName}
+                              baseUrl={schedulerBaseUrl}
+                              available={schedulerJobNumbers.has(job.jobId)}
+                            />
+                          </div>
                         </td>
                       )}
                       {visibleCols.map((s, sIdx) => {

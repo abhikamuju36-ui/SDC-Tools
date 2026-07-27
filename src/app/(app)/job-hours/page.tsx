@@ -6,6 +6,8 @@ import { listDashboardJobs, getJobHoursDashboard, defaultDashboardJobId } from "
 import { getJobPartsCost, type JobPartsCost } from "@/lib/sync-totaleto";
 import { getExecutionEtcByJob } from "@/lib/execution-etc";
 import { PartsCostSection } from "@/components/PartsCostSection";
+import { SchedulerJobLink } from "@/components/SchedulerJobLink";
+import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 
 // "Job Hour Details" — web recreation of the Power BI "Job Hours Report —
 // Management Level" drillthrough. Supports one OR many jobs (aggregated), like
@@ -33,6 +35,10 @@ export default async function JobHoursPage({
   }
   const selectedInternalIds = selectedJobIds.map((s) => idByJobId.get(s)!).filter((n) => n != null);
   const data = selectedInternalIds.length ? await getJobHoursDashboard(selectedInternalIds) : null;
+
+  // "Open in Scheduler" icon target + which jobs have a Scheduler project
+  // (fail-soft empty set when its DB isn't configured).
+  const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers } = await getSchedulerLinkContext();
 
   // Parts Cost — live from TotalETO — aggregated across every selected job, plus
   // the parts New ETC (Estimated to Purchase). Best-effort: a TotalETO hiccup
@@ -76,8 +82,15 @@ export default async function JobHoursPage({
       {data ? (
         <>
           <div className={`${card("p-4")} mb-5`}>
-            <p className="text-lg font-semibold text-sdc-navy">
-              {data.job.jobId} — {data.job.jobName}
+            <p className="flex items-center gap-2 text-lg font-semibold text-sdc-navy">
+              <span>{data.job.jobId} — {data.job.jobName}</span>
+              <SchedulerJobLink
+                jobId={data.job.jobId}
+                jobName={data.job.jobName}
+                baseUrl={schedulerBaseUrl}
+                available={schedulerJobNumbers.has(data.job.jobId)}
+                className="shrink-0 text-sdc-gray-400 hover:text-sdc-blue"
+              />
             </p>
             <p className="text-xs text-sdc-gray-500">
               {data.job.customer ?? "—"} · {data.job.status}

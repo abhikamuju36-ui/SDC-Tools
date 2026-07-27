@@ -72,3 +72,27 @@ export async function fetchSchedulerTeam(includeInactive = false): Promise<Sched
     specialty: r.specialty == null ? null : String(r.specialty),
   }));
 }
+
+// Set of ETC job numbers that already have a project in the Scheduler
+// (projects.job_number is stamped with the ETC jobId when a schedule is
+// created from an ETC job — see SDC_Scheduler routes/projects.js). Used by the
+// grids to show the "open in Scheduler" icon ONLY for jobs that actually have a
+// schedule, so it's never a dead link.
+//
+// Fail-SOFT (unlike fetchSchedulerTeam): if the read-only Scheduler DB isn't
+// configured, or the query fails, this returns an empty set instead of throwing
+// — the icon simply doesn't render and the rest of the page is unaffected.
+export async function fetchSchedulerProjectJobNumbers(): Promise<Set<string>> {
+  if (!isSchedulerDbConfigured()) return new Set();
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT DISTINCT job_number
+         FROM projects
+        WHERE job_number IS NOT NULL AND job_number <> ''`,
+    );
+    return new Set(rows.map((r) => String(r.job_number).trim()).filter(Boolean));
+  } catch {
+    return new Set();
+  }
+}

@@ -14,6 +14,8 @@ import { SortButton } from "@/components/SortButton";
 import { AddProjectButton } from "@/components/AddProjectButton";
 import { NewProjectRows } from "@/components/NewProjectRows";
 import { DateCell } from "@/components/DateCell";
+import { SchedulerJobLink } from "@/components/SchedulerJobLink";
+import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 import { saveQuotedHours } from "@/lib/quoted-actions";
 
 // Header banding, matching the real "Estimated Hours" tab's column colors
@@ -215,6 +217,11 @@ export default async function QuotedPage({
   // non-billable boundary and leaves each group's existing order untouched.
   jobs.sort((a, b) => Number(!a.billable) - Number(!b.billable));
 
+  // Which of these jobs have a schedule in the SDC Scheduler (+ its base URL),
+  // so each row can show an "open in Scheduler" icon only where it leads
+  // somewhere. Fail-soft: empty set when the Scheduler DB isn't configured.
+  const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers } = await getSchedulerLinkContext();
+
   const visibleSectionsByPhase = new Map(
     PHASE_GROUPS.map((g) => [g.phase, SECTIONS.filter((s) => s.phase === g.phase && visibleSet.has(s.code))])
   );
@@ -281,17 +288,17 @@ export default async function QuotedPage({
         <table className={`text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
           <thead className="sticky top-0 z-20 bg-sdc-gray-100">
             <tr className={TABLE_HEADER_ROW}>
-              <th rowSpan={3} className="sticky left-0 z-10 w-8 min-w-8 bg-sdc-gray-100 px-1 py-2 text-center align-bottom">
+              <th rowSpan={3} className="frozen-col sticky left-0 z-10 w-8 min-w-8 bg-sdc-gray-100 px-1 py-2 text-center align-bottom">
                 #
               </th>
-              <th rowSpan={3} className="sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden truncate bg-sdc-gray-100 px-2 py-2 align-bottom">
+              <th rowSpan={3} className="frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden truncate bg-sdc-gray-100 px-2 py-2 align-bottom">
                 <SortButton sortKey="jobId" label="Job Id" currentSort={sortKey} currentDir={sortDir} />
               </th>
               {show("job") && (
                 <th
                   rowSpan={3}
                   style={{ width: "var(--job-col-width, 280px)", minWidth: "var(--job-col-width, 280px)" }}
-                  className="sticky left-[112px] z-10 border-l border-r border-sdc-border bg-sdc-gray-100 px-2 py-2 align-bottom"
+                  className="frozen-col frozen-col-last sticky left-[7rem] z-10 border-l border-r border-sdc-border bg-sdc-gray-100 px-2 py-2 align-bottom"
                 >
                   Job
                   <div
@@ -451,12 +458,12 @@ export default async function QuotedPage({
               const zebraSticky = isSdc ? "bg-[#caedfb]" : i % 2 === 1 ? "bg-sdc-gray-50" : "bg-white";
               return (
                 <tr key={job.id} className={`hover:bg-sdc-blue-light/40 ${zebra}`}>
-                  <td className={`sticky left-0 z-10 w-8 min-w-8 px-1 py-1.5 text-center text-[10px] text-sdc-gray-400 ${zebraSticky}`}>
+                  <td className={`frozen-col sticky left-0 z-10 w-8 min-w-8 px-1 py-1.5 text-center text-[10px] text-sdc-gray-400 ${zebraSticky}`}>
                     {i + 1}
                   </td>
                   <td
                     title={`Open ${job.jobId} in Job Hour Details`}
-                    className={`sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden truncate px-2 py-1.5 text-center font-mono text-[10px] ${zebraSticky}`}
+                    className={`frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden truncate px-2 py-1.5 text-center font-mono text-[10px] ${zebraSticky}`}
                   >
                     <Link href={`/job-hours?jobs=${encodeURIComponent(job.jobId)}`} className="font-semibold text-sdc-blue-dark hover:underline">
                       {job.jobId}
@@ -465,7 +472,7 @@ export default async function QuotedPage({
                   {show("job") && (
                     <td
                       style={{ width: "var(--job-col-width, 280px)", minWidth: "var(--job-col-width, 280px)" }}
-                      className={`sticky left-[112px] z-10 whitespace-nowrap border-l border-r border-sdc-border px-2 py-1.5 text-center text-[10px] font-medium text-sdc-navy ${zebraSticky}`}
+                      className={`frozen-col frozen-col-last sticky left-[7rem] z-10 whitespace-nowrap border-l border-r border-sdc-border px-2 py-1.5 text-center text-[10px] font-medium text-sdc-navy ${zebraSticky}`}
                       title={job.jobName}
                     >
                       <div className="flex min-w-0 items-center gap-1">
@@ -489,6 +496,12 @@ export default async function QuotedPage({
                             <rect x="11" y="6.5" width="2.5" height="6.5" rx="0.5" />
                           </svg>
                         </Link>
+                        <SchedulerJobLink
+                          jobId={job.jobId}
+                          jobName={job.jobName}
+                          baseUrl={schedulerBaseUrl}
+                          available={schedulerJobNumbers.has(job.jobId)}
+                        />
                       </div>
                     </td>
                   )}
