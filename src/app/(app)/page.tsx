@@ -32,8 +32,19 @@ async function runQuotedSync() {
   revalidatePath("/quoted");
 }
 
+// Relative "…ago" instead of a raw UTC timestamp — the old ISO string read as
+// the viewer's local time and could misjudge freshness by hours.
+function timeAgo(d: Date): string {
+  const mins = Math.floor((Date.now() - d.getTime()) / 60000);
+  if (mins < 1) return "just now";
+  if (mins < 60) return `${mins}m ago`;
+  const hrs = Math.floor(mins / 60);
+  if (hrs < 24) return `${hrs}h ago`;
+  return `${Math.floor(hrs / 24)}d ago`;
+}
+
 function formatSynced(d: Date | null | undefined) {
-  return d ? `Synced ${d.toISOString().slice(0, 16).replace("T", " ")}` : "Never synced";
+  return d ? `Synced ${timeAgo(d)}` : "Never synced";
 }
 
 function formatDataThrough(d: Date | null | undefined) {
@@ -66,8 +77,8 @@ export default async function Home() {
   const stats = [
     { label: "Total Jobs", value: jobCount, href: "/jobs" },
     { label: "Active Jobs", value: activeCount, href: "/jobs" },
-    { label: "Active Employees", value: employeeCount, href: null },
-    { label: "ETC Entries Needing Review", value: needsReviewCount, href: null, alert: needsReviewCount > 0 },
+    { label: "Active Employees", value: employeeCount, href: "/employees" },
+    { label: "ETC Entries Needing Review", value: needsReviewCount, href: "/etc", alert: needsReviewCount > 0 },
   ];
 
   const syncRows = [

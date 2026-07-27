@@ -683,12 +683,21 @@ export default async function MonthlyEtcPage({
             aren't in the form at all — on the current month submitMonth
             rejects the post ("Missing Hours Worked"), and on a reopened
             month it would lock in a sheet the manager only half-saw. */}
-        {started && !locked && jobs.length > 0 && selectedGroups.size === DEPT_GROUPS.length && !billableFilterActive && (
-          <SubmitAndLockButton formId="etc-month-form" className={BUTTON_SECONDARY} />
-        )}
-        {started && !locked && jobs.length > 0 && (selectedGroups.size < DEPT_GROUPS.length || billableFilterActive) && (
-          <span className="self-center text-xs text-sdc-gray-500">Clear the Columns and Billable filters to Submit and Lock.</span>
-        )}
+        {started && !locked && jobs.length > 0 &&
+          (selectedGroups.size === DEPT_GROUPS.length && !billableFilterActive ? (
+            <SubmitAndLockButton formId="etc-month-form" className={BUTTON_SECONDARY} />
+          ) : (
+            // Keep the control in place but disabled with a reason, instead of
+            // replacing it with loose text (a control vanishing reads as a bug).
+            <button
+              type="button"
+              disabled
+              title="Clear the Columns and Billable filters first — a filtered view doesn't show every entry that Submit and Lock would freeze."
+              className={`${BUTTON_SECONDARY} disabled:cursor-not-allowed disabled:opacity-50`}
+            >
+              Submit and Lock
+            </button>
+          ))}
         {locked && role === "ADMIN" && (
           <form action={reopenMonth.bind(null, month)}>
             <button type="submit" className={BUTTON_SECONDARY}>

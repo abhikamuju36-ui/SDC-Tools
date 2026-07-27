@@ -82,19 +82,32 @@ export default async function JobHoursPage({
       {data ? (
         <>
           <div className={`${card("p-4")} mb-5`}>
-            <p className="flex items-center gap-2 text-lg font-semibold text-sdc-navy">
-              <span>{data.job.jobId} — {data.job.jobName}</span>
-              <SchedulerJobLink
-                jobId={data.job.jobId}
-                jobName={data.job.jobName}
-                baseUrl={schedulerBaseUrl}
-                available={schedulerJobNumbers.has(data.job.jobId)}
-                className="shrink-0 text-sdc-gray-400 hover:text-sdc-blue"
-              />
-            </p>
-            <p className="text-xs text-sdc-gray-500">
-              {data.job.customer ?? "—"} · {data.job.status}
-            </p>
+            {selectedJobIds.length > 1 ? (
+              // Aggregate mode: the charts/KPIs below sum every selected job, so
+              // the header must say so rather than name a single job.
+              <>
+                <p className="text-lg font-semibold text-sdc-navy">{selectedJobIds.length} jobs (aggregated)</p>
+                <p className="text-xs text-sdc-gray-500" title={selectedJobIds.join(", ")}>
+                  {selectedJobIds.join(", ")}
+                </p>
+              </>
+            ) : (
+              <>
+                <p className="flex items-center gap-2 text-lg font-semibold text-sdc-navy">
+                  <span>{data.job.jobId} — {data.job.jobName}</span>
+                  <SchedulerJobLink
+                    jobId={data.job.jobId}
+                    jobName={data.job.jobName}
+                    baseUrl={schedulerBaseUrl}
+                    available={schedulerJobNumbers.has(data.job.jobId)}
+                    className="shrink-0 text-sdc-gray-400 hover:text-sdc-blue"
+                  />
+                </p>
+                <p className="text-xs text-sdc-gray-500">
+                  {data.job.customer ?? "—"} · {data.job.status}
+                </p>
+              </>
+            )}
           </div>
           <JobHoursDashboard data={data} />
           <PartsCostSection parts={parts} estimatedToPurchase={partsEtc} />
