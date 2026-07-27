@@ -2,7 +2,7 @@
 
 import { useMemo } from "react";
 import { useRouter } from "next/navigation";
-import { AgGridReact } from "ag-grid-react";
+import { AgGridReact, type CustomFloatingFilterProps } from "ag-grid-react";
 import {
   AllCommunityModule,
   ModuleRegistry,
@@ -46,6 +46,33 @@ type GridContext = {
   onToggleActive: (row: EmployeeRow) => void;
   supByName: Map<string, number>;
 };
+
+// Community-safe replacement for the Enterprise Set Filter: a native dropdown
+// of the column's known values, so Discipline/Department filter by picking a
+// value directly instead of the text filter's Contains/Equals operators.
+// Backed by the built-in agTextColumnFilter (via an "equals" model), so the
+// grid's own filtering/quick-search all keep working.
+function DropdownFloatingFilter(props: CustomFloatingFilterProps & { values: string[] }) {
+  const { model, onModelChange, values } = props;
+  const current = (model?.filter as string | undefined) ?? "";
+  return (
+    <select
+      value={current}
+      onChange={(e) => {
+        const v = e.target.value;
+        onModelChange(v ? { type: "equals", filter: v } : null);
+      }}
+      className="h-7 w-full rounded-md border border-sdc-border bg-white px-1.5 text-[12px] text-sdc-navy outline-none focus:border-sdc-blue"
+    >
+      <option value="">All</option>
+      {values.map((v) => (
+        <option key={v} value={v}>
+          {v}
+        </option>
+      ))}
+    </select>
+  );
+}
 
 function StatusRenderer(p: ICellRendererParams<EmployeeRow>) {
   const active = p.data?.active;
@@ -91,6 +118,11 @@ export default function EmployeesGridInner({
 }) {
   const router = useRouter();
   const supByName = useMemo(() => new Map(supervisors.map((s) => [s.name, s.id])), [supervisors]);
+  // Distinct departments present in the data, for the department dropdown filter.
+  const departments = useMemo(
+    () => Array.from(new Set(rows.map((r) => r.department).filter((d): d is string => !!d && d !== DASH))).sort(),
+    [rows]
+  );
 
   const context: GridContext = {
     supByName,
@@ -113,9 +145,30 @@ export default function EmployeesGridInner({
   const columnDefs: ColDef<EmployeeRow>[] = [
     { headerName: "#", width: 64, valueGetter: (p) => (p.node?.rowIndex ?? 0) + 1, sortable: false, filter: false, resizable: false },
     { field: "name", headerName: "Name", editable: true, minWidth: 180, flex: 1 },
-    { field: "discipline", headerName: "Discipline", editable: true, width: 200, sort: "asc", cellEditor: "agSelectCellEditor", cellEditorParams: { values: [DASH, ...disciplines] } },
+    {
+      field: "discipline",
+      headerName: "Discipline",
+      editable: true,
+      width: 200,
+      sort: "asc",
+      cellEditor: "agSelectCellEditor",
+      cellEditorParams: { values: [DASH, ...disciplines] },
+      filter: "agTextColumnFilter",
+      suppressFloatingFilterButton: true,
+      floatingFilterComponent: DropdownFloatingFilter,
+      floatingFilterComponentParams: { values: disciplines },
+    },
     { field: "supervisor", headerName: "Supervisor", editable: true, width: 200, cellEditor: "agSelectCellEditor", cellEditorParams: { values: [DASH, ...supervisors.map((s) => s.name)] } },
-    { field: "department", headerName: "Department", editable: true, width: 200 },
+    {
+      field: "department",
+      headerName: "Department",
+      editable: true,
+      width: 200,
+      filter: "agTextColumnFilter",
+      suppressFloatingFilterButton: true,
+      floatingFilterComponent: DropdownFloatingFilter,
+      floatingFilterComponentParams: { values: departments },
+    },
     { field: "active", headerName: "Status", width: 120, editable: false, cellRenderer: StatusRenderer, valueGetter: (p) => (p.data?.active ? "Active" : "Inactive") },
     { headerName: "Actions", width: 190, editable: false, sortable: false, filter: false, cellRenderer: ActionsRenderer },
   ];
@@ -132,9 +185,6 @@ export default function EmployeesGridInner({
         quickFilterText={quickFilter}
         stopEditingWhenCellsLoseFocus
         animateRows
-        pagination
-        paginationPageSize={50}
-        paginationPageSizeSelector={[25, 50, 100, 200]}
       />
     </div>
   );
