@@ -14,6 +14,7 @@ import { SortButton } from "@/components/SortButton";
 import { AddProjectButton } from "@/components/AddProjectButton";
 import { NewProjectRows } from "@/components/NewProjectRows";
 import { DateCell } from "@/components/DateCell";
+import { SaveQuotedHoursButton } from "@/components/SaveQuotedHoursButton";
 import { SchedulerJobLink } from "@/components/SchedulerJobLink";
 import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 import { saveQuotedHours } from "@/lib/quoted-actions";
@@ -245,9 +246,7 @@ export default async function QuotedPage({
         <PageTitle>Projects</PageTitle>
         <div className="flex items-center gap-2.5">
           <AddProjectButton className={BUTTON_PRIMARY} />
-          <button type="submit" className={BUTTON_PRIMARY}>
-            Save Quoted Hours
-          </button>
+          <SaveQuotedHoursButton />
         </div>
       </div>
       <p className="mb-2 text-sm text-sdc-gray-600">

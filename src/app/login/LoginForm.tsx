@@ -96,11 +96,12 @@ export default function LoginForm() {
               onChange={(e) => setPassword(e.target.value)}
               className="w-full rounded-lg border border-sdc-border px-3 py-2 text-sm focus:border-sdc-blue focus:outline-none"
               autoComplete={mode === "signin" ? "current-password" : "new-password"}
+              minLength={mode === "signup" ? 8 : undefined}
               required
             />
             {mode === "signup" && <p className="text-[11px] text-sdc-gray-400">At least 8 characters.</p>}
           </div>
-          {error && <p className="text-sm text-red-600">{error}</p>}
+          {error && <p className="text-sm text-sdc-red-text">{error}</p>}
           <button
             type="submit"
             disabled={busy}

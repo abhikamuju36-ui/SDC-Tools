@@ -148,8 +148,9 @@ export function PartsCostSection({ parts, estimatedToPurchase }: { parts: JobPar
         </div>
       ) : null}
 
-      {/* Slicers — single compact row (no wrap); dropdowns/search shrink to fit. */}
-      <div className="flex flex-nowrap items-center gap-1.5">
+      {/* Slicers — one compact row on wide screens; wraps below lg so the
+          selects/date inputs stack instead of crushing to unreadable slivers. */}
+      <div className="flex flex-wrap items-center gap-1.5 lg:flex-nowrap">
         <select value={category} onChange={(e) => setCategory(e.target.value)} className={`${CTRL} min-w-0 flex-1`} aria-label="Filter by category">
           <option value="">All categories</option>
           {categories.map((c) => <option key={c} value={c}>{c}</option>)}
