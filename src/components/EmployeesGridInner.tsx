@@ -11,6 +11,7 @@ import {
   type ICellRendererParams,
 } from "ag-grid-community";
 import { updateEmployee, setEmployeeActive } from "@/lib/employee-actions";
+import { useToast } from "@/components/ui/Toast";
 
 ModuleRegistry.registerModules([AllCommunityModule]);
 
@@ -117,6 +118,7 @@ export default function EmployeesGridInner({
   quickFilter?: string;
 }) {
   const router = useRouter();
+  const { toast } = useToast();
   const supByName = useMemo(() => new Map(supervisors.map((s) => [s.name, s.id])), [supervisors]);
   // Distinct departments present in the data, for the department dropdown filter.
   const departments = useMemo(
@@ -135,10 +137,26 @@ export default function EmployeesGridInner({
       fd.set("discipline", row.discipline && row.discipline !== DASH ? row.discipline : "");
       const supId = row.supervisor && row.supervisor !== DASH ? supByName.get(row.supervisor) : undefined;
       fd.set("supervisorId", supId != null ? String(supId) : "");
-      void updateEmployee(row.id, fd).then(() => router.refresh());
+      // Feedback on both outcomes — the action can reject (e.g. duplicate
+      // Paylocity ID) and previously that failure was swallowed silently.
+      updateEmployee(row.id, fd)
+        .then(() => {
+          toast(`Saved ${row.name}`);
+          router.refresh();
+        })
+        .catch((e: unknown) => toast(e instanceof Error ? e.message : "Couldn't save this employee.", "error"));
     },
     onToggleActive: (row) => {
-      void setEmployeeActive(row.id, !row.active, new FormData()).then(() => router.refresh());
+      const next = !row.active;
+      // Confirm deactivation — it removes the person from the default view and
+      // the supervisor picker, so an accidental click is disorienting.
+      if (!next && !window.confirm(`Deactivate ${row.name}? They keep all historical hours and can be reactivated any time.`)) return;
+      setEmployeeActive(row.id, next, new FormData())
+        .then(() => {
+          toast(next ? `Reactivated ${row.name}` : `Deactivated ${row.name}`);
+          router.refresh();
+        })
+        .catch((e: unknown) => toast(e instanceof Error ? e.message : "Couldn't update this employee.", "error"));
     },
   };
 

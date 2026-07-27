@@ -9,6 +9,7 @@ import { PillLinks } from "@/components/ui/PillLinks";
 import { card, INPUT, BUTTON_PRIMARY, BUTTON_SECONDARY, LABEL, TABLE_HEADER_ROW, TABLE_GRID, TABLE_CARD } from "@/components/ui/classnames";
 import { saveJobTask, deleteJobTask } from "@/lib/jobtask-actions";
 import { ProjectReleasePanel } from "@/components/ProjectReleasePanel";
+import { ConfirmSubmit } from "@/components/ConfirmSubmit";
 import { Fragment } from "react";
 
 // Section code -> full name (e.g. "10-211" -> "ME General"), for a tooltip on
@@ -472,9 +473,13 @@ export default async function JobDetailPage({
                         <button type="submit" form={`task-${t.id}`} className={`${BUTTON_SECONDARY} px-2.5 py-1 text-[10px]`}>
                           Save
                         </button>
-                        <button type="submit" form={`task-del-${t.id}`} className={`${BUTTON_SECONDARY} px-2.5 py-1 text-[10px] text-red-700`}>
+                        <ConfirmSubmit
+                          form={`task-del-${t.id}`}
+                          message={`Delete task "${t.taskName}"? This can't be undone.`}
+                          className={`${BUTTON_SECONDARY} px-2.5 py-1 text-[10px] text-sdc-red-text`}
+                        >
                           Delete
-                        </button>
+                        </ConfirmSubmit>
                       </div>
                     </td>
                   </tr>

@@ -303,6 +303,7 @@ export default function Sidebar({
 
   return (
     <aside
+      aria-label="Primary navigation"
       style={{ width: collapsed ? undefined : width }}
       className={`relative flex shrink-0 flex-col bg-sdc-navy text-white ${
         dragWidth === null ? "transition-[width] duration-150" : ""
@@ -329,7 +330,7 @@ export default function Sidebar({
         )}
       </div>
 
-      <nav className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
+      <nav aria-label="Application sections" className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
         {groups.map((group) => (
           <div key={group.label}>
             {!collapsed && (

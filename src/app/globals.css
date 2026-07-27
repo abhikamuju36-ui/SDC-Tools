@@ -37,6 +37,13 @@
   --sdc-gray-400: #3d3d3d;
   --sdc-gray-600: #2b2b2b;
   --sdc-gray-700: #231f20;
+  /* Danger / error — the one semantic color the palette lacked, so errors,
+     destructive actions and negative deltas used ad-hoc Tailwind reds. These
+     match the deactivate-button treatment already in use (#B03A3A / #FBEDED). */
+  --sdc-red: #c0392b;
+  --sdc-red-bg: #fbeded;
+  --sdc-red-text: #b03a3a;
+  --sdc-red-border: #f0d6d6;
 }
 
 @theme inline {
@@ -61,6 +68,10 @@
   --color-sdc-gray-400: var(--sdc-gray-400);
   --color-sdc-gray-600: var(--sdc-gray-600);
   --color-sdc-gray-700: var(--sdc-gray-700);
+  --color-sdc-red: var(--sdc-red);
+  --color-sdc-red-bg: var(--sdc-red-bg);
+  --color-sdc-red-text: var(--sdc-red-text);
+  --color-sdc-red-border: var(--sdc-red-border);
 
   /* System-native body/mono stacks — crisper and instant-loading versus a
      generic downloaded webapp font. Montserrat stays for headings only,
@@ -84,6 +95,22 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
+}
+
+/* Visible keyboard focus — the app was missing this app-wide (many controls use
+ * Tailwind's outline-none). :focus-visible targets keyboard/AT focus only, so
+ * it never shows on a mouse click. This rule is un-layered, so it wins over the
+ * outline-none utility (which lives in Tailwind's utilities layer). Uses outline
+ * (not box-shadow) so it layers cleanly over a control's own shadows. */
+:focus-visible {
+  outline: 2px solid var(--sdc-blue);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* On the dark navy sidebar, a blue outline is low-contrast — use white there. */
+.bg-sdc-navy :focus-visible,
+.bg-sdc-navy:focus-visible {
+  outline-color: #ffffff;
 }
 
 /* Uniform 13px text everywhere inside every data table app-wide — overrides

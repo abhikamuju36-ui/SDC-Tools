@@ -1,6 +1,7 @@
 import type { ProjectRelease } from "@prisma/client";
 import { card, INPUT, BUTTON_PRIMARY } from "@/components/ui/classnames";
 import { uploadProjectRelease, deleteProjectRelease } from "@/lib/project-release-actions";
+import { ConfirmSubmit } from "@/components/ConfirmSubmit";
 
 // Displays the parsed SDC Project Release for a job (identity, order date,
 // delivery, financial milestones, penalty/warranty, and the Project Budget) and
@@ -40,10 +41,21 @@ export function ProjectReleasePanel({
   return (
     <div className={`${card("p-5")} mb-6`}>
       <div className="mb-3 flex items-center justify-between gap-3">
-        <p className="text-sm font-semibold text-sdc-navy">📄 Project Release</p>
+        <p className="flex items-center gap-1.5 text-sm font-semibold text-sdc-navy">
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.5" className="shrink-0">
+            <path d="M4 1.5 H9 L13 5.5 V14.5 H4 Z" strokeLinejoin="round" />
+            <path d="M9 1.5 V5.5 H13" strokeLinejoin="round" />
+          </svg>
+          Project Release
+        </p>
         {release && (
           <form action={deleteProjectRelease.bind(null, jobId)}>
-            <button className="text-xs text-sdc-gray-400 hover:text-red-600" type="submit">Remove</button>
+            <ConfirmSubmit
+              message="Remove the Project Release for this job? The uploaded document and its parsed dates/budget will be cleared."
+              className="text-xs text-sdc-gray-400 hover:text-sdc-red-text"
+            >
+              Remove
+            </ConfirmSubmit>
           </form>
         )}
       </div>

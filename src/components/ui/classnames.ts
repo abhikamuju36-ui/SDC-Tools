@@ -13,6 +13,21 @@ export const BUTTON_PRIMARY =
 export const BUTTON_SECONDARY =
   "rounded-lg border border-sdc-border bg-white px-5 py-2.5 text-sm font-semibold text-sdc-navy shadow-sm transition-all hover:border-sdc-blue-100 hover:bg-sdc-blue-light hover:shadow-md active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50";
 
+// Compact primary — the toolbar/inline size (was hand-rolled as
+// `bg-sdc-blue px-3 py-1.5` in a dozen places with no shadow/press feedback).
+export const BUTTON_PRIMARY_SM =
+  "rounded-md bg-sdc-blue px-3.5 py-1.5 text-sm font-semibold text-white shadow-sm transition-all hover:bg-sdc-blue-dark active:translate-y-px disabled:cursor-not-allowed disabled:opacity-50 disabled:active:translate-y-0";
+
+// Ghost / tertiary — bordered white, for secondary toolbar actions and the
+// dropdown triggers (matches the ColumnToggle/GridZoomControls trigger style).
+export const BUTTON_GHOST =
+  "rounded-md border border-sdc-border bg-white px-3.5 py-1.5 text-sm font-medium text-sdc-navy shadow-sm transition-colors hover:bg-sdc-blue-light disabled:cursor-not-allowed disabled:opacity-50";
+
+// Danger — destructive actions (deactivate, delete, remove). Uses the red
+// tokens so it stops drifting shade-to-shade across files.
+export const BUTTON_DANGER =
+  "rounded-md border border-sdc-red-border bg-white px-3 py-1.5 text-sm font-semibold text-sdc-red-text shadow-sm transition-colors hover:bg-sdc-red-bg disabled:cursor-not-allowed disabled:opacity-50";
+
 export const INPUT =
   "rounded-lg border border-sdc-border bg-white px-3.5 py-2.5 text-sm text-sdc-navy shadow-sm transition-shadow outline-none focus:border-sdc-blue focus:ring-2 focus:ring-sdc-blue/15";
 
