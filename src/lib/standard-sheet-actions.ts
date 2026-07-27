@@ -187,6 +187,16 @@ export async function submitStandardSheetMonth(month: string) {
     loadEffectivePools(month),
     prisma.standardSheetSetting.findUnique({ where: { id: 1 } }),
   ]);
+  // Never freeze a month against a carried-forward ESTIMATE. loadEffectivePools
+  // falls back to a prior month's pools (labeled `carriedFrom`) when this month
+  // was never refreshed — fine for a live preview, but freezing that would
+  // permanently stamp last month's pool balances as if they were this month's.
+  // The manager must Refresh Pools for this month first.
+  if (effective.carriedFrom) {
+    throw new Error(
+      `${month}'s department pools were never refreshed — the sheet is showing ${effective.carriedFrom}'s figures as an estimate. Click "Refresh Pools" for ${month} before submitting, so the freeze uses this month's real balances.`,
+    );
+  }
   const rate = globalRates(setting);
   const contingencyRate = setting ? Number(setting.contingencyRate) : 1.2;
   const pools = effective.pools;

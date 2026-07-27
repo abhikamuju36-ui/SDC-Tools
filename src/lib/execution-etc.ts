@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { suggestNewEtc } from "@/lib/etc";
+import { suggestNewEtc, round2 } from "@/lib/etc";
 import { ETC_SECTIONS, ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
 
 const SECTION_BILLING_GROUP = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]));
@@ -55,6 +55,13 @@ export async function getExecutionEtcByJob(jobIds: number[], month: string): Pro
       totals.shop += value;
     }
     result.set(e.jobId, totals);
+  }
+
+  // Round each rollup at the boundary: these sums feed calcTotalEtcDollars in
+  // the month-freeze (stored as money), so float residue from summing per-
+  // section values (e.g. 12.340000000001) must not drift into persisted fees.
+  for (const [jobId, t] of result) {
+    result.set(jobId, { engineering: round2(t.engineering), shop: round2(t.shop), parts: round2(t.parts) });
   }
 
   return result;

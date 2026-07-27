@@ -17,7 +17,7 @@
 
 import { useState } from "react";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/ui/classnames";
-import { useStandardPoolCell, useStandardPoolTotals } from "@/components/EtcStandardColumns";
+import { useStandardPoolCell, useStandardPoolTotals, useStandardPoolDirty } from "@/components/EtcStandardColumns";
 
 export type PoolPanelRow = {
   category: string;
@@ -86,6 +86,10 @@ export function StandardPoolPanel({
 }) {
   const groups = [...new Set(rows.map((r) => r.group))];
   const [open, setOpen] = useState(true);
+  // Unsaved pulled/rate edits: Submit & Lock freezes from the SAVED pool values,
+  // so it must be blocked until "Save Pool Cells" persists what's on screen —
+  // otherwise the frozen fees silently differ from the live grid.
+  const poolsDirty = useStandardPoolDirty();
 
   if (!open) {
     // Collapsed: fold sideways into a thin vertical rail instead of up.
@@ -178,9 +182,19 @@ export function StandardPoolPanel({
               </>
             ) : (
               <form action={submitMonthAction}>
-                <button type="submit" className={`${BUTTON_PRIMARY} w-full !py-2 !text-xs`} title="Freeze this month's Standard Sheet.">
+                <button
+                  type="submit"
+                  disabled={poolsDirty}
+                  className={`${BUTTON_PRIMARY} w-full !py-2 !text-xs disabled:cursor-not-allowed disabled:opacity-50`}
+                  title={poolsDirty ? "Save Pool Cells first — the freeze uses the saved pool values." : "Freeze this month's Standard Sheet."}
+                >
                   Submit &amp; Lock Standard Sheet
                 </button>
+                {poolsDirty && (
+                  <p className="mt-1 text-center text-[10px] font-medium text-sdc-yellow-text">
+                    Unsaved pool edits — click “Save Pool Cells” first so the frozen fees match the grid.
+                  </p>
+                )}
               </form>
             )}
           </div>

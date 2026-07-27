@@ -86,6 +86,12 @@ type Ctx = {
   editable: boolean;
   getPoolCell: (category: string) => LivePoolCell | undefined;
   getPoolTotals: () => PoolTotals;
+  // True when a live pulled/rate cell differs from the saved (server-seeded)
+  // value — i.e. there are pool edits the grid is showing but that "Save Pool
+  // Cells" hasn't persisted yet. Submit & Lock freezes from the SAVED values,
+  // so it must be blocked while this is true or the frozen fees won't match
+  // what's on screen.
+  isPoolDirty: () => boolean;
 };
 
 const StandardRatesCtx = createContext<Ctx | null>(null);
@@ -204,14 +210,30 @@ export function StandardRatesProvider({
     };
   }
 
+  const isPoolDirty = () =>
+    poolRows.some((p) => {
+      const pv = num(pulled[p.category] ?? String(p.hoursPulled));
+      const rv = num(rate[p.category] ?? String(p.rate));
+      return pv !== p.hoursPulled || rv !== p.rate;
+    });
+
   const ctx: Ctx = {
     getComputed: (jobId) => computedByJob.get(jobId),
     getGrandTotals: () => grandTotals,
     editable,
     getPoolCell,
     getPoolTotals: () => poolTotals,
+    isPoolDirty,
   };
   return <StandardRatesCtx.Provider value={ctx}>{children}</StandardRatesCtx.Provider>;
+}
+
+// Consumed by the pool panel to disable Submit & Lock while there are unsaved
+// pulled/rate edits (see isPoolDirty above).
+export function useStandardPoolDirty(): boolean {
+  const ctx = useContext(StandardRatesCtx);
+  if (!ctx) throw new Error("useStandardPoolDirty must be used inside a StandardRatesProvider");
+  return ctx.isPoolDirty();
 }
 
 // Consumed by the pool panel to read/write the live pulled/rate cells.

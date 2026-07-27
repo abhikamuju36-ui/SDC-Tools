@@ -28,21 +28,29 @@ export async function syncActualHours(): Promise<{
   let jobsNotFound = 0;
   let rowsSkippedOverridden = 0;
 
+  // Prefetch the whole working set in two queries instead of two per key: this
+  // loop spans EVERY job × EVERY month in the SharePoint export (a full year of
+  // history), so the old per-key job.findUnique + overridden findUnique meant
+  // thousands of serial round-trips per Refresh — multi-minute, timeout-prone.
+  const jobIdStrs = [...new Set([...byJobMonth.keys()].map((k) => k.split("::")[0]))];
+  const jobRows = await prisma.job.findMany({ where: { jobId: { in: jobIdStrs } }, select: { id: true, jobId: true } });
+  const jobByJobId = new Map(jobRows.map((j) => [j.jobId, j]));
+  // Mirrors the legacy "Actual Hours Override" tab: a manually corrected month
+  // must not be silently clobbered by the next sync.
+  const overriddenRows = await prisma.jobMonthlyActualHours.findMany({
+    where: { jobId: { in: jobRows.map((j) => j.id) }, overridden: true },
+    select: { jobId: true, month: true },
+  });
+  const overriddenSet = new Set(overriddenRows.map((o) => `${o.jobId}::${o.month}`));
+
   for (const [key, hours] of byJobMonth) {
     const [jobId, monthStr] = key.split("::");
-    const job = await prisma.job.findUnique({ where: { jobId } });
+    const job = jobByJobId.get(jobId);
     if (!job) {
       jobsNotFound++;
       continue;
     }
-
-    // Mirrors the legacy "Actual Hours Override" tab: a manually corrected
-    // month must not be silently clobbered by the next sync.
-    const existing = await prisma.jobMonthlyActualHours.findUnique({
-      where: { jobId_month: { jobId: job.id, month: monthStr } },
-      select: { overridden: true },
-    });
-    if (existing?.overridden) {
+    if (overriddenSet.has(`${job.id}::${monthStr}`)) {
       rowsSkippedOverridden++;
       continue;
     }
@@ -88,6 +96,17 @@ export async function syncHoursWorked(month: string): Promise<{ rowsUpdated: num
   const [year, monthNum] = month.split("-").map(Number);
   const spentByKey = hoursByJobSection(await fetchJobHoursRows(), year, monthNum);
 
+  // Resolve every job once, up front (one query), instead of the same
+  // job.findUnique repeated per section row. The per-row EtcEntry reads below
+  // stay live on purpose — they guard against this exact month being locked /
+  // a row being submitted mid-sync, and must not be served from a stale snapshot.
+  const jobIdStrs = [...new Set([...spentByKey.keys()].map((k) => k.split("::")[0]))];
+  const jobRows = await prisma.job.findMany({
+    where: { jobId: { in: jobIdStrs } },
+    select: { id: true, jobId: true, status: true, completeDate: true, type: true },
+  });
+  const jobByJobId = new Map(jobRows.map((j) => [j.jobId, j]));
+
   let rowsUpdated = 0;
   let rowsSkipped = 0;
 
@@ -95,7 +114,7 @@ export async function syncHoursWorked(month: string): Promise<{ rowsUpdated: num
     const [jobId, section] = key.split("::");
     if (!ETC_TRACKED_CODES.has(section)) continue; // ignore codes the ETC grid doesn't track
 
-    const job = await prisma.job.findUnique({ where: { jobId } });
+    const job = jobByJobId.get(jobId);
     if (!job) {
       rowsSkipped++;
       continue;
