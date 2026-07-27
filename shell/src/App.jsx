@@ -9,7 +9,7 @@ import RecentActivity from './components/RecentActivity'
 import WindowChrome from './components/WindowChrome'
 import LoginScreen from './screens/LoginScreen'
 
-const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'calendar', 'vendor'].map(id => ({
+const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'calendar', 'vendor', 'reports'].map(id => ({
   id,
   name: {
     assemblies: 'Assemblies Library',
@@ -18,6 +18,7 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
     statelogic: 'State Logic Builder',
     calendar:   'Calendar',
     vendor:     'Vendor Tracker',
+    reports:    'SDC Projects Reports',
   }[id],
   description: {
     assemblies: 'SolidWorks CAD assembly search and check-out — 18,442 assemblies in the vault.',
@@ -26,6 +27,7 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
     statelogic: 'Author PLC state machines and export Allen-Bradley L5X for ControlLogix.',
     calendar:   'Company-wide calendar — events, birthdays, paydays, Scheduler sync.',
     vendor:     'Procurement analytics — vendor scorecards, PO ledger & spend tracking.',
+    reports:    'Monthly ETC, quoted-hours Projects grid & Standard Fees — replaces the ETC / Standard Fees workbooks.',
   }[id],
   status: 'starting',
   color: {
@@ -35,6 +37,7 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
     statelogic: '#ea580c',
     calendar:   '#74C415',
     vendor:     '#1574C4',
+    reports:    '#0f5a95',
   }[id],
   url: '',
 }))

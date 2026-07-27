@@ -107,6 +107,17 @@ class ProcessManager extends EventEmitter {
         emoji:       '📦',
         windowSize:  { width: 1440, height: 900 },
       },
+      reports: {
+        id:          'reports',
+        name:        'SDC Projects Reports',
+        description: 'Monthly ETC, quoted-hours Projects grid & Standard Fees',
+        port:        3010,
+        url:         url(3010),
+        healthPath:  '/api/health',
+        color:       '#0f5a95',
+        emoji:       '📈',
+        windowSize:  { width: 1440, height: 900 },
+      },
     };
   }
 

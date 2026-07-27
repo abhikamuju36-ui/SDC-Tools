@@ -344,6 +344,53 @@ export function VendorLogo({ size = 48 }) {
   );
 }
 
+/* ── SDC PROJECTS REPORTS ────────────────────────────────────────────────── */
+export function ReportsLogo({ size = 48 }) {
+  const floor = 360;
+  const bars = [
+    { x: 150, h: 70,  fill: P.lb },
+    { x: 214, h: 110, fill: P.blue },
+    { x: 278, h: 92,  fill: P.navy },
+    { x: 342, h: 140, fill: P.blue },
+  ];
+  const cx = bars.map(b => b.x + 24);
+  const cy = bars.map(b => floor - b.h);
+  const pts = cx.map((x, i) => `${x},${cy[i]}`).join(' ');
+  return (
+    <svg viewBox="0 0 512 512" width={size} height={size} xmlns="http://www.w3.org/2000/svg">
+      <defs>
+        <clipPath id="sq-rp"><path d={SQ} /></clipPath>
+        {BG_GRAD('bg-rp')}
+      </defs>
+      <path d={SQ} fill="url(#bg-rp)" />
+      <path d={SQ} fill="none" stroke="rgba(6,29,57,0.12)" strokeWidth="2" />
+      <g clipPath="url(#sq-rp)">
+        {/* Report page */}
+        <rect x="96" y="84" width="320" height="344" rx="22" fill="#ffffff" stroke={P.lb} strokeWidth="2" />
+        {/* Dark header band */}
+        <rect x="96" y="84" width="320" height="56" rx="22" fill={P.navy} />
+        <rect x="96" y="116" width="320" height="24" fill={P.navy} />
+        <rect x="120" y="103" width="120" height="9" rx="4.5" fill="#ffffff" opacity="0.95" />
+        <rect x="120" y="120" width="70"  height="6" rx="3"   fill="#ffffff" opacity="0.45" />
+        {/* Table-ish rows */}
+        <rect x="120" y="166" width="180" height="6" rx="3" fill={P.lb} />
+        <rect x="120" y="182" width="140" height="6" rx="3" fill={P.lb} />
+        {/* Floor line */}
+        <line x1="120" y1={floor} x2="392" y2={floor} stroke={P.navy} strokeWidth="2" opacity="0.15" />
+        {/* Bars */}
+        {bars.map((b, i) => (
+          <rect key={i} x={b.x} y={floor - b.h} width="48" height={b.h} rx="8" fill={b.fill} />
+        ))}
+        {/* Upward trend line over the bars */}
+        <polyline points={pts} fill="none" stroke={P.green} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />
+        {cx.map((x, i) => (
+          <circle key={i} cx={x} cy={cy[i]} r="5" fill={P.green} />
+        ))}
+      </g>
+    </svg>
+  );
+}
+
 /* ── Registry ────────────────────────────────────────────────────────────── */
 const LOGOS = {
   assemblies: AssembliesLogo,
@@ -352,6 +399,7 @@ const LOGOS = {
   statelogic: StateLogicLogo,
   calendar:   CalendarLogo,
   vendor:     VendorLogo,
+  reports:    ReportsLogo,
 };
 
 export default function AppLogo({ appId, size = 48 }) {
