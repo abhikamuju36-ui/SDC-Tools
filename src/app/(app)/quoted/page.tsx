@@ -634,7 +634,7 @@ export default async function QuotedPage({
                           return (
                             <td
                               key={s.code}
-                              className={`qc quoted-actual-cell border-l border-sdc-border px-1 py-1.5 text-center font-mono text-[10px] text-sdc-gray-600 ${tone}`}
+                              className={`qc quoted-actual-cell w-[78px] min-w-[78px] border-l border-sdc-border px-1 py-1.5 text-center font-mono text-[10px] text-sdc-gray-600 ${tone}`}
                               title={`Quoted ${exactHours(hours) ?? "0"} / Actual ${exactHours(actual) ?? "0"}`}
                             >
                               <input
@@ -655,7 +655,7 @@ export default async function QuotedPage({
                         })}
                         {g.phase === "Machine Testing" && (
                           <td
-                            className="qc whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center font-mono text-[10px] font-medium"
+                            className="qc w-[78px] min-w-[78px] whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center font-mono text-[10px] font-medium"
                             title={`Quoted ${exactHours(total) ?? "0"} / Actual ${exactHours(actualTotal) ?? "0"}`}
                           >
                             <span className="font-semibold text-sdc-blue-dark">{wholeHours(total)}</span>
