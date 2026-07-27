@@ -94,6 +94,16 @@ table, table * {
   font-size: 13px !important;
 }
 
+/* AG Grid tables (Employees, Audit Log) render <div>s, not <table>, so the rule
+ * above can't reach them. Their body/header size is set to 13px in each grid's
+ * theme (fontSize/headerFontSize) to match; this matches the HTML tables'
+ * header TREATMENT too — uppercase + wide tracking (see TABLE_HEADER_ROW) — so
+ * every table's header reads the same across the app. */
+.ag-header-cell .ag-header-cell-text {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
 /* Number cells should read like Excel cells — plain values you click and
  * type into, no spinner arrows appearing on hover/focus. Applies to every
  * numeric input app-wide (grid cells and forms alike). */

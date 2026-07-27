@@ -209,7 +209,7 @@ export function PartsCostSection({ parts, estimatedToPurchase }: { parts: JobPar
                     <th
                       key={header.id}
                       onClick={header.column.getToggleSortingHandler()}
-                      className={`cursor-pointer select-none whitespace-nowrap border-l border-white/15 px-2 py-2 font-medium hover:bg-white/10 first:border-l-0 ${
+                      className={`cursor-pointer select-none whitespace-nowrap border-l border-white/15 px-2 py-2 font-semibold uppercase tracking-wider hover:bg-white/10 first:border-l-0 ${
                         i === 0 ? "sticky left-0 z-30 bg-sdc-navy" : ""
                       } ${i >= 8 ? "text-right" : ""}`}
                     >

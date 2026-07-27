@@ -47,10 +47,10 @@ export function JobBomMatrix({ bom }: { bom: JobBom }) {
       <div className="max-h-[76vh] overflow-auto styled-scrollbar">
         <table className="w-full border-collapse text-[12px] tabular-nums">
           <thead className="sticky top-0 z-10">
-            <tr className="bg-sdc-navy text-left text-white">
+            <tr className="bg-sdc-navy text-left text-white uppercase tracking-wider">
               <th className="px-4 py-2.5 font-semibold">
                 Hierarchy
-                <span className="ml-3 font-normal">
+                <span className="ml-3 font-normal normal-case tracking-normal">
                   <button type="button" onClick={() => setCollapsed(new Set())} className="text-[11px] text-white/70 underline decoration-white/30 hover:text-white">expand all</button>
                   <span className="px-1 text-white/30">·</span>
                   <button type="button" onClick={() => setCollapsed(new Set(allParents))} className="text-[11px] text-white/70 underline decoration-white/30 hover:text-white">collapse</button>
