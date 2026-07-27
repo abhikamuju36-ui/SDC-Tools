@@ -32,7 +32,7 @@ export function NewProjectRows({
     <>
       {tempIds.map((tempId) => (
         <tr key={tempId} className="bg-sdc-yellow-bg/30 hover:bg-sdc-yellow-bg/50">
-          <td className="sticky left-0 z-10 w-8 min-w-8 bg-sdc-yellow-bg/60 px-1 py-1.5 text-center">
+          <td className="frozen-col sticky left-0 z-10 w-8 min-w-8 bg-sdc-yellow-bg px-1 py-1.5 text-center">
             <button
               type="button"
               onClick={() => removeNewProjectRow(tempId)}
@@ -43,7 +43,7 @@ export function NewProjectRows({
               ×
             </button>
           </td>
-          <td className="sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden bg-sdc-yellow-bg/60 px-2 py-1.5 text-center font-mono text-[10px]">
+          <td className="frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden bg-sdc-yellow-bg px-2 py-1.5 text-center font-mono text-[10px]">
             <input
               type="number"
               step="1"
@@ -58,7 +58,7 @@ export function NewProjectRows({
           {show("job") && (
             <td
               style={{ width: "var(--job-col-width, 280px)", minWidth: "var(--job-col-width, 280px)" }}
-              className="sticky left-[112px] z-10 whitespace-nowrap border-l border-r border-sdc-border bg-sdc-yellow-bg/60 px-2 py-1.5 text-center text-[10px] font-medium text-sdc-navy"
+              className="frozen-col frozen-col-last sticky left-[7rem] z-10 whitespace-nowrap border-l border-r border-sdc-border bg-sdc-yellow-bg px-2 py-1.5 text-center text-[10px] font-medium text-sdc-navy"
             >
               <input
                 type="text"

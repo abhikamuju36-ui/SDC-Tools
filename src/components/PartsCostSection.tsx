@@ -227,7 +227,7 @@ export function PartsCostSection({ parts, estimatedToPurchase }: { parts: JobPar
                 const l = row.original;
                 const pct = l.totalPrice ? Math.round((l.invoicedAmount / l.totalPrice) * 100) : 0;
                 return (
-                  <tr key={row.id} className="border-b border-sdc-border-soft/60 odd:bg-white even:bg-sdc-gray-50/60 hover:bg-sdc-blue-light/40">
+                  <tr key={row.id} className="border-b border-sdc-border-soft/60 odd:bg-white even:bg-sdc-gray-50 hover:bg-sdc-blue-light/40">
                     <td className="sticky left-0 z-10 whitespace-nowrap bg-inherit px-2 py-1 text-sdc-gray-500">{l.purchaseDate ?? "—"}</td>
                     <td className="whitespace-nowrap px-2 py-1 text-sdc-gray-500">{l.invoicedDate ?? "—"}</td>
                     <td className="max-w-36 truncate px-2 py-1" title={l.manufacturer ?? ""}>{l.manufacturer ?? "—"}</td>

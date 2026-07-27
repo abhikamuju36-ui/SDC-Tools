@@ -260,6 +260,32 @@ tr.row-selected > td:first-child {
   background: var(--sdc-gray-50);
 }
 
+/* Frozen (sticky) grid columns — the #/Job Id/Job pane on the Projects grid
+ * and similar pinned columns.
+ *
+ * The bleed-through fix is NOT here — it's that every frozen cell now has an
+ * opaque background AND the pinned columns' left-offsets are expressed in the
+ * same rem unit as their widths. They used to mix rem widths (w-8 = 2rem, w-20
+ * = 5rem) with a px offset (left-[112px]); since the app's text-size control
+ * sets the root font-size to 15px (not 16px), 2rem+5rem = 105px ≠ 112px, so a
+ * ~7px gap opened between two frozen columns and the scrolling columns showed
+ * through it during horizontal scroll. Offsets are now left-28 / left-30 (rem),
+ * so the pane stays seamless at every text size.
+ *
+ * background-clip keeps each cell's fill inside its own border box so the
+ * opaque background can't smear over the gridlines. Deliberately NO
+ * transform/translateZ here: per-cell layer promotion on a few-hundred-row
+ * grid would spawn hundreds of compositing layers (GPU-memory hazard) and
+ * isn't needed once the gap is closed. */
+.frozen-col {
+  background-clip: padding-box;
+}
+/* The rightmost frozen column gets a soft right-edge shadow so the freeze
+ * boundary reads as a crisp Excel-style pane divider while scrolling. */
+.frozen-col-last {
+  box-shadow: 6px 0 6px -4px rgb(6 29 57 / 0.18);
+}
+
 /* Column-resize drag handle (ColumnResize.tsx): a thin invisible strip on a
  * header cell's right edge that highlights on hover/drag so it reads as
  * grabbable without adding visual noise the rest of the time. */
