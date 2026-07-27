@@ -27,7 +27,7 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
     statelogic: 'Author PLC state machines and export Allen-Bradley L5X for ControlLogix.',
     calendar:   'Company-wide calendar — events, birthdays, paydays, Scheduler sync.',
     vendor:     'Procurement analytics — vendor scorecards, PO ledger & spend tracking.',
-    reports:    'Monthly ETC, quoted-hours Projects grid & Standard Fees — replaces the ETC / Standard Fees workbooks.',
+    reports:    '',
   }[id],
   status: 'starting',
   color: {
