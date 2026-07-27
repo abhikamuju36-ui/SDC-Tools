@@ -30,9 +30,12 @@ export function GaugeCard({
   target: number;
   subLabel?: string;
 }) {
-  const max = Math.max(target, value) || 1;
+  // Cap the axis at the target (or 1.2× when over) so an overrun visibly pegs
+  // the needle past full instead of rescaling the whole gauge to the value —
+  // which made a 480%-over job's needle sit mid-arc, contradicting the readout.
   const pct = target > 0 ? Math.round((value / target) * 100) : 0;
   const over = value > target;
+  const max = (over ? target * 1.2 : target) || 1;
   const arc = over ? RED : value >= target * 0.9 ? BLUE : GREEN;
 
   const option: EChartsOption = {

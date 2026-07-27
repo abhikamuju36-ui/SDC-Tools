@@ -191,7 +191,11 @@ export function PartsCostSection({ parts, estimatedToPurchase }: { parts: JobPar
             Clear
           </button>
         )}
-        <span className="ml-auto shrink-0 whitespace-nowrap text-xs text-sdc-gray-400">{filtered.length.toLocaleString()} line items</span>
+        <span className="ml-auto shrink-0 whitespace-nowrap text-xs text-sdc-gray-400">
+          {filtered.length > ROW_CAP
+            ? `showing ${ROW_CAP.toLocaleString()} of ${filtered.length.toLocaleString()} line items`
+            : `${filtered.length.toLocaleString()} line items`}
+        </span>
       </div>
 
       {/* Detail table — sticky header + first column, tall scroll region */}
