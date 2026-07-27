@@ -18,7 +18,14 @@ function readEmployeeForm(formData: FormData) {
   const discipline = String(formData.get("discipline") ?? "").trim() || null;
   const paylocityId = String(formData.get("paylocityId") ?? "").trim() || null;
   const supRaw = String(formData.get("supervisorId") ?? "").trim();
-  const supervisorId = supRaw ? Number(supRaw) : null;
+  // Guard like every other numeric field: a non-numeric/blank-ish value must
+  // not slip through as NaN (or "0" as 0) into a Prisma write.
+  let supervisorId: number | null = null;
+  if (supRaw) {
+    const n = Number(supRaw);
+    if (!Number.isInteger(n) || n <= 0) throw new Error(`Invalid supervisor id "${supRaw}".`);
+    supervisorId = n;
+  }
   return { name, department, billingGroup, discipline, paylocityId, supervisorId };
 }
 

@@ -7,6 +7,7 @@ import { logAudit } from "@/lib/audit";
 // Task assignments mirror the sheet's "ME Name" columns (slots 1-11).
 
 export async function saveJobTask(jobId: number, slot: number | null, formData: FormData) {
+  if (!Number.isInteger(jobId) || jobId <= 0) throw new Error(`Invalid job id "${jobId}".`);
   const taskName = String(formData.get("taskName") ?? "").trim();
   if (!taskName) throw new Error("Task name is required.");
 
@@ -16,15 +17,19 @@ export async function saveJobTask(jobId: number, slot: number | null, formData: 
 
   if (slot === null) {
     // New task: next free slot (the sheet had 11 columns; the app doesn't cap).
+    // Use create (not upsert): if two "Add Task" clicks race and both compute
+    // the same next slot, the second hits the jobId_slot unique constraint and
+    // fails loudly instead of silently OVERWRITING the first task's row.
     const last = await prisma.jobTask.findFirst({ where: { jobId }, orderBy: { slot: "desc" }, select: { slot: true } });
     slot = (last?.slot ?? 0) + 1;
+    await prisma.jobTask.create({ data: { jobId, slot, taskName, estimateToCompleteHours: hours } });
+  } else {
+    await prisma.jobTask.upsert({
+      where: { jobId_slot: { jobId, slot } },
+      update: { taskName, estimateToCompleteHours: hours },
+      create: { jobId, slot, taskName, estimateToCompleteHours: hours },
+    });
   }
-
-  await prisma.jobTask.upsert({
-    where: { jobId_slot: { jobId, slot } },
-    update: { taskName, estimateToCompleteHours: hours },
-    create: { jobId, slot, taskName, estimateToCompleteHours: hours },
-  });
   await logAudit({
     action: "jobtask.save",
     entityType: "JobTask",

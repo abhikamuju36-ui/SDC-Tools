@@ -263,9 +263,10 @@ function PoolTotals() {
           {currency(shopTotal)}
         </dd>
       </div>
-      <div className="flex items-center justify-end px-3 py-2 text-xs">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 text-xs">
+        <dt className="font-semibold text-sdc-navy underline">Grand Total</dt>
         <dd className="font-semibold tabular-nums text-sdc-blue-dark" title={`${currencyExact(grandTotal)} = Engineering Total + Shop Total`}>
-          {whole(grandTotal)}
+          {currency(grandTotal)}
         </dd>
       </div>
     </div>

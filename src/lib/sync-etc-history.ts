@@ -241,7 +241,13 @@ export async function syncEtcHistoryFromPowerBi(): Promise<{
         newEtc = round2(suggestNewEtc(priorEtc, hoursWorked));
         unsubmittedFilled++;
       } else {
-        newEtc = round2(r.NewEtc);
+        // Clamp at 0: New ETC is hours/dollars-left-to-complete and can never
+        // be negative (the app's own suggestNewEtc enforces this). Power BI's
+        // "ETC Historical" measure can report a negative for edge rows — e.g.
+        // internal/overhead jobs with prior ETC 0 but hours logged against the
+        // section — and storing that verbatim left nonsensical negative New ETC
+        // values in closed months (found in 2026-06 for jobs 4000/6000/7000).
+        newEtc = round2(Math.max(0, r.NewEtc));
       }
 
       newEntries.push({

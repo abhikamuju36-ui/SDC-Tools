@@ -1,6 +1,7 @@
 import type { NextRequest } from "next/server";
 import { prisma } from "@/lib/prisma";
 import { getExecutionEtcByJob } from "@/lib/execution-etc";
+import { validJobTypeFilter } from "@/lib/job-filters";
 import { checkSchedulerToken } from "@/lib/scheduler-api-auth";
 
 // Read-only job detail for the SDC_Scheduler "create project from job list"
@@ -33,7 +34,10 @@ export async function GET(
 
   const { jobId } = await ctx.params;
 
-  const job = await prisma.job.findUnique({ where: { jobId } });
+  // Type-gate like the list endpoint / export do: a "noise" job (null/invalid
+  // Type) that never appears in any list must not be served in full detail
+  // (costs, hours, execution ETC) to the Scheduler just because its id is known.
+  const job = await prisma.job.findFirst({ where: { jobId, ...validJobTypeFilter } });
   if (!job) return Response.json({ error: "job_not_found" }, { status: 404 });
 
   // Per-category QUOTED hours for the scheduler's Project Release budget grid.

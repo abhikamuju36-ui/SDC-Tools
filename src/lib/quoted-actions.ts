@@ -61,8 +61,14 @@ async function saveHoursCells(formData: FormData) {
 
   if (edits.length === 0) return;
 
+  // Fetch by the (bounded) set of distinct job ids, not a giant OR-of-pairs:
+  // the whole Projects grid is one <form>, so `edits` is jobs × sections
+  // (thousands of cells). One OR clause per cell produced a query that grew
+  // with the grid and would eventually hit SQL statement-size limits. Filtering
+  // sections in memory afterward is trivial and keeps the query flat.
+  const editJobIds = [...new Set(edits.map((e) => e.jobId))];
   const existing = await prisma.estimatedHours.findMany({
-    where: { OR: edits.map((e) => ({ jobId: e.jobId, section: e.section })) },
+    where: { jobId: { in: editJobIds } },
     select: { jobId: true, section: true, quotedHours: true },
   });
   const existingByKey = new Map(existing.map((e) => [`${e.jobId}::${e.section}`, Number(e.quotedHours)]));
