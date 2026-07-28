@@ -288,7 +288,7 @@ export default async function QuotedPage({
       </div>
 
       <div className="max-h-[calc(100vh-170px)] min-w-[480px] overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm select-none styled-scrollbar">
-        <table className={`text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
+        <table className={`w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
           <thead className="sticky top-0 z-20 bg-sdc-gray-100">
             <tr className={TABLE_HEADER_ROW}>
               <th rowSpan={3} className="frozen-col sticky left-0 z-10 w-8 min-w-8 bg-sdc-gray-100 px-1 py-2 text-center align-bottom">
