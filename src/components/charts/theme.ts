@@ -14,9 +14,7 @@ const MUTED = "#64748b"; // axis / secondary
 const GRID = "#eef1f5"; // recessive gridlines
 const FONT = "Inter, ui-sans-serif, system-ui, sans-serif";
 
-export function usd(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
+export { usd } from "@/components/ui/format";
 export function compact(n: number): string {
   return Math.round(n).toLocaleString();
 }

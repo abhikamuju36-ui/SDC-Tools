@@ -3,6 +3,7 @@
 import type { EChartsOption } from "echarts";
 import { EChart } from "@/components/charts/EChart";
 import { card } from "@/components/ui/classnames";
+import { usd } from "@/components/ui/format";
 
 const NAVY = "#12239e";
 const BLUE = "#118dff";
@@ -10,10 +11,6 @@ const RED = "#dc2626";
 const GREEN = "#15803d";
 const TRACK = "#eef1f5";
 const MUTED = "#64748b";
-
-function usd(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
 
 // Angular gauge (Power BI–style) — value against a budget/target, with a needle,
 // a colored progress arc (green under target, red over), and a % readout in the

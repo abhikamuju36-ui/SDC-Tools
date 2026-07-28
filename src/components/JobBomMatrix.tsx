@@ -3,9 +3,7 @@
 import { useMemo, useState } from "react";
 import type { BomNode, JobBom } from "@/lib/job-bom";
 
-function usd(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
+import { usd } from "@/components/ui/format";
 function num(n: number): string {
   return n ? Math.round(n).toLocaleString() : "";
 }

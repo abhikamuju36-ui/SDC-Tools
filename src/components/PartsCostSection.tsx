@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react";
 import { useReactTable, getCoreRowModel, getSortedRowModel, type SortingState, type ColumnDef } from "@tanstack/react-table";
 import { card } from "@/components/ui/classnames";
+import { usd, usd2 } from "@/components/ui/format";
 import { IndicatorCard } from "@/components/charts/IndicatorCard";
 import { GaugeCard } from "@/components/charts/GaugeCard";
 import type { JobPartsCost } from "@/lib/sync-totaleto";
@@ -34,12 +35,6 @@ const TABLE_COLUMNS: ColumnDef<PartLine>[] = [
 // sticky so the table reads without losing context.
 const ROW_CAP = 800;
 
-function usd(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
-function usd2(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
-}
 
 const COLS = ["Purchase", "Invoiced", "Manufacturer", "Supplier", "Category", "PO #", "Part #", "Description", "Qty", "Unit $", "Total", "Paid", "% Inv"];
 
