@@ -118,7 +118,7 @@ body {
  * cells/headers/inputs use, per explicit request for consistent table
  * typography instead of the mix of sizes each page picked independently. */
 table, table * {
-  font-size: 13px !important;
+  font-size: 8px !important;
 }
 
 /* AG Grid tables (Employees, Audit Log) render <div>s, not <table>, so the rule
