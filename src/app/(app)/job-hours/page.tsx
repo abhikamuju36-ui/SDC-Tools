@@ -4,12 +4,10 @@ import { JobHoursDashboard } from "@/components/JobHoursDashboard";
 import { JobMultiSelect } from "@/components/JobMultiSelect";
 import { listDashboardJobs, getJobHoursDashboard, defaultDashboardJobId } from "@/lib/job-hours-dashboard";
 import { getJobPartsCost, type JobPartsCost } from "@/lib/sync-totaleto";
-import { getExecutionEtcByJob } from "@/lib/execution-etc";
-import { PartsCostSection } from "@/components/PartsCostSection";
 import { SchedulerJobLink } from "@/components/SchedulerJobLink";
 import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 import { getJobBom, type JobBom } from "@/lib/job-bom";
-import { JobBomMatrix } from "@/components/JobBomMatrix";
+import { JobProcurement } from "@/components/JobProcurement";
 import { EmptyState } from "@/components/ui/EmptyState";
 
 // "Job Hour Details" — web recreation of the Power BI "Job Hours Report —
@@ -43,11 +41,10 @@ export default async function JobHoursPage({
   // (fail-soft empty set when its DB isn't configured).
   const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers } = await getSchedulerLinkContext();
 
-  // Parts Cost — live from TotalETO — aggregated across every selected job, plus
-  // the parts New ETC (Estimated to Purchase). Best-effort: a TotalETO hiccup
-  // must not take down the hours dashboard.
+  // Parts lines — live from TotalETO — aggregated across every selected job.
+  // Feeds the Procurement Parts List (joined to the BOM by part number).
+  // Best-effort: a TotalETO hiccup must not take down the hours dashboard.
   let parts: JobPartsCost | null = null;
-  let partsEtc: number | null = null;
   if (data) {
     try {
       const perJob = await Promise.all(data.jobRefs.map((r) => getJobPartsCost(r.jobId).catch(() => null)));
@@ -58,14 +55,6 @@ export default async function JobHoursPage({
       parts = { purchased, paid, leftToPay: purchased - paid, lines };
     } catch {
       parts = null;
-    }
-    if (data.kpis.latestEtcMonth) {
-      try {
-        const map = await getExecutionEtcByJob(data.jobRefs.map((r) => r.id), data.kpis.latestEtcMonth);
-        partsEtc = data.jobRefs.reduce((s, r) => s + (map.get(r.id)?.parts ?? 0), 0);
-      } catch {
-        partsEtc = null;
-      }
     }
   }
 
@@ -128,25 +117,25 @@ export default async function JobHoursPage({
             )}
           </div>
           <JobHoursDashboard data={data} />
-          <PartsCostSection parts={parts} estimatedToPurchase={partsEtc} />
 
-          {/* Job Cost — BOM cost hierarchy for the selected job (moved here from
-              the retired Job Cost page). Only meaningful for a single job. */}
+          {/* Procurement — the two-tab (Assemblies / Parts List) drawer ported
+              from the Build Readiness app. It's a per-single-job view (BOM tree +
+              live PO purchase lines), so it only renders for one selected job. */}
           <div className="mt-8">
-            <p className="mb-3 font-heading text-lg font-bold tracking-tight text-sdc-navy">Job Cost</p>
+            <p className="mb-3 font-heading text-lg font-bold tracking-tight text-sdc-navy">Procurement</p>
             <p className="mb-4 text-sm text-sdc-gray-600">
-              Bill-of-materials cost hierarchy — assemblies and parts with rolled-up costs and quantities, pulled live from Total ETO via Power BI.
+              Assembly readiness and the full parts buy-list — assemblies, parts, PO status, suppliers and material cost, pulled live from Total ETO.
             </p>
             {!singleJobId ? (
-              <EmptyState title="Select a single job" message="The Bill-of-Materials cost hierarchy is per job — pick one job above to see it." />
+              <EmptyState title="Select a single job" message="Procurement is per job — pick one job above to see its assemblies and parts list." />
             ) : bomFailed ? (
               <EmptyState
                 tone="warning"
-                title="Job Cost is temporarily unavailable"
+                title="Procurement is temporarily unavailable"
                 message="The BOM couldn't be loaded from Total ETO / Power BI right now. This is usually a brief upstream hiccup — try again in a moment, or run Sync from the Dashboard."
               />
             ) : bom && bom.roots.length ? (
-              <JobBomMatrix bom={bom} />
+              <JobProcurement bom={bom} partsLines={parts?.lines ?? []} />
             ) : (
               <EmptyState title="No BOM found for this job" message="This job has no assembly/part records in Total ETO." />
             )}
