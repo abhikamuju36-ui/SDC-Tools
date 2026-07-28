@@ -21,8 +21,8 @@ export async function registerUser(input: {
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return { ok: false, error: "Please enter a valid email address." };
   }
-  if (password.length < 8) {
-    return { ok: false, error: "Password must be at least 8 characters." };
+  if (password.length < 1) {
+    return { ok: false, error: "Please enter a password." };
   }
 
   const existing = await prisma.user.findUnique({ where: { email } });
@@ -40,6 +40,41 @@ export async function registerUser(input: {
     entityType: "User",
     entityId: user.id,
     summary: `${user.email} created an account`,
+  });
+
+  return { ok: true };
+}
+
+// Self-service password change for an existing account: proves ownership by
+// requiring the current password, then re-hashes the new one. Works from the
+// login screen (no active session needed), so any user can change theirs.
+export async function changePassword(input: {
+  email: string;
+  currentPassword: string;
+  newPassword: string;
+}): Promise<RegisterResult> {
+  const email = input.email?.trim().toLowerCase();
+  const currentPassword = input.currentPassword ?? "";
+  const newPassword = input.newPassword ?? "";
+
+  if (!email) return { ok: false, error: "Please enter your email." };
+  if (newPassword.length < 1) return { ok: false, error: "Please enter a new password." };
+
+  const user = await prisma.user.findUnique({ where: { email } });
+  // One generic error whether the account is missing or the current password is
+  // wrong — so this can't be used to probe which emails exist.
+  if (!user || !(await bcrypt.compare(currentPassword, user.passwordHash))) {
+    return { ok: false, error: "Email or current password is incorrect." };
+  }
+
+  const passwordHash = await bcrypt.hash(newPassword, 10);
+  await prisma.user.update({ where: { id: user.id }, data: { passwordHash } });
+
+  await logAuditFor(user.id, user.email, {
+    action: "auth.changePassword",
+    entityType: "User",
+    entityId: user.id,
+    summary: `${user.email} changed their password`,
   });
 
   return { ok: true };
