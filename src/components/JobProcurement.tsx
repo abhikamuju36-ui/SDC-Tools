@@ -74,9 +74,8 @@ function avatarColor(name: string): string {
   return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
 }
 
-function SupplierChip({ supplier }: { supplier: string | null }) {
-  if (!supplier) return <span className="text-[11px] text-sdc-gray-400">—</span>;
-  const initials = supplier
+function supplierInitials(supplier: string): string {
+  return supplier
     .split(/[\s.]+/)
     .filter(Boolean)
     .slice(0, 2)
@@ -84,6 +83,25 @@ function SupplierChip({ supplier }: { supplier: string | null }) {
     .join("")
     .toUpperCase()
     .slice(0, 2);
+}
+
+// Square colored-initial avatar (same palette as SupplierChip), sized for the
+// vendor card header.
+function SupplierAvatar({ supplier, size = 30 }: { supplier: string; size?: number }) {
+  return (
+    <span
+      aria-hidden
+      className="inline-flex shrink-0 items-center justify-center rounded font-bold text-white"
+      style={{ width: size, height: size, background: avatarColor(supplier), fontSize: Math.round(size * 0.38) }}
+    >
+      {supplierInitials(supplier)}
+    </span>
+  );
+}
+
+function SupplierChip({ supplier }: { supplier: string | null }) {
+  if (!supplier) return <span className="text-[11px] text-sdc-gray-400">—</span>;
+  const initials = supplierInitials(supplier);
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       <span
@@ -204,6 +222,16 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
     [toast],
   );
 
+  // Copy any string to the clipboard with a toast — reused by the Card view's
+  // PO-number buttons (part numbers use drillToPart, which also copies).
+  const copyText = useCallback(
+    (text: string, label?: string) => {
+      if (!text) return;
+      navigator.clipboard?.writeText(text).then(() => toast(`Copied ${label ?? text}`, "success")).catch(() => {});
+    },
+    [toast],
+  );
+
   const partsState = { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo } as const;
 
   // PO purchase lines indexed by normalized part number, newest purchase first.
@@ -306,7 +334,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
       {tab === "assemblies" ? (
         <AssembliesTab bom={bom} onPartClick={drillToPart} />
       ) : (
-        <PartsListTab parts={parts} state={partsState} drill={drill} onPartClick={drillToPart} />
+        <PartsListTab parts={parts} state={partsState} drill={drill} onPartClick={drillToPart} onCopy={copyText} />
       )}
     </div>
   );
@@ -614,11 +642,13 @@ function PartsListTab({
   state,
   drill,
   onPartClick,
+  onCopy,
 }: {
   parts: FlatPart[];
   state: PartsListState;
   drill: { key: string; nonce: number };
   onPartClick: (p: DrillablePart) => void;
+  onCopy: (text: string, label?: string) => void;
 }) {
   const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo } = state;
   const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set());
@@ -762,7 +792,7 @@ function PartsListTab({
       ) : view === "list" ? (
         <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} />
       ) : (
-        <PartsCardView parts={filtered} onPartClick={onPartClick} />
+        <PartsCardView parts={filtered} onPartClick={onPartClick} onCopy={onCopy} />
       )}
     </div>
   );
@@ -865,38 +895,230 @@ function PartsTableView({ parts, cols, onPartClick }: { parts: FlatPart[]; cols:
   );
 }
 
-function PartsCardView({ parts, onPartClick }: { parts: FlatPart[]; onPartClick: (p: DrillablePart) => void }) {
+const NO_PO_KEY = "__NO_PO__";
+
+type PoGroup = {
+  poKey: string;
+  poNumber: string | null;
+  parts: FlatPart[];
+  received: number;
+  total: number;
+  expected: string | null; // soonest expected date among the PO's parts
+  status: "received" | "ordered" | "noPO";
+  pastDue: boolean;
+};
+
+type VendorGroup = {
+  supplier: string;
+  pos: PoGroup[];
+  received: number;
+  total: number;
+  pct: number;
+  poCount: number; // excludes the NO-PO group
+  status: { label: string; cls: string };
+  order: number; // sort priority (0 = most urgent)
+  pastDue: boolean;
+};
+
+// Vendor card layout — group the flat parts by supplier → PO, matching the
+// Scheduler drawer's Card mode. One card per supplier, a mini PO table inside,
+// and each PO row expands inline to reveal its parts.
+function PartsCardView({ parts, onPartClick, onCopy }: { parts: FlatPart[]; onPartClick: (p: DrillablePart) => void; onCopy: (text: string, label?: string) => void }) {
+  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
+
+  const vendors = useMemo<VendorGroup[]>(() => {
+    const now = Date.now();
+    const isPastDue = (p: FlatPart) => {
+      if (p.status === "received" || !p.expectedDate) return false;
+      const t = new Date(p.expectedDate).getTime();
+      return !Number.isNaN(t) && t < now;
+    };
+    const minDate = (a: string | null, b: string | null) => {
+      if (!a) return b;
+      if (!b) return a;
+      return a.slice(0, 10) <= b.slice(0, 10) ? a : b;
+    };
+
+    const byVendor = new Map<string, Map<string, FlatPart[]>>();
+    for (const p of parts) {
+      const vKey = p.supplier ?? "Unknown supplier";
+      const poKey = p.poNumber ?? NO_PO_KEY;
+      let pos = byVendor.get(vKey);
+      if (!pos) byVendor.set(vKey, (pos = new Map()));
+      const arr = pos.get(poKey);
+      if (arr) arr.push(p);
+      else pos.set(poKey, [p]);
+    }
+
+    const groups: VendorGroup[] = [];
+    for (const [supplier, poMap] of byVendor) {
+      const pos: PoGroup[] = [];
+      let vReceived = 0;
+      let vTotal = 0;
+      let vPastDue = false;
+      for (const [poKey, poParts] of poMap) {
+        const received = poParts.filter((p) => p.status === "received").length;
+        const total = poParts.length;
+        const isNoPo = poKey === NO_PO_KEY;
+        const expected = poParts.reduce<string | null>((acc, p) => minDate(acc, p.expectedDate), null);
+        const poPastDue = poParts.some(isPastDue);
+        const status: PoGroup["status"] = isNoPo ? "noPO" : received >= total ? "received" : "ordered";
+        pos.push({ poKey, poNumber: isNoPo ? null : poParts[0].poNumber, parts: poParts, received, total, expected, status, pastDue: poPastDue });
+        vReceived += received;
+        vTotal += total;
+        if (poPastDue) vPastDue = true;
+      }
+      // Incomplete first, received last; then most parts first.
+      pos.sort((a, b) => {
+        const ar = a.status === "received" ? 1 : 0;
+        const br = b.status === "received" ? 1 : 0;
+        if (ar !== br) return ar - br;
+        return b.total - a.total;
+      });
+      const pct = vTotal ? Math.round((vReceived / vTotal) * 100) : 0;
+      const poCount = pos.filter((p) => p.poKey !== NO_PO_KEY).length;
+      let status: VendorGroup["status"];
+      let order: number;
+      if (vPastDue) {
+        status = { label: "PAST DUE", cls: "bg-sdc-red-bg text-sdc-red-text" };
+        order = 0;
+      } else if (pct >= 90) {
+        status = { label: "RECEIVED", cls: "bg-sdc-green-bg text-sdc-green-text" };
+        order = 3;
+      } else if (pct >= 60) {
+        status = { label: "PARTIAL", cls: "bg-sdc-yellow-bg text-sdc-yellow-text" };
+        order = 2;
+      } else {
+        status = { label: "PENDING", cls: "bg-sdc-blue-light text-sdc-blue-dark" };
+        order = 1;
+      }
+      groups.push({ supplier, pos, received: vReceived, total: vTotal, pct, poCount, status, order, pastDue: vPastDue });
+    }
+    groups.sort((a, b) => a.order - b.order || a.pct - b.pct || a.supplier.localeCompare(b.supplier));
+    return groups;
+  }, [parts]);
+
+  const toggle = (key: string) =>
+    setExpanded((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  // Vendor readiness bar color: >=90 green, >=60 amber, else blue.
+  const vendorBar = (pct: number) => (pct >= 90 ? "bg-sdc-green" : pct >= 60 ? "bg-sdc-yellow" : "bg-sdc-blue");
+  const vendorText = (pct: number) => (pct >= 90 ? "text-sdc-green-text" : pct >= 60 ? "text-sdc-yellow-text" : "text-sdc-blue-dark");
+  const dotColor = (s: PoGroup["status"]) => (s === "received" ? "bg-sdc-green" : s === "noPO" ? "bg-sdc-red" : "bg-sdc-blue");
+
   return (
-    <div className="grid max-h-[74vh] grid-cols-1 gap-2 overflow-y-auto styled-scrollbar sm:grid-cols-2 xl:grid-cols-3">
-      {parts.map((p, i) => (
-        <div
-          key={`${p.id}-${i}`}
-          data-part-key={String(p.id)}
-          data-pn={p.pn}
-          data-part-id={p.id}
-          onClick={() => onPartClick(p)}
-          className="flex cursor-pointer flex-col gap-2 rounded-lg border border-sdc-border bg-white p-3 shadow-sm hover:border-sdc-blue-100"
-        >
-          <div className="flex items-start justify-between gap-2">
-            <div className="min-w-0">
-              <div className="font-mono text-[12px] font-semibold text-sdc-blue">{p.pn}</div>
-              <div className="line-clamp-2 text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</div>
+    <div
+      className="grid max-h-[74vh] gap-3 overflow-y-auto styled-scrollbar"
+      style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
+    >
+      {vendors.map((v) => (
+        <div key={v.supplier} className="flex flex-col overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
+          {/* Header */}
+          <div className="flex flex-col gap-2 border-b border-sdc-border-soft p-3">
+            <div className="flex items-start justify-between gap-2">
+              <div className="flex min-w-0 items-center gap-2">
+                <SupplierAvatar supplier={v.supplier} size={30} />
+                <div className="min-w-0">
+                  <div className="truncate text-[13px] font-bold text-sdc-navy" title={v.supplier}>{v.supplier}</div>
+                  <div className="text-[10px] text-sdc-gray-400">
+                    {v.poCount} PO{v.poCount === 1 ? "" : "s"} · {v.total} item{v.total === 1 ? "" : "s"}
+                  </div>
+                </div>
+              </div>
+              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wide ${v.status.cls}`}>{v.status.label}</span>
             </div>
-            <StatusBadge status={p.status} />
+            <div className="flex items-center gap-2" title={`${v.pct}% received`}>
+              <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-sdc-gray-100">
+                <div className={`h-full rounded-full ${vendorBar(v.pct)}`} style={{ width: `${Math.min(100, v.pct)}%` }} />
+              </div>
+              <span className={`w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums ${vendorText(v.pct)}`}>{v.pct}%</span>
+            </div>
           </div>
-          <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-[10px] text-sdc-gray-600">
-            <span>Qty <span className="font-semibold tabular-nums text-sdc-navy">{num(p.qty)}</span></span>
-            {p.category && <span>· {p.category}</span>}
-            {p.poNumber ? <span>· PO <span className="font-mono font-semibold text-sdc-blue">{p.poNumber}</span></span> : <span className="font-semibold text-sdc-red-text">· NO PO</span>}
+
+          {/* Mini PO table */}
+          <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 bg-sdc-gray-100 px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider text-sdc-gray-400">
+            <span>PO #</span>
+            <span className="text-right">Received</span>
+            <span className="text-right">Date</span>
+            <span />
           </div>
-          <div className="flex items-center justify-between gap-2">
-            <SupplierChip supplier={p.supplier} />
-            <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">
-              exp {fmtDate(p.expectedDate)}{p.leadDays != null && p.leadDays >= 0 ? ` · ${p.leadDays}d` : ""}
-            </span>
+          <div className="max-h-56 overflow-y-auto styled-scrollbar">
+            {v.pos.map((po) => {
+              const rowKey = `${v.supplier}::${po.poKey}`;
+              const isOpen = expanded.has(rowKey);
+              return (
+                <div key={rowKey} className="border-b border-sdc-border-soft/60 last:border-b-0">
+                  <button
+                    type="button"
+                    onClick={() => toggle(rowKey)}
+                    className="grid w-full grid-cols-[1fr_auto_auto_auto] items-center gap-2 px-3 py-1.5 text-left hover:bg-sdc-blue-light/30"
+                    aria-expanded={isOpen}
+                  >
+                    {po.poNumber ? (
+                      <span
+                        role="button"
+                        tabIndex={0}
+                        title="Copy PO number"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onCopy(po.poNumber!, `PO ${po.poNumber}`);
+                        }}
+                        className="truncate font-mono text-[11px] font-semibold text-sdc-blue underline decoration-dotted underline-offset-2"
+                      >
+                        {po.poNumber}
+                      </span>
+                    ) : (
+                      <span className="text-[10px] font-semibold text-sdc-red-text">NO PO</span>
+                    )}
+                    <span className="text-right text-[10px] tabular-nums text-sdc-gray-600">{po.received}/{po.total} rcvd</span>
+                    <span className={`text-right font-mono text-[10px] ${po.pastDue ? "text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(po.expected)}</span>
+                    <span className="flex items-center gap-1.5">
+                      <span aria-hidden className={`inline-block h-2 w-2 rounded-full ${dotColor(po.status)}`} />
+                      <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" className={`text-sdc-gray-400 transition-transform ${isOpen ? "rotate-90" : ""}`}>
+                        <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                    </span>
+                  </button>
+
+                  {isOpen && (
+                    <div className="bg-sdc-gray-50/60 px-3 pb-2 pt-1">
+                      {po.parts.map((p, i) => (
+                        <div key={`${p.id}-${i}`} className="flex items-center gap-2 border-b border-sdc-border-soft/50 py-1 last:border-b-0">
+                          <button
+                            type="button"
+                            title="Copy part # · locate row"
+                            onClick={() => onPartClick(p)}
+                            className="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] font-semibold text-sdc-blue"
+                          >
+                            {p.pn}
+                            <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
+                              <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
+                            </svg>
+                          </button>
+                          <span className="min-w-0 flex-1 truncate text-[10px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
+                          <span className="shrink-0 text-[10px] tabular-nums text-sdc-gray-600">×{num(p.qty)}</span>
+                          <span className="shrink-0"><StatusBadge status={p.status} /></span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
           </div>
         </div>
       ))}
+
+      {vendors.length === 0 && (
+        <p className="col-span-full rounded-xl border border-sdc-border bg-white px-4 py-10 text-center text-sm text-sdc-gray-400 shadow-sm">
+          No parts match the current filters.
+        </p>
+      )}
     </div>
   );
 }
