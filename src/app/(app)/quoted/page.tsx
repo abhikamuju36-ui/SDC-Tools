@@ -503,7 +503,7 @@ export default async function QuotedPage({
                       className={`frozen-col frozen-col-last sticky left-[7rem] z-10 overflow-hidden border-l border-r border-sdc-border px-2 py-1.5 text-left align-middle text-[10px] font-medium whitespace-nowrap text-sdc-navy ${zebraSticky}`}
                       title={job.jobName}
                     >
-                      <div className="flex min-w-0 items-center gap-1">
+                      <div className="flex min-h-[14px] min-w-0 items-center gap-1">
                         <input
                           type="text"
                           name={`jobField__${job.id}__jobName`}
