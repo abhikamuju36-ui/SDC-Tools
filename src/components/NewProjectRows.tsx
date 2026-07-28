@@ -78,7 +78,7 @@ export function NewProjectRows({
             </td>
           )}
           {show("type") && (
-            <td className="whitespace-nowrap px-2 py-1.5 text-center text-[10px] text-sdc-gray-600">
+            <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px] text-sdc-gray-600">
               <select name={`newRow__${tempId}__type`} defaultValue="" aria-label="New project Type" className="text-center">
                 <option value="">—</option>
                 {VALID_JOB_TYPES.map((t) => (
@@ -90,7 +90,7 @@ export function NewProjectRows({
             </td>
           )}
           {show("billable") && (
-            <td className="whitespace-nowrap px-2 py-1.5 text-center text-[10px]">
+            <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px]">
               <select name={`newRow__${tempId}__billable`} defaultValue="Billable" aria-label="New project Billable" className="text-center">
                 <option value="Billable">Billable</option>
                 <option value="Non-Billable">Non-Billable</option>
@@ -98,7 +98,7 @@ export function NewProjectRows({
             </td>
           )}
           {show("status") && (
-            <td className="whitespace-nowrap px-2 py-1.5 text-center text-[10px] font-medium text-sdc-blue-dark">
+            <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px] font-medium text-sdc-blue-dark">
               <select name={`newRow__${tempId}__status`} defaultValue="Active" aria-label="New project Status" className="text-center">
                 {allStatuses.map((st) => (
                   <option key={st} value={st}>
@@ -109,12 +109,12 @@ export function NewProjectRows({
             </td>
           )}
           {show("startDate") && (
-            <td className="whitespace-nowrap px-2 py-1.5 text-center text-[10px] text-sdc-gray-500">
+            <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px] text-sdc-gray-500">
               <DateCell name={`newRow__${tempId}__startDate`} defaultValue="" ariaLabel="New project Start Date" />
             </td>
           )}
           {show("completeDate") && (
-            <td className="whitespace-nowrap px-2 py-1.5 text-center text-[10px] text-sdc-gray-500">
+            <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px] text-sdc-gray-500">
               <DateCell name={`newRow__${tempId}__completeDate`} defaultValue="" ariaLabel="New project Complete Date" />
             </td>
           )}

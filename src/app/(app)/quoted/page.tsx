@@ -345,27 +345,27 @@ export default async function QuotedPage({
                 </th>
               )}
               {show("type") && (
-                <th rowSpan={3} className="px-2 py-2 align-bottom">
+                <th rowSpan={3} className="px-1 py-2 align-bottom">
                   Type
                 </th>
               )}
               {show("billable") && (
-                <th rowSpan={3} className="px-2 py-2 align-bottom">
+                <th rowSpan={3} className="px-1 py-2 align-bottom">
                   Billable
                 </th>
               )}
               {show("status") && (
-                <th rowSpan={3} className="px-2 py-2 align-bottom">
+                <th rowSpan={3} className="px-1 py-2 align-bottom">
                   <SortButton sortKey="status" label="Status" currentSort={sortKey} currentDir={sortDir} />
                 </th>
               )}
               {show("startDate") && (
-                <th rowSpan={3} className="px-2 py-2 align-bottom">
+                <th rowSpan={3} className="px-1 py-2 align-bottom">
                   <SortButton sortKey="startDate" label="Start Date" currentSort={sortKey} currentDir={sortDir} />
                 </th>
               )}
               {show("completeDate") && (
-                <th rowSpan={3} className="px-2 py-2 align-bottom">
+                <th rowSpan={3} className="px-1 py-2 align-bottom">
                   <SortButton sortKey="completeDate" label="Complete Date" currentSort={sortKey} currentDir={sortDir} />
                 </th>
               )}
@@ -534,7 +534,7 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("type") && (
-                    <td className="whitespace-nowrap px-2 py-1.5 text-center text-[10px] text-sdc-gray-600">
+                    <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px] text-sdc-gray-600">
                       <select name={`jobField__${job.id}__type`} defaultValue={job.type ?? ""} aria-label={`Type, ${job.jobName}`} className="text-center">
                         {job.type == null && <option value="">—</option>}
                         {VALID_JOB_TYPES.map((t) => (
@@ -546,7 +546,7 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("billable") && (
-                    <td className="whitespace-nowrap px-2 py-1.5 text-center text-[10px]">
+                    <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px]">
                       {isSdc ? (
                         <span className="text-sdc-gray-500" aria-label={`Billable, ${job.jobName}`} title="SDC's own projects are always non-billable">
                           Non-Billable
@@ -566,7 +566,7 @@ export default async function QuotedPage({
                   )}
                   {show("status") && (
                     <td
-                      className={`whitespace-nowrap px-2 py-1.5 text-center text-[10px] font-medium ${
+                      className={`whitespace-nowrap px-1 py-1.5 text-center text-[10px] font-medium ${
                         job.status === "Complete" ? "text-sdc-green-text" : "text-sdc-blue-dark"
                       }`}
                     >
@@ -585,7 +585,7 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("startDate") && (
-                    <td className="whitespace-nowrap px-2 py-1.5 text-center text-[10px] text-sdc-gray-500">
+                    <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px] text-sdc-gray-500">
                       <DateCell
                         name={`jobField__${job.id}__startDate`}
                         defaultValue={dateInputValue(job.startDate)}
@@ -594,7 +594,7 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("completeDate") && (
-                    <td className="whitespace-nowrap px-2 py-1.5 text-center text-[10px] text-sdc-gray-500">
+                    <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px] text-sdc-gray-500">
                       <DateCell
                         name={`jobField__${job.id}__completeDate`}
                         defaultValue={dateInputValue(job.completeDate)}

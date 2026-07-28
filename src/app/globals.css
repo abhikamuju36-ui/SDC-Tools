@@ -198,10 +198,15 @@ td > select {
   -moz-appearance: none;
   background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
   background-repeat: no-repeat;
-  background-position: right 0.2rem center;
+  background-position: right 0.15rem center;
   background-size: 7px 7px;
-  padding-right: 0.85rem;
-  min-width: 5.5rem;
+  /* Let the select hug its own content instead of filling the cell at a fixed
+   * 5.5rem floor — that floor was the white space. width:auto sizes it to the
+   * widest option (so no value ever clips), min-width:0 removes the floor, and
+   * the padding only reserves room for the ~7px arrow on the right. */
+  width: auto !important;
+  min-width: 0;
+  padding: 0.2rem 0.65rem 0.2rem 0.3rem;
 }
 td > input:not([type]):focus,
 td > input[type="text"]:focus,
@@ -248,6 +253,17 @@ td.quoted-actual-cell > .actual-suffix {
  * visible feedback while picking/typing a date. Once a real date is set,
  * DateCell removes this class and the value displays normally. WebKit/
  * Chromium-only pseudo-elements — Firefox falls back to the native look. */
+/* Date cells hug their content too — drop the native min-width and trim the
+ * internal padding so the date column isn't padded out with dead space. */
+td > input[type="date"] {
+  min-width: 0;
+  width: auto;
+  padding: 0.2rem 0.2rem;
+}
+td > input[type="date"]::-webkit-calendar-picker-indicator {
+  margin-left: 0.1rem;
+  padding: 0;
+}
 input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
   opacity: 0;
 }
