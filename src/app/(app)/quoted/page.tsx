@@ -133,9 +133,16 @@ export default async function QuotedPage({
   // keys (absent = all shown). Drives the "Columns" dropdown.
   const hiddenCols = new Set((hide ?? "").split(",").filter(Boolean));
   const show = (key: string) => !hiddenCols.has(key);
-  // No `cols` param at all (first visit) defaults to every section visible;
-  // an explicit (possibly empty) `cols` value means the user has picked some.
-  const visibleCodes = cols === undefined ? SECTIONS.map((s) => s.code) : cols.split(",").filter(Boolean);
+  // No `cols` param at all (first visit) defaults to every section EXCEPT the
+  // ones below; an explicit (possibly empty) `cols` value means the user has
+  // picked some via the phase pickers (which still list all sections).
+  // Hidden by default: 10-111 (PM), 10-413 (Manufacturing), and the two
+  // Warranty codes (70-211/70-411). A manager can re-enable any of them.
+  const DEFAULT_HIDDEN_CODES = new Set(["10-111", "10-413", "70-211", "70-411"]);
+  const visibleCodes =
+    cols === undefined
+      ? SECTIONS.filter((s) => !DEFAULT_HIDDEN_CODES.has(s.code)).map((s) => s.code)
+      : cols.split(",").filter(Boolean);
   const visibleSet = new Set(visibleCodes);
 
   const sortKey: SortKey = SORT_KEYS.includes(sort as SortKey) ? (sort as SortKey) : "jobId";
