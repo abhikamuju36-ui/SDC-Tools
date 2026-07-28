@@ -114,12 +114,15 @@ body {
   outline-color: #ffffff;
 }
 
-/* Uniform 13px text everywhere inside every data table app-wide — overrides
- * whatever size utility (text-xs, text-[10.5px], text-[9px], etc.) individual
- * cells/headers/inputs use, per explicit request for consistent table
- * typography instead of the mix of sizes each page picked independently. */
+/* Uniform table text app-wide — overrides whatever size utility (text-xs,
+ * text-[10px], text-[9px], etc.) individual cells/headers/inputs use, so every
+ * data table reads at one consistent size. Expressed in `rem` (relative to the
+ * root font-size) rather than an absolute px so the sidebar "Text size" control
+ * — which sets the root font-size, see AppTextSize — actually scales the grids
+ * too. 0.68rem ≈ 10px at the 15px default root; the control's 12–20px range
+ * scales the tables ~8px–14px in step with the rest of the UI. */
 table, table * {
-  font-size: 8px !important;
+  font-size: 0.68rem !important;
 }
 
 /* AG Grid tables (Employees, Audit Log) render <div>s, not <table>, so the rule
