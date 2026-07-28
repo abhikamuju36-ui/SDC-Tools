@@ -135,11 +135,7 @@ export function NewProjectRows({
                   </td>
                 ))}
               </Fragment>
-            ) : (
-              <td key={g.phase} className="border-l border-sdc-border px-1 py-1.5 text-center font-mono text-[10px] text-sdc-gray-600">
-                —
-              </td>
-            )
+            ) : null
           )}
           {/* Grand-total columns (Engineering + Shop, computed on save) — match
               the grid's two total columns that span all phases. */}

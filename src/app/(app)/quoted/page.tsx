@@ -254,7 +254,7 @@ export default async function QuotedPage({
   const dataColumnCount =
     PHASE_GROUPS.reduce((sum, g) => {
       const visible = visibleSectionsByPhase.get(g.phase) ?? [];
-      return sum + (visible.length ? visible.length : 1);
+      return sum + visible.length; // fully-hidden phases render no column
     }, 0) + 2;
 
   // Currently-visible section codes split by billing group — the two grand
@@ -385,6 +385,9 @@ export default async function QuotedPage({
               {PHASE_GROUPS.map((g) => {
                 const visible = visibleSectionsByPhase.get(g.phase) ?? [];
                 const color = PHASE_HEADER_COLOR[g.phase] ?? "bg-sdc-blue-light";
+                // A phase with no visible sections renders no column at all
+                // (e.g. Warranty, hidden by default) — re-enable a section via
+                // its phase picker to bring the column back.
                 return visible.length ? (
                   <th
                     key={g.phase}
@@ -393,15 +396,7 @@ export default async function QuotedPage({
                   >
                     {g.phase}
                   </th>
-                ) : (
-                  <th
-                    key={g.phase}
-                    className={`border-l border-sdc-border px-1.5 py-2 text-center align-bottom italic ${color}`}
-                    rowSpan={3}
-                  >
-                    {g.phase}
-                  </th>
-                );
+                ) : null;
               })}
               <th
                 rowSpan={3}
@@ -623,23 +618,9 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {PHASE_GROUPS.map((g) => {
-                    const allSections = SECTIONS.filter((s) => s.phase === g.phase);
                     const visibleSections = visibleSectionsByPhase.get(g.phase) ?? [];
-                    const total = allSections.reduce((sum, s) => sum + Number(hoursBySection.get(s.code) ?? 0), 0);
-                    const actualTotal = allSections.reduce((sum, s) => sum + (actualBySection.get(s.code) ?? 0), 0);
-                    if (!visibleSections.length) {
-                      return (
-                        <td
-                          key={g.phase}
-                          className="whitespace-nowrap border-l border-sdc-border px-1 py-1.5 text-center font-mono text-[10px] text-sdc-gray-600"
-                          title={`Quoted ${exactHours(total) ?? "0"} / Actual ${exactHours(actualTotal) ?? "0"}`}
-                        >
-                          <span className="font-semibold text-sdc-blue-dark">{wholeHours(total)}</span>
-                          <span className="text-sdc-gray-400"> / </span>
-                          <span className="font-semibold text-sdc-green-text">{wholeHours(actualTotal)}</span>
-                        </td>
-                      );
-                    }
+                    // Fully-hidden phase (e.g. Warranty) renders no column.
+                    if (!visibleSections.length) return null;
                     return (
                       <Fragment key={g.phase}>
                         {visibleSections.map((s) => {
