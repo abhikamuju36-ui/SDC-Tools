@@ -8,6 +8,9 @@ import { getExecutionEtcByJob } from "@/lib/execution-etc";
 import { PartsCostSection } from "@/components/PartsCostSection";
 import { SchedulerJobLink } from "@/components/SchedulerJobLink";
 import { getSchedulerLinkContext } from "@/lib/scheduler-link";
+import { getJobBom, type JobBom } from "@/lib/job-bom";
+import { JobBomMatrix } from "@/components/JobBomMatrix";
+import { EmptyState } from "@/components/ui/EmptyState";
 
 // "Job Hour Details" — web recreation of the Power BI "Job Hours Report —
 // Management Level" drillthrough. Supports one OR many jobs (aggregated), like
@@ -66,6 +69,21 @@ export default async function JobHoursPage({
     }
   }
 
+  // Job Cost — the BOM cost hierarchy (formerly its own page) now lives below
+  // Parts Cost here. It's a per-single-job view, so only load it when exactly
+  // one job is selected. Best-effort: a Power BI hiccup mustn't break the page.
+  let bom: JobBom | null = null;
+  let bomFailed = false;
+  const singleJobId = selectedJobIds.length === 1 ? selectedJobIds[0] : null;
+  if (data && singleJobId) {
+    try {
+      bom = await getJobBom(singleJobId);
+    } catch (e) {
+      console.error(`getJobBom failed for job ${singleJobId}:`, e);
+      bomFailed = true;
+    }
+  }
+
   return (
     <div className="w-full p-6 md:p-8">
       <div className="mb-1 flex flex-wrap items-end justify-between gap-4">
@@ -111,6 +129,28 @@ export default async function JobHoursPage({
           </div>
           <JobHoursDashboard data={data} />
           <PartsCostSection parts={parts} estimatedToPurchase={partsEtc} />
+
+          {/* Job Cost — BOM cost hierarchy for the selected job (moved here from
+              the retired Job Cost page). Only meaningful for a single job. */}
+          <div className="mt-8">
+            <p className="mb-3 font-heading text-lg font-bold tracking-tight text-sdc-navy">Job Cost</p>
+            <p className="mb-4 text-sm text-sdc-gray-600">
+              Bill-of-materials cost hierarchy — assemblies and parts with rolled-up costs and quantities, pulled live from Total ETO via Power BI.
+            </p>
+            {!singleJobId ? (
+              <EmptyState title="Select a single job" message="The Bill-of-Materials cost hierarchy is per job — pick one job above to see it." />
+            ) : bomFailed ? (
+              <EmptyState
+                tone="warning"
+                title="Job Cost is temporarily unavailable"
+                message="The BOM couldn't be loaded from Total ETO / Power BI right now. This is usually a brief upstream hiccup — try again in a moment, or run Sync from the Dashboard."
+              />
+            ) : bom && bom.roots.length ? (
+              <JobBomMatrix bom={bom} />
+            ) : (
+              <EmptyState title="No BOM found for this job" message="This job has no assembly/part records in Total ETO." />
+            )}
+          </div>
         </>
       ) : (
         <div className={card("p-8")}>
