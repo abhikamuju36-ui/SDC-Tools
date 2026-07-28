@@ -1021,7 +1021,7 @@ export default async function MonthlyEtcPage({
                           className={`sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] px-3 py-1 text-center align-middle text-[10px] font-medium leading-none whitespace-nowrap text-sdc-navy ${zebraSticky}`}
                           title={job.jobName}
                         >
-                          <div className="flex min-w-0 items-center justify-center gap-1.5">
+                          <div className="flex min-h-[14px] min-w-0 items-center justify-center gap-1.5">
                             <span className="min-w-0 truncate">{job.jobName}</span>
                             <SchedulerJobLink
                               jobId={job.jobId}
