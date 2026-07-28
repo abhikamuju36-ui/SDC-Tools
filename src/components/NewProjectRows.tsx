@@ -141,8 +141,11 @@ export function NewProjectRows({
               </td>
             )
           )}
-          {/* Grand-total column (computed on save) — matches the grid's single
-              Total Hours column that spans all phases. */}
+          {/* Grand-total columns (Engineering + Shop, computed on save) — match
+              the grid's two total columns that span all phases. */}
+          <td className="border-l border-sdc-border bg-sdc-blue-light/60 px-1 py-1.5 text-center font-mono text-[10px] font-medium text-sdc-navy">
+            —
+          </td>
           <td className="border-l border-sdc-border bg-sdc-blue-light/60 px-1 py-1.5 text-center font-mono text-[10px] font-medium text-sdc-navy">
             —
           </td>

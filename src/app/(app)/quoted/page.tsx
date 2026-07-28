@@ -249,19 +249,21 @@ export default async function QuotedPage({
   );
 
   // Total visible data columns: for each phase, its visible sections (or just 1
-  // collapsed column if every section in that phase is hidden), PLUS the single
-  // grand-total "Total Hours" column that spans all phases.
+  // collapsed column if every section in that phase is hidden), PLUS the two
+  // grand-total columns (Engineering total + Shop total) that span all phases.
   const dataColumnCount =
     PHASE_GROUPS.reduce((sum, g) => {
       const visible = visibleSectionsByPhase.get(g.phase) ?? [];
       return sum + (visible.length ? visible.length : 1);
-    }, 0) + 1;
+    }, 0) + 2;
 
-  // Every currently-visible section code, across all phases — the grand total
-  // (quoted / actual) sums exactly these, so it tracks the column pickers.
-  const visibleCodesFlat = PHASE_GROUPS.flatMap((g) =>
-    (visibleSectionsByPhase.get(g.phase) ?? []).map((s) => s.code)
-  );
+  // Currently-visible section codes split by billing group — the two grand
+  // totals sum exactly these, so they track the column pickers. Shop = the
+  // sheet's "Shop" department band; everything else (PM/ME/CE/General
+  // Engineering/Engineering) rolls into Engineering, matching the header bands.
+  const visibleSectionsFlat = PHASE_GROUPS.flatMap((g) => visibleSectionsByPhase.get(g.phase) ?? []);
+  const engCodes = visibleSectionsFlat.filter((s) => s.group !== "Shop").map((s) => s.code);
+  const shopCodes = visibleSectionsFlat.filter((s) => s.group === "Shop").map((s) => s.code);
 
   return (
     <form action={saveQuotedHours} className="w-full px-8 py-10 md:px-13 md:py-11">
@@ -405,8 +407,15 @@ export default async function QuotedPage({
                 rowSpan={3}
                 className="w-[60px] min-w-[60px] border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-[11px] leading-tight text-sdc-blue-dark"
               >
-                TOTAL
-                <span className="block font-normal normal-case tracking-normal text-sdc-gray-500">Quoted / Actual</span>
+                ENG
+                <span className="block font-semibold">TOTAL</span>
+              </th>
+              <th
+                rowSpan={3}
+                className="w-[60px] min-w-[60px] border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-[11px] leading-tight text-sdc-blue-dark"
+              >
+                SHOP
+                <span className="block font-semibold">TOTAL</span>
               </th>
               <th rowSpan={3} className="min-w-[90px] border-l border-sdc-border bg-sdc-green-bg px-2 py-2 text-center align-bottom text-sdc-green-text">
                 Cost Quoted
@@ -676,19 +685,30 @@ export default async function QuotedPage({
                     );
                   })}
                   {(() => {
-                    // Grand total = sum of every currently-visible section's
-                    // quoted / actual, across all phases (tracks the pickers).
-                    const grandQuoted = visibleCodesFlat.reduce((sum, code) => sum + Number(hoursBySection.get(code) ?? 0), 0);
-                    const grandActual = visibleCodesFlat.reduce((sum, code) => sum + (actualBySection.get(code) ?? 0), 0);
+                    // Two grand totals — Engineering and Shop — each summing the
+                    // currently-visible sections in that billing group. The
+                    // "/ actual" half uses the same .actual-suffix hook as the
+                    // section cells, so it hides when Actuals is toggled off.
+                    const sumQ = (codes: string[]) => codes.reduce((s, c) => s + Number(hoursBySection.get(c) ?? 0), 0);
+                    const sumA = (codes: string[]) => codes.reduce((s, c) => s + (actualBySection.get(c) ?? 0), 0);
+                    const cell = (label: string, codes: string[]) => {
+                      const q = sumQ(codes);
+                      const a = sumA(codes);
+                      return (
+                        <td
+                          className="w-[60px] min-w-[60px] whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center font-mono text-[10px] font-medium"
+                          title={`${label} — Quoted ${exactHours(q) ?? "0"} / Actual ${exactHours(a) ?? "0"}`}
+                        >
+                          <span className="font-semibold text-sdc-blue-dark">{wholeHours(q)}</span>
+                          <span className="actual-suffix text-sdc-gray-400"> /<span className="font-semibold text-sdc-green-text"> {wholeHours(a)}</span></span>
+                        </td>
+                      );
+                    };
                     return (
-                      <td
-                        className="w-[60px] min-w-[60px] whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center font-mono text-[10px] font-medium"
-                        title={`Quoted ${exactHours(grandQuoted) ?? "0"} / Actual ${exactHours(grandActual) ?? "0"}`}
-                      >
-                        <span className="font-semibold text-sdc-blue-dark">{wholeHours(grandQuoted)}</span>
-                        <span className="text-sdc-gray-400"> / </span>
-                        <span className="font-semibold text-sdc-green-text">{wholeHours(grandActual)}</span>
-                      </td>
+                      <>
+                        {cell("Engineering", engCodes)}
+                        {cell("Shop", shopCodes)}
+                      </>
                     );
                   })()}
                   <td className={`whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center text-[10px] font-medium text-sdc-navy ${zebra}`}>
