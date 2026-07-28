@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_BTN_NEUTRAL } from "@/components/ui/classnames";
 
 export type ToggleColumn = { key: string; label: string };
 
@@ -39,9 +40,7 @@ export function ColumnToggle({ columns, hidden }: { columns: ToggleColumn[]; hid
   return (
     <details ref={detailsRef} className="group relative inline-block">
       <summary
-        className={`flex list-none cursor-pointer select-none items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm font-medium shadow-sm ${
-          allShown ? "border-sdc-border bg-white text-sdc-navy hover:bg-sdc-blue-light" : "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark"
-        }`}
+        className={`${TOOLBAR_BTN} ${allShown ? TOOLBAR_BTN_NEUTRAL : TOOLBAR_BTN_ACTIVE}`}
       >
         Columns
         {!allShown && ` (${columns.length - hiddenSet.size}/${columns.length})`}

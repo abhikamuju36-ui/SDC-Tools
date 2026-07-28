@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
+import { TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_BTN_NEUTRAL } from "@/components/ui/classnames";
 import {
   type SharedView,
   type ViewConfig,
@@ -154,7 +155,7 @@ export function ProjectViewsMenu({
 
   return (
     <details ref={detailsRef} className="group relative inline-block">
-      <summary className="flex list-none cursor-pointer select-none items-center gap-1.5 rounded-md border border-sdc-border bg-white px-3.5 py-1.5 text-sm font-medium text-sdc-navy shadow-sm hover:bg-sdc-blue-light">
+      <summary className={`${TOOLBAR_BTN} ${activeName ? TOOLBAR_BTN_ACTIVE : TOOLBAR_BTN_NEUTRAL}`}>
         {activeName ? `View: ${activeName}` : "Views"}
         <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" className="shrink-0 opacity-70 transition-transform duration-150 group-open:rotate-180">
           <path d="M3.5 6 L8 10.5 L12.5 6" strokeLinecap="round" strokeLinejoin="round" />

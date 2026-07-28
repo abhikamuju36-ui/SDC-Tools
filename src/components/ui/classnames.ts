@@ -28,6 +28,18 @@ export const BUTTON_GHOST =
 export const BUTTON_DANGER =
   "rounded-md border border-sdc-red-border bg-white px-3 py-1.5 text-sm font-semibold text-sdc-red-text shadow-sm transition-colors hover:bg-sdc-red-bg disabled:cursor-not-allowed disabled:opacity-50";
 
+// One consistent shape/size for EVERY control in the Projects toolbar — filter
+// pills, Actuals, Columns, Grid Size, Views. Geometry only (fixed height, same
+// radius/padding/font/border/shadow); callers append one color variant below so
+// they line up evenly regardless of state.
+export const TOOLBAR_BTN =
+  "flex list-none cursor-pointer select-none items-center gap-1.5 rounded-lg border px-3.5 h-9 text-sm font-medium shadow-sm transition-colors";
+// Neutral (menus with no on/off state), Active (a filter/toggle that's engaged),
+// Muted (a filter with nothing selected).
+export const TOOLBAR_BTN_NEUTRAL = "border-sdc-border bg-white text-sdc-navy hover:bg-sdc-blue-light";
+export const TOOLBAR_BTN_ACTIVE = "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark";
+export const TOOLBAR_BTN_MUTED = "border-sdc-border bg-white text-sdc-gray-500 hover:bg-sdc-blue-light";
+
 export const INPUT =
   "rounded-lg border border-sdc-border bg-white px-3.5 py-2.5 text-sm text-sdc-navy shadow-sm transition-shadow outline-none focus:border-sdc-blue focus:ring-2 focus:ring-sdc-blue/15";
 

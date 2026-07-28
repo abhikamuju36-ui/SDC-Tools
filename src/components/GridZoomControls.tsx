@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef } from "react";
+import { TOOLBAR_BTN, TOOLBAR_BTN_NEUTRAL } from "@/components/ui/classnames";
 
 // Density controls for a data grid — "Row height" scales every body cell's
 // vertical padding, "Column width" scales the grid's repeated data columns'
@@ -75,7 +76,7 @@ export function GridZoomControls({
 
   return (
     <details ref={detailsRef} className="group relative inline-block text-xs text-sdc-gray-500">
-      <summary className="flex list-none cursor-pointer select-none items-center gap-1.5 rounded-md border border-sdc-border bg-white px-3.5 py-1.5 text-sm font-medium text-sdc-navy shadow-sm hover:bg-sdc-blue-light">
+      <summary className={`${TOOLBAR_BTN} ${TOOLBAR_BTN_NEUTRAL}`}>
         Grid Size
         <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" className="shrink-0 opacity-70 transition-transform duration-150 group-open:rotate-180">
           <path d="M3.5 6 L8 10.5 L12.5 6" strokeLinecap="round" strokeLinejoin="round" />

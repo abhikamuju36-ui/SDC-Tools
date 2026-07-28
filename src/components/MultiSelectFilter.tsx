@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_BTN_MUTED } from "@/components/ui/classnames";
 
 // Generic multi-select dropdown filter, same interaction pattern as
 // PhaseColumnPicker (checkboxes, Select all/Clear, closes on outside click)
@@ -56,9 +57,7 @@ export function MultiSelectFilter({
   return (
     <details ref={detailsRef} className="group relative inline-block">
       <summary
-        className={`flex list-none cursor-pointer select-none items-center gap-1.5 rounded-full px-3.5 py-[7px] text-[12.5px] font-semibold ${
-          noneChecked ? "bg-sdc-gray-100 text-sdc-gray-600 hover:bg-sdc-gray-100/70" : "bg-sdc-blue-light text-sdc-blue hover:bg-sdc-blue-100/40"
-        }`}
+        className={`${TOOLBAR_BTN} ${noneChecked ? TOOLBAR_BTN_MUTED : TOOLBAR_BTN_ACTIVE}`}
       >
         {label}
         {!allChecked && ` (${checkedCount}/${options.length})`}

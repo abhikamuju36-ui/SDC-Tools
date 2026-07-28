@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_BTN_NEUTRAL } from "@/components/ui/classnames";
 
 // Toolbar toggle for the Projects grid: show or hide the "/actual" hours beside
 // each quoted value. Toggles a body class the grid CSS keys off, persisted in
@@ -28,9 +29,7 @@ export function ShowActualsToggle() {
       type="button"
       onClick={toggle}
       title="Show or hide actual hours next to quoted in each cell"
-      className={`flex cursor-pointer select-none items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm font-medium shadow-sm ${
-        show ? "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark" : "border-sdc-border bg-white text-sdc-gray-600"
-      }`}
+      className={`${TOOLBAR_BTN} ${show ? TOOLBAR_BTN_ACTIVE : TOOLBAR_BTN_NEUTRAL}`}
     >
       {show ? "Actuals: On" : "Actuals: Off"}
     </button>
