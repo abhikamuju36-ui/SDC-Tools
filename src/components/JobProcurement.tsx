@@ -835,7 +835,7 @@ function PartsDetailTable({
                   key={`${p.id}-${i}`}
                   onClick={() => onPartClick(p)}
                   title="Open in Parts List · copies part #"
-                  className={`cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/25 ${st.key === "overdue" ? "bg-sdc-red-bg/40" : ""}`}
+                  className={`cursor-pointer border-b border-sdc-border-soft/60 ${STATUS_ROW_BG[st.key]}`}
                 >
                   <td className="px-2 py-1.5"><StatusPill st={st} /></td>
                   <td className="px-2 py-1.5 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</td>
@@ -2099,7 +2099,7 @@ function RiskCards({
                   key={`${p.id}-${i}`}
                   onClick={() => { onPartClick(p); setSeeAll(null); }}
                   title="Copy part # · locate row"
-                  className={`cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/25 ${p.st.key === "overdue" ? "bg-sdc-red-bg/40" : ""}`}
+                  className={`cursor-pointer border-b border-sdc-border-soft/60 ${STATUS_ROW_BG[p.st.key]}`}
                 >
                   {seeAll === "upcoming" && <td className="px-3 py-1.5 font-mono text-[10px] text-sdc-gray-600">{p.poNumber || "—"}</td>}
                   <td className="px-3 py-1.5 font-mono text-[11px] font-semibold text-sdc-blue">{p.pn}</td>
