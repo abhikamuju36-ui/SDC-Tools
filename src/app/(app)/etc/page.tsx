@@ -785,7 +785,7 @@ export default async function MonthlyEtcPage({
               provider wraps both so the panel's live pulled/rate edits flow into
               the grid's job Standard Fees. */}
           <form key={month} id="etc-month-form" action={submitMonth.bind(null, month)} className="min-w-0 flex-1">
-          <div className="max-h-[calc(100vh-260px)] overflow-auto border border-sdc-border border-t-[#808080] bg-white shadow-sm select-none styled-scrollbar">
+          <div className="max-h-[calc(100vh-185px)] overflow-auto border border-sdc-border border-t-[#808080] bg-white shadow-sm select-none styled-scrollbar">
             <table className={`w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
               <thead className="sticky top-0 z-20 bg-sdc-gray-100">
                 <tr className={TABLE_HEADER_ROW}>

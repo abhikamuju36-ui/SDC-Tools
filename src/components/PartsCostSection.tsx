@@ -194,7 +194,7 @@ export function PartsCostSection({ parts, estimatedToPurchase }: { parts: JobPar
       </div>
 
       {/* Detail table — sticky header + first column, tall scroll region */}
-      <div className={`${card("p-0")} max-h-[72vh] overflow-auto`}>
+      <div className={`${card("p-0")} max-h-[82vh] overflow-auto`}>
         {filtered.length === 0 ? (
           <p className="p-8 text-center text-sm text-sdc-gray-500">
             {allLines.length === 0 ? "No parts purchased for this job." : "No line items match the current filters."}

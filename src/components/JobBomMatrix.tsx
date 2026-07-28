@@ -111,7 +111,7 @@ export function JobBomMatrix({ bom }: { bom: JobBom }) {
       </div>
 
       {/* Sections */}
-      <div className="max-h-[68vh] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
+      <div className="max-h-[82vh] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
         {bom.roots.map((section) => {
           const specId = Number(section.key.slice(1));
           const title = SPEC_TITLES[specId] ?? "";

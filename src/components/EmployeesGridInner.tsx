@@ -192,7 +192,7 @@ export default function EmployeesGridInner({
   ];
 
   return (
-    <div style={{ height: "78vh", width: "100%" }}>
+    <div style={{ height: "calc(100vh - 175px)", width: "100%" }}>
       <AgGridReact<EmployeeRow>
         theme={sdcTheme}
         rowData={rows}

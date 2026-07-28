@@ -287,7 +287,7 @@ export default async function QuotedPage({
         />
       </div>
 
-      <div className="max-h-[calc(100vh-220px)] min-w-[480px] overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm select-none styled-scrollbar">
+      <div className="max-h-[calc(100vh-170px)] min-w-[480px] overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm select-none styled-scrollbar">
         <table className={`text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
           <thead className="sticky top-0 z-20 bg-sdc-gray-100">
             <tr className={TABLE_HEADER_ROW}>
