@@ -43,6 +43,17 @@ const SUB_COLUMNS = ["Prior ETC", "Hours Worked Month", "Hours Left", "New ETC",
 const PARTS_COST_SUB_COLUMNS = ["Prior ETC", "Money Spent Month", "Money Left", "New ETC", "Diff"] as const;
 const TOTAL_SUB_COLUMNS = ["Prior ETC", "Hours Worked", "Hours Left", "Total New ETC", "Diff"] as const;
 
+// Every HOUR data column holds the same kind of value (a 4-digit-max hour
+// count), so they all get one uniform fixed width — matching what the Projects
+// grid did (commit 43b8a28). Applied to BOTH the header <th> and body <td> of
+// every hour sub-column (the per-section SUB_COLUMNS and the Total rollup
+// TOTAL_SUB_COLUMNS), so the column is truly uniform regardless of content.
+// Long header words wrap within the width via [overflow-wrap:anywhere] rather
+// than forcing the column wider. Deliberately NOT applied to the Parts Cost
+// dollar columns, which hold large "$" figures (e.g. -$974,979) and must size
+// to fit.
+const ETC_COL_W = "w-[46px] min-w-[46px]";
+
 // The sheet's 5-level header above the column labels: Phase -> billing group
 // (Engineering/Shop) -> sub-group (ME / CE / General Engineering / dept
 // abbreviations) -> colored section cell. Rather than hardcode column counts
@@ -907,7 +918,7 @@ export default async function MonthlyEtcPage({
                         key={s.code}
                         title={`${s.name} (${s.code})`}
                         colSpan={SUB_COLUMNS.length}
-                        className={`${edgeFor(s.code, i)} px-2 py-1 text-center ${color ?? ""}`}
+                        className={`${edgeFor(s.code, i)} [overflow-wrap:anywhere] px-2 py-1 text-center ${color ?? ""}`}
                       >
                         {s.sectionDisplay}
                       </th>
@@ -928,7 +939,7 @@ export default async function MonthlyEtcPage({
                     SUB_COLUMNS.map((col, ci) => (
                       <th
                         key={`${s.code}-${col}`}
-                        className={`${ci === 0 ? edgeFor(s.code, i) : "border-l border-sdc-border"} px-1 py-1.5 text-center text-[10px] ${
+                        className={`${ci === 0 ? edgeFor(s.code, i) : "border-l border-sdc-border"} ${ETC_COL_W} [overflow-wrap:anywhere] px-1 py-1.5 text-center text-[10px] ${
                           subColHeaderBg(col) || SECTION_HEADER_COLOR_LIGHT[s.code] || ""
                         }`}
                       >
@@ -940,7 +951,7 @@ export default async function MonthlyEtcPage({
                     TOTAL_SUB_COLUMNS.map((col, ci) => (
                       <th
                         key={`${group}-${col}`}
-                        className={`${ci === 0 && gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} px-1 py-1.5 text-center text-[10px] ${
+                        className={`${ci === 0 && gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} [overflow-wrap:anywhere] px-1 py-1.5 text-center text-[10px] ${
                           subColHeaderBg(col) || "bg-sdc-yellow-bg text-sdc-navy"
                         }`}
                       >
@@ -1028,7 +1039,7 @@ export default async function MonthlyEtcPage({
                           return SUB_COLUMNS.map((col, ci) => (
                             <td
                               key={`${s.code}-${col}`}
-                              className={`${ci === 0 ? edge : "border-l border-sdc-border"} px-2 py-1 text-center ${
+                              className={`${ci === 0 ? edge : "border-l border-sdc-border"} ${ETC_COL_W} px-2 py-1 text-center ${
                                 col === "Prior ETC" ? "bg-[#5E91D3] text-sdc-gray-700" : `${subColBodyBg(col)} text-sdc-gray-400`
                               }`}
                             >
@@ -1071,23 +1082,23 @@ export default async function MonthlyEtcPage({
                         groupGrandTotals[group].newEtc += totals[group].newEtc;
                         return (
                           <Fragment key={group}>
-                            <td className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} bg-[#5E91D3] px-1 py-1 text-center text-[10px] text-sdc-gray-700`} title={String(round2(totals[group].prior))}>
+                            <td className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} bg-[#5E91D3] px-1 py-1 text-center text-[10px] text-sdc-gray-700`} title={String(round2(totals[group].prior))}>
                               {wholeNum(totals[group].prior)}
                             </td>
-                            <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} px-1 py-1 text-center text-[10px] text-sdc-gray-500`} title={String(round2(totals[group].worked))}>
+                            <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} px-1 py-1 text-center text-[10px] text-sdc-gray-500`} title={String(round2(totals[group].worked))}>
                               {wholeNum(totals[group].worked)}
                             </td>
                             <td
-                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} px-1 py-1 text-center text-[10px] text-sdc-gray-500`}
+                              className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} px-1 py-1 text-center text-[10px] text-sdc-gray-500`}
                               title={`${round2(hoursLeft)} = Prior ETC (${round2(totals[group].prior)}) − Hours Worked (${round2(totals[group].worked)})`}
                             >
                               {wholeNum(hoursLeft)}
                             </td>
-                            <td className={`border-l border-sdc-border ${newEtcBg(true)} px-1 py-1 text-center text-[10px] font-bold text-sdc-navy`} title={String(round2(totals[group].newEtc))}>
+                            <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} px-1 py-1 text-center text-[10px] font-bold text-sdc-navy`} title={String(round2(totals[group].newEtc))}>
                               {monthComplete ? wholeNum(totals[group].newEtc) : "—"}
                             </td>
                             <td
-                              className={`border-l border-sdc-border ${diffBg(diff)} px-1 py-1 text-center text-[10px] text-sdc-gray-700`}
+                              className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} px-1 py-1 text-center text-[10px] text-sdc-gray-700`}
                               title={`${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(totals[group].newEtc)})`}
                             >
                               {wholeNum(diff)}
@@ -1214,17 +1225,17 @@ export default async function MonthlyEtcPage({
                       const diff = hoursLeft - t.newEtc;
                       return (
                         <Fragment key={s.code}>
-                          <td className={`${edgeFor(s.code, sIdx)} bg-[#5E91D3] px-1 py-1 text-center text-[10px] text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
-                          <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} px-1 py-1 text-center text-[10px] text-sdc-navy`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
+                          <td className={`${edgeFor(s.code, sIdx)} ${ETC_COL_W} bg-[#5E91D3] px-1 py-1 text-center text-[10px] text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
+                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} px-1 py-1 text-center text-[10px] text-sdc-navy`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
                           <td
-                            className={`border-l border-sdc-border ${HOURS_LEFT_BG} px-1 py-1 text-center text-[10px] text-sdc-navy`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} px-1 py-1 text-center text-[10px] text-sdc-navy`}
                             title={`${round2(hoursLeft)} = Prior ETC (${round2(t.prior)}) − Hours Worked (${round2(t.worked)})`}
                           >
                             {wholeNum(hoursLeft)}
                           </td>
-                          <td className={`border-l border-sdc-border ${newEtcBg(true)} px-1 py-1 text-center text-[10px] font-bold text-sdc-navy`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
+                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} px-1 py-1 text-center text-[10px] font-bold text-sdc-navy`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
                           <td
-                            className={`border-l border-sdc-border ${diffBg(diff)} px-1 py-1 text-center text-[10px] text-sdc-gray-700`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} px-1 py-1 text-center text-[10px] text-sdc-gray-700`}
                             title={`${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(t.newEtc)})`}
                           >
                             {wholeNum(diff)}
@@ -1238,17 +1249,17 @@ export default async function MonthlyEtcPage({
                       const diff = hoursLeft - t.newEtc;
                       return (
                         <Fragment key={group}>
-                          <td className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} bg-[#5E91D3] px-1 py-1 text-center text-[10px] text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
-                          <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} px-1 py-1 text-center text-[10px] text-sdc-blue-dark`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
+                          <td className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} bg-[#5E91D3] px-1 py-1 text-center text-[10px] text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
+                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} px-1 py-1 text-center text-[10px] text-sdc-blue-dark`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
                           <td
-                            className={`border-l border-sdc-border ${HOURS_LEFT_BG} px-1 py-1 text-center text-[10px] text-sdc-blue-dark`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} px-1 py-1 text-center text-[10px] text-sdc-blue-dark`}
                             title={`${round2(hoursLeft)} = Prior ETC (${round2(t.prior)}) − Hours Worked (${round2(t.worked)})`}
                           >
                             {wholeNum(hoursLeft)}
                           </td>
-                          <td className={`border-l border-sdc-border ${newEtcBg(true)} px-1 py-1 text-center text-[10px] font-bold text-sdc-blue-dark`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
+                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} px-1 py-1 text-center text-[10px] font-bold text-sdc-blue-dark`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
                           <td
-                            className={`border-l border-sdc-border ${diffBg(diff)} px-1 py-1 text-center text-[10px] text-sdc-gray-700`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} px-1 py-1 text-center text-[10px] text-sdc-gray-700`}
                             title={`${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(t.newEtc)})`}
                           >
                             {wholeNum(diff)}
