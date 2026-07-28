@@ -167,7 +167,7 @@ function SectionHierarchyChart({ rows, plannedLabel }: { rows: HierRow[]; planne
   );
 
   return (
-    <div className="relative min-w-[640px]">
+    <div className="relative min-w-[640px]" onMouseLeave={() => setHover(null)}>
       <div className="mb-2 flex items-center gap-4 text-xs text-sdc-gray-600">
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIES.planned }} /> {plannedLabel}</span>
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIES.actual }} /> Actual</span>
