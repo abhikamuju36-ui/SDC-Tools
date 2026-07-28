@@ -394,3 +394,23 @@ model StandardFeeSnapshot {
   totalShop     Decimal  @db.Decimal(12, 2)
   totalParts    Decimal  @db.Decimal(12, 2)
 }
+
+// Saved Projects-grid views ("Views ▾"), ported from the Scheduler's shared
+// column-views feature. A view is a snapshot of the grid's URL state (which
+// section columns show, hidden info columns, sort, and the Customer/Type/
+// Status/Billable filters) plus the client-side Grid Size and Actuals toggle —
+// stored as JSON in `config`. Only SHARED (published, team-wide) and the single
+// team DEFAULT live in the DB; each user's private "My views" stay in their
+// browser's localStorage. `scope`+`name` is unique so a publish upserts by name.
+model SavedView {
+  id        Int      @id @default(autoincrement())
+  name      String // "__default__" for the single team default row
+  scope     String // "shared" | "default"
+  owner     String? // display name / email of who published it
+  config    String   @db.Text // JSON: { params, grid, actuals }
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, name])
+  @@map("saved_views")
+}

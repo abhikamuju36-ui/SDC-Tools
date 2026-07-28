@@ -8,6 +8,8 @@ import { TABLE_HEADER_ROW, TABLE_GRID, BUTTON_PRIMARY } from "@/components/ui/cl
 import { PhaseColumnPicker } from "@/components/PhaseColumnPicker";
 import { ColumnToggle } from "@/components/ColumnToggle";
 import { GridZoomControls } from "@/components/GridZoomControls";
+import { ProjectViewsMenu } from "@/components/ProjectViewsMenu";
+import { listSharedViews } from "@/lib/saved-views-actions";
 import { ShowActualsToggle } from "@/components/ShowActualsToggle";
 import { MultiSelectFilter } from "@/components/MultiSelectFilter";
 import { SortButton } from "@/components/SortButton";
@@ -126,9 +128,13 @@ export default async function QuotedPage({
     statuses?: string;
     billables?: string;
     hide?: string;
+    view?: string;
   }>;
 }) {
   const { cols, sort, dir, customers, types, statuses, billables, hide } = await searchParams;
+  // Saved/published grid views ("Views ▾") — loaded for everyone; the team
+  // default + shared list come from the DB, personal views live in the browser.
+  const { default: teamDefault, shared: sharedViews } = await listSharedViews();
   // Column show/hide — `hide` is a comma-separated list of hidden column
   // keys (absent = all shown). Drives the "Columns" dropdown.
   const hiddenCols = new Set((hide ?? "").split(",").filter(Boolean));
@@ -302,6 +308,7 @@ export default async function QuotedPage({
           defaultRowPx={6}
           defaultColPx={4}
         />
+        <ProjectViewsMenu sharedViews={sharedViews} teamDefault={teamDefault} />
       </div>
 
       <div className="max-h-[calc(100vh-170px)] min-w-[480px] overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm select-none styled-scrollbar">
