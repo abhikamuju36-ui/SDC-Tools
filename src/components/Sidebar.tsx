@@ -3,7 +3,7 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isEtcDirty } from "@/lib/etc-dirty-tracker";
 import { AppTextSize } from "@/components/AppTextSize";
 
@@ -266,6 +266,20 @@ export default function Sidebar({
     if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Refresh anyway?")) return;
     window.location.reload();
   }
+
+  // Global Back — returns to the exact previous view (its URL preserves the
+  // filters/sort/scroll that were active), so e.g. Projects → a job's Job Hour
+  // Details → Back lands you right back on the Projects grid as you left it.
+  // Hidden when there's no in-app history to return to (fresh/direct load), and
+  // guarded by the same unsaved-New-ETC check as the nav items.
+  const [canGoBack, setCanGoBack] = useState(false);
+  useEffect(() => {
+    setCanGoBack(window.history.length > 1);
+  }, [pathname]);
+  function handleBack() {
+    if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Go back anyway?")) return;
+    router.back();
+  }
   const collapsed = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
   const persistedWidth = useSyncExternalStore(subscribeWidth, getWidthSnapshot, getServerWidthSnapshot);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
@@ -329,6 +343,24 @@ export default function Sidebar({
           </div>
         )}
       </div>
+
+      {canGoBack && (
+        <button
+          onClick={handleBack}
+          title="Go back to the previous page"
+          className={`flex items-center gap-2.5 border-b border-white/10 text-sm font-medium text-sdc-blue-100/80 hover:bg-white/5 hover:text-white ${
+            collapsed ? "justify-center px-0 py-3" : "px-4 py-2.5"
+          }`}
+        >
+          <span className="flex h-5 w-5 shrink-0 items-center justify-center">
+            <Icon>
+              <path d="M9.5 3 L4.5 8 L9.5 13" strokeLinecap="round" strokeLinejoin="round" />
+              <line x1="4.5" y1="8" x2="13" y2="8" strokeLinecap="round" />
+            </Icon>
+          </span>
+          {!collapsed && <span>Back</span>}
+        </button>
+      )}
 
       <nav aria-label="Application sections" className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
         {groups.map((group) => (
