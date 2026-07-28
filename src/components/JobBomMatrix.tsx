@@ -132,51 +132,64 @@ export function JobBomMatrix({ bom }: { bom: JobBom }) {
                 const hasKids = n.children.length > 0;
                 const isCollapsed = collapsed.has(n.key);
                 const share = Math.round((n.totalCost / grand) * 100);
-                const indent = 12 + Math.max(0, n.depth - 2) * 20;
+                // Depth 2 = a section's top-level assembly (no indent); each
+                // deeper level adds one guide rail. Rails are drawn as fixed-
+                // width spans with a left border so consecutive rows in the same
+                // subtree form a continuous vertical hierarchy line.
+                const levels = Math.max(0, n.depth - 2);
+                const expandable = hasKids && !q;
                 return (
                   <div
                     key={n.key}
-                    className="flex items-center gap-3 border-b border-sdc-border-soft/50 py-2 pr-3 hover:bg-sdc-blue-light/30"
-                    style={{ paddingLeft: indent }}
+                    onClick={expandable ? () => toggle(n.key) : undefined}
+                    className={`flex items-stretch border-b border-sdc-border-soft/50 hover:bg-sdc-blue-light/30 ${expandable ? "cursor-pointer" : ""}`}
                   >
-                    {hasKids && !q ? (
-                      <button
-                        type="button"
-                        onClick={() => toggle(n.key)}
-                        aria-label={isCollapsed ? "Expand" : "Collapse"}
-                        className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-sdc-gray-400 hover:bg-sdc-blue-light hover:text-sdc-navy"
-                      >
-                        <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" className={`transition-transform ${isCollapsed ? "" : "rotate-90"}`}>
-                          <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
-                        </svg>
-                      </button>
-                    ) : (
-                      <span className="w-5 shrink-0" />
-                    )}
-                    <span className="shrink-0 rounded bg-sdc-blue-light px-1.5 py-0.5 font-mono text-[11px] font-semibold text-sdc-blue-dark">
-                      {n.pn || "—"}
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="truncate text-[13px] font-medium text-sdc-navy" title={n.desc || n.label}>
-                        {n.desc || n.label || "—"}
+                    {/* Hierarchy guide rails — one vertical line per ancestor level. */}
+                    {Array.from({ length: levels }).map((_, i) => (
+                      <span key={i} aria-hidden className="w-5 shrink-0 border-l border-sdc-border-soft" />
+                    ))}
+                    <div className="flex min-w-0 flex-1 items-center gap-3 py-2 pl-2 pr-3">
+                      {expandable ? (
+                        <span
+                          aria-label={isCollapsed ? "Expand" : "Collapse"}
+                          className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-sdc-blue hover:bg-sdc-blue-light"
+                        >
+                          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" className={`transition-transform ${isCollapsed ? "" : "rotate-90"}`}>
+                            <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
+                          </svg>
+                        </span>
+                      ) : (
+                        // Leaf part — a small node dot on the hierarchy line.
+                        <span aria-hidden className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+                          <span className="h-1.5 w-1.5 rounded-full bg-sdc-gray-300" />
+                        </span>
+                      )}
+                      <span className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[11px] font-semibold ${hasKids ? "bg-sdc-blue text-white" : "bg-sdc-blue-light text-sdc-blue-dark"}`}>
+                        {n.pn || "—"}
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className={`truncate text-[13px] text-sdc-navy ${hasKids ? "font-bold" : "font-medium"}`} title={n.desc || n.label}>
+                          {n.desc || n.label || "—"}
+                        </div>
+                        <div className="text-[11px] text-sdc-gray-500">
+                          {num(n.totalPartQty)} parts
+                          {n.nestedAssemblies ? ` · ${n.nestedAssemblies} sub-assy` : ""}
+                          {hasKids ? ` · ${n.children.length} lines${isCollapsed ? " (click to expand)" : ""}` : ""}
+                        </div>
                       </div>
-                      <div className="text-[11px] text-sdc-gray-500">
-                        {num(n.totalPartQty)} parts
-                        {n.nestedAssemblies ? ` · ${n.nestedAssemblies} sub-assy` : ""}
+                      <div className="flex w-40 shrink-0 items-center gap-2" title={`${share}% of total job cost`}>
+                        <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-sdc-gray-100">
+                          <div
+                            className={`h-full rounded-full ${share >= 20 ? "bg-sdc-blue" : "bg-sdc-blue-100"}`}
+                            style={{ width: `${Math.min(100, share)}%` }}
+                          />
+                        </div>
+                        <span className="w-9 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{share}%</span>
                       </div>
+                      <span className="w-24 shrink-0 text-right text-[13px] font-medium tabular-nums text-sdc-navy">
+                        {n.totalCost ? usd(n.totalCost) : ""}
+                      </span>
                     </div>
-                    <div className="flex w-40 shrink-0 items-center gap-2" title={`${share}% of total job cost`}>
-                      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-sdc-gray-100">
-                        <div
-                          className={`h-full rounded-full ${share >= 20 ? "bg-sdc-blue" : "bg-sdc-blue-100"}`}
-                          style={{ width: `${Math.min(100, share)}%` }}
-                        />
-                      </div>
-                      <span className="w-9 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{share}%</span>
-                    </div>
-                    <span className="w-24 shrink-0 text-right text-[13px] font-medium tabular-nums text-sdc-navy">
-                      {n.totalCost ? usd(n.totalCost) : ""}
-                    </span>
                   </div>
                 );
               })}
