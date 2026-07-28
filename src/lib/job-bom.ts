@@ -17,6 +17,8 @@ export type BomNode = {
   key: string;
   depth: number;
   label: string;
+  pn: string; // part/company number (chip)
+  desc: string; // description (name)
   isAssembly: boolean;
   partQty: number;
   unitCost: number;
@@ -108,9 +110,11 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
     if (parent) isParent.add(parent);
   }
 
+  const partOf = (r: Row) => (r.ItemCompanyID ?? "").trim();
+  const descOf = (r: Row) => (r.ItemDescription ?? "").replace(/\s+/g, " ").trim();
   const label = (r: Row) => {
-    const part = (r.ItemCompanyID ?? "").trim();
-    const desc = (r.ItemDescription ?? "").replace(/\s+/g, " ").trim();
+    const part = partOf(r);
+    const desc = descOf(r);
     return desc ? (part ? `${part} — ${desc}` : desc) : part;
   };
 
@@ -129,6 +133,8 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
       key: r.path,
       depth: 0, // set below
       label: label(r),
+      pn: partOf(r),
+      desc: descOf(r),
       isAssembly: !leaf,
       partQty: qty,
       unitCost: unit,
@@ -154,6 +160,8 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
           key: `S${r.SpecID}`,
           depth: 1,
           label: `Section ${r.SpecID}`,
+          pn: "",
+          desc: "",
           isAssembly: true,
           partQty: 0,
           unitCost: 0,

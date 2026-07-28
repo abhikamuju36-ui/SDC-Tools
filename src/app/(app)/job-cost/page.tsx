@@ -52,10 +52,7 @@ export default async function JobCostPage({
           message="The BOM couldn't be loaded from Total ETO / Power BI right now. This is usually a brief upstream hiccup — try again in a moment, or run Sync from the Dashboard."
         />
       ) : bom && bom.roots.length ? (
-        <>
-          <p className="mb-3 text-xs text-sdc-gray-400">{bom.rowCount.toLocaleString()} BOM lines</p>
-          <JobBomMatrix bom={bom} />
-        </>
+        <JobBomMatrix bom={bom} />
       ) : (
         <EmptyState title="No BOM found for this job" message="This job has no assembly/part records in Total ETO." />
       )}
