@@ -25,6 +25,23 @@ export function JobMultiSelect({ jobs, selected }: { jobs: JobOpt[]; selected: s
     return () => document.removeEventListener("click", onClick);
   }, []);
 
+  // Remember the last selection so the page stops snapping back to the server's
+  // data-richest default (1142) on every fresh landing. An explicit ?jobs= /
+  // ?job= (e.g. a deep-link from Projects) always wins — we only restore when
+  // the URL carries no selection at all.
+  const LAST_KEY = "jobhours-last-jobs";
+  useEffect(() => {
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.has("jobs") || sp.has("job")) return;
+    let stored: string | null = null;
+    try { stored = window.localStorage.getItem(LAST_KEY); } catch { /* ignore */ }
+    if (!stored) return;
+    sp.set("jobs", stored);
+    router.replace(`${pathname}?${sp.toString()}`);
+    // Run once on mount — a stored value only matters for the initial landing.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     if (!q) return jobs;
@@ -36,6 +53,11 @@ export function JobMultiSelect({ jobs, selected }: { jobs: JobOpt[]; selected: s
     if (next.size === 0) qs.delete("jobs");
     else qs.set("jobs", [...next].join(","));
     qs.delete("job"); // drop the legacy single-job param
+    // Persist the pick so the next landing restores it (see the mount effect).
+    try {
+      if (next.size === 0) window.localStorage.removeItem(LAST_KEY);
+      else window.localStorage.setItem(LAST_KEY, [...next].join(","));
+    } catch { /* ignore */ }
     router.push(`${pathname}?${qs.toString()}`);
   }
 
