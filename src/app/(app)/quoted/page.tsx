@@ -238,14 +238,20 @@ export default async function QuotedPage({
     PHASE_GROUPS.map((g) => [g.phase, SECTIONS.filter((s) => s.phase === g.phase && visibleSet.has(s.code))])
   );
 
-  // Total visible data columns: for each phase, its visible sections + 1 total
-  // column (Machine Testing only — the other phases don't show a Total column),
-  // or just 1 column if every section in that phase is hidden.
-  const dataColumnCount = PHASE_GROUPS.reduce((sum, g) => {
-    const visible = visibleSectionsByPhase.get(g.phase) ?? [];
-    const hasTotalCol = g.phase === "Machine Testing";
-    return sum + (visible.length ? visible.length + (hasTotalCol ? 1 : 0) : 1);
-  }, 0);
+  // Total visible data columns: for each phase, its visible sections (or just 1
+  // collapsed column if every section in that phase is hidden), PLUS the single
+  // grand-total "Total Hours" column that spans all phases.
+  const dataColumnCount =
+    PHASE_GROUPS.reduce((sum, g) => {
+      const visible = visibleSectionsByPhase.get(g.phase) ?? [];
+      return sum + (visible.length ? visible.length : 1);
+    }, 0) + 1;
+
+  // Every currently-visible section code, across all phases — the grand total
+  // (quoted / actual) sums exactly these, so it tracks the column pickers.
+  const visibleCodesFlat = PHASE_GROUPS.flatMap((g) =>
+    (visibleSectionsByPhase.get(g.phase) ?? []).map((s) => s.code)
+  );
 
   return (
     <form action={saveQuotedHours} className="w-full px-8 py-10 md:px-13 md:py-11">
@@ -366,11 +372,10 @@ export default async function QuotedPage({
               {PHASE_GROUPS.map((g) => {
                 const visible = visibleSectionsByPhase.get(g.phase) ?? [];
                 const color = PHASE_HEADER_COLOR[g.phase] ?? "bg-sdc-blue-light";
-                const hasTotalCol = g.phase === "Machine Testing";
                 return visible.length ? (
                   <th
                     key={g.phase}
-                    colSpan={visible.length + (hasTotalCol ? 1 : 0)}
+                    colSpan={visible.length}
                     className={`border-l border-sdc-border px-2 py-2 text-center italic ${color}`}
                   >
                     {g.phase}
@@ -385,6 +390,13 @@ export default async function QuotedPage({
                   </th>
                 );
               })}
+              <th
+                rowSpan={3}
+                className="w-[84px] min-w-[84px] border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-[11px] leading-tight text-sdc-blue-dark"
+              >
+                TOTAL
+                <span className="block font-normal normal-case tracking-normal text-sdc-gray-500">Quoted / Actual</span>
+              </th>
               <th rowSpan={3} className="min-w-[90px] border-l border-sdc-border bg-sdc-green-bg px-2 py-2 text-center align-bottom text-sdc-green-text">
                 Cost Quoted
               </th>
@@ -408,17 +420,7 @@ export default async function QuotedPage({
                     {run.group}
                   </th>
                 ));
-                if (g.phase !== "Machine Testing") return groupHeaders;
-                return [
-                  ...groupHeaders,
-                  <th
-                    key={`${g.phase}-total`}
-                    rowSpan={2}
-                    className="qc w-[78px] min-w-[78px] border-l border-sdc-border bg-sdc-blue-light px-1 py-2 text-center align-bottom text-[10px] text-sdc-blue-dark"
-                  >
-                    Total
-                  </th>,
-                ];
+                return groupHeaders;
               })}
             </tr>
             <tr className={TABLE_HEADER_ROW}>
@@ -659,19 +661,25 @@ export default async function QuotedPage({
                             </td>
                           );
                         })}
-                        {g.phase === "Machine Testing" && (
-                          <td
-                            className="qc w-[78px] min-w-[78px] whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center font-mono text-[10px] font-medium"
-                            title={`Quoted ${exactHours(total) ?? "0"} / Actual ${exactHours(actualTotal) ?? "0"}`}
-                          >
-                            <span className="font-semibold text-sdc-blue-dark">{wholeHours(total)}</span>
-                            <span className="text-sdc-gray-400"> / </span>
-                            <span className="font-semibold text-sdc-green-text">{wholeHours(actualTotal)}</span>
-                          </td>
-                        )}
                       </Fragment>
                     );
                   })}
+                  {(() => {
+                    // Grand total = sum of every currently-visible section's
+                    // quoted / actual, across all phases (tracks the pickers).
+                    const grandQuoted = visibleCodesFlat.reduce((sum, code) => sum + Number(hoursBySection.get(code) ?? 0), 0);
+                    const grandActual = visibleCodesFlat.reduce((sum, code) => sum + (actualBySection.get(code) ?? 0), 0);
+                    return (
+                      <td
+                        className="w-[84px] min-w-[84px] whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center font-mono text-[10px] font-medium"
+                        title={`Quoted ${exactHours(grandQuoted) ?? "0"} / Actual ${exactHours(grandActual) ?? "0"}`}
+                      >
+                        <span className="font-semibold text-sdc-blue-dark">{wholeHours(grandQuoted)}</span>
+                        <span className="text-sdc-gray-400"> / </span>
+                        <span className="font-semibold text-sdc-green-text">{wholeHours(grandActual)}</span>
+                      </td>
+                    );
+                  })()}
                   <td className={`whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center text-[10px] font-medium text-sdc-navy ${zebra}`}>
                     <div className="flex items-center justify-center gap-0.5">
                       <span className="text-sdc-gray-400">$</span>

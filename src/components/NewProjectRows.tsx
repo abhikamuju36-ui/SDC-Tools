@@ -134,9 +134,6 @@ export function NewProjectRows({
                     />
                   </td>
                 ))}
-                <td className="border-l border-sdc-border bg-sdc-blue-light/60 px-1 py-1.5 text-center font-mono text-[10px] font-medium text-sdc-navy">
-                  —
-                </td>
               </Fragment>
             ) : (
               <td key={g.phase} className="border-l border-sdc-border px-1 py-1.5 text-center font-mono text-[10px] text-sdc-gray-600">
@@ -144,6 +141,11 @@ export function NewProjectRows({
               </td>
             )
           )}
+          {/* Grand-total column (computed on save) — matches the grid's single
+              Total Hours column that spans all phases. */}
+          <td className="border-l border-sdc-border bg-sdc-blue-light/60 px-1 py-1.5 text-center font-mono text-[10px] font-medium text-sdc-navy">
+            —
+          </td>
           <td className="whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-2 py-1.5 text-center text-[10px] font-medium text-sdc-navy">
             <div className="flex items-center justify-center gap-0.5">
               <span className="text-sdc-gray-400">$</span>
