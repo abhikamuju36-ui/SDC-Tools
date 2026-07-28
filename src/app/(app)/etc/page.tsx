@@ -1216,9 +1216,21 @@ export default async function MonthlyEtcPage({
                 )}
                 {visibleJobs.length > 0 && (
                   <tr className="border-t-2 border-sdc-navy bg-sdc-gray-100 font-medium">
-                    <td className="sticky left-0 z-10 overflow-hidden bg-sdc-gray-100 px-3 py-2 text-center align-middle whitespace-nowrap" colSpan={showJobName ? 3 : 2}>
-                      Total
+                    {/* Mirror the body's THREE separate frozen cells (same widths
+                        + sticky offsets) rather than one colSpan cell, so the
+                        section totals after them line up exactly with the rows. */}
+                    <td className="sticky left-0 z-10 w-10 min-w-10 overflow-hidden bg-sdc-gray-100 px-2 py-2 text-center align-middle whitespace-nowrap" />
+                    <td className={`sticky left-10 z-10 w-20 min-w-20 overflow-hidden bg-sdc-gray-100 px-3 py-2 text-right align-middle font-bold whitespace-nowrap text-sdc-navy ${showJobName ? "" : "border-r-8 border-[#808080]"}`}>
+                      {showJobName ? "" : "Total"}
                     </td>
+                    {showJobName && (
+                      <td
+                        style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
+                        className="sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] bg-sdc-gray-100 px-3 py-2 text-right align-middle font-bold whitespace-nowrap text-sdc-navy"
+                      >
+                        Total
+                      </td>
+                    )}
                     {visibleCols.map((s, sIdx) => {
                       const t = sectionGrandTotals.get(s.code)!;
                       const hoursLeft = t.prior - t.worked;
