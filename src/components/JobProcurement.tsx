@@ -1109,34 +1109,27 @@ function PartRowCells({
   now: number;
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
 }) {
+  const parentLine = p.parentPN ? `${p.parentPN}${p.parentDesc ? ` — ${p.parentDesc}` : ""}` : "Loose parts";
   const cell = (key: ColKey) => {
     switch (key) {
       case "qty":
         return <span className="text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</span>;
       case "pn":
-        return (
-          <span className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-sdc-blue">
-            {p.pn}
-            <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
-              <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
-            </svg>
-          </span>
-        );
+        // Blue link-style — the row itself copies the PN + drills, so the link
+        // is the affordance (no separate copy glyph).
+        return <span className="block truncate font-mono text-[11px] font-medium text-sdc-blue group-hover:underline" title={p.pn}>{p.pn}</span>;
       case "desc":
-        return <span className="line-clamp-1 text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>;
+        return <span className="block truncate text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>;
       case "parent":
-        return p.parentPN ? (
-          <span className="flex min-w-0 flex-col leading-tight">
-            <span className="truncate font-mono text-[10px] font-semibold text-sdc-gray-600" title={p.parentPN}>{p.parentPN}</span>
-            <span className="truncate text-[9px] text-sdc-gray-400" title={p.parentDesc}>{p.parentDesc || "—"}</span>
+        return (
+          <span className={`block truncate font-mono text-[10px] ${p.parentPN ? "text-sdc-gray-600" : "italic text-sdc-gray-400"}`} title={parentLine}>
+            {parentLine}
           </span>
-        ) : (
-          <span className="text-[10px] italic text-sdc-gray-400">Loose parts</span>
         );
       case "category":
-        return <span className="line-clamp-1 text-[11px] text-sdc-gray-600" title={p.category ?? ""}>{p.category || "—"}</span>;
+        return <span className="block truncate text-[11px] text-sdc-gray-600" title={p.category ?? ""}>{p.category || "—"}</span>;
       case "mfr":
-        return <span className="line-clamp-1 text-[11px] text-sdc-gray-600" title={p.manufacturer}>{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>;
+        return <span className="block truncate text-[11px] text-sdc-gray-600" title={p.manufacturer}>{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>;
       case "supplier":
         return <SupplierChip supplier={p.supplier} />;
       case "po":
@@ -1145,7 +1138,7 @@ function PartRowCells({
             type="button"
             onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poNumber); }}
             title="View PO"
-            className="font-mono text-[11px] font-semibold text-sdc-blue underline decoration-dotted underline-offset-2"
+            className="block truncate text-left font-mono text-[11px] font-medium text-sdc-blue hover:underline"
           >
             {p.poNumber}
           </button>
@@ -1167,7 +1160,10 @@ function PartRowCells({
   return (
     <>
       {cols.map((c) => (
-        <td key={c.key} className={`px-2 py-1.5 ${c.align === "right" ? "text-right" : ""}`}>
+        <td
+          key={c.key}
+          className={`overflow-hidden border-b border-r border-sdc-border-soft px-2 py-1 align-middle ${c.align === "right" ? "text-right" : ""}`}
+        >
           {cell(c.key)}
         </td>
       ))}
@@ -1230,7 +1226,7 @@ function PartsTableView({
           <thead className="sticky top-0 z-[2]">
             <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wider text-white">
               {cols.map((c) => (
-                <th key={c.key} className={`relative px-2 py-2 font-bold ${c.align === "right" ? "text-right" : ""}`}>
+                <th key={c.key} className={`relative border-r border-white/15 px-2 py-1.5 font-bold ${c.align === "right" ? "text-right" : ""}`}>
                   <span className="block truncate">{c.label}</span>
                   <span
                     onMouseDown={(e) => startResize(c.key, e)}
@@ -1244,19 +1240,30 @@ function PartsTableView({
             </tr>
           </thead>
           <tbody>
-            {parts.map((p, i) => (
-              <tr
-                key={`${p.id}-${i}`}
-                data-part-key={String(p.id)}
-                data-pn={p.pn}
-                data-part-id={p.id}
-                onClick={() => onPartClick(p)}
-                title="Copy part # · locate row"
-                className={`cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/25 ${p.st.key === "overdue" ? "bg-sdc-red-bg/40" : ""}`}
-              >
-                <PartRowCells p={p} cols={cols} now={now} onOpenPo={onOpenPo} />
-              </tr>
-            ))}
+            {parts.map((p, i) => {
+              // Row-bg precedence: drill-flash (inline style, set imperatively)
+              // > overdue tint > hover > zebra. Overdue rows omit the hover class
+              // so the red always wins; the flash uses inline style so it beats
+              // every class. Non-overdue rows get zebra + hover (the hover variant
+              // is emitted after the base bg, so it wins over the zebra tint).
+              const overdue = p.st.key === "overdue";
+              const rowBg = overdue
+                ? "bg-sdc-red-bg/40"
+                : `${i % 2 === 1 ? "bg-sdc-gray-100/40" : "bg-white"} hover:bg-sdc-blue-light/25`;
+              return (
+                <tr
+                  key={`${p.id}-${i}`}
+                  data-part-key={String(p.id)}
+                  data-pn={p.pn}
+                  data-part-id={p.id}
+                  onClick={() => onPartClick(p)}
+                  title="Copy part # · locate row"
+                  className={`group cursor-pointer ${rowBg}`}
+                >
+                  <PartRowCells p={p} cols={cols} now={now} onOpenPo={onOpenPo} />
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
