@@ -1,43 +1,73 @@
 import "server-only";
 import sql from "mssql";
 
-// Native BOM cost hierarchy — pulled DIRECTLY from Total ETO (the ERP Power BI
-// itself reads from), via the `vwEngBOM` engineering BOM view. This avoids the
-// Power BI delegated-token path entirely (its DPAPI token cache can't be
-// decrypted when the app runs under the PM2 service account).
+// Native procurement BOM — ported from the Build Readiness report
+// (Centrailized library/Build_Readiness_Report). Instead of the cost-only
+// `vwEngBOM` explosion this used to run, it now pulls the same engineering
+// product structure the Build Readiness page uses (tblEngProductStructure +
+// tblEngItemMaster) plus purchase-order / receiver data, so every leaf part
+// carries its PO status, supplier, and dates and every assembly carries a
+// readiness rollup — exactly matching the reference app's data + status logic.
 //
-// vwEngBOM is edge rows (ParentID → ChildID) per ProjectID (= job number) and
-// SpecID (= the report's "sections" 10/30/40/90). We explode it with a
-// recursive CTE, group under one synthetic section node per SpecID, and roll
-// leaf part costs (ItemLastCost × ItemQty) up the tree. Verified against the
-// Power BI report: sections 30/90 match to the dollar; grand total is within
-// ~0.3% (Power BI applies extra costing nuances on shared/assembly items).
+// Hierarchy: one synthetic section node per SpecID (the report's
+// "sections" 10/30/40/90) → the spec's top node(s) from tblEngTop are exploded
+// into nested assemblies → leaf parts. Status/stats logic mirrors
+// server/lib/bomTree.js verbatim (assemblyIds = every ParentID; a part is
+// `received` when ReceivedQty >= ItemQty, else `ordered` when POQty > 0, else
+// `noPO`; assembly readiness is computed over UNIQUE leaf parts deduped by
+// ChildID). Kept defensive/fail-soft: an unknown job or a query error yields an
+// empty JobBom.
+
+export type BomStats = {
+  total: number;
+  received: number;
+  noPO: number;
+  ordered: number;
+  pct: number;
+};
+
+export type BomPart = {
+  id: number;
+  pn: string;
+  desc: string;
+  manufacturer: string;
+  qty: number;
+  poQty: number;
+  receivedQty: number;
+  unitPrice: number;
+  requiredDate: string | null; // eps.RequiredDate — when the part is needed
+  expectedDate: string | null; // PO dueDate (DateRequired || PurchaseDateRequired)
+  receivedDate: string | null; // LastReceivedDate
+  status: "received" | "ordered" | "noPO";
+  supplier: string | null;
+  poId: string | null;
+};
 
 export type BomNode = {
-  key: string;
-  depth: number;
+  key: string; // unique instance key (parent path)
+  id: number | string;
+  depth: number; // section = 0, its top-level assemblies = 1, …
   label: string;
   pn: string; // part/company number (chip)
   desc: string; // description (name)
   isAssembly: boolean;
-  partQty: number;
-  unitCost: number;
-  extendedCost: number;
-  totalCost: number;
-  totalPartQty: number;
-  nestedAssemblies: number;
-  children: BomNode[];
+  stats: BomStats;
+  children: BomNode[]; // nested sub-assemblies
+  parts: BomPart[]; // direct leaf parts
+  totalCost: number; // Σ unitPrice × qty over descendant leaf parts
+  totalPartQty: number; // Σ qty over descendant leaf parts
+  nestedAssemblies: number; // count of descendant assemblies
 };
 
 export type JobBom = {
   jobId: string;
-  roots: BomNode[];
+  roots: BomNode[]; // one section node per SpecID
   grandTotalCost: number;
   grandTotalPartQty: number;
   rowCount: number;
 };
 
-// Total ETO connection — same server/db/creds as sync-totaleto.ts.
+// Total ETO connection — same server/db/creds as sync-totaleto.ts. DO NOT CHANGE.
 const config: sql.config = {
   server: "SERVER-APP1.stevendouglas.local",
   database: "SDC",
@@ -50,153 +80,433 @@ const config: sql.config = {
   requestTimeout: 120000,
 };
 
-// Recursive BOM explosion. Each row carries a unique instance `path` (of
-// StructureIDs) so a part used under multiple assemblies stays distinct.
-const BOM_SQL = `
-WITH roots AS (
-  SELECT DISTINCT b.SpecID, b.ParentID AS rootId
-  FROM vwEngBOM b
-  WHERE b.ProjectID = @job
-    AND b.ParentID NOT IN (SELECT ChildID FROM vwEngBOM WHERE ProjectID = @job)
-),
-tree AS (
-  SELECT b.SpecID, b.StructureID, b.ChildID AS nodeId, 1 AS lvl,
-         CAST('/' + CAST(b.StructureID AS VARCHAR(20)) AS VARCHAR(MAX)) AS path,
-         b.ItemCompanyID, b.ItemDescription, b.ItemQty, b.ItemLastCost
-  FROM vwEngBOM b JOIN roots r ON r.SpecID = b.SpecID AND b.ParentID = r.rootId
-  WHERE b.ProjectID = @job
-  UNION ALL
-  SELECT b.SpecID, b.StructureID, b.ChildID, t.lvl + 1,
-         CAST(t.path + '/' + CAST(b.StructureID AS VARCHAR(20)) AS VARCHAR(MAX)),
-         b.ItemCompanyID, b.ItemDescription, b.ItemQty, b.ItemLastCost
-  FROM vwEngBOM b JOIN tree t ON b.ProjectID = @job AND b.SpecID = t.SpecID AND b.ParentID = t.nodeId
-)
-SELECT SpecID, path, ItemCompanyID, ItemDescription, ItemQty, ItemLastCost
-FROM tree
-OPTION (MAXRECURSION 32767)`;
+// ---------- SQL (ported from server/services/eto.js) ----------
 
-type Row = {
-  SpecID: number;
-  path: string;
-  ItemCompanyID: string | null;
-  ItemDescription: string | null;
+const SPECS_SQL = `
+  SELECT SpecID, SDescription
+  FROM tblSpec
+  WHERE ProjectID = @job
+  ORDER BY SpecID`;
+
+const TOP_SQL = `
+  SELECT et.SpecID, et.ItemID AS TopItemID,
+         eim.ItemCompanyID AS TopPN, eim.ItemDescription AS TopDesc
+  FROM tblEngTop et
+  JOIN tblEngItemMaster eim ON et.ItemID = eim.ItemID
+  WHERE et.ProjectID = @job`;
+
+// One project-wide pull (SpecID carried per row) instead of the reference's
+// per-spec round-trip — the PO/received subqueries are keyed by ItemID +
+// ProjectID (not SpecID), so the per-row values are byte-identical.
+const BOM_SQL = `
+  SELECT
+    eps.ChildID,
+    child.ItemCompanyID   AS ChildPN,
+    child.ItemDescription AS ChildDesc,
+    child.Manufacturer    AS Manufacturer,
+    eps.ParentID,
+    parent.ItemCompanyID   AS ParentPN,
+    parent.ItemDescription AS ParentDesc,
+    eps.ItemQty,
+    eps.SpecID,
+    eps.RequiredDate,
+    eps.ItemHold,
+    ISNULL((
+      SELECT SUM(pod.PurchaseQty)
+      FROM tblPurchaseOrderDetails pod
+      WHERE pod.ProjectID = @job AND pod.ItemID = eps.ChildID
+    ), 0) AS POQty,
+    ISNULL((
+      SELECT SUM(rl.QtyReceived)
+      FROM tblReceiverLog rl
+      JOIN tblPurchaseOrderDetails pod2 ON rl.PurchaseDetailID = pod2.PurchaseDetailID
+      WHERE pod2.ProjectID = @job AND pod2.ItemID = eps.ChildID
+    ), 0) AS ReceivedQty,
+    ISNULL((
+      SELECT TOP 1 pod3.PurchasePrice
+      FROM tblPurchaseOrderDetails pod3
+      WHERE pod3.ProjectID = @job AND pod3.ItemID = eps.ChildID AND pod3.PurchasePrice > 0
+      ORDER BY pod3.PurchaseDetailID DESC
+    ), 0) AS UnitPrice,
+    (
+      SELECT TOP 1 rl3.[Date]
+      FROM tblReceiverLog rl3
+      JOIN tblPurchaseOrderDetails pod5 ON rl3.PurchaseDetailID = pod5.PurchaseDetailID
+      WHERE pod5.ProjectID = @job AND pod5.ItemID = eps.ChildID
+      ORDER BY rl3.[Date] DESC
+    ) AS LastReceivedDate
+  FROM tblEngProductStructure eps
+  JOIN tblEngItemMaster child  ON eps.ChildID  = child.ItemID
+  JOIN tblEngItemMaster parent ON eps.ParentID = parent.ItemID
+  WHERE eps.ProjectID = @job
+  ORDER BY eps.SpecID, parent.ItemCompanyID, child.ItemCompanyID`;
+
+const PO_SQL = `
+  SELECT
+    poh.PurchaseOrderID,
+    poh.PurchaseDate,
+    poh.PurchaseDateRequired,
+    c.CName AS Supplier,
+    pod.ItemID,
+    pod.DateRequired
+  FROM tblPurchaseOrderDetails pod
+  JOIN tblPurchaseOrderHeader poh ON pod.PurchaseOrderID = poh.PurchaseOrderID
+  JOIN tblCompany c               ON poh.PurchaseSupplierID = c.CompanyID
+  JOIN tblEngItemMaster eim       ON pod.ItemID = eim.ItemID
+  WHERE pod.ProjectID = @job
+    AND eim.ItemCompanyID NOT IN ('Shipping', 'FEE', 'TARIFF')
+  ORDER BY c.CName, pod.DateRequired`;
+
+// ---------- Row shapes ----------
+
+type BomRow = {
+  ChildID: number;
+  ChildPN: string | null;
+  ChildDesc: string | null;
+  Manufacturer: string | null;
+  ParentID: number;
+  ParentPN: string | null;
+  ParentDesc: string | null;
   ItemQty: number | null;
-  ItemLastCost: number | null;
+  SpecID: number;
+  RequiredDate: Date | null;
+  ItemHold: boolean | null;
+  POQty: number | null;
+  ReceivedQty: number | null;
+  UnitPrice: number | null;
+  LastReceivedDate: Date | null;
 };
 
-export async function getJobBom(jobId: string): Promise<JobBom> {
-  const numericJob = Number(String(jobId).replace(/[^0-9]/g, ""));
-  if (!Number.isFinite(numericJob) || numericJob === 0) {
-    return { jobId: String(jobId), roots: [], grandTotalCost: 0, grandTotalPartQty: 0, rowCount: 0 };
-  }
+type TopRow = { SpecID: number; TopItemID: number; TopPN: string | null; TopDesc: string | null };
+type SpecRow = { SpecID: number; SDescription: string | null };
+type PoRow = {
+  PurchaseOrderID: string | number | null;
+  PurchaseDate: Date | null;
+  PurchaseDateRequired: Date | null;
+  Supplier: string | null;
+  ItemID: number;
+  DateRequired: Date | null;
+};
 
-  const pool = await sql.connect(config);
-  let rows: Row[];
-  try {
-    const result = await pool.request().input("job", sql.Int, numericJob).query(BOM_SQL);
-    rows = result.recordset as Row[];
-  } finally {
-    await pool.close();
-  }
+type PoLine = { poId: string | null; supplier: string | null; dueDate: string | null };
 
-  // Which instance paths are parents (have at least one child path)? Everything
-  // else is a leaf — only leaves carry cost (assemblies roll up from parts, and
-  // their own ItemLastCost is an already-rolled figure we must not double count).
-  const isParent = new Set<string>();
+// ---------- Helpers ----------
+
+const iso = (d: Date | null | undefined): string | null => {
+  if (!d) return null;
+  const t = new Date(d);
+  return Number.isNaN(t.getTime()) ? null : t.toISOString();
+};
+const clean = (s: string | null | undefined): string => (s ?? "").replace(/\s+/g, " ").trim();
+
+// PO index: ItemID → PO lines. Supplier/expected-date for a part come from its
+// first PO line (dueDate = DateRequired || PurchaseDateRequired), matching
+// buildPoIndex in the reference.
+function buildPoIndex(rows: PoRow[]): Map<number, PoLine[]> {
+  const idx = new Map<number, PoLine[]>();
   for (const r of rows) {
-    const seg = r.path.split("/");
-    seg.pop();
-    const parent = seg.join("/");
-    if (parent) isParent.add(parent);
+    const line: PoLine = {
+      poId: r.PurchaseOrderID != null ? String(r.PurchaseOrderID) : null,
+      supplier: r.Supplier ?? null,
+      dueDate: iso(r.DateRequired ?? r.PurchaseDateRequired),
+    };
+    const arr = idx.get(r.ItemID);
+    if (arr) arr.push(line);
+    else idx.set(r.ItemID, [line]);
   }
+  return idx;
+}
 
-  const partOf = (r: Row) => (r.ItemCompanyID ?? "").trim();
-  const descOf = (r: Row) => (r.ItemDescription ?? "").replace(/\s+/g, " ").trim();
-  const label = (r: Row) => {
-    const part = partOf(r);
-    const desc = descOf(r);
-    return desc ? (part ? `${part} — ${desc}` : desc) : part;
+// Everything for one spec's tree: dedupe edges, find assemblies + roots.
+type SpecTree = {
+  assemblyIds: Set<number>;
+  childrenMap: Map<number, BomRow[]>;
+  deduped: BomRow[];
+};
+
+function buildSpecTree(rows: BomRow[]): SpecTree {
+  const seen = new Set<string>();
+  const deduped = rows.filter((r) => {
+    const k = `${r.ChildID}-${r.ParentID}`;
+    if (seen.has(k)) return false;
+    seen.add(k);
+    return true;
+  });
+  const assemblyIds = new Set<number>(deduped.map((r) => r.ParentID));
+  const childrenMap = new Map<number, BomRow[]>();
+  for (const r of deduped) {
+    const arr = childrenMap.get(r.ParentID);
+    if (arr) arr.push(r);
+    else childrenMap.set(r.ParentID, [r]);
+  }
+  return { assemblyIds, childrenMap, deduped };
+}
+
+// Recursively collect all leaf (non-assembly) rows under a node — reference
+// getLeafParts, including the shared-visited behaviour that prevents cycles.
+function getLeafRows(nodeId: number, t: SpecTree, visited: Set<number>): BomRow[] {
+  if (visited.has(nodeId)) return [];
+  visited.add(nodeId);
+  const out: BomRow[] = [];
+  for (const child of t.childrenMap.get(nodeId) ?? []) {
+    if (t.assemblyIds.has(child.ChildID)) {
+      out.push(...getLeafRows(child.ChildID, t, visited));
+    } else {
+      out.push(child);
+    }
+  }
+  return out;
+}
+
+// Readiness stats over UNIQUE leaf parts (deduped by ChildID) — reference
+// getAssemblyStats verbatim.
+function statsForRoots(rootIds: number[], t: SpecTree): BomStats {
+  const visited = new Set<number>();
+  const leaves: BomRow[] = [];
+  for (const id of rootIds) leaves.push(...getLeafRows(id, t, visited));
+  const byChild = new Map<number, BomRow>();
+  for (const p of leaves) if (!byChild.has(p.ChildID)) byChild.set(p.ChildID, p);
+  const unique = [...byChild.values()];
+  const total = unique.length;
+  const qty = (r: BomRow) => Number(r.ItemQty) || 0;
+  const rec = (r: BomRow) => Number(r.ReceivedQty) || 0;
+  const po = (r: BomRow) => Number(r.POQty) || 0;
+  const received = unique.filter((r) => rec(r) >= qty(r)).length;
+  const noPO = unique.filter((r) => po(r) === 0 && rec(r) < qty(r)).length;
+  const ordered = unique.filter((r) => po(r) > 0 && rec(r) < qty(r)).length;
+  const pct = total ? Math.round((received / total) * 100) : 0;
+  return { total, received, noPO, ordered, pct };
+}
+
+function makePart(r: BomRow, poIndex: Map<number, PoLine[]>): BomPart {
+  const qty = Number(r.ItemQty) || 0;
+  const receivedQty = Number(r.ReceivedQty) || 0;
+  const poQty = Number(r.POQty) || 0;
+  const line = (poIndex.get(r.ChildID) ?? [])[0];
+  return {
+    id: r.ChildID,
+    pn: clean(r.ChildPN) || "—",
+    desc: clean(r.ChildDesc),
+    manufacturer: clean(r.Manufacturer),
+    qty,
+    poQty,
+    receivedQty,
+    unitPrice: Number(r.UnitPrice) || 0,
+    requiredDate: iso(r.RequiredDate),
+    expectedDate: line?.dueDate ?? null,
+    receivedDate: iso(r.LastReceivedDate),
+    status: receivedQty >= qty ? "received" : poQty > 0 ? "ordered" : "noPO",
+    supplier: line?.supplier ?? null,
+    poId: line?.poId ?? null,
+  };
+}
+
+// Build a nested assembly node. `keyPath` keeps each instance unique; the
+// ancestor set guards against structural cycles without collapsing legitimately
+// shared sub-assemblies (they render fully under each parent, as in the ref).
+function buildAssembly(
+  nodeId: number,
+  pn: string,
+  desc: string,
+  keyPath: string,
+  t: SpecTree,
+  poIndex: Map<number, PoLine[]>,
+  ancestors: Set<number>,
+): BomNode {
+  const node: BomNode = {
+    key: keyPath,
+    id: nodeId,
+    depth: 0,
+    label: desc ? (pn ? `${pn} — ${desc}` : desc) : pn,
+    pn: pn || "—",
+    desc,
+    isAssembly: true,
+    stats: statsForRoots([nodeId], t),
+    children: [],
+    parts: [],
+    totalCost: 0,
+    totalPartQty: 0,
+    nestedAssemblies: 0,
   };
 
-  // One synthetic section node per SpecID (the report's "TOP {job}-{spec}").
-  const sections = new Map<number, BomNode>();
-  const nodeByPath = new Map<string, BomNode>();
+  if (!ancestors.has(nodeId)) {
+    const nextAncestors = new Set(ancestors).add(nodeId);
+    for (const child of t.childrenMap.get(nodeId) ?? []) {
+      if (t.assemblyIds.has(child.ChildID)) {
+        node.children.push(
+          buildAssembly(
+            child.ChildID,
+            clean(child.ChildPN),
+            clean(child.ChildDesc),
+            `${keyPath}/${child.ChildID}`,
+            t,
+            poIndex,
+            nextAncestors,
+          ),
+        );
+      } else {
+        node.parts.push(makePart(child, poIndex));
+      }
+    }
+  }
+
+  let cost = 0;
+  let pq = 0;
+  let nested = 0;
+  for (const p of node.parts) {
+    cost += p.unitPrice * p.qty;
+    pq += p.qty;
+  }
+  for (const c of node.children) {
+    cost += c.totalCost;
+    pq += c.totalPartQty;
+    nested += c.nestedAssemblies + 1;
+  }
+  node.totalCost = cost;
+  node.totalPartQty = pq;
+  node.nestedAssemblies = nested;
+  return node;
+}
+
+// ---------- Entry point ----------
+
+export async function getJobBom(jobId: string): Promise<JobBom> {
+  const empty: JobBom = {
+    jobId: String(jobId),
+    roots: [],
+    grandTotalCost: 0,
+    grandTotalPartQty: 0,
+    rowCount: 0,
+  };
+
+  const numericJob = Number(String(jobId).replace(/[^0-9]/g, ""));
+  if (!Number.isFinite(numericJob) || numericJob === 0) return empty;
+  if (!config.user || !config.password) return empty;
+
+  let pool: sql.ConnectionPool | undefined;
+  let specs: SpecRow[] = [];
+  let tops: TopRow[] = [];
+  let bomRows: BomRow[] = [];
+  let poRows: PoRow[] = [];
+  try {
+    pool = await sql.connect(config);
+    const [specR, topR, bomR, poR] = await Promise.all([
+      pool.request().input("job", sql.Int, numericJob).query(SPECS_SQL),
+      pool.request().input("job", sql.Int, numericJob).query(TOP_SQL),
+      pool.request().input("job", sql.Int, numericJob).query(BOM_SQL),
+      pool.request().input("job", sql.Int, numericJob).query(PO_SQL),
+    ]);
+    specs = specR.recordset as SpecRow[];
+    tops = topR.recordset as TopRow[];
+    bomRows = bomR.recordset as BomRow[];
+    poRows = poR.recordset as PoRow[];
+  } catch {
+    return empty;
+  } finally {
+    if (pool) await pool.close();
+  }
+
+  if (bomRows.length === 0) return empty;
+
+  const poIndex = buildPoIndex(poRows);
+
+  // Group rows + top nodes by SpecID.
+  const rowsBySpec = new Map<number, BomRow[]>();
+  for (const r of bomRows) {
+    const arr = rowsBySpec.get(r.SpecID);
+    if (arr) arr.push(r);
+    else rowsBySpec.set(r.SpecID, [r]);
+  }
+  const topsBySpec = new Map<number, TopRow[]>();
+  for (const tp of tops) {
+    const arr = topsBySpec.get(tp.SpecID);
+    if (arr) arr.push(tp);
+    else topsBySpec.set(tp.SpecID, [tp]);
+  }
+  const specTitle = new Map<number, string>();
+  for (const s of specs) specTitle.set(s.SpecID, clean(s.SDescription));
+
+  // Order specs: known list first, then any leftover spec IDs that have rows.
+  const specIds = [...new Set([...specs.map((s) => s.SpecID), ...rowsBySpec.keys()])].sort(
+    (a, b) => a - b,
+  );
+
   const roots: BomNode[] = [];
   let rowCount = 0;
 
-  for (const r of rows) {
-    rowCount++;
-    const leaf = !isParent.has(r.path);
-    const qty = Number(r.ItemQty) || 0;
-    const unit = Number(r.ItemLastCost) || 0;
-    const node: BomNode = {
-      key: r.path,
-      depth: 0, // set below
-      label: label(r),
-      pn: partOf(r),
-      desc: descOf(r),
-      isAssembly: !leaf,
-      partQty: qty,
-      unitCost: unit,
-      extendedCost: leaf ? unit * qty : 0,
+  for (const specId of specIds) {
+    const rows = rowsBySpec.get(specId);
+    if (!rows || rows.length === 0) continue;
+    const tree = buildSpecTree(rows);
+    rowCount += tree.deduped.length;
+
+    // Roots of this spec = the top node(s) from tblEngTop. Fall back to
+    // parents that never appear as a child (reference buildTree.topParentIds).
+    let topNodeIds = (topsBySpec.get(specId) ?? []).map((tp) => tp.TopItemID);
+    topNodeIds = topNodeIds.filter((id) => tree.assemblyIds.has(id));
+    if (topNodeIds.length === 0) {
+      const childIds = new Set(tree.deduped.map((r) => r.ChildID));
+      topNodeIds = [...tree.assemblyIds].filter((p) => !childIds.has(p));
+    }
+
+    // Flatten each top node's tree into the synthetic section node: the
+    // section directly carries the top node(s)' assemblies + loose parts.
+    const section: BomNode = {
+      key: `S${specId}`,
+      id: `S${specId}`,
+      depth: 0,
+      label: `Spec ${specId}`,
+      pn: "",
+      desc: specTitle.get(specId) ?? "",
+      isAssembly: true,
+      stats: statsForRoots(topNodeIds, tree),
+      children: [],
+      parts: [],
       totalCost: 0,
       totalPartQty: 0,
       nestedAssemblies: 0,
-      children: [],
     };
-    nodeByPath.set(r.path, node);
 
-    const seg = r.path.split("/");
-    seg.pop();
-    const parentPath = seg.join("/");
-    const parent = parentPath ? nodeByPath.get(parentPath) : undefined;
-    if (parent) {
-      parent.children.push(node);
-    } else {
-      // Top of a spec → hang under that section node.
-      let section = sections.get(r.SpecID);
-      if (!section) {
-        section = {
-          key: `S${r.SpecID}`,
-          depth: 1,
-          label: `Section ${r.SpecID}`,
-          pn: "",
-          desc: "",
-          isAssembly: true,
-          partQty: 0,
-          unitCost: 0,
-          extendedCost: 0,
-          totalCost: 0,
-          totalPartQty: 0,
-          nestedAssemblies: 0,
-          children: [],
-        };
-        sections.set(r.SpecID, section);
-        roots.push(section);
-      }
-      section.children.push(node);
+    for (const topId of topNodeIds) {
+      const top = buildAssembly(
+        topId,
+        "",
+        "",
+        `S${specId}/${topId}`,
+        tree,
+        poIndex,
+        new Set<number>(),
+      );
+      section.children.push(...top.children);
+      section.parts.push(...top.parts);
     }
-  }
 
-  roots.sort((a, b) => a.label.localeCompare(b.label, undefined, { numeric: true }));
-
-  // Assign depth (section = 1) and roll up cost / qty / nested-assembly counts.
-  const walk = (n: BomNode, depth: number): void => {
-    n.depth = depth;
-    let cost = n.extendedCost;
-    let pq = n.partQty;
+    // Roll the section total from its children + loose parts.
+    let cost = 0;
+    let pq = 0;
     let nested = 0;
-    for (const c of n.children) {
-      walk(c, depth + 1);
+    for (const p of section.parts) {
+      cost += p.unitPrice * p.qty;
+      pq += p.qty;
+    }
+    for (const c of section.children) {
       cost += c.totalCost;
       pq += c.totalPartQty;
-      nested += c.nestedAssemblies + (c.isAssembly ? 1 : 0);
+      nested += c.nestedAssemblies + 1;
     }
-    n.totalCost = cost;
-    n.totalPartQty = pq;
-    n.nestedAssemblies = nested;
+    section.totalCost = cost;
+    section.totalPartQty = pq;
+    section.nestedAssemblies = nested;
+
+    if (section.children.length || section.parts.length) roots.push(section);
+  }
+
+  // Assign depth (section = 0).
+  const setDepth = (n: BomNode, depth: number) => {
+    n.depth = depth;
+    for (const c of n.children) setDepth(c, depth + 1);
   };
-  roots.forEach((n) => walk(n, 1));
+  roots.forEach((r) => setDepth(r, 0));
 
   const grandTotalCost = roots.reduce((s, n) => s + n.totalCost, 0);
   const grandTotalPartQty = roots.reduce((s, n) => s + n.totalPartQty, 0);
