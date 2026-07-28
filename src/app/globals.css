@@ -187,8 +187,20 @@ td > select {
  * (percentages don't contribute to intrinsic column width), so without a
  * wider floor here the narrowest select column (Type: "Duplicate") gets
  * sized too tight for its own text once the reserved arrow padding is added. */
+/* Replace the browser's native (unsizable) dropdown arrow with a tiny custom
+ * chevron so the value has the most room possible and never reads as cut off.
+ * The arrow is drawn as a small background SVG pinned to the right edge; the
+ * right padding only has to clear that ~7px glyph, not the browser's chunky
+ * native arrow — so columns like Type/Billable/Status show their full value. */
 td > select {
-  padding-right: 1.5rem;
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right 0.2rem center;
+  background-size: 7px 7px;
+  padding-right: 0.85rem;
   min-width: 5.5rem;
 }
 td > input:not([type]):focus,
