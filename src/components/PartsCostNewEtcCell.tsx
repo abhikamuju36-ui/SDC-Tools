@@ -70,7 +70,7 @@ export function PartsCostNewEtcCell({
         placeholder={placeholder}
         disabled={locked}
         aria-label={`New ETC cost override, ${jobName}, Parts Cost`}
-        className="w-16 [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-1 text-center text-[10px] font-bold text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"
+        className="w-16 [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-[10px] font-bold leading-none text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"
       />
     </td>
   );

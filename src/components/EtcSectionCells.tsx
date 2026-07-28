@@ -146,7 +146,7 @@ export function EtcSectionCells({
           onChange={handleNewEtcChange}
           disabled={locked}
           aria-label={`New ETC override, ${jobName}, ${sectionName}`}
-          className="w-full [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-1 text-center text-[10px] font-bold text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"
+          className="w-full [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-[10px] font-bold leading-none text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"
         />
       </td>
       <td
