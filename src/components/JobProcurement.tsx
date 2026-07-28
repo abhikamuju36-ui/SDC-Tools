@@ -637,7 +637,7 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
             style={{ gridTemplateColumns: ASM_GRID }}
           >
             <span>Assembly</span>
-            <span>Description</span>
+            <span>Desc</span>
             <span className="text-right">Rcvd · Total</span>
             <span className="text-right">No PO</span>
             <span className="text-right">Priced</span>
@@ -782,8 +782,8 @@ function PartsDetailTable({
               <th className="px-2 py-1.5 font-bold">Status</th>
               <th className="px-2 py-1.5 text-right font-bold">Qty</th>
               <th className="px-2 py-1.5 font-bold">Part #</th>
-              <th className="px-2 py-1.5 font-bold">Description</th>
-              <th className="px-2 py-1.5 font-bold">Manufacturer</th>
+              <th className="px-2 py-1.5 font-bold">Desc</th>
+              <th className="px-2 py-1.5 font-bold">Mfr</th>
               <th className="px-2 py-1.5 font-bold">Supplier</th>
               <th className="px-2 py-1.5 font-bold">PO #</th>
               <th className="px-2 py-1.5 font-bold">Req Date</th>
@@ -854,7 +854,7 @@ type ColKey = "qty" | "pn" | "desc" | "parent" | "category" | "mfr" | "supplier"
 const ALL_COLS: { key: ColKey; label: string; align?: "right" }[] = [
   { key: "qty", label: "Qty", align: "right" },
   { key: "pn", label: "Part No" },
-  { key: "desc", label: "Description" },
+  { key: "desc", label: "Desc" },
   { key: "parent", label: "Parent Assembly" },
   { key: "category", label: "Category" },
   { key: "mfr", label: "Mfr" },
@@ -1052,7 +1052,7 @@ function PartsListTab({
           { value: "hold", label: "On hold" },
         ]} />
         <FilterSelect label="Category" value={category} onChange={setCategory} options={[{ value: "all", label: "All categories" }, ...distinct.cats.map((c) => ({ value: c, label: c }))]} />
-        <FilterSelect label="Manufacturer" value={manufacturer} onChange={setManufacturer} options={[{ value: "all", label: "All manufacturers" }, ...distinct.mfrs.map((c) => ({ value: c, label: c }))]} />
+        <FilterSelect label="Mfr" value={manufacturer} onChange={setManufacturer} options={[{ value: "all", label: "All manufacturers" }, ...distinct.mfrs.map((c) => ({ value: c, label: c }))]} />
         <FilterSelect label="Supplier" value={supplier} onChange={setSupplier} options={[{ value: "all", label: "All suppliers" }, ...distinct.sups.map((c) => ({ value: c, label: c }))]} />
 
         <span className="mx-1 h-5 w-px bg-sdc-border" aria-hidden />
@@ -1972,7 +1972,7 @@ function RiskCards({
               <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wider text-white">
                 {seeAll === "upcoming" && <th className="px-3 py-2 font-bold">PO #</th>}
                 <th className="px-3 py-2 font-bold">Part #</th>
-                <th className="px-2 py-2 font-bold">Description</th>
+                <th className="px-2 py-2 font-bold">Desc</th>
                 {seeAll !== "nopo" && <th className="px-2 py-2 font-bold">Supplier</th>}
                 <th className="px-2 py-2 font-bold">Req</th>
                 {seeAll !== "nopo" && <th className="px-2 py-2 font-bold">Exp</th>}

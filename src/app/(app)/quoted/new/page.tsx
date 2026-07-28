@@ -73,7 +73,7 @@ export default function NewProjectPage() {
             <input name="jobId" required className={`mt-1 w-full ${INPUT}`} />
           </div>
           <div>
-            <label className={LABEL}>Job Name / Description</label>
+            <label className={LABEL}>Job Name / Desc</label>
             <input name="jobName" required className={`mt-1 w-full ${INPUT}`} />
           </div>
           <div>

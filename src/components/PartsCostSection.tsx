@@ -36,7 +36,7 @@ const TABLE_COLUMNS: ColumnDef<PartLine>[] = [
 const ROW_CAP = 800;
 
 
-const COLS = ["Purchase", "Invoiced", "Manufacturer", "Supplier", "Category", "PO #", "Part #", "Description", "Qty", "Unit $", "Total", "Paid", "% Inv"];
+const COLS = ["Purchase", "Invoiced", "Mfr", "Supplier", "Category", "PO #", "Part #", "Desc", "Qty", "Unit $", "Total", "Paid", "% Inv"];
 
 // Compact filter control — small enough that the whole slicer row fits on one
 // line. The dropdowns/search flex-shrink; the date inputs stay fixed.

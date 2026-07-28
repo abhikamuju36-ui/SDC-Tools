@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { card } from "@/components/ui/classnames";
+import { abbreviateLabel } from "@/lib/abbrev";
 import { EChart } from "@/components/charts/EChart";
 import { groupedBarOption, SERIES } from "@/components/charts/theme";
 import { IndicatorCard } from "@/components/charts/IndicatorCard";
@@ -228,7 +229,7 @@ function SectionHierarchyChart({ rows, plannedLabel }: { rows: HierRow[]; planne
       <div className="mt-1 grid" style={colStyle}>
         {deptRuns.map((g, i) => (
           <div key={i} style={{ gridColumn: `span ${g.count}`, borderLeftColor: TIER_DIVIDER }} className="border-l border-dashed py-0.5 text-center text-[10px] font-medium text-sdc-gray-600 first:border-l-0">
-            {g.label}
+            {abbreviateLabel(g.label)}
           </div>
         ))}
       </div>
@@ -236,7 +237,7 @@ function SectionHierarchyChart({ rows, plannedLabel }: { rows: HierRow[]; planne
       <div className="mt-0.5 grid" style={colStyle}>
         {phaseRuns.map((p, i) => (
           <div key={i} style={{ gridColumn: `span ${p.count}`, borderLeftColor: TIER_DIVIDER, borderTopColor: TIER_DIVIDER }} className="border-l border-t border-dashed py-1 text-center text-[11px] font-semibold text-sdc-navy first:border-l-0">
-            {p.label}
+            {abbreviateLabel(p.label)}
           </div>
         ))}
       </div>

@@ -316,11 +316,11 @@ export default async function JobDetailPage({
                 </div>
                 <div>
                   <p className="font-mono text-lg font-bold text-sdc-blue">{job.totEtoEstMfgHours?.toString() ?? "—"}</p>
-                  <p className="text-xs text-sdc-gray-600">Est. Manufacturing Hrs</p>
+                  <p className="text-xs text-sdc-gray-600">Est. Mfg Hrs</p>
                 </div>
                 <div>
                   <p className="font-mono text-lg font-bold text-sdc-blue">{job.totEtoActMfgHours?.toString() ?? "—"}</p>
-                  <p className="text-xs text-sdc-gray-600">Actual Manufacturing Hrs</p>
+                  <p className="text-xs text-sdc-gray-600">Actual Mfg Hrs</p>
                 </div>
               </div>
             </div>

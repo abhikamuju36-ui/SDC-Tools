@@ -34,6 +34,7 @@ import { MonthYearSelect } from "@/components/MonthYearSelect";
 import { SchedulerJobLink } from "@/components/SchedulerJobLink";
 import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, TABLE_HEADER_ROW, TABLE_GRID } from "@/components/ui/classnames";
+import { abbreviateLabel } from "@/lib/abbrev";
 
 // Matches the real "Managers Fill Out" sheet's column shape exactly — every
 // department block has these same 5 columns; Parts Cost and the Total rollup
@@ -99,15 +100,15 @@ const DEPT_GROUPS = ["Engineering", "Shop"] as const;
 // Colored section-cell labels, exactly as the sheet prints them (no "CE"
 // prefixes; Testing/Teardown show "All"/"Total" rather than section names).
 const ETC_SECTION_DISPLAY: Record<string, string> = {
-  "10-211": "ME General",
+  "10-211": "ME Gen",
   "10-312": "Design and Drawings",
   "10-313": "Software",
   "10-515": "HMI",
   "10-516": "Robot",
   "10-517": "Vision",
   "10-518": "Database and Device",
-  "10-411": "Mechanical Build",
-  "10-412": "Electrical Build",
+  "10-411": "Mech Build",
+  "10-412": "Elec Build",
   "40-211": "All",
   "40-411": "Total",
   "50-211": "All",
@@ -266,7 +267,7 @@ const STANDARD_LEAF_COLUMNS = [
 const POOL_PANEL_META = [
   { category: "ENGINEERING_PM", group: "Engineering", dept: "PM" },
   { category: "ENGINEERING_WARRANTY", group: "Engineering", dept: "Warranty" },
-  { category: "SHOP_MANUFACTURING", group: "Shop", dept: "Manufacturing" },
+  { category: "SHOP_MANUFACTURING", group: "Shop", dept: "Mfg" },
   { category: "SHOP_WARRANTY", group: "Shop", dept: "Warranty" },
 ] as const;
 
@@ -844,14 +845,14 @@ export default async function MonthlyEtcPage({
                       colIdx += g.count;
                       return (
                         <th key={g.key + i} colSpan={g.count * SUB_COLUMNS.length} className={`${edgeFor(startCode, i)} px-2 py-1 text-center font-medium`}>
-                          {g.label}
+                          {abbreviateLabel(g.label)}
                         </th>
                       );
                     });
                   })()}
                   {visibleGroups.map((group, i) => (
                     <th key={group} colSpan={TOTAL_SUB_COLUMNS.length} className={`${i === 0 ? PHASE_EDGE : "border-l border-sdc-border"} bg-sdc-yellow-bg px-2 py-1 text-center font-medium text-sdc-navy`}>
-                      {group}
+                      {abbreviateLabel(group)}
                     </th>
                   ))}
                   {/* Parts Cost has no Engineering/Shop split — one green Total
@@ -878,7 +879,7 @@ export default async function MonthlyEtcPage({
                           colSpan={g.count * SUB_COLUMNS.length}
                           className={`${edgeFor(startCode, i)} px-2 py-1 text-center font-medium`}
                         >
-                          {g.label}
+                          {abbreviateLabel(g.label)}
                         </th>
                       );
                     });

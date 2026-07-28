@@ -3,6 +3,7 @@ import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { validJobTypeFilter, VALID_JOB_TYPES, compareJobIds, isSdcCustomer } from "@/lib/job-filters";
 import { SECTIONS, PHASE_GROUPS } from "@/lib/sections";
+import { abbreviateLabel } from "@/lib/abbrev";
 import { PageTitle } from "@/components/ui/Typography";
 import { TABLE_HEADER_ROW, TABLE_GRID, BUTTON_PRIMARY } from "@/components/ui/classnames";
 import { PhaseColumnPicker } from "@/components/PhaseColumnPicker";
@@ -432,7 +433,7 @@ export default async function QuotedPage({
                       GROUP_HEADER_COLOR[run.group] ?? ""
                     }`}
                   >
-                    {run.group}
+                    {abbreviateLabel(run.group)}
                   </th>
                 ));
                 return groupHeaders;

@@ -179,7 +179,7 @@ export default function EmployeesGridInner({
     { field: "supervisor", headerName: "Supervisor", editable: true, width: 200, cellEditor: "agSelectCellEditor", cellEditorParams: { values: [DASH, ...supervisors.map((s) => s.name)] } },
     {
       field: "department",
-      headerName: "Department",
+      headerName: "Dept",
       editable: true,
       width: 200,
       filter: "agTextColumnFilter",
