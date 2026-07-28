@@ -369,7 +369,8 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   const [dateType, setDateType] = useState<"purchase" | "invoice">(() => saved.dateType ?? "purchase");
   const [from, setFrom] = useState(() => saved.from ?? "");
   const [to, setTo] = useState(() => saved.to ?? "");
-  const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set(saved.hiddenPartCols ?? ["due", "lead"]));
+  // Default hidden columns (fresh users; anyone with a stored set keeps theirs).
+  const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set(saved.hiddenPartCols ?? ["parent", "category", "exp", "lead", "due"]));
   const [upcomingWeek, setUpcomingWeek] = useState<number>(() => saved.upcomingWeek ?? 1);
   const [colWidths, setColWidths] = useState<Partial<Record<ColKey, number>>>(() => saved.colWidths ?? {});
 
