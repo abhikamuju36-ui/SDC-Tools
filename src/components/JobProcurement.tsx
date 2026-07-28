@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import type { BomNode, BomPart, JobBom } from "@/lib/job-bom";
+import type { BomNode, BomPart, JobBom, PoLineGroup, Vendor } from "@/lib/job-bom";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
 import { usd } from "@/components/ui/format";
 import { useToast } from "@/components/ui/Toast";
@@ -259,7 +259,41 @@ type PersistedState = {
   to: string;
   upcomingWeek: number;
   hiddenPartCols: ColKey[];
+  colWidths: Partial<Record<ColKey, number>>;
 };
+
+// Numeric-safe PO lookup against the authoritative vendor data (mirrors the
+// Scheduler's parseInt-based match). Returns undefined when there's no match,
+// which is the signal to keep the BOM-derived counts.
+function findAuthoritativePo(vendors: Vendor[] | undefined, poNumber: string | null): PoLineGroup | undefined {
+  if (!vendors?.length || !poNumber) return undefined;
+  const target = parseInt(poNumber, 10);
+  for (const v of vendors) {
+    for (const po of v.pos) {
+      if (po.poId === poNumber) return po;
+      const a = parseInt(po.poId, 10);
+      if (!Number.isNaN(a) && !Number.isNaN(target) && a === target) return po;
+    }
+  }
+  return undefined;
+}
+
+// Authoritative supplier rollup (received / itemCount across all the supplier's
+// POs), matched by vendor name. Undefined when the supplier has no PO data.
+function authoritativeVendorRollup(vendors: Vendor[] | undefined, supplier: string): { received: number; itemCount: number; pct: number } | undefined {
+  if (!vendors?.length) return undefined;
+  const key = supplier.trim().toLowerCase();
+  const v = vendors.find((x) => x.name.trim().toLowerCase() === key);
+  if (!v) return undefined;
+  let received = 0;
+  let itemCount = 0;
+  for (const po of v.pos) {
+    received += po.received;
+    itemCount += po.itemCount;
+  }
+  if (itemCount === 0) return undefined;
+  return { received, itemCount, pct: Math.round((received / itemCount) * 100) };
+}
 
 function loadPersisted(): Partial<PersistedState> {
   if (typeof window === "undefined") return {};
@@ -313,24 +347,26 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   const [to, setTo] = useState(() => saved.to ?? "");
   const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set(saved.hiddenPartCols ?? []));
   const [upcomingWeek, setUpcomingWeek] = useState<number>(() => saved.upcomingWeek ?? 1);
+  const [colWidths, setColWidths] = useState<Partial<Record<ColKey, number>>>(() => saved.colWidths ?? {});
 
   // Persist everything under one key.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const data: PersistedState = { tab, view, query, status, category, manufacturer, supplier, dateType, from, to, upcomingWeek, hiddenPartCols: [...hidden] };
+    const data: PersistedState = { tab, view, query, status, category, manufacturer, supplier, dateType, from, to, upcomingWeek, hiddenPartCols: [...hidden], colWidths };
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch {
       /* quota / disabled — non-fatal */
     }
-  }, [tab, view, query, status, category, manufacturer, supplier, dateType, from, to, upcomingWeek, hidden]);
+  }, [tab, view, query, status, category, manufacturer, supplier, dateType, from, to, upcomingWeek, hidden, colWidths]);
 
   // Drill target — key = String(part.id). `nonce` bumps on every drill so the
   // Parts List effect re-fires even when the same row is targeted twice.
   const [drill, setDrill] = useState<{ key: string; nonce: number }>({ key: "", nonce: 0 });
 
-  // PO detail — the right-side sliding panel. null = closed.
-  const [poPanel, setPoPanel] = useState<{ supplier: string; po: PoGroup } | null>(null);
+  // PO detail — the right-side sliding panel. null = closed. `authoritative` is
+  // the matched real PO line-group (undefined → panel falls back to BOM rows).
+  const [poPanel, setPoPanel] = useState<{ supplier: string; po: PoGroup; authoritative?: PoLineGroup } | null>(null);
 
   // The primary click action anywhere a part is shown: jump to its Parts-List
   // row (table mode, filters cleared, then scroll+flash) and copy the part #.
@@ -375,7 +411,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
     setTo("");
   }, []);
 
-  const partsState = { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, upcomingWeek, setUpcomingWeek, clearFilters } as const;
+  const partsState = { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, upcomingWeek, setUpcomingWeek, colWidths, setColWidths, clearFilters } as const;
 
   // PO purchase lines indexed by normalized part number, newest purchase first.
   const lineIndex = useMemo(() => {
@@ -459,9 +495,10 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
       const poKey = poNumber ?? NO_PO_KEY;
       const poParts = parts.filter((p) => (p.supplier ?? "Unknown supplier") === supKey && (p.poNumber ?? NO_PO_KEY) === poKey);
       if (!poParts.length) return;
-      setPoPanel({ supplier: supKey, po: makePoGroup(poKey, poParts) });
+      const authoritative = findAuthoritativePo(bom.vendors, poNumber);
+      setPoPanel({ supplier: supKey, po: makePoGroup(poKey, poParts), authoritative });
     },
-    [parts],
+    [parts, bom.vendors],
   );
 
   return (
@@ -497,6 +534,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
           parts={parts}
           state={partsState}
           drill={drill}
+          vendors={bom.vendors}
           onPartClick={drillToPart}
           onCopy={copyText}
           onOpenPo={openPoFor}
@@ -507,6 +545,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
         <PoPanel
           supplier={poPanel.supplier}
           po={poPanel.po}
+          authoritative={poPanel.authoritative}
           onClose={() => setPoPanel(null)}
           onPartClick={drillToPart}
         />
@@ -851,13 +890,35 @@ type PartsListState = {
   setHidden: (updater: (prev: Set<ColKey>) => Set<ColKey>) => void;
   upcomingWeek: number;
   setUpcomingWeek: (n: number) => void;
+  colWidths: Partial<Record<ColKey, number>>;
+  setColWidths: (updater: (prev: Partial<Record<ColKey, number>>) => Partial<Record<ColKey, number>>) => void;
   clearFilters: () => void;
 };
+
+// Default Parts-List column widths (px) — the fallback when a column has no
+// persisted resize. Mirrors the Scheduler's PROC_PART_COLS defaults.
+const DEFAULT_COL_WIDTH: Record<ColKey, number> = {
+  qty: 52,
+  pn: 150,
+  desc: 260,
+  parent: 180,
+  category: 130,
+  mfr: 115,
+  supplier: 130,
+  po: 72,
+  purchased: 80,
+  exp: 80,
+  lead: 60,
+  due: 68,
+  status: 120,
+};
+const MIN_COL_WIDTH = 48;
 
 function PartsListTab({
   parts,
   state,
   drill,
+  vendors,
   onPartClick,
   onCopy,
   onOpenPo,
@@ -865,11 +926,12 @@ function PartsListTab({
   parts: FlatPart[];
   state: PartsListState;
   drill: { key: string; nonce: number };
+  vendors: Vendor[];
   onPartClick: (p: DrillablePart) => void;
   onCopy: (text: string, label?: string) => void;
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
 }) {
-  const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, upcomingWeek, setUpcomingWeek, clearFilters } = state;
+  const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, upcomingWeek, setUpcomingWeek, colWidths, setColWidths, clearFilters } = state;
   const now = useMemo(() => Date.now(), []);
   const filtersActive =
     status !== "all" || category !== "all" || manufacturer !== "all" || supplier !== "all" || query !== "" || dateType !== "purchase" || from !== "" || to !== "";
@@ -969,9 +1031,10 @@ function PartsListTab({
                   {c.label}
                 </label>
               ))}
-              <div className="mt-1.5 flex gap-2 border-t border-sdc-border-soft pt-1.5">
+              <div className="mt-1.5 flex flex-wrap gap-2 border-t border-sdc-border-soft pt-1.5">
                 <button type="button" onClick={() => setHidden(() => new Set())} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light">Show all</button>
                 <button type="button" onClick={() => setHidden(() => new Set())} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light">Reset</button>
+                <button type="button" onClick={() => setColWidths(() => ({}))} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light" title="Restore default column widths">Reset widths</button>
               </div>
             </div>
           </details>
@@ -1027,9 +1090,9 @@ function PartsListTab({
           No parts match the current filters.
         </p>
       ) : view === "list" ? (
-        <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />
+        <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} colWidths={colWidths} setColWidths={setColWidths} />
       ) : (
-        <PartsCardView parts={filtered} onCopy={onCopy} onOpenPo={onOpenPo} />
+        <PartsCardView parts={filtered} vendors={vendors} onCopy={onCopy} onOpenPo={onOpenPo} />
       )}
     </div>
   );
@@ -1118,21 +1181,65 @@ function PartsTableView({
   onPartClick,
   onOpenPo,
   now,
+  colWidths,
+  setColWidths,
 }: {
   parts: FlatPart[];
   cols: { key: ColKey; label: string; align?: "right" }[];
   onPartClick: (p: DrillablePart) => void;
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
   now: number;
+  colWidths: Partial<Record<ColKey, number>>;
+  setColWidths: (updater: (prev: Partial<Record<ColKey, number>>) => Partial<Record<ColKey, number>>) => void;
 }) {
+  const widthOf = (key: ColKey) => colWidths[key] ?? DEFAULT_COL_WIDTH[key];
+  const totalWidth = cols.reduce((s, c) => s + widthOf(c.key), 0);
+
+  // Drag-to-resize: listeners are added on mousedown and torn down on mouseup;
+  // stopPropagation keeps a drag from also triggering the row click.
+  const startResize = (key: ColKey, e: React.MouseEvent) => {
+    e.preventDefault();
+    e.stopPropagation();
+    const startX = e.clientX;
+    const startW = widthOf(key);
+    const onMove = (ev: MouseEvent) => {
+      const w = Math.max(MIN_COL_WIDTH, startW + (ev.clientX - startX));
+      setColWidths((prev) => ({ ...prev, [key]: w }));
+    };
+    const onUp = () => {
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+      document.body.style.cursor = "";
+      document.body.style.userSelect = "";
+    };
+    document.body.style.cursor = "col-resize";
+    document.body.style.userSelect = "none";
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  };
+
   return (
     <div className="overflow-x-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
       <div className="max-h-[74vh] overflow-y-auto styled-scrollbar">
-        <table className="w-full min-w-[1100px] border-collapse text-left">
+        <table className="table-fixed border-collapse text-left" style={{ width: totalWidth, minWidth: "100%" }}>
+          <colgroup>
+            {cols.map((c) => (
+              <col key={c.key} style={{ width: widthOf(c.key) }} />
+            ))}
+          </colgroup>
           <thead className="sticky top-0 z-[2]">
             <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wider text-white">
               {cols.map((c) => (
-                <th key={c.key} className={`px-2 py-2 font-bold ${c.align === "right" ? "text-right" : ""}`}>{c.label}</th>
+                <th key={c.key} className={`relative px-2 py-2 font-bold ${c.align === "right" ? "text-right" : ""}`}>
+                  <span className="block truncate">{c.label}</span>
+                  <span
+                    onMouseDown={(e) => startResize(c.key, e)}
+                    role="separator"
+                    aria-label={`Resize ${c.label} column`}
+                    title="Drag to resize"
+                    className="absolute right-0 top-0 z-[1] h-full w-1.5 cursor-col-resize bg-white/0 hover:bg-white/40"
+                  />
+                </th>
               ))}
             </tr>
           </thead>
@@ -1187,14 +1294,16 @@ type VendorGroup = {
 // and each PO row expands inline to reveal its parts.
 function PartsCardView({
   parts,
+  vendors,
   onCopy,
   onOpenPo,
 }: {
   parts: FlatPart[];
+  vendors: Vendor[];
   onCopy: (text: string, label?: string) => void;
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
 }) {
-  const vendors = useMemo<VendorGroup[]>(() => {
+  const vendorGroups = useMemo<VendorGroup[]>(() => {
     const byVendor = new Map<string, Map<string, FlatPart[]>>();
     for (const p of parts) {
       const vKey = p.supplier ?? "Unknown supplier";
@@ -1259,7 +1368,13 @@ function PartsCardView({
       className="grid max-h-[74vh] gap-3 overflow-y-auto styled-scrollbar"
       style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
     >
-      {vendors.map((v) => (
+      {vendorGroups.map((v) => {
+        // Authoritative supplier rollup (real PO line counts) overrides the
+        // BOM-derived bar %. Falls back to the BOM % when the vendor has no
+        // authoritative match — no regression.
+        const rollup = authoritativeVendorRollup(vendors, v.supplier);
+        const barPct = rollup?.pct ?? v.pct;
+        return (
         <div key={v.supplier} className="flex flex-col overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
           {/* Header */}
           <div className="flex flex-col gap-2 border-b border-sdc-border-soft p-3">
@@ -1275,11 +1390,11 @@ function PartsCardView({
               </div>
               <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wide ${v.status.cls}`}>{v.status.label}</span>
             </div>
-            <div className="flex items-center gap-2" title={`${v.pct}% received`}>
+            <div className="flex items-center gap-2" title={`${barPct}% received${rollup ? " (supplier PO lines)" : ""}`}>
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-sdc-gray-100">
-                <div className={`h-full rounded-full ${vendorBar(v.pct)}`} style={{ width: `${Math.min(100, v.pct)}%` }} />
+                <div className={`h-full rounded-full ${vendorBar(barPct)}`} style={{ width: `${Math.min(100, barPct)}%` }} />
               </div>
-              <span className={`w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums ${vendorText(v.pct)}`}>{v.pct}%</span>
+              <span className={`w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums ${vendorText(barPct)}`}>{barPct}%</span>
             </div>
           </div>
 
@@ -1293,6 +1408,13 @@ function PartsCardView({
           <div className="max-h-56 overflow-y-auto styled-scrollbar">
             {v.pos.map((po) => {
               const rowKey = `${v.supplier}::${po.poKey}`;
+              // Authoritative per-PO override — real line counts when matched,
+              // otherwise the BOM-derived counts.
+              const apo = findAuthoritativePo(vendors, po.poNumber);
+              const rc = apo ? apo.received : po.received;
+              const tot = apo ? apo.itemCount : po.total;
+              const effPct = apo ? apo.pct : po.total ? Math.round((po.received / po.total) * 100) : 0;
+              const dotKey: PoGroup["status"] = po.poKey === NO_PO_KEY ? "noPO" : effPct >= 100 ? "received" : effPct >= 60 ? "ordered" : "noPO";
               return (
                 <button
                   key={rowKey}
@@ -1317,10 +1439,10 @@ function PartsCardView({
                   ) : (
                     <span className="text-[10px] font-semibold text-sdc-red-text">NO PO</span>
                   )}
-                  <span className="text-right text-[10px] tabular-nums text-sdc-gray-600">{po.received}/{po.total} rcvd</span>
+                  <span className="text-right text-[10px] tabular-nums text-sdc-gray-600" title={apo ? "Supplier PO line count" : "BOM-derived count"}>{rc}/{tot} rcvd</span>
                   <span className={`text-right font-mono text-[10px] ${po.pastDue ? "text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(po.expected)}</span>
                   <span className="flex items-center gap-1.5">
-                    <span aria-hidden className={`inline-block h-2 w-2 rounded-full ${dotColor(po.status)}`} />
+                    <span aria-hidden className={`inline-block h-2 w-2 rounded-full ${dotColor(dotKey)}`} />
                     <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" className="text-sdc-gray-400" aria-hidden>
                       <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>
@@ -1330,9 +1452,10 @@ function PartsCardView({
             })}
           </div>
         </div>
-      ))}
+        );
+      })}
 
-      {vendors.length === 0 && (
+      {vendorGroups.length === 0 && (
         <p className="col-span-full rounded-xl border border-sdc-border bg-white px-4 py-10 text-center text-sm text-sdc-gray-400 shadow-sm">
           No parts match the current filters.
         </p>
@@ -1346,14 +1469,23 @@ function PartsCardView({
 function PoPanel({
   supplier,
   po,
+  authoritative,
   onClose,
   onPartClick,
 }: {
   supplier: string;
   po: PoGroup;
+  authoritative?: PoLineGroup;
   onClose: () => void;
   onPartClick: (p: DrillablePart) => void;
 }) {
+  // Map BOM parts by normalized PN so authoritative PO lines that exist in the
+  // BOM can still drill to their Parts-List row.
+  const bomByPn = useMemo(() => {
+    const m = new Map<string, FlatPart>();
+    for (const p of po.parts) m.set(normPn(p.pn), p);
+    return m;
+  }, [po]);
   // Mount closed, then flip to open on the next frame so the slide-in plays.
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -1392,7 +1524,7 @@ function PoPanel({
       const t = new Date(p.expectedDate).getTime();
       return !Number.isNaN(t) && t < now;
     };
-    return { ordered, due, value, pct, isPastDue };
+    return { ordered, due, value, pct, isPastDue, nowMs: now };
   }, [po]);
 
   const badge = po.pastDue
@@ -1402,8 +1534,6 @@ function PoPanel({
       : stats.pct >= 60
         ? { label: "PARTIAL", cls: "bg-sdc-yellow-bg text-sdc-yellow-text" }
         : { label: "PENDING", cls: "bg-sdc-blue-light text-sdc-blue-dark" };
-
-  const barColor = stats.pct >= 90 ? "bg-sdc-green" : stats.pct >= 60 ? "bg-sdc-yellow" : "bg-sdc-blue";
 
   const handlePart = (p: FlatPart) => {
     onPartClick(p);
@@ -1444,19 +1574,25 @@ function PoPanel({
             <Stat label="Ordered" value={fmtDate(stats.ordered)} />
             <Stat label="Due" value={fmtDate(stats.due)} tone={po.pastDue ? "danger" : undefined} />
             <Stat label="PO Value" value={stats.value > 0 ? usd(stats.value) : "—"} />
-            <div className="ml-auto min-w-[120px]">
-              <div className="mb-1 flex items-center justify-between text-[10px]">
-                <span className="text-sdc-gray-400">{po.received}/{po.total} received</span>
-                <span className="font-semibold text-sdc-navy tabular-nums">{stats.pct}%</span>
-              </div>
-              <div className="h-1.5 overflow-hidden rounded-full bg-sdc-gray-100">
-                <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(100, stats.pct)}%` }} />
-              </div>
-            </div>
+          </div>
+
+          {/* Progress bars — authoritative PO-line status (when matched) plus the
+              BOM assembly-readiness bar. */}
+          <div className="flex flex-col gap-2">
+            {authoritative && (
+              <PanelBar
+                label="PO Lines (Supplier Status)"
+                received={authoritative.received}
+                total={authoritative.itemCount}
+                pct={authoritative.pct}
+              />
+            )}
+            <PanelBar label="Parts (Assembly Readiness)" received={po.received} total={po.total} pct={stats.pct} />
           </div>
         </div>
 
-        {/* Lines table */}
+        {/* Lines table — authoritative PO lines when matched (every real line,
+            incl. non-BOM), else the BOM-part rows. */}
         <div className="flex-1 overflow-y-auto styled-scrollbar">
           <table className="w-full border-collapse text-left">
             <thead className="sticky top-0 z-[1]">
@@ -1470,44 +1606,93 @@ function PoPanel({
               </tr>
             </thead>
             <tbody>
-              {po.parts.map((p, i) => {
-                const isRcvd = p.status === "received" || !!p.receivedDate;
-                const isPast = stats.isPastDue(p);
-                const rowTint = isRcvd ? "bg-sdc-green-bg/50" : isPast ? "bg-sdc-red-bg/50" : "bg-sdc-yellow-bg/40";
-                return (
-                  <tr key={`${p.id}-${i}`} className={`border-b border-sdc-border-soft/60 ${rowTint}`}>
-                    <td className="px-3 py-2">
-                      <button
-                        type="button"
-                        onClick={() => handlePart(p)}
-                        title="Copy part # · locate row"
-                        className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-sdc-blue"
-                      >
-                        {p.pn}
-                        <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
-                          <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
-                        </svg>
-                      </button>
-                      <div className="line-clamp-1 text-[10px] text-sdc-gray-600" title={p.desc}>{p.desc || "—"}</div>
-                    </td>
-                    <td className="px-2 py-2 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.purchasedDate)}</td>
-                    <td className={`px-2 py-2 whitespace-nowrap font-mono text-[10px] ${isPast ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(p.expectedDate)}</td>
-                    <td className="px-2 py-2 whitespace-nowrap font-mono text-[10px]">
-                      {isRcvd ? (
-                        <span className="font-semibold text-sdc-green-text">✓ {fmtDate(p.receivedDate)}</span>
-                      ) : (
-                        <span className="text-sdc-yellow-text">Exp {fmtDate(p.expectedDate)}</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2 text-right font-mono text-[10px] text-sdc-gray-600">{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
-                  </tr>
-                );
-              })}
+              {authoritative
+                ? authoritative.lines.map((l, i) => {
+                    const isRcvd = l.status === "received" || !!l.receivedDate;
+                    const expT = l.expectedDate ? new Date(l.expectedDate).getTime() : NaN;
+                    const isPast = !isRcvd && Number.isFinite(expT) && expT < stats.nowMs;
+                    const rowTint = isRcvd ? "bg-sdc-green-bg/50" : isPast ? "bg-sdc-red-bg/50" : "bg-sdc-yellow-bg/40";
+                    const match = bomByPn.get(normPn(l.partNumber));
+                    return (
+                      <tr key={`${l.partNumber}-${i}`} className={`border-b border-sdc-border-soft/60 ${rowTint}`}>
+                        <td className="px-3 py-2">
+                          {match ? (
+                            <button type="button" onClick={() => handlePart(match)} title="Copy part # · locate row" className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-sdc-blue">
+                              {l.partNumber}
+                              <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
+                                <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
+                              </svg>
+                            </button>
+                          ) : (
+                            <span className="font-mono text-[11px] font-semibold text-sdc-navy">{l.partNumber}</span>
+                          )}
+                          <div className="line-clamp-1 text-[10px] text-sdc-gray-600" title={l.desc}>{l.desc || "—"}</div>
+                        </td>
+                        <td className="px-2 py-2 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(l.qty)}</td>
+                        <td className="px-2 py-2 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(l.orderedDate)}</td>
+                        <td className={`px-2 py-2 whitespace-nowrap font-mono text-[10px] ${isPast ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(l.expectedDate)}</td>
+                        <td className="px-2 py-2 whitespace-nowrap font-mono text-[10px]">
+                          {isRcvd ? <span className="font-semibold text-sdc-green-text">✓ {fmtDate(l.receivedDate)}</span> : <span className="text-sdc-yellow-text">Exp {fmtDate(l.expectedDate)}</span>}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-[10px] text-sdc-gray-600">{l.price > 0 ? usd(l.price) : "—"}</td>
+                      </tr>
+                    );
+                  })
+                : po.parts.map((p, i) => {
+                    const isRcvd = p.status === "received" || !!p.receivedDate;
+                    const isPast = stats.isPastDue(p);
+                    const rowTint = isRcvd ? "bg-sdc-green-bg/50" : isPast ? "bg-sdc-red-bg/50" : "bg-sdc-yellow-bg/40";
+                    return (
+                      <tr key={`${p.id}-${i}`} className={`border-b border-sdc-border-soft/60 ${rowTint}`}>
+                        <td className="px-3 py-2">
+                          <button
+                            type="button"
+                            onClick={() => handlePart(p)}
+                            title="Copy part # · locate row"
+                            className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-sdc-blue"
+                          >
+                            {p.pn}
+                            <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
+                              <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
+                            </svg>
+                          </button>
+                          <div className="line-clamp-1 text-[10px] text-sdc-gray-600" title={p.desc}>{p.desc || "—"}</div>
+                        </td>
+                        <td className="px-2 py-2 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</td>
+                        <td className="px-2 py-2 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.purchasedDate)}</td>
+                        <td className={`px-2 py-2 whitespace-nowrap font-mono text-[10px] ${isPast ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(p.expectedDate)}</td>
+                        <td className="px-2 py-2 whitespace-nowrap font-mono text-[10px]">
+                          {isRcvd ? (
+                            <span className="font-semibold text-sdc-green-text">✓ {fmtDate(p.receivedDate)}</span>
+                          ) : (
+                            <span className="text-sdc-yellow-text">Exp {fmtDate(p.expectedDate)}</span>
+                          )}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono text-[10px] text-sdc-gray-600">{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
+                      </tr>
+                    );
+                  })}
             </tbody>
           </table>
         </div>
       </aside>
+    </div>
+  );
+}
+
+function PanelBar({ label, received, total, pct }: { label: string; received: number; total: number; pct: number }) {
+  const color = pct >= 90 ? "bg-sdc-green" : pct >= 60 ? "bg-sdc-yellow" : "bg-sdc-blue";
+  return (
+    <div>
+      <div className="mb-1 flex items-center justify-between text-[10px]">
+        <span className="font-semibold uppercase tracking-wide text-sdc-gray-400">{label}</span>
+        <span className="text-sdc-gray-600 tabular-nums">
+          {received}/{total} · <span className="font-semibold text-sdc-navy">{pct}%</span>
+        </span>
+      </div>
+      <div className="h-1.5 overflow-hidden rounded-full bg-sdc-gray-100">
+        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, pct)}%` }} />
+      </div>
     </div>
   );
 }

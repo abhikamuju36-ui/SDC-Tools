@@ -60,12 +60,41 @@ export type BomNode = {
   nestedAssemblies: number; // count of descendant assemblies
 };
 
+// Authoritative per-line PO data (from tblPurchaseOrderDetails + tblReceiverLog)
+// — the supplier's own line counts, independent of the BOM explosion. Used to
+// override the BOM-derived received/total in the Card view + PO panel.
+export type PoLineDetail = {
+  partNumber: string;
+  desc: string;
+  qty: number;
+  price: number;
+  orderedDate: string | null; // poh.PurchaseDate
+  expectedDate: string | null; // DateRequired || PurchaseDateRequired
+  receivedQty: number;
+  receivedDate: string | null;
+  status: "received" | "ordered"; // received when receivedQty >= qty
+};
+
+export type PoLineGroup = {
+  poId: string;
+  itemCount: number; // # lines on this PO
+  received: number; // # lines fully received
+  pct: number;
+  lines: PoLineDetail[];
+};
+
+export type Vendor = {
+  name: string;
+  pos: PoLineGroup[];
+};
+
 export type JobBom = {
   jobId: string;
   roots: BomNode[]; // one section node per SpecID
   grandTotalCost: number;
   grandTotalPartQty: number;
   rowCount: number;
+  vendors: Vendor[]; // authoritative supplier → PO line rollups (fail-soft: [])
 };
 
 // Total ETO connection — same server/db/creds as sync-totaleto.ts. DO NOT CHANGE.
@@ -142,14 +171,34 @@ const BOM_SQL = `
   WHERE eps.ProjectID = @job
   ORDER BY eps.SpecID, parent.ItemCompanyID, child.ItemCompanyID`;
 
+// Full per-line PO query (mirrors Build Readiness getPoDetails) — every real PO
+// line with its own received qty/date, so vendor cards can show authoritative
+// line counts and the PO panel can list lines that aren't in the BOM. The
+// per-part supplier/expected join (buildPoIndex) still reads from these rows.
 const PO_SQL = `
   SELECT
     poh.PurchaseOrderID,
     poh.PurchaseDate,
     poh.PurchaseDateRequired,
     c.CName AS Supplier,
+    pod.PurchaseDetailID,
     pod.ItemID,
-    pod.DateRequired
+    eim.ItemCompanyID AS PartNumber,
+    eim.ItemDescription AS PartDesc,
+    pod.PurchaseQty,
+    pod.PurchasePrice,
+    pod.DateRequired,
+    ISNULL((
+      SELECT SUM(rl.QtyReceived)
+      FROM tblReceiverLog rl
+      WHERE rl.PurchaseDetailID = pod.PurchaseDetailID
+    ), 0) AS ReceivedQty,
+    (
+      SELECT TOP 1 rl2.[Date]
+      FROM tblReceiverLog rl2
+      WHERE rl2.PurchaseDetailID = pod.PurchaseDetailID
+      ORDER BY rl2.[Date] DESC
+    ) AS LastReceivedDate
   FROM tblPurchaseOrderDetails pod
   JOIN tblPurchaseOrderHeader poh ON pod.PurchaseOrderID = poh.PurchaseOrderID
   JOIN tblCompany c               ON poh.PurchaseSupplierID = c.CompanyID
@@ -185,8 +234,15 @@ type PoRow = {
   PurchaseDate: Date | null;
   PurchaseDateRequired: Date | null;
   Supplier: string | null;
+  PurchaseDetailID: number | null;
   ItemID: number;
+  PartNumber: string | null;
+  PartDesc: string | null;
+  PurchaseQty: number | null;
+  PurchasePrice: number | null;
   DateRequired: Date | null;
+  ReceivedQty: number | null;
+  LastReceivedDate: Date | null;
 };
 
 type PoLine = { poId: string | null; supplier: string | null; dueDate: string | null };
@@ -216,6 +272,52 @@ function buildPoIndex(rows: PoRow[]): Map<number, PoLine[]> {
     else idx.set(r.ItemID, [line]);
   }
   return idx;
+}
+
+// Authoritative vendor → PO line rollups from the raw PO rows (mirrors the
+// reference buildPoIndex/getPoDetails shape used by the Scheduler's card merge).
+// Fully fail-soft: any error yields [] so the BOM-derived counts stay in charge.
+function buildVendors(rows: PoRow[]): Vendor[] {
+  try {
+    const byVendor = new Map<string, Map<string, PoLineDetail[]>>();
+    for (const r of rows) {
+      const poId = r.PurchaseOrderID != null ? String(r.PurchaseOrderID) : "";
+      if (!poId) continue;
+      const name = clean(r.Supplier) || "No Supplier";
+      const qty = Number(r.PurchaseQty) || 0;
+      const receivedQty = Number(r.ReceivedQty) || 0;
+      const line: PoLineDetail = {
+        partNumber: clean(r.PartNumber) || "—",
+        desc: clean(r.PartDesc),
+        qty,
+        price: Number(r.PurchasePrice) || 0,
+        orderedDate: iso(r.PurchaseDate),
+        expectedDate: iso(r.DateRequired ?? r.PurchaseDateRequired),
+        receivedQty,
+        receivedDate: iso(r.LastReceivedDate),
+        status: receivedQty >= qty ? "received" : "ordered",
+      };
+      let pos = byVendor.get(name);
+      if (!pos) byVendor.set(name, (pos = new Map()));
+      const arr = pos.get(poId);
+      if (arr) arr.push(line);
+      else pos.set(poId, [line]);
+    }
+    const vendors: Vendor[] = [];
+    for (const [name, poMap] of byVendor) {
+      const pos: PoLineGroup[] = [];
+      for (const [poId, lines] of poMap) {
+        const itemCount = lines.length;
+        const received = lines.filter((l) => l.receivedQty >= l.qty).length;
+        const pct = itemCount ? Math.round((received / itemCount) * 100) : 0;
+        pos.push({ poId, itemCount, received, pct, lines });
+      }
+      vendors.push({ name, pos });
+    }
+    return vendors;
+  } catch {
+    return [];
+  }
 }
 
 // Everything for one spec's tree: dedupe edges, find assemblies + roots.
@@ -379,6 +481,7 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
     grandTotalCost: 0,
     grandTotalPartQty: 0,
     rowCount: 0,
+    vendors: [],
   };
 
   const numericJob = Number(String(jobId).replace(/[^0-9]/g, ""));
@@ -411,6 +514,7 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
   if (bomRows.length === 0) return empty;
 
   const poIndex = buildPoIndex(poRows);
+  const vendors = buildVendors(poRows); // fail-soft: [] on any error
 
   // Group rows + top nodes by SpecID.
   const rowsBySpec = new Map<number, BomRow[]>();
@@ -513,5 +617,5 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
   const grandTotalCost = roots.reduce((s, n) => s + n.totalCost, 0);
   const grandTotalPartQty = roots.reduce((s, n) => s + n.totalPartQty, 0);
 
-  return { jobId: String(jobId), roots, grandTotalCost, grandTotalPartQty, rowCount };
+  return { jobId: String(jobId), roots, grandTotalCost, grandTotalPartQty, rowCount, vendors };
 }
