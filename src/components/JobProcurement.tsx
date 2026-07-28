@@ -200,6 +200,9 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   // Parts List effect re-fires even when the same row is targeted twice.
   const [drill, setDrill] = useState<{ key: string; nonce: number }>({ key: "", nonce: 0 });
 
+  // Card view PO detail — the right-side sliding panel. null = closed.
+  const [poPanel, setPoPanel] = useState<{ supplier: string; po: PoGroup } | null>(null);
+
   // The primary click action anywhere a part is shown: jump to its Parts-List
   // row (table mode, filters cleared, then scroll+flash) and copy the part #.
   const drillToPart = useCallback(
@@ -334,7 +337,23 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
       {tab === "assemblies" ? (
         <AssembliesTab bom={bom} onPartClick={drillToPart} />
       ) : (
-        <PartsListTab parts={parts} state={partsState} drill={drill} onPartClick={drillToPart} onCopy={copyText} />
+        <PartsListTab
+          parts={parts}
+          state={partsState}
+          drill={drill}
+          onPartClick={drillToPart}
+          onCopy={copyText}
+          onOpenPo={(supplier, po) => setPoPanel({ supplier, po })}
+        />
+      )}
+
+      {poPanel && (
+        <PoPanel
+          supplier={poPanel.supplier}
+          po={poPanel.po}
+          onClose={() => setPoPanel(null)}
+          onPartClick={drillToPart}
+        />
       )}
     </div>
   );
@@ -643,12 +662,14 @@ function PartsListTab({
   drill,
   onPartClick,
   onCopy,
+  onOpenPo,
 }: {
   parts: FlatPart[];
   state: PartsListState;
   drill: { key: string; nonce: number };
   onPartClick: (p: DrillablePart) => void;
   onCopy: (text: string, label?: string) => void;
+  onOpenPo: (supplier: string, po: PoGroup) => void;
 }) {
   const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo } = state;
   const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set());
@@ -792,7 +813,7 @@ function PartsListTab({
       ) : view === "list" ? (
         <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} />
       ) : (
-        <PartsCardView parts={filtered} onPartClick={onPartClick} onCopy={onCopy} />
+        <PartsCardView parts={filtered} onCopy={onCopy} onOpenPo={onOpenPo} />
       )}
     </div>
   );
@@ -923,9 +944,15 @@ type VendorGroup = {
 // Vendor card layout — group the flat parts by supplier → PO, matching the
 // Scheduler drawer's Card mode. One card per supplier, a mini PO table inside,
 // and each PO row expands inline to reveal its parts.
-function PartsCardView({ parts, onPartClick, onCopy }: { parts: FlatPart[]; onPartClick: (p: DrillablePart) => void; onCopy: (text: string, label?: string) => void }) {
-  const [expanded, setExpanded] = useState<Set<string>>(() => new Set());
-
+function PartsCardView({
+  parts,
+  onCopy,
+  onOpenPo,
+}: {
+  parts: FlatPart[];
+  onCopy: (text: string, label?: string) => void;
+  onOpenPo: (supplier: string, po: PoGroup) => void;
+}) {
   const vendors = useMemo<VendorGroup[]>(() => {
     const now = Date.now();
     const isPastDue = (p: FlatPart) => {
@@ -998,14 +1025,6 @@ function PartsCardView({ parts, onPartClick, onCopy }: { parts: FlatPart[]; onPa
     return groups;
   }, [parts]);
 
-  const toggle = (key: string) =>
-    setExpanded((prev) => {
-      const next = new Set(prev);
-      if (next.has(key)) next.delete(key);
-      else next.add(key);
-      return next;
-    });
-
   // Vendor readiness bar color: >=90 green, >=60 amber, else blue.
   const vendorBar = (pct: number) => (pct >= 90 ? "bg-sdc-green" : pct >= 60 ? "bg-sdc-yellow" : "bg-sdc-blue");
   const vendorText = (pct: number) => (pct >= 90 ? "text-sdc-green-text" : pct >= 60 ? "text-sdc-yellow-text" : "text-sdc-blue-dark");
@@ -1050,64 +1069,39 @@ function PartsCardView({ parts, onPartClick, onCopy }: { parts: FlatPart[]; onPa
           <div className="max-h-56 overflow-y-auto styled-scrollbar">
             {v.pos.map((po) => {
               const rowKey = `${v.supplier}::${po.poKey}`;
-              const isOpen = expanded.has(rowKey);
               return (
-                <div key={rowKey} className="border-b border-sdc-border-soft/60 last:border-b-0">
-                  <button
-                    type="button"
-                    onClick={() => toggle(rowKey)}
-                    className="grid w-full grid-cols-[1fr_auto_auto_auto] items-center gap-2 px-3 py-1.5 text-left hover:bg-sdc-blue-light/30"
-                    aria-expanded={isOpen}
-                  >
-                    {po.poNumber ? (
-                      <span
-                        role="button"
-                        tabIndex={0}
-                        title="Copy PO number"
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          onCopy(po.poNumber!, `PO ${po.poNumber}`);
-                        }}
-                        className="truncate font-mono text-[11px] font-semibold text-sdc-blue underline decoration-dotted underline-offset-2"
-                      >
-                        {po.poNumber}
-                      </span>
-                    ) : (
-                      <span className="text-[10px] font-semibold text-sdc-red-text">NO PO</span>
-                    )}
-                    <span className="text-right text-[10px] tabular-nums text-sdc-gray-600">{po.received}/{po.total} rcvd</span>
-                    <span className={`text-right font-mono text-[10px] ${po.pastDue ? "text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(po.expected)}</span>
-                    <span className="flex items-center gap-1.5">
-                      <span aria-hidden className={`inline-block h-2 w-2 rounded-full ${dotColor(po.status)}`} />
-                      <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" className={`text-sdc-gray-400 transition-transform ${isOpen ? "rotate-90" : ""}`}>
-                        <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
-                      </svg>
+                <button
+                  key={rowKey}
+                  type="button"
+                  onClick={() => onOpenPo(v.supplier, po)}
+                  title="Open PO details"
+                  className="grid w-full grid-cols-[1fr_auto_auto_auto] items-center gap-2 border-b border-sdc-border-soft/60 px-3 py-1.5 text-left last:border-b-0 hover:bg-sdc-blue-light/30"
+                >
+                  {po.poNumber ? (
+                    <span
+                      role="button"
+                      tabIndex={0}
+                      title="Copy PO number"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onCopy(po.poNumber!, `PO ${po.poNumber}`);
+                      }}
+                      className="truncate font-mono text-[11px] font-semibold text-sdc-blue underline decoration-dotted underline-offset-2"
+                    >
+                      {po.poNumber}
                     </span>
-                  </button>
-
-                  {isOpen && (
-                    <div className="bg-sdc-gray-50/60 px-3 pb-2 pt-1">
-                      {po.parts.map((p, i) => (
-                        <div key={`${p.id}-${i}`} className="flex items-center gap-2 border-b border-sdc-border-soft/50 py-1 last:border-b-0">
-                          <button
-                            type="button"
-                            title="Copy part # · locate row"
-                            onClick={() => onPartClick(p)}
-                            className="inline-flex shrink-0 items-center gap-1 font-mono text-[10px] font-semibold text-sdc-blue"
-                          >
-                            {p.pn}
-                            <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
-                              <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
-                            </svg>
-                          </button>
-                          <span className="min-w-0 flex-1 truncate text-[10px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
-                          <span className="shrink-0 text-[10px] tabular-nums text-sdc-gray-600">×{num(p.qty)}</span>
-                          <span className="shrink-0"><StatusBadge status={p.status} /></span>
-                        </div>
-                      ))}
-                    </div>
+                  ) : (
+                    <span className="text-[10px] font-semibold text-sdc-red-text">NO PO</span>
                   )}
-                </div>
+                  <span className="text-right text-[10px] tabular-nums text-sdc-gray-600">{po.received}/{po.total} rcvd</span>
+                  <span className={`text-right font-mono text-[10px] ${po.pastDue ? "text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(po.expected)}</span>
+                  <span className="flex items-center gap-1.5">
+                    <span aria-hidden className={`inline-block h-2 w-2 rounded-full ${dotColor(po.status)}`} />
+                    <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" className="text-sdc-gray-400" aria-hidden>
+                      <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </svg>
+                  </span>
+                </button>
               );
             })}
           </div>
@@ -1119,6 +1113,186 @@ function PartsCardView({ parts, onPartClick, onCopy }: { parts: FlatPart[]; onPa
           No parts match the current filters.
         </p>
       )}
+    </div>
+  );
+}
+
+// ── PO detail — right-side sliding panel ─────────────────────────────────────
+
+function PoPanel({
+  supplier,
+  po,
+  onClose,
+  onPartClick,
+}: {
+  supplier: string;
+  po: PoGroup;
+  onClose: () => void;
+  onPartClick: (p: DrillablePart) => void;
+}) {
+  // Mount closed, then flip to open on the next frame so the slide-in plays.
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const id = window.requestAnimationFrame(() => setOpen(true));
+    return () => window.cancelAnimationFrame(id);
+  }, []);
+
+  // Animate out, then unmount via the parent after the transition.
+  const requestClose = useCallback(() => {
+    setOpen(false);
+    window.setTimeout(onClose, 200);
+  }, [onClose]);
+
+  // Escape closes.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") requestClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [requestClose]);
+
+  const stats = useMemo(() => {
+    const now = Date.now();
+    let ordered: string | null = null; // earliest purchase
+    let due: string | null = null; // latest expected
+    let value = 0;
+    for (const p of po.parts) {
+      if (p.purchasedDate && (!ordered || p.purchasedDate.slice(0, 10) < ordered.slice(0, 10))) ordered = p.purchasedDate;
+      if (p.expectedDate && (!due || p.expectedDate.slice(0, 10) > due.slice(0, 10))) due = p.expectedDate;
+      value += (p.unitPrice || 0) * (p.qty || 0);
+    }
+    const pct = po.total ? Math.round((po.received / po.total) * 100) : 0;
+    const isPastDue = (p: FlatPart) => {
+      if (p.status === "received" || !p.expectedDate) return false;
+      const t = new Date(p.expectedDate).getTime();
+      return !Number.isNaN(t) && t < now;
+    };
+    return { ordered, due, value, pct, isPastDue };
+  }, [po]);
+
+  const badge = po.pastDue
+    ? { label: "PAST DUE", cls: "bg-sdc-red-bg text-sdc-red-text" }
+    : stats.pct >= 90
+      ? { label: "RECEIVED", cls: "bg-sdc-green-bg text-sdc-green-text" }
+      : stats.pct >= 60
+        ? { label: "PARTIAL", cls: "bg-sdc-yellow-bg text-sdc-yellow-text" }
+        : { label: "PENDING", cls: "bg-sdc-blue-light text-sdc-blue-dark" };
+
+  const barColor = stats.pct >= 90 ? "bg-sdc-green" : stats.pct >= 60 ? "bg-sdc-yellow" : "bg-sdc-blue";
+
+  const handlePart = (p: FlatPart) => {
+    onPartClick(p);
+    requestClose();
+  };
+
+  return (
+    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={`PO ${po.poNumber ?? "without number"}`}>
+      {/* Backdrop */}
+      <div
+        onClick={requestClose}
+        className={`absolute inset-0 bg-sdc-navy/40 transition-opacity duration-200 ${open ? "opacity-100" : "opacity-0"}`}
+      />
+      {/* Panel */}
+      <aside
+        className={`absolute right-0 top-0 flex h-full w-[440px] max-w-[92vw] flex-col bg-white shadow-xl transition-transform duration-200 ${open ? "translate-x-0" : "translate-x-full"}`}
+      >
+        {/* Header */}
+        <div className="flex flex-col gap-3 border-b border-sdc-border-soft p-4">
+          <div className="flex items-start justify-between gap-3">
+            <div className="flex min-w-0 items-center gap-2.5">
+              <SupplierAvatar supplier={supplier} size={38} />
+              <div className="min-w-0">
+                <div className="truncate text-[15px] font-bold text-sdc-navy" title={supplier}>{supplier}</div>
+                <div className="font-mono text-[12px] text-sdc-gray-600">{po.poNumber ? `PO #${po.poNumber}` : "Parts without PO"}</div>
+              </div>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wide ${badge.cls}`}>{badge.label}</span>
+              <button type="button" onClick={requestClose} aria-label="Close" className="rounded p-1 text-sdc-gray-400 hover:bg-sdc-gray-100 hover:text-sdc-navy">
+                <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 4 L12 12 M12 4 L4 12" strokeLinecap="round" /></svg>
+              </button>
+            </div>
+          </div>
+
+          {/* Summary stats */}
+          <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
+            <Stat label="Ordered" value={fmtDate(stats.ordered)} />
+            <Stat label="Due" value={fmtDate(stats.due)} tone={po.pastDue ? "danger" : undefined} />
+            <Stat label="PO Value" value={stats.value > 0 ? usd(stats.value) : "—"} />
+            <div className="ml-auto min-w-[120px]">
+              <div className="mb-1 flex items-center justify-between text-[10px]">
+                <span className="text-sdc-gray-400">{po.received}/{po.total} received</span>
+                <span className="font-semibold text-sdc-navy tabular-nums">{stats.pct}%</span>
+              </div>
+              <div className="h-1.5 overflow-hidden rounded-full bg-sdc-gray-100">
+                <div className={`h-full rounded-full ${barColor}`} style={{ width: `${Math.min(100, stats.pct)}%` }} />
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Lines table */}
+        <div className="flex-1 overflow-y-auto styled-scrollbar">
+          <table className="w-full border-collapse text-left">
+            <thead className="sticky top-0 z-[1]">
+              <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wider text-white">
+                <th className="px-3 py-2 font-bold">Part</th>
+                <th className="px-2 py-2 text-right font-bold">Qty</th>
+                <th className="px-2 py-2 font-bold">Ordered</th>
+                <th className="px-2 py-2 font-bold">Expected</th>
+                <th className="px-2 py-2 font-bold">Received</th>
+                <th className="px-3 py-2 text-right font-bold">Price</th>
+              </tr>
+            </thead>
+            <tbody>
+              {po.parts.map((p, i) => {
+                const isRcvd = p.status === "received" || !!p.receivedDate;
+                const isPast = stats.isPastDue(p);
+                const rowTint = isRcvd ? "bg-sdc-green-bg/50" : isPast ? "bg-sdc-red-bg/50" : "bg-sdc-yellow-bg/40";
+                return (
+                  <tr key={`${p.id}-${i}`} className={`border-b border-sdc-border-soft/60 ${rowTint}`}>
+                    <td className="px-3 py-2">
+                      <button
+                        type="button"
+                        onClick={() => handlePart(p)}
+                        title="Copy part # · locate row"
+                        className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-sdc-blue"
+                      >
+                        {p.pn}
+                        <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
+                          <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
+                        </svg>
+                      </button>
+                      <div className="line-clamp-1 text-[10px] text-sdc-gray-600" title={p.desc}>{p.desc || "—"}</div>
+                    </td>
+                    <td className="px-2 py-2 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</td>
+                    <td className="px-2 py-2 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.purchasedDate)}</td>
+                    <td className={`px-2 py-2 whitespace-nowrap font-mono text-[10px] ${isPast ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(p.expectedDate)}</td>
+                    <td className="px-2 py-2 whitespace-nowrap font-mono text-[10px]">
+                      {isRcvd ? (
+                        <span className="font-semibold text-sdc-green-text">✓ {fmtDate(p.receivedDate)}</span>
+                      ) : (
+                        <span className="text-sdc-yellow-text">Exp {fmtDate(p.expectedDate)}</span>
+                      )}
+                    </td>
+                    <td className="px-3 py-2 text-right font-mono text-[10px] text-sdc-gray-600">{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
+      </aside>
+    </div>
+  );
+}
+
+function Stat({ label, value, tone }: { label: string; value: string; tone?: "danger" }) {
+  return (
+    <div className="flex flex-col">
+      <span className="text-[9px] font-bold uppercase tracking-wider text-sdc-gray-400">{label}</span>
+      <span className={`font-mono text-[12px] font-semibold tabular-nums ${tone === "danger" ? "text-sdc-red-text" : "text-sdc-navy"}`}>{value}</span>
     </div>
   );
 }
