@@ -296,7 +296,14 @@ export default function Sidebar({
     <aside
       aria-label="Primary navigation"
       style={{ width: collapsed ? undefined : width }}
-      className={`relative flex shrink-0 flex-col bg-sdc-navy text-white ${
+      // Pin the sidebar to the viewport height with its own internal scroll
+      // (the nav is flex-1 overflow-y-auto below). Without this the aside
+      // stretches to match the page content, so on tall tabs (Projects /
+      // Monthly ETC grids) it grew very tall and pushed the bottom controls
+      // (Text size / Refresh / Collapse / user) far down the page — making the
+      // item positions appear to shift between tabs. sticky+h-screen keeps it
+      // fixed to the viewport regardless of how tall the page content is.
+      className={`sticky top-0 z-20 flex h-screen max-h-screen shrink-0 flex-col self-start bg-sdc-navy text-white ${
         dragWidth === null ? "transition-[width] duration-150" : ""
       } ${collapsed ? "w-16" : ""}`}
     >
