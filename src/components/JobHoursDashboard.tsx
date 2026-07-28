@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { card } from "@/components/ui/classnames";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { EChart } from "@/components/charts/EChart";
@@ -159,11 +159,22 @@ function SectionHierarchyChart({ rows, plannedLabel }: { rows: HierRow[]; planne
 
   // Hovered section index + cursor position, for the floating tooltip.
   const [hover, setHover] = useState<{ row: HierRow; x: number; y: number } | null>(null);
+  // Entrance animation — bars grow up from 0 on mount / when the data changes,
+  // mirroring the ECharts chart beside it. Two rAFs so the 0-height paints first.
+  const [grown, setGrown] = useState(false);
+  useEffect(() => {
+    setGrown(false);
+    const id = requestAnimationFrame(() => requestAnimationFrame(() => setGrown(true)));
+    return () => cancelAnimationFrame(id);
+  }, [rows]);
 
   const Bar = ({ value, color }: { value: number; color: string }) => (
     <div className="flex h-full flex-col items-center justify-end">
       <span className="mb-0.5 text-[8px] leading-none text-sdc-gray-500">{value ? fmt(value) : ""}</span>
-      <div className="w-5 rounded-t-sm" style={{ height: `${(value / max) * 100}%`, background: color }} />
+      <div
+        className="w-5 rounded-t-sm transition-[height] duration-500 ease-out"
+        style={{ height: grown ? `${(value / max) * 100}%` : "0%", background: color }}
+      />
     </div>
   );
 
@@ -182,7 +193,7 @@ function SectionHierarchyChart({ rows, plannedLabel }: { rows: HierRow[]; planne
           return (
             <div
               key={r.code}
-              className="flex h-full flex-col rounded-sm hover:bg-sdc-blue-light/30"
+              className={`flex h-full flex-col rounded-sm transition-opacity duration-150 hover:bg-sdc-blue-light/30 ${hover && hover.row.code !== r.code ? "opacity-40" : "opacity-100"}`}
               onMouseMove={(e) => {
                 const box = e.currentTarget.parentElement!.getBoundingClientRect();
                 setHover({ row: r, x: e.clientX - box.left, y: e.clientY - box.top });
