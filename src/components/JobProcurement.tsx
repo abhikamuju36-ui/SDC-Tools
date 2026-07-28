@@ -1296,6 +1296,34 @@ function PartsTableView({
     document.addEventListener("mouseup", onUp);
   };
 
+  // Column totals for the sticky footer (over the currently-filtered rows),
+  // mirroring the Power BI Parts Cost total row.
+  const tot = parts.reduce(
+    (a, p) => {
+      a.qty += p.qty;
+      a.unit += p.unitPrice;
+      a.total += p.totalPrice;
+      a.invoiced += p.invoicedAmount;
+      a.jobcost += p.jobCostExclSdc;
+      a.left += p.leftToSpend;
+      return a;
+    },
+    { qty: 0, unit: 0, total: 0, invoiced: 0, jobcost: 0, left: 0 },
+  );
+  const totPct = tot.total > 0 ? Math.round((tot.invoiced / tot.total) * 100) : tot.invoiced > 0 ? 100 : 0;
+  const footCell = (key: ColKey, idx: number): string => {
+    switch (key) {
+      case "qty": return num(tot.qty);
+      case "unit": return usd(tot.unit);
+      case "total": return usd(tot.total);
+      case "invoiced": return usd(tot.invoiced);
+      case "pctinv": return `${totPct}%`;
+      case "jobcost": return usd(tot.jobcost);
+      case "leftspend": return usd(tot.left);
+      default: return idx === 0 ? "Total" : "";
+    }
+  };
+
   return (
     <div className="overflow-x-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
       <div className="max-h-[74vh] overflow-y-auto styled-scrollbar">
@@ -1342,6 +1370,15 @@ function PartsTableView({
               );
             })}
           </tbody>
+          <tfoot className="sticky bottom-0 z-[2]">
+            <tr className="border-t-2 border-sdc-border bg-sdc-gray-100 text-[11px] font-bold text-sdc-navy">
+              {cols.map((c, idx) => (
+                <td key={c.key} className={`overflow-hidden border-r border-sdc-border-soft px-2 py-1.5 align-middle font-mono tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
+                  {footCell(c.key, idx)}
+                </td>
+              ))}
+            </tr>
+          </tfoot>
         </table>
       </div>
     </div>
