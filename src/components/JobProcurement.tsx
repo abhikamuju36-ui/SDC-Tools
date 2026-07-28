@@ -73,12 +73,12 @@ const STATUS_PILL: Record<StatusKey, string> = {
 // whole Parts-List row so status reads at a glance (with a slightly stronger
 // tint on hover). The drill-flash (inline style) still wins over these.
 const STATUS_ROW_BG: Record<StatusKey, string> = {
-  received: "bg-sdc-green-bg/50 hover:bg-sdc-green-bg/80",
-  ordered: "bg-sdc-blue-light/40 hover:bg-sdc-blue-light/70",
-  soon: "bg-sdc-yellow-bg/50 hover:bg-sdc-yellow-bg/80",
-  overdue: "bg-sdc-red-bg/50 hover:bg-sdc-red-bg/80",
-  noPO: "bg-sdc-red-bg/25 hover:bg-sdc-red-bg/50",
-  hold: "bg-sdc-gray-100/70 hover:bg-sdc-gray-100",
+  received: "bg-sdc-green-bg/90 hover:bg-sdc-green-bg",
+  ordered: "bg-sdc-blue-light/75 hover:bg-sdc-blue-light/95",
+  soon: "bg-sdc-yellow-bg/90 hover:bg-sdc-yellow-bg",
+  overdue: "bg-sdc-red-bg/90 hover:bg-sdc-red-bg",
+  noPO: "bg-sdc-red-bg/45 hover:bg-sdc-red-bg/80",
+  hold: "bg-sdc-gray-100 hover:bg-sdc-gray-100",
 };
 
 function StatusPill({ st }: { st: PartStatus }) {
