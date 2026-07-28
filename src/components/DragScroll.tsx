@@ -14,12 +14,21 @@ export function DragScroll({ className, children }: { className?: string; childr
   const ref = useRef<HTMLDivElement>(null);
   const moved = useRef(false);
 
+  const scrollable = (el: HTMLElement) => el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight;
+
+  // Only show the grab cursor when there's actually something to pan, so
+  // non-overflowing tables don't get a misleading "grab" affordance.
+  function onMouseEnter() {
+    const el = ref.current;
+    if (el) el.style.cursor = scrollable(el) ? "grab" : "";
+  }
+
   function onMouseDown(e: React.MouseEvent) {
     if (e.button !== 0) return; // left button only
     const target = e.target as HTMLElement;
     if (target.closest("input,select,textarea,button,a,[contenteditable],summary,label,[role='button']")) return;
     const el = ref.current;
-    if (!el) return;
+    if (!el || !scrollable(el)) return;
 
     const startX = e.clientX;
     const startY = e.clientY;
@@ -55,7 +64,7 @@ export function DragScroll({ className, children }: { className?: string; childr
   }
 
   return (
-    <div ref={ref} className={className} style={{ cursor: "grab" }} onMouseDown={onMouseDown} onClickCapture={onClickCapture}>
+    <div ref={ref} className={className} onMouseEnter={onMouseEnter} onMouseDown={onMouseDown} onClickCapture={onClickCapture}>
       {children}
     </div>
   );

@@ -5,6 +5,7 @@ import type { BomNode, BomPart, JobBom, PoLineGroup, Vendor } from "@/lib/job-bo
 import type { PartsCostLine } from "@/lib/sync-totaleto";
 import { usd } from "@/components/ui/format";
 import { useToast } from "@/components/ui/Toast";
+import { DragScroll } from "@/components/DragScroll";
 
 // A minimal shape shared by BOM leaf parts (Assemblies detail table) and the
 // flattened Parts List rows — enough to drill + copy.
@@ -664,11 +665,11 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
         <button type="button" onClick={() => setCollapsed(new Set(allKeys))} className={ghostBtn}>Collapse All</button>
       </div>
 
-      <div className="overflow-x-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
+      <DragScroll className="max-h-[78vh] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
         <div className="min-w-[846px]">
-          {/* Dark header row */}
+          {/* Dark header row — sticky to the single scroll container */}
           <div
-            className="grid items-center gap-3 bg-sdc-navy px-3 py-2 text-[9px] font-bold uppercase tracking-wider text-white"
+            className="sticky top-0 z-[2] grid items-center gap-3 bg-sdc-navy px-3 py-2 text-[9px] font-bold uppercase tracking-wider text-white"
             style={{ gridTemplateColumns: ASM_GRID }}
           >
             <span>Assembly</span>
@@ -680,31 +681,29 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
             <span>Readiness %</span>
           </div>
 
-          <div className="max-h-[78vh] overflow-y-auto styled-scrollbar">
-            {bom.roots.map((section) => (
-              <div key={section.key}>
-                {/* Light section header with material-$ subtotal on the right */}
-                <div className="flex items-center justify-between gap-2 border-y border-sdc-border-soft bg-sdc-gray-100 px-4 py-2">
-                  <span className="text-[13px] font-bold text-sdc-navy">{sectionLabelFor(section)}</span>
-                  <span className="whitespace-nowrap text-xs font-semibold text-sdc-gray-600 tabular-nums">
-                    {usd(section.totalCost)}
-                  </span>
-                </div>
-
-                {section.children.map((asm) => (
-                  <AssemblyRow key={asm.key} node={asm} depth={0} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />
-                ))}
-                {section.parts.length > 0 && <PartsDetailTable parts={section.parts} depth={0} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />}
+          {bom.roots.map((section) => (
+            <div key={section.key}>
+              {/* Light section header with material-$ subtotal on the right */}
+              <div className="flex items-center justify-between gap-2 border-y border-sdc-border-soft bg-sdc-gray-100 px-4 py-2">
+                <span className="text-[13px] font-bold text-sdc-navy">{sectionLabelFor(section)}</span>
+                <span className="whitespace-nowrap text-xs font-semibold text-sdc-gray-600 tabular-nums">
+                  {usd(section.totalCost)}
+                </span>
               </div>
-            ))}
 
-            {bom.roots.length === 0 && (
-              <p className="px-4 py-10 text-center text-sm text-sdc-gray-400">No assemblies found for this job.</p>
-            )}
-          </div>
+              {section.children.map((asm) => (
+                <AssemblyRow key={asm.key} node={asm} depth={0} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />
+              ))}
+              {section.parts.length > 0 && <PartsDetailTable parts={section.parts} depth={0} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />}
+            </div>
+          ))}
 
-          {/* Dark BOM-materials footer */}
-          <div className="flex items-center justify-between gap-2 bg-sdc-navy px-4 py-2.5 text-white">
+          {bom.roots.length === 0 && (
+            <p className="px-4 py-10 text-center text-sm text-sdc-gray-400">No assemblies found for this job.</p>
+          )}
+
+          {/* Dark BOM-materials footer — sticky to the bottom of the scroll container */}
+          <div className="sticky bottom-0 z-[2] flex items-center justify-between gap-2 bg-sdc-navy px-4 py-2.5 text-white">
             <span className="text-[11px] font-semibold uppercase tracking-wide">
               BOM materials value
               <span className="ml-2 font-normal normal-case text-white/60">assembly parts at latest PO price</span>
@@ -712,7 +711,7 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
             <span className="text-sm font-bold tabular-nums">{usd(bom.grandTotalCost)}</span>
           </div>
         </div>
-      </div>
+      </DragScroll>
     </div>
   );
 }
@@ -1326,10 +1325,9 @@ function PartsTableView({
   };
 
   return (
-    <div className="overflow-x-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
-      <div className="max-h-[74vh] overflow-y-auto styled-scrollbar">
-        <table className="table-fixed border-collapse text-left" style={{ width: totalWidth, minWidth: "100%" }}>
-          <colgroup>
+    <DragScroll className="max-h-[74vh] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
+      <table className="table-fixed border-collapse text-left" style={{ width: totalWidth, minWidth: "100%" }}>
+        <colgroup>
             {cols.map((c) => (
               <col key={c.key} style={{ width: widthOf(c.key) }} />
             ))}
@@ -1381,8 +1379,7 @@ function PartsTableView({
             </tr>
           </tfoot>
         </table>
-      </div>
-    </div>
+    </DragScroll>
   );
 }
 
