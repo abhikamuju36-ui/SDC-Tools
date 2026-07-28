@@ -69,6 +69,18 @@ const STATUS_PILL: Record<StatusKey, string> = {
   hold: "bg-sdc-gray-100 text-sdc-gray-600",
 };
 
+// Light row tint per status — same hues as the status pills, applied to the
+// whole Parts-List row so status reads at a glance (with a slightly stronger
+// tint on hover). The drill-flash (inline style) still wins over these.
+const STATUS_ROW_BG: Record<StatusKey, string> = {
+  received: "bg-sdc-green-bg/50 hover:bg-sdc-green-bg/80",
+  ordered: "bg-sdc-blue-light/40 hover:bg-sdc-blue-light/70",
+  soon: "bg-sdc-yellow-bg/50 hover:bg-sdc-yellow-bg/80",
+  overdue: "bg-sdc-red-bg/50 hover:bg-sdc-red-bg/80",
+  noPO: "bg-sdc-red-bg/25 hover:bg-sdc-red-bg/50",
+  hold: "bg-sdc-gray-100/70 hover:bg-sdc-gray-100",
+};
+
 function StatusPill({ st }: { st: PartStatus }) {
   return (
     <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wide ${STATUS_PILL[st.key]}`} title={st.sub || st.label}>
@@ -188,7 +200,7 @@ function SupplierChip({ supplier }: { supplier: string | null }) {
       >
         {initials}
       </span>
-      <span className="truncate text-[11px] text-sdc-gray-600" title={supplier}>
+      <span className="truncate text-[11px] font-medium text-sdc-navy" title={supplier}>
         {supplier}
       </span>
     </span>
@@ -1113,23 +1125,23 @@ function PartRowCells({
   const cell = (key: ColKey) => {
     switch (key) {
       case "qty":
-        return <span className="text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</span>;
+        return <span className="text-[11px] font-bold tabular-nums text-sdc-navy">{num(p.qty)}</span>;
       case "pn":
         // Blue link-style — the row itself copies the PN + drills, so the link
         // is the affordance (no separate copy glyph).
-        return <span className="block truncate font-mono text-[11px] font-medium text-sdc-blue group-hover:underline" title={p.pn}>{p.pn}</span>;
+        return <span className="block truncate font-mono text-[11px] font-bold text-sdc-blue group-hover:underline" title={p.pn}>{p.pn}</span>;
       case "desc":
-        return <span className="block truncate text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>;
+        return <span className="block truncate text-[11px] font-semibold text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>;
       case "parent":
         return (
-          <span className={`block truncate font-mono text-[10px] ${p.parentPN ? "text-sdc-gray-600" : "italic text-sdc-gray-400"}`} title={parentLine}>
+          <span className={`block truncate font-mono text-[10px] font-medium ${p.parentPN ? "text-sdc-navy" : "italic text-sdc-gray-500"}`} title={parentLine}>
             {parentLine}
           </span>
         );
       case "category":
-        return <span className="block truncate text-[11px] text-sdc-gray-600" title={p.category ?? ""}>{p.category || "—"}</span>;
+        return <span className="block truncate text-[11px] font-medium text-sdc-navy" title={p.category ?? ""}>{p.category || "—"}</span>;
       case "mfr":
-        return <span className="block truncate text-[11px] text-sdc-gray-600" title={p.manufacturer}>{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>;
+        return <span className="block truncate text-[11px] font-medium text-sdc-navy" title={p.manufacturer}>{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>;
       case "supplier":
         return <SupplierChip supplier={p.supplier} />;
       case "po":
@@ -1146,9 +1158,9 @@ function PartRowCells({
           <span className="text-[10px] font-semibold text-sdc-red-text">NO PO</span>
         );
       case "purchased":
-        return <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.purchasedDate)}</span>;
+        return <span className="whitespace-nowrap font-mono text-[10px] font-medium text-sdc-navy">{fmtDate(p.purchasedDate)}</span>;
       case "exp":
-        return <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.expectedDate)}</span>;
+        return <span className="whitespace-nowrap font-mono text-[10px] font-medium text-sdc-navy">{fmtDate(p.expectedDate)}</span>;
       case "lead":
         return <LeadChip ordered={p.purchasedDate} expected={p.expectedDate} />;
       case "due":
@@ -1241,15 +1253,10 @@ function PartsTableView({
           </thead>
           <tbody>
             {parts.map((p, i) => {
-              // Row-bg precedence: drill-flash (inline style, set imperatively)
-              // > overdue tint > hover > zebra. Overdue rows omit the hover class
-              // so the red always wins; the flash uses inline style so it beats
-              // every class. Non-overdue rows get zebra + hover (the hover variant
-              // is emitted after the base bg, so it wins over the zebra tint).
-              const overdue = p.st.key === "overdue";
-              const rowBg = overdue
-                ? "bg-sdc-red-bg/40"
-                : `${i % 2 === 1 ? "bg-sdc-gray-100/40" : "bg-white"} hover:bg-sdc-blue-light/25`;
+              // Row tint by status (STATUS_ROW_BG) so each row reads by its
+              // status at a glance. Precedence: drill-flash (inline style, set
+              // imperatively) > the status tint's hover > the status tint.
+              const rowBg = STATUS_ROW_BG[p.st.key];
               return (
                 <tr
                   key={`${p.id}-${i}`}
