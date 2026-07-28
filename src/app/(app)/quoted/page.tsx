@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { validJobTypeFilter, VALID_JOB_TYPES, compareJobIds, isSdcCustomer } from "@/lib/job-filters";
 import { SECTIONS, PHASE_GROUPS } from "@/lib/sections";
 import { abbreviateLabel } from "@/lib/abbrev";
+import { DragScroll } from "@/components/DragScroll";
 import { PageTitle } from "@/components/ui/Typography";
 import { TABLE_HEADER_ROW, TABLE_GRID, BUTTON_PRIMARY } from "@/components/ui/classnames";
 import { PhaseColumnPicker } from "@/components/PhaseColumnPicker";
@@ -314,7 +315,7 @@ export default async function QuotedPage({
         <ProjectViewsMenu sharedViews={sharedViews} teamDefault={teamDefault} />
       </div>
 
-      <div className="max-h-[calc(100vh-170px)] min-w-[480px] overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm select-none styled-scrollbar">
+      <DragScroll className="max-h-[calc(100vh-170px)] min-w-[480px] overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm select-none styled-scrollbar">
         <table className={`w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
           <thead className="sticky top-0 z-20 bg-sdc-gray-100">
             <tr className={TABLE_HEADER_ROW}>
@@ -728,7 +729,7 @@ export default async function QuotedPage({
             })}
           </tbody>
         </table>
-      </div>
+      </DragScroll>
     </form>
   );
 }

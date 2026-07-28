@@ -35,6 +35,7 @@ import { SchedulerJobLink } from "@/components/SchedulerJobLink";
 import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, TABLE_HEADER_ROW, TABLE_GRID } from "@/components/ui/classnames";
 import { abbreviateLabel } from "@/lib/abbrev";
+import { DragScroll } from "@/components/DragScroll";
 
 // Matches the real "Managers Fill Out" sheet's column shape exactly — every
 // department block has these same 5 columns; Parts Cost and the Total rollup
@@ -797,7 +798,7 @@ export default async function MonthlyEtcPage({
               provider wraps both so the panel's live pulled/rate edits flow into
               the grid's job Standard Fees. */}
           <form key={month} id="etc-month-form" action={submitMonth.bind(null, month)} className="min-w-0 flex-1">
-          <div className="max-h-[calc(100vh-185px)] overflow-auto border border-sdc-border border-t-[#808080] bg-white shadow-sm select-none styled-scrollbar">
+          <DragScroll className="max-h-[calc(100vh-185px)] overflow-auto border border-sdc-border border-t-[#808080] bg-white shadow-sm select-none styled-scrollbar">
             <table className={`w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
               <thead className="sticky top-0 z-20 bg-sdc-gray-100">
                 <tr className={TABLE_HEADER_ROW}>
@@ -1315,7 +1316,7 @@ export default async function MonthlyEtcPage({
                 )}
               </tbody>
             </table>
-          </div>
+          </DragScroll>
           </form>
           {showStandards && (
             <StandardPoolPanel
