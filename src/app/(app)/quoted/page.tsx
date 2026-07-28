@@ -392,7 +392,7 @@ export default async function QuotedPage({
               })}
               <th
                 rowSpan={3}
-                className="w-[84px] min-w-[84px] border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-[11px] leading-tight text-sdc-blue-dark"
+                className="w-[60px] min-w-[60px] border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-[11px] leading-tight text-sdc-blue-dark"
               >
                 TOTAL
                 <span className="block font-normal normal-case tracking-normal text-sdc-gray-500">Quoted / Actual</span>
@@ -427,7 +427,7 @@ export default async function QuotedPage({
               {PHASE_GROUPS.flatMap((g) => {
                 const sections = visibleSectionsByPhase.get(g.phase) ?? [];
                 return sections.map((s) => (
-                  <th key={s.code} title={s.code} className="qc w-[78px] min-w-[78px] border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
+                  <th key={s.code} title={s.code} className="qc w-[54px] min-w-[54px] border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
                     {s.name}
                     <span className="block font-mono text-[10px] font-normal normal-case tracking-normal text-sdc-gray-400">
                       {s.code}
@@ -585,7 +585,7 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("startDate") && (
-                    <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px] text-sdc-gray-500">
+                    <td className="whitespace-nowrap px-1 py-1.5 text-left text-[10px] text-sdc-gray-500">
                       <DateCell
                         name={`jobField__${job.id}__startDate`}
                         defaultValue={dateInputValue(job.startDate)}
@@ -594,7 +594,7 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("completeDate") && (
-                    <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px] text-sdc-gray-500">
+                    <td className="whitespace-nowrap px-1 py-1.5 text-left text-[10px] text-sdc-gray-500">
                       <DateCell
                         name={`jobField__${job.id}__completeDate`}
                         defaultValue={dateInputValue(job.completeDate)}
@@ -642,7 +642,7 @@ export default async function QuotedPage({
                           return (
                             <td
                               key={s.code}
-                              className={`qc quoted-actual-cell w-[78px] min-w-[78px] border-l border-sdc-border px-1 py-1.5 text-center font-mono text-[10px] text-sdc-gray-600 ${tone}`}
+                              className={`qc quoted-actual-cell w-[54px] min-w-[54px] border-l border-sdc-border px-1 py-1.5 text-center font-mono text-[10px] text-sdc-gray-600 ${tone}`}
                               title={`Quoted ${exactHours(hours) ?? "0"} / Actual ${exactHours(actual) ?? "0"}`}
                             >
                               <input
@@ -671,7 +671,7 @@ export default async function QuotedPage({
                     const grandActual = visibleCodesFlat.reduce((sum, code) => sum + (actualBySection.get(code) ?? 0), 0);
                     return (
                       <td
-                        className="w-[84px] min-w-[84px] whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center font-mono text-[10px] font-medium"
+                        className="w-[60px] min-w-[60px] whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center font-mono text-[10px] font-medium"
                         title={`Quoted ${exactHours(grandQuoted) ?? "0"} / Actual ${exactHours(grandActual) ?? "0"}`}
                       >
                         <span className="font-semibold text-sdc-blue-dark">{wholeHours(grandQuoted)}</span>

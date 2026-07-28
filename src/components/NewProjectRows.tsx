@@ -109,12 +109,12 @@ export function NewProjectRows({
             </td>
           )}
           {show("startDate") && (
-            <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px] text-sdc-gray-500">
+            <td className="whitespace-nowrap px-1 py-1.5 text-left text-[10px] text-sdc-gray-500">
               <DateCell name={`newRow__${tempId}__startDate`} defaultValue="" ariaLabel="New project Start Date" />
             </td>
           )}
           {show("completeDate") && (
-            <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px] text-sdc-gray-500">
+            <td className="whitespace-nowrap px-1 py-1.5 text-left text-[10px] text-sdc-gray-500">
               <DateCell name={`newRow__${tempId}__completeDate`} defaultValue="" ariaLabel="New project Complete Date" />
             </td>
           )}
