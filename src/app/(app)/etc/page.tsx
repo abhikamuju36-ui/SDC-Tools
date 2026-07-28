@@ -1013,12 +1013,12 @@ export default async function MonthlyEtcPage({
 
                   return (
                     <tr key={job.id} className={`hover:bg-sdc-blue-light/40 ${zebra}`}>
-                      <td className={`sticky left-0 z-10 w-10 min-w-10 overflow-hidden px-2 py-1 text-center align-middle whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}>{jobIndex + 1}</td>
-                      <td className={`sticky left-10 z-10 w-20 min-w-20 overflow-hidden px-3 py-1 text-center align-middle font-mono whitespace-nowrap text-sdc-gray-400 ${showJobName ? "" : "border-r-8 border-[#808080]"} ${zebraSticky}`}>{job.jobId}</td>
+                      <td className={`sticky left-0 z-10 w-10 min-w-10 overflow-hidden px-2 py-1 text-center align-middle text-[10px] leading-none whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}>{jobIndex + 1}</td>
+                      <td className={`sticky left-10 z-10 w-20 min-w-20 overflow-hidden px-3 py-1 text-center align-middle font-mono text-[10px] leading-none whitespace-nowrap text-sdc-gray-400 ${showJobName ? "" : "border-r-8 border-[#808080]"} ${zebraSticky}`}>{job.jobId}</td>
                       {showJobName && (
                         <td
                           style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
-                          className={`sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] px-3 py-1 text-center align-middle font-medium whitespace-nowrap text-sdc-navy ${zebraSticky}`}
+                          className={`sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] px-3 py-1 text-center align-middle text-[10px] font-medium leading-none whitespace-nowrap text-sdc-navy ${zebraSticky}`}
                           title={job.jobName}
                         >
                           <div className="flex min-w-0 items-center justify-center gap-1.5">
