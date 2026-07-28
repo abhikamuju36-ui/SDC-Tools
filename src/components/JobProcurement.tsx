@@ -1372,9 +1372,9 @@ function PartsTableView({
             })}
           </tbody>
           <tfoot className="sticky bottom-0 z-[2]">
-            <tr className="border-t-2 border-sdc-border bg-sdc-gray-100 text-[11px] font-bold text-sdc-navy">
+            <tr className="border-t-2 border-sdc-blue bg-sdc-navy text-[12px] font-extrabold text-white">
               {cols.map((c, idx) => (
-                <td key={c.key} className={`overflow-hidden border-r border-sdc-border-soft px-2 py-1.5 align-middle font-mono tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
+                <td key={c.key} className={`overflow-hidden border-r border-white/15 px-2 py-2 align-middle font-mono font-extrabold tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
                   {footCell(c.key, idx)}
                 </td>
               ))}
