@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import type { BomNode, BomPart, JobBom } from "@/lib/job-bom";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
 import { usd } from "@/components/ui/format";
@@ -23,14 +23,91 @@ type DrillablePart = { id: number; pn: string };
 // useMemo (this is a client component).
 // ─────────────────────────────────────────────────────────────────────────────
 
-const SPEC_TITLES: Record<number, string> = {
+// PM-facing section (spec) label overrides — DISPLAY ONLY, keyed by SpecID.
+// Matches the Scheduler's SECTION_LABEL_OVERRIDE so both apps read the same.
+const SECTION_LABEL_OVERRIDE: Record<number, string> = {
   10: "Mechanical Design and Build",
-  30: "Controls Design",
-  40: "Machine Testing",
+  30: "Control-Related Parts",
+  40: "Machine Testing-Related Parts",
   90: "Spare Parts",
 };
 
 const DAY = 86_400_000;
+
+// ── Status model ─────────────────────────────────────────────────────────────
+// One derived status per part (mirrors the Scheduler's _procPartStatus). Time-
+// relative keys (overdue/soon) resolve against a `now` passed by the caller.
+type StatusKey = "received" | "hold" | "noPO" | "overdue" | "soon" | "ordered";
+type PartStatus = { key: StatusKey; label: string; cls: string; sub: string };
+
+function partStatus(
+  p: { status: BomPart["status"]; hold: boolean; expectedDate: string | null; requiredDate: string | null; poId?: string | null; poNumber?: string | null },
+  now: number,
+): PartStatus {
+  if (p.status === "received") return { key: "received", label: "RECEIVED", cls: "received", sub: "" };
+  if (p.hold) return { key: "hold", label: "ON HOLD", cls: "hold", sub: "in ETO" };
+  if (p.status === "noPO") return { key: "noPO", label: "NO PO", cls: "noPO", sub: "" };
+  const due = p.expectedDate || p.requiredDate;
+  if (due) {
+    const t = new Date(due).getTime();
+    if (!Number.isNaN(t)) {
+      const diff = Math.ceil((t - now) / DAY);
+      if (diff < 0) return { key: "overdue", label: "OVERDUE", cls: "overdue", sub: `${Math.abs(diff)}d late` };
+      if (diff <= 14) return { key: "soon", label: "DUE SOON", cls: "soon", sub: `in ${diff}d` };
+      return { key: "ordered", label: "ON ORDER", cls: "ordered", sub: `in ${diff}d` };
+    }
+  }
+  return { key: "ordered", label: "ON ORDER", cls: "ordered", sub: "" };
+}
+
+const STATUS_PILL: Record<StatusKey, string> = {
+  received: "bg-sdc-green-bg text-sdc-green-text",
+  ordered: "bg-sdc-blue-light text-sdc-blue-dark",
+  soon: "bg-sdc-yellow-bg text-sdc-yellow-text",
+  overdue: "bg-sdc-red-bg text-sdc-red-text",
+  noPO: "border border-sdc-red-border bg-white text-sdc-red-text",
+  hold: "bg-sdc-gray-100 text-sdc-gray-600",
+};
+
+function StatusPill({ st }: { st: PartStatus }) {
+  return (
+    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wide ${STATUS_PILL[st.key]}`} title={st.sub || st.label}>
+      {st.label}
+      {st.sub ? <span className="font-medium opacity-70">{st.sub}</span> : null}
+    </span>
+  );
+}
+
+// Lead time chip — weeks between purchase and expected delivery. ≤4w ok (green),
+// ≤8w warn (amber), >8w long (blue). Day count in the tooltip.
+function LeadChip({ ordered, expected }: { ordered: string | null; expected: string | null }) {
+  const days = daysBetween(ordered, expected);
+  if (days == null || days < 0) return <span className="text-[10px] text-sdc-gray-400">—</span>;
+  const wks = Math.round((days / 7) * 2) / 2;
+  const cls = wks <= 4 ? "bg-sdc-green-bg text-sdc-green-text" : wks <= 8 ? "bg-sdc-yellow-bg text-sdc-yellow-text" : "bg-sdc-blue-light text-sdc-blue-dark";
+  return (
+    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${cls}`} title={`${days} day lead time (ordered → expected delivery)`}>
+      {wks}w
+    </span>
+  );
+}
+
+// Due countdown chip — green "RCVD" when received, else weeks ahead (+Nw) /
+// due-soon (+Nw amber) / late (-Nw red) vs. the expected date.
+function DueChip({ expected, received, now }: { expected: string | null; received: boolean; now: number }) {
+  if (received) return <span className="inline-flex items-center rounded bg-sdc-green-bg px-1.5 py-0.5 text-[9px] font-bold text-sdc-green-text" title="Already received">RCVD</span>;
+  if (!expected) return <span className="text-[10px] text-sdc-gray-400">—</span>;
+  const t = new Date(expected).getTime();
+  if (Number.isNaN(t)) return <span className="text-[10px] text-sdc-gray-400">—</span>;
+  const rawDays = (t - now) / DAY;
+  const daysRounded = Math.round(rawDays);
+  const wks = Math.round((rawDays / 7) * 2) / 2;
+  const base = "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums";
+  if (rawDays > 7) return <span className={`${base} bg-sdc-green-bg text-sdc-green-text`} title={`Due in ${daysRounded} days`}>+{wks}w</span>;
+  if (rawDays >= 0) return <span className={`${base} bg-sdc-yellow-bg text-sdc-yellow-text`} title={`Due in ${daysRounded} days`}>+{wks}w</span>;
+  const overWks = Math.round((Math.abs(rawDays) / 7) * 2) / 2;
+  return <span className={`${base} bg-sdc-red-bg text-sdc-red-text`} title={`${Math.abs(daysRounded)} days overdue`}>-{overWks}w</span>;
+}
 
 function num(n: number): string {
   return (Math.round(n) || 0).toLocaleString();
@@ -118,23 +195,10 @@ function SupplierChip({ supplier }: { supplier: string | null }) {
   );
 }
 
-function StatusBadge({ status }: { status: BomPart["status"] }) {
-  const map = {
-    received: { cls: "bg-sdc-green-bg text-sdc-green-text", label: "RCVD" },
-    ordered: { cls: "bg-sdc-blue-light text-sdc-blue-dark", label: "ORDERED" },
-    noPO: { cls: "bg-sdc-red-bg text-sdc-red-text", label: "NO PO" },
-  } as const;
-  const m = map[status];
-  return (
-    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wide ${m.cls}`}>
-      {m.label}
-    </span>
-  );
-}
-
-// Readiness bar color: green at 100, amber >= 60, red below.
+// Readiness bar color: green >= 90, amber >= 60, red below (matches the
+// Scheduler's _procBarColor threshold).
 function barClasses(pct: number): { bar: string; text: string } {
-  if (pct >= 100) return { bar: "bg-sdc-green", text: "text-sdc-green-text" };
+  if (pct >= 90) return { bar: "bg-sdc-green", text: "text-sdc-green-text" };
   if (pct >= 60) return { bar: "bg-sdc-yellow", text: "text-sdc-yellow-text" };
   return { bar: "bg-sdc-red", text: "text-sdc-red-text" };
 }
@@ -167,12 +231,61 @@ type FlatPart = BomPart & {
   invoicedDate: string | null;
   poNumber: string | null;
   leadDays: number | null;
+  st: PartStatus;
 };
 
 function sectionLabelFor(section: BomNode): string {
   const specId = typeof section.id === "string" ? Number(section.id.replace(/\D/g, "")) : Number(section.id);
-  const title = SPEC_TITLES[specId] ?? section.desc ?? "";
+  const title = SECTION_LABEL_OVERRIDE[specId] ?? section.desc ?? "";
   return `Spec ${specId}${title ? ` — ${title}` : ""}`;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Persisted UI state
+// ─────────────────────────────────────────────────────────────────────────────
+
+const STORAGE_KEY = "sdc-etc-proc-state";
+
+type PersistedState = {
+  tab: "assemblies" | "parts";
+  view: "list" | "card";
+  query: string;
+  status: "all" | StatusKey;
+  category: string;
+  manufacturer: string;
+  supplier: string;
+  dateType: "purchase" | "invoice";
+  from: string;
+  to: string;
+  upcomingWeek: number;
+  hiddenPartCols: ColKey[];
+};
+
+function loadPersisted(): Partial<PersistedState> {
+  if (typeof window === "undefined") return {};
+  try {
+    const raw = window.localStorage.getItem(STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+// Build one PO's group (received/expected/status rollup) from the parts sharing
+// a supplier + PO key. Shared by the Card view and the table/assembly PO-panel.
+function makePoGroup(poKey: string, poParts: FlatPart[]): PoGroup {
+  const isNoPo = poKey === NO_PO_KEY;
+  const received = poParts.filter((p) => p.st.key === "received").length;
+  const total = poParts.length;
+  let expected: string | null = null;
+  for (const p of poParts) {
+    if (p.expectedDate && (!expected || p.expectedDate.slice(0, 10) < expected.slice(0, 10))) expected = p.expectedDate;
+  }
+  const pastDue = poParts.some((p) => p.st.key === "overdue");
+  const status: PoGroup["status"] = isNoPo ? "noPO" : received >= total ? "received" : "ordered";
+  return { poKey, poNumber: isNoPo ? null : poParts[0].poNumber, parts: poParts, received, total, expected, status, pastDue };
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -181,26 +294,42 @@ function sectionLabelFor(section: BomNode): string {
 
 export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: PartsCostLine[] }) {
   const { toast } = useToast();
-  const [tab, setTab] = useState<"assemblies" | "parts">("assemblies");
+  const saved = useMemo(() => loadPersisted(), []);
+
+  const [tab, setTab] = useState<"assemblies" | "parts">(() => saved.tab ?? "assemblies");
 
   // Parts List filter/view state lives here (not in PartsListTab) so a drill
   // from the Assemblies tab can reset every filter + force table mode before
-  // the Parts List even mounts, guaranteeing the target row renders.
-  const [view, setView] = useState<"list" | "card">("list");
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<"all" | BomPart["status"]>("all");
-  const [category, setCategory] = useState("all");
-  const [manufacturer, setManufacturer] = useState("all");
-  const [supplier, setSupplier] = useState("all");
-  const [dateType, setDateType] = useState<"purchase" | "invoice">("purchase");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+  // the Parts List even mounts, guaranteeing the target row renders. All of it
+  // is persisted to localStorage (see the effect below).
+  const [view, setView] = useState<"list" | "card">(() => saved.view ?? "list");
+  const [query, setQuery] = useState(() => saved.query ?? "");
+  const [status, setStatus] = useState<"all" | StatusKey>(() => saved.status ?? "all");
+  const [category, setCategory] = useState(() => saved.category ?? "all");
+  const [manufacturer, setManufacturer] = useState(() => saved.manufacturer ?? "all");
+  const [supplier, setSupplier] = useState(() => saved.supplier ?? "all");
+  const [dateType, setDateType] = useState<"purchase" | "invoice">(() => saved.dateType ?? "purchase");
+  const [from, setFrom] = useState(() => saved.from ?? "");
+  const [to, setTo] = useState(() => saved.to ?? "");
+  const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set(saved.hiddenPartCols ?? []));
+  const [upcomingWeek, setUpcomingWeek] = useState<number>(() => saved.upcomingWeek ?? 1);
+
+  // Persist everything under one key.
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+    const data: PersistedState = { tab, view, query, status, category, manufacturer, supplier, dateType, from, to, upcomingWeek, hiddenPartCols: [...hidden] };
+    try {
+      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+    } catch {
+      /* quota / disabled — non-fatal */
+    }
+  }, [tab, view, query, status, category, manufacturer, supplier, dateType, from, to, upcomingWeek, hidden]);
 
   // Drill target — key = String(part.id). `nonce` bumps on every drill so the
   // Parts List effect re-fires even when the same row is targeted twice.
   const [drill, setDrill] = useState<{ key: string; nonce: number }>({ key: "", nonce: 0 });
 
-  // Card view PO detail — the right-side sliding panel. null = closed.
+  // PO detail — the right-side sliding panel. null = closed.
   const [poPanel, setPoPanel] = useState<{ supplier: string; po: PoGroup } | null>(null);
 
   // The primary click action anywhere a part is shown: jump to its Parts-List
@@ -225,8 +354,8 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
     [toast],
   );
 
-  // Copy any string to the clipboard with a toast — reused by the Card view's
-  // PO-number buttons (part numbers use drillToPart, which also copies).
+  // Copy any string to the clipboard with a toast — reused by the PO-number
+  // buttons (part numbers use drillToPart, which also copies).
   const copyText = useCallback(
     (text: string, label?: string) => {
       if (!text) return;
@@ -235,7 +364,18 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
     [toast],
   );
 
-  const partsState = { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo } as const;
+  const clearFilters = useCallback(() => {
+    setStatus("all");
+    setCategory("all");
+    setManufacturer("all");
+    setSupplier("all");
+    setQuery("");
+    setDateType("purchase");
+    setFrom("");
+    setTo("");
+  }, []);
+
+  const partsState = { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, upcomingWeek, setUpcomingWeek, clearFilters } as const;
 
   // PO purchase lines indexed by normalized part number, newest purchase first.
   const lineIndex = useMemo(() => {
@@ -259,12 +399,13 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   const parts = useMemo<FlatPart[]>(() => {
     const out: FlatPart[] = [];
     const seen = new Set<number>();
+    const now = Date.now();
 
     const enrich = (p: BomPart, parentPN: string, parentDesc: string, sectionId: string, sectionLabel: string) => {
       if (seen.has(p.id)) return;
       seen.add(p.id);
       const line = lineIndex.get(normPn(p.pn))?.[0] ?? null;
-      out.push({
+      const flat: FlatPart = {
         ...p,
         parentPN,
         parentDesc,
@@ -276,7 +417,9 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
         poNumber: p.poId ?? line?.poNumber ?? null,
         supplier: p.supplier ?? line?.supplier ?? null,
         leadDays: daysBetween(line?.purchaseDate ?? null, p.expectedDate),
-      });
+        st: partStatus(p, now),
+      };
+      out.push(flat);
     };
 
     const walk = (node: BomNode, sectionId: string, sectionLabel: string) => {
@@ -297,8 +440,8 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   // Top summary line.
   const summary = useMemo(() => {
     const total = parts.length;
-    const received = parts.filter((p) => p.status === "received").length;
-    const noPO = parts.filter((p) => p.status === "noPO").length;
+    const received = parts.filter((p) => p.st.key === "received").length;
+    const noPO = parts.filter((p) => p.st.key === "noPO").length;
     const pct = total ? Math.round((received / total) * 100) : 0;
     return { total, received, noPO, pct };
   }, [parts]);
@@ -306,6 +449,19 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   const assembliesCount = useMemo(
     () => bom.roots.reduce((s, sec) => s + sec.nestedAssemblies, 0),
     [bom],
+  );
+
+  // Open the PO side panel for a supplier + PO number, gathering that PO's parts
+  // from the full (unfiltered) buy-list so the panel is always complete.
+  const openPoFor = useCallback(
+    (sup: string | null, poNumber: string | null) => {
+      const supKey = sup ?? "Unknown supplier";
+      const poKey = poNumber ?? NO_PO_KEY;
+      const poParts = parts.filter((p) => (p.supplier ?? "Unknown supplier") === supKey && (p.poNumber ?? NO_PO_KEY) === poKey);
+      if (!poParts.length) return;
+      setPoPanel({ supplier: supKey, po: makePoGroup(poKey, poParts) });
+    },
+    [parts],
   );
 
   return (
@@ -335,7 +491,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
       </div>
 
       {tab === "assemblies" ? (
-        <AssembliesTab bom={bom} onPartClick={drillToPart} />
+        <AssembliesTab bom={bom} onPartClick={drillToPart} onOpenPo={openPoFor} />
       ) : (
         <PartsListTab
           parts={parts}
@@ -343,7 +499,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
           drill={drill}
           onPartClick={drillToPart}
           onCopy={copyText}
-          onOpenPo={(supplier, po) => setPoPanel({ supplier, po })}
+          onOpenPo={openPoFor}
         />
       )}
 
@@ -389,7 +545,8 @@ function TabChip({ active, onClick, label, count }: { active: boolean; onClick: 
 // Grid template shared by the dark header + every assembly row so columns align.
 const ASM_GRID = "minmax(220px,1.5fr) minmax(150px,1.4fr) 92px 64px 82px 108px 150px";
 
-function AssembliesTab({ bom, onPartClick }: { bom: JobBom; onPartClick: (p: DrillablePart) => void }) {
+function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClick: (p: DrillablePart) => void; onOpenPo: (supplier: string | null, poNumber: string | null) => void }) {
+  const now = useMemo(() => Date.now(), []);
   // Every assembly node key — for Expand/Collapse All + collapsed-by-default.
   const { pricedByKey, allKeys } = useMemo(() => {
     const priced = new Map<string, { priced: number; total: number }>();
@@ -461,9 +618,9 @@ function AssembliesTab({ bom, onPartClick }: { bom: JobBom; onPartClick: (p: Dri
                 </div>
 
                 {section.children.map((asm) => (
-                  <AssemblyRow key={asm.key} node={asm} depth={0} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} onPartClick={onPartClick} />
+                  <AssemblyRow key={asm.key} node={asm} depth={0} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />
                 ))}
-                {section.parts.length > 0 && <PartsDetailTable parts={section.parts} depth={0} onPartClick={onPartClick} />}
+                {section.parts.length > 0 && <PartsDetailTable parts={section.parts} depth={0} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />}
               </div>
             ))}
 
@@ -493,6 +650,8 @@ function AssemblyRow({
   toggle,
   pricedByKey,
   onPartClick,
+  onOpenPo,
+  now,
 }: {
   node: BomNode;
   depth: number;
@@ -500,6 +659,8 @@ function AssemblyRow({
   toggle: (key: string) => void;
   pricedByKey: Map<string, { priced: number; total: number }>;
   onPartClick: (p: DrillablePart) => void;
+  onOpenPo: (supplier: string | null, poNumber: string | null) => void;
+  now: number;
 }) {
   const isOpen = !collapsed.has(node.key);
   const { text } = barClasses(node.stats.pct);
@@ -551,20 +712,32 @@ function AssemblyRow({
       {isOpen && (
         <div>
           {node.children.map((child) => (
-            <AssemblyRow key={child.key} node={child} depth={depth + 1} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} onPartClick={onPartClick} />
+            <AssemblyRow key={child.key} node={child} depth={depth + 1} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />
           ))}
-          {node.parts.length > 0 && <PartsDetailTable parts={node.parts} depth={depth + 1} onPartClick={onPartClick} />}
+          {node.parts.length > 0 && <PartsDetailTable parts={node.parts} depth={depth + 1} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />}
         </div>
       )}
     </div>
   );
 }
 
-function PartsDetailTable({ parts, depth, onPartClick }: { parts: BomPart[]; depth: number; onPartClick: (p: DrillablePart) => void }) {
+function PartsDetailTable({
+  parts,
+  depth,
+  onPartClick,
+  onOpenPo,
+  now,
+}: {
+  parts: BomPart[];
+  depth: number;
+  onPartClick: (p: DrillablePart) => void;
+  onOpenPo: (supplier: string | null, poNumber: string | null) => void;
+  now: number;
+}) {
   return (
     <div className="bg-sdc-gray-50/60" style={{ paddingLeft: `${depth * 18}px` }}>
       <div className="overflow-x-auto styled-scrollbar">
-        <table className="w-full min-w-[820px] border-collapse text-left">
+        <table className="w-full min-w-[980px] border-collapse text-left">
           <thead>
             <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wider text-white">
               <th className="px-2 py-1.5 font-bold">Status</th>
@@ -573,39 +746,59 @@ function PartsDetailTable({ parts, depth, onPartClick }: { parts: BomPart[]; dep
               <th className="px-2 py-1.5 font-bold">Description</th>
               <th className="px-2 py-1.5 font-bold">Manufacturer</th>
               <th className="px-2 py-1.5 font-bold">Supplier</th>
+              <th className="px-2 py-1.5 font-bold">PO #</th>
               <th className="px-2 py-1.5 font-bold">Req Date</th>
               <th className="px-2 py-1.5 font-bold">Expected</th>
-              <th className="px-2 py-1.5 font-bold">Rcvd Date</th>
+              <th className="px-2 py-1.5 text-right font-bold">Unit $</th>
+              <th className="px-2 py-1.5 text-right font-bold">Extended</th>
             </tr>
           </thead>
           <tbody>
-            {parts.map((p, i) => (
-              <tr
-                key={`${p.id}-${i}`}
-                onClick={() => onPartClick(p)}
-                title="Open in Parts List · copies part #"
-                className="cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/25"
-              >
-                <td className="px-2 py-1.5"><StatusBadge status={p.status} /></td>
-                <td className="px-2 py-1.5 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</td>
-                <td className="px-2 py-1.5">
-                  <span className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-sdc-blue">
-                    {p.pn}
-                    <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
-                      <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
-                    </svg>
-                  </span>
-                </td>
-                <td className="px-2 py-1.5 text-[11px] text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
-                <td className="px-2 py-1.5 text-[11px] text-sdc-gray-600" title={p.manufacturer}>
-                  <span className="line-clamp-1">{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>
-                </td>
-                <td className="px-2 py-1.5 text-[11px] text-sdc-gray-600"><SupplierChip supplier={p.supplier} /></td>
-                <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</td>
-                <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.expectedDate)}</td>
-                <td className={`px-2 py-1.5 whitespace-nowrap font-mono text-[10px] ${p.receivedDate ? "text-sdc-green-text" : "text-sdc-gray-400"}`}>{fmtDate(p.receivedDate)}</td>
-              </tr>
-            ))}
+            {parts.map((p, i) => {
+              const st = partStatus(p, now);
+              return (
+                <tr
+                  key={`${p.id}-${i}`}
+                  onClick={() => onPartClick(p)}
+                  title="Open in Parts List · copies part #"
+                  className={`cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/25 ${st.key === "overdue" ? "bg-sdc-red-bg/40" : ""}`}
+                >
+                  <td className="px-2 py-1.5"><StatusPill st={st} /></td>
+                  <td className="px-2 py-1.5 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</td>
+                  <td className="px-2 py-1.5">
+                    <span className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-sdc-blue">
+                      {p.pn}
+                      <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
+                        <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
+                      </svg>
+                    </span>
+                  </td>
+                  <td className="px-2 py-1.5 text-[11px] text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
+                  <td className="px-2 py-1.5 text-[11px] text-sdc-gray-600" title={p.manufacturer}>
+                    <span className="line-clamp-1">{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>
+                  </td>
+                  <td className="px-2 py-1.5 text-[11px] text-sdc-gray-600"><SupplierChip supplier={p.supplier} /></td>
+                  <td className="px-2 py-1.5">
+                    {p.poId ? (
+                      <button
+                        type="button"
+                        onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poId); }}
+                        title="View PO"
+                        className="font-mono text-[10px] font-semibold text-sdc-blue underline decoration-dotted underline-offset-2"
+                      >
+                        {p.poId}
+                      </button>
+                    ) : (
+                      <span className="text-[10px] font-semibold text-sdc-red-text">NO PO</span>
+                    )}
+                  </td>
+                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.expectedDate)}</td>
+                  <td className="px-2 py-1.5 text-right font-mono text-[10px] text-sdc-gray-600">{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
+                  <td className="px-2 py-1.5 text-right font-mono text-[10px] font-semibold text-sdc-navy">{p.unitPrice > 0 ? usd(p.unitPrice * p.qty) : "—"}</td>
+                </tr>
+              );
+            })}
           </tbody>
         </table>
       </div>
@@ -640,8 +833,8 @@ type PartsListState = {
   setView: (v: "list" | "card") => void;
   query: string;
   setQuery: (v: string) => void;
-  status: "all" | BomPart["status"];
-  setStatus: (v: "all" | BomPart["status"]) => void;
+  status: "all" | StatusKey;
+  setStatus: (v: "all" | StatusKey) => void;
   category: string;
   setCategory: (v: string) => void;
   manufacturer: string;
@@ -654,6 +847,11 @@ type PartsListState = {
   setFrom: (v: string) => void;
   to: string;
   setTo: (v: string) => void;
+  hidden: Set<ColKey>;
+  setHidden: (updater: (prev: Set<ColKey>) => Set<ColKey>) => void;
+  upcomingWeek: number;
+  setUpcomingWeek: (n: number) => void;
+  clearFilters: () => void;
 };
 
 function PartsListTab({
@@ -669,10 +867,12 @@ function PartsListTab({
   drill: { key: string; nonce: number };
   onPartClick: (p: DrillablePart) => void;
   onCopy: (text: string, label?: string) => void;
-  onOpenPo: (supplier: string, po: PoGroup) => void;
+  onOpenPo: (supplier: string | null, poNumber: string | null) => void;
 }) {
-  const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo } = state;
-  const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set());
+  const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, upcomingWeek, setUpcomingWeek, clearFilters } = state;
+  const now = useMemo(() => Date.now(), []);
+  const filtersActive =
+    status !== "all" || category !== "all" || manufacturer !== "all" || supplier !== "all" || query !== "" || dateType !== "purchase" || from !== "" || to !== "";
 
   // Drill effect — after a short delay, scroll the matching row into center and
   // flash it. Keyed on `nonce` so re-drilling the same part re-fires. Uses the
@@ -710,7 +910,7 @@ function PartsListTab({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return parts.filter((p) => {
-      if (status !== "all" && p.status !== status) return false;
+      if (status !== "all" && p.st.key !== status) return false;
       if (category !== "all" && p.category !== category) return false;
       if (manufacturer !== "all" && p.manufacturer !== manufacturer) return false;
       if (supplier !== "all" && p.supplier !== supplier) return false;
@@ -733,7 +933,7 @@ function PartsListTab({
 
   return (
     <div ref={rootRef} className="flex flex-col gap-3">
-      <RiskCards parts={parts} onPartClick={onPartClick} />
+      <RiskCards parts={parts} onPartClick={onPartClick} now={now} upcomingWeek={upcomingWeek} setUpcomingWeek={setUpcomingWeek} />
 
       {/* Filter row */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sdc-border bg-white px-3 py-2.5 shadow-sm">
@@ -743,40 +943,50 @@ function PartsListTab({
           onChange={(v) => setView(v as "list" | "card")}
           options={[{ value: "list", label: "List" }, { value: "card", label: "Card" }]}
         />
-        {/* Columns toggle */}
-        <details className="relative">
-          <summary className="flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md border border-sdc-border bg-white px-3 text-xs font-medium text-sdc-navy hover:bg-sdc-blue-light">
-            Columns
-            <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6 L8 11 L13 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
-          </summary>
-          <div className="absolute left-0 z-20 mt-1 max-h-72 w-48 overflow-auto styled-scrollbar rounded-lg border border-sdc-border bg-white p-1.5 shadow-lg">
-            {ALL_COLS.map((c) => (
-              <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs text-sdc-navy hover:bg-sdc-blue-light">
-                <input
-                  type="checkbox"
-                  checked={!hidden.has(c.key)}
-                  onChange={() =>
-                    setHidden((prev) => {
-                      const next = new Set(prev);
-                      if (next.has(c.key)) next.delete(c.key);
-                      else next.add(c.key);
-                      return next;
-                    })
-                  }
-                />
-                {c.label}
-              </label>
-            ))}
-          </div>
-        </details>
+        {/* Columns toggle (table mode only) */}
+        {view === "list" && (
+          <details className="relative">
+            <summary className={`flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md border px-3 text-xs font-medium hover:bg-sdc-blue-light ${hidden.size ? "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark" : "border-sdc-border bg-white text-sdc-navy"}`}>
+              Columns
+              {hidden.size > 0 && <span className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-sdc-blue px-1 text-[10px] font-bold text-white tabular-nums">{hidden.size}</span>}
+              <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6 L8 11 L13 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+            </summary>
+            <div className="absolute left-0 z-20 mt-1 max-h-80 w-52 overflow-auto styled-scrollbar rounded-lg border border-sdc-border bg-white p-1.5 shadow-lg">
+              {ALL_COLS.map((c) => (
+                <label key={c.key} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs text-sdc-navy hover:bg-sdc-blue-light">
+                  <input
+                    type="checkbox"
+                    checked={!hidden.has(c.key)}
+                    onChange={() =>
+                      setHidden((prev) => {
+                        const next = new Set(prev);
+                        if (next.has(c.key)) next.delete(c.key);
+                        else next.add(c.key);
+                        return next;
+                      })
+                    }
+                  />
+                  {c.label}
+                </label>
+              ))}
+              <div className="mt-1.5 flex gap-2 border-t border-sdc-border-soft pt-1.5">
+                <button type="button" onClick={() => setHidden(() => new Set())} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light">Show all</button>
+                <button type="button" onClick={() => setHidden(() => new Set())} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light">Reset</button>
+              </div>
+            </div>
+          </details>
+        )}
 
         <span className="mx-1 h-5 w-px bg-sdc-border" aria-hidden />
 
         <FilterSelect label="Status" value={status} onChange={(v) => setStatus(v as typeof status)} options={[
           { value: "all", label: "All status" },
           { value: "received", label: "Received" },
-          { value: "ordered", label: "Ordered" },
+          { value: "ordered", label: "On order" },
+          { value: "soon", label: "Due soon" },
+          { value: "overdue", label: "Overdue" },
           { value: "noPO", label: "No PO" },
+          { value: "hold", label: "On hold" },
         ]} />
         <FilterSelect label="Category" value={category} onChange={setCategory} options={[{ value: "all", label: "All categories" }, ...distinct.cats.map((c) => ({ value: c, label: c }))]} />
         <FilterSelect label="Manufacturer" value={manufacturer} onChange={setManufacturer} options={[{ value: "all", label: "All manufacturers" }, ...distinct.mfrs.map((c) => ({ value: c, label: c }))]} />
@@ -792,6 +1002,12 @@ function PartsListTab({
         <input type="date" aria-label="From date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 rounded-md border border-sdc-border bg-white px-2 text-xs text-sdc-navy outline-none focus:border-sdc-blue" />
         <span className="text-xs text-sdc-gray-400">to</span>
         <input type="date" aria-label="To date" value={to} onChange={(e) => setTo(e.target.value)} className="h-8 rounded-md border border-sdc-border bg-white px-2 text-xs text-sdc-navy outline-none focus:border-sdc-blue" />
+
+        {filtersActive && (
+          <button type="button" onClick={clearFilters} className="h-8 rounded-md border border-sdc-border bg-white px-3 text-xs font-medium text-sdc-navy hover:bg-sdc-blue-light">
+            Clear
+          </button>
+        )}
 
         {/* Search */}
         <div className="flex h-8 min-w-[160px] flex-1 items-center gap-2 rounded-md border border-sdc-border bg-white px-2.5">
@@ -811,7 +1027,7 @@ function PartsListTab({
           No parts match the current filters.
         </p>
       ) : view === "list" ? (
-        <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} />
+        <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />
       ) : (
         <PartsCardView parts={filtered} onCopy={onCopy} onOpenPo={onOpenPo} />
       )}
@@ -819,7 +1035,17 @@ function PartsListTab({
   );
 }
 
-function PartRowCells({ p, cols }: { p: FlatPart; cols: { key: ColKey; label: string; align?: "right" }[] }) {
+function PartRowCells({
+  p,
+  cols,
+  now,
+  onOpenPo,
+}: {
+  p: FlatPart;
+  cols: { key: ColKey; label: string; align?: "right" }[];
+  now: number;
+  onOpenPo: (supplier: string | null, poNumber: string | null) => void;
+}) {
   const cell = (key: ColKey) => {
     switch (key) {
       case "qty":
@@ -852,7 +1078,14 @@ function PartRowCells({ p, cols }: { p: FlatPart; cols: { key: ColKey; label: st
         return <SupplierChip supplier={p.supplier} />;
       case "po":
         return p.poNumber ? (
-          <span className="font-mono text-[11px] font-semibold text-sdc-blue underline decoration-dotted underline-offset-2">{p.poNumber}</span>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poNumber); }}
+            title="View PO"
+            className="font-mono text-[11px] font-semibold text-sdc-blue underline decoration-dotted underline-offset-2"
+          >
+            {p.poNumber}
+          </button>
         ) : (
           <span className="text-[10px] font-semibold text-sdc-red-text">NO PO</span>
         );
@@ -861,15 +1094,11 @@ function PartRowCells({ p, cols }: { p: FlatPart; cols: { key: ColKey; label: st
       case "exp":
         return <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.expectedDate)}</span>;
       case "lead":
-        return p.leadDays != null && p.leadDays >= 0 ? (
-          <span className="inline-flex items-center rounded bg-sdc-gray-100 px-1.5 py-0.5 text-[10px] font-semibold tabular-nums text-sdc-gray-600">{p.leadDays}d</span>
-        ) : (
-          <span className="text-[10px] text-sdc-gray-400">—</span>
-        );
+        return <LeadChip ordered={p.purchasedDate} expected={p.expectedDate} />;
       case "due":
-        return <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>;
+        return <DueChip expected={p.expectedDate} received={p.st.key === "received"} now={now} />;
       case "status":
-        return <StatusBadge status={p.status} />;
+        return <StatusPill st={p.st} />;
     }
   };
   return (
@@ -883,7 +1112,19 @@ function PartRowCells({ p, cols }: { p: FlatPart; cols: { key: ColKey; label: st
   );
 }
 
-function PartsTableView({ parts, cols, onPartClick }: { parts: FlatPart[]; cols: { key: ColKey; label: string; align?: "right" }[]; onPartClick: (p: DrillablePart) => void }) {
+function PartsTableView({
+  parts,
+  cols,
+  onPartClick,
+  onOpenPo,
+  now,
+}: {
+  parts: FlatPart[];
+  cols: { key: ColKey; label: string; align?: "right" }[];
+  onPartClick: (p: DrillablePart) => void;
+  onOpenPo: (supplier: string | null, poNumber: string | null) => void;
+  now: number;
+}) {
   return (
     <div className="overflow-x-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
       <div className="max-h-[74vh] overflow-y-auto styled-scrollbar">
@@ -904,9 +1145,9 @@ function PartsTableView({ parts, cols, onPartClick }: { parts: FlatPart[]; cols:
                 data-part-id={p.id}
                 onClick={() => onPartClick(p)}
                 title="Copy part # · locate row"
-                className="cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/25"
+                className={`cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/25 ${p.st.key === "overdue" ? "bg-sdc-red-bg/40" : ""}`}
               >
-                <PartRowCells p={p} cols={cols} />
+                <PartRowCells p={p} cols={cols} now={now} onOpenPo={onOpenPo} />
               </tr>
             ))}
           </tbody>
@@ -951,21 +1192,9 @@ function PartsCardView({
 }: {
   parts: FlatPart[];
   onCopy: (text: string, label?: string) => void;
-  onOpenPo: (supplier: string, po: PoGroup) => void;
+  onOpenPo: (supplier: string | null, poNumber: string | null) => void;
 }) {
   const vendors = useMemo<VendorGroup[]>(() => {
-    const now = Date.now();
-    const isPastDue = (p: FlatPart) => {
-      if (p.status === "received" || !p.expectedDate) return false;
-      const t = new Date(p.expectedDate).getTime();
-      return !Number.isNaN(t) && t < now;
-    };
-    const minDate = (a: string | null, b: string | null) => {
-      if (!a) return b;
-      if (!b) return a;
-      return a.slice(0, 10) <= b.slice(0, 10) ? a : b;
-    };
-
     const byVendor = new Map<string, Map<string, FlatPart[]>>();
     for (const p of parts) {
       const vKey = p.supplier ?? "Unknown supplier";
@@ -984,16 +1213,11 @@ function PartsCardView({
       let vTotal = 0;
       let vPastDue = false;
       for (const [poKey, poParts] of poMap) {
-        const received = poParts.filter((p) => p.status === "received").length;
-        const total = poParts.length;
-        const isNoPo = poKey === NO_PO_KEY;
-        const expected = poParts.reduce<string | null>((acc, p) => minDate(acc, p.expectedDate), null);
-        const poPastDue = poParts.some(isPastDue);
-        const status: PoGroup["status"] = isNoPo ? "noPO" : received >= total ? "received" : "ordered";
-        pos.push({ poKey, poNumber: isNoPo ? null : poParts[0].poNumber, parts: poParts, received, total, expected, status, pastDue: poPastDue });
-        vReceived += received;
-        vTotal += total;
-        if (poPastDue) vPastDue = true;
+        const po = makePoGroup(poKey, poParts);
+        pos.push(po);
+        vReceived += po.received;
+        vTotal += po.total;
+        if (po.pastDue) vPastDue = true;
       }
       // Incomplete first, received last; then most parts first.
       pos.sort((a, b) => {
@@ -1073,7 +1297,7 @@ function PartsCardView({
                 <button
                   key={rowKey}
                   type="button"
-                  onClick={() => onOpenPo(v.supplier, po)}
+                  onClick={() => onOpenPo(v.supplier, po.poNumber)}
                   title="Open PO details"
                   className="grid w-full grid-cols-[1fr_auto_auto_auto] items-center gap-2 border-b border-sdc-border-soft/60 px-3 py-1.5 text-left last:border-b-0 hover:bg-sdc-blue-light/30"
                 >
@@ -1297,99 +1521,339 @@ function Stat({ label, value, tone }: { label: string; value: string; tone?: "da
   );
 }
 
-// ── Risk cards: Delivery Slip + No Purchase Order ────────────────────────────
+// ── Generic right-side sliding panel (shared slide/close mechanics) ──────────
 
-function RiskCards({ parts, onPartClick }: { parts: FlatPart[]; onPartClick: (p: DrillablePart) => void }) {
-  const { recentlyReceived, noPo, noPoThisWeek, noPoOldest } = useMemo(() => {
-    const now = Date.now();
-    const recentCutoff = now - 14 * DAY;
-    const weekEnd = now + 7 * DAY;
+function SidePanel({ title, subtitle, onClose, children }: { title: string; subtitle?: string; onClose: () => void; children: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    const id = window.requestAnimationFrame(() => setOpen(true));
+    return () => window.cancelAnimationFrame(id);
+  }, []);
+  const requestClose = useCallback(() => {
+    setOpen(false);
+    window.setTimeout(onClose, 200);
+  }, [onClose]);
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") requestClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [requestClose]);
+  return (
+    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={title}>
+      <div onClick={requestClose} className={`absolute inset-0 bg-sdc-navy/40 transition-opacity duration-200 ${open ? "opacity-100" : "opacity-0"}`} />
+      <aside className={`absolute right-0 top-0 flex h-full w-[560px] max-w-[94vw] flex-col bg-white shadow-xl transition-transform duration-200 ${open ? "translate-x-0" : "translate-x-full"}`}>
+        <div className="flex items-center justify-between gap-3 border-b border-sdc-border-soft p-4">
+          <div className="min-w-0">
+            <div className="truncate text-[15px] font-bold text-sdc-navy">{title}</div>
+            {subtitle ? <div className="text-[12px] text-sdc-gray-600">{subtitle}</div> : null}
+          </div>
+          <button type="button" onClick={requestClose} aria-label="Close" className="rounded p-1 text-sdc-gray-400 hover:bg-sdc-gray-100 hover:text-sdc-navy">
+            <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 4 L12 12 M12 4 L4 12" strokeLinecap="round" /></svg>
+          </button>
+        </div>
+        <div className="flex-1 overflow-y-auto styled-scrollbar">{children}</div>
+      </aside>
+    </div>
+  );
+}
 
-    const received = parts
+// ── Risk panels: Delivery Slip · No Purchase Order · Upcoming Deliveries ─────
+
+function startOfTodayMs(now: number): number {
+  const d = new Date(now);
+  d.setHours(0, 0, 0, 0);
+  return d.getTime();
+}
+function dueMs(p: FlatPart): number {
+  const d = p.expectedDate || p.requiredDate;
+  if (!d) return NaN;
+  return new Date(d).getTime();
+}
+function reqMs(p: FlatPart): number {
+  return p.requiredDate ? new Date(p.requiredDate).getTime() : NaN;
+}
+
+function RiskCards({
+  parts,
+  onPartClick,
+  now,
+  upcomingWeek,
+  setUpcomingWeek,
+}: {
+  parts: FlatPart[];
+  onPartClick: (p: DrillablePart) => void;
+  now: number;
+  upcomingWeek: number;
+  setUpcomingWeek: (n: number) => void;
+}) {
+  const [seeAll, setSeeAll] = useState<null | "delivery" | "nopo" | "upcoming">(null);
+
+  const risk = useMemo(() => {
+    const today = startOfTodayMs(now);
+
+    // Delivery Slip — upcoming/overdue deliveries: has a PO, not received, due
+    // within today ±7 days.
+    const slipStart = today - 7 * DAY;
+    const slipEnd = today + 8 * DAY;
+    const delivery = parts
       .filter((p) => {
-        if (!p.receivedDate) return false;
-        const t = new Date(p.receivedDate).getTime();
-        return !Number.isNaN(t) && t >= recentCutoff && t <= now;
+        if (!p.poNumber || p.st.key === "received") return false;
+        const t = dueMs(p);
+        return Number.isFinite(t) && t >= slipStart && t < slipEnd;
       })
-      .sort((a, b) => (b.receivedDate ?? "").localeCompare(a.receivedDate ?? ""));
+      .sort((a, b) => dueMs(a) - dueMs(b));
+    const lateParts = delivery.filter((p) => Number.isFinite(dueMs(p)) && dueMs(p) < today);
+    const deliveryAvgLate = lateParts.length
+      ? Math.round(lateParts.reduce((s, p) => s + Math.ceil((today - dueMs(p)) / DAY), 0) / lateParts.length)
+      : 0;
+    const deliveryOldest = delivery.reduce<string | null>((acc, p) => {
+      if (!p.requiredDate) return acc;
+      return !acc || p.requiredDate < acc ? p.requiredDate : acc;
+    }, null);
 
-    const nopo = parts.filter((p) => p.status === "noPO");
-    let thisWeek = 0;
-    let oldest: string | null = null;
-    for (const p of nopo) {
-      if (!p.requiredDate) continue;
-      const t = new Date(p.requiredDate).getTime();
-      if (Number.isNaN(t)) continue;
-      if (t <= weekEnd) thisWeek++;
-      if (!oldest || p.requiredDate < oldest) oldest = p.requiredDate;
+    // No PO — dedupe by part number, exclude on-hold + received.
+    const seenPn = new Set<string>();
+    const noPo = parts.filter((p) => {
+      if (p.poNumber) return false;
+      if (p.st.key === "received" || p.hold) return false;
+      const key = normPn(p.pn);
+      if (seenPn.has(key)) return false;
+      seenPn.add(key);
+      return true;
+    });
+    const weekEnd = today + 7 * DAY;
+    let noPoThisWeek = 0;
+    let noPoOldest: string | null = null;
+    for (const p of noPo) {
+      const t = reqMs(p);
+      if (Number.isFinite(t) && t <= weekEnd) noPoThisWeek++;
+      if (p.requiredDate && (!noPoOldest || p.requiredDate < noPoOldest)) noPoOldest = p.requiredDate;
     }
-    return { recentlyReceived: received, noPo: nopo, noPoThisWeek: thisWeek, noPoOldest: oldest };
-  }, [parts]);
+
+    // Upcoming — not received, due tomorrow through ~8 weeks out.
+    const upStart = today + 1 * DAY;
+    const upEnd = today + 57 * DAY;
+    const upcoming = parts
+      .filter((p) => {
+        if (p.st.key === "received") return false;
+        const t = dueMs(p);
+        return Number.isFinite(t) && t >= upStart && t < upEnd;
+      })
+      .sort((a, b) => dueMs(a) - dueMs(b));
+    const weekData = Array.from({ length: 8 }, (_, i) => {
+      const w = i + 1;
+      const wStart = today + ((w - 1) * 7 + 1) * DAY;
+      const wEnd = today + (w * 7 + 1) * DAY;
+      const wParts = upcoming.filter((p) => {
+        const t = dueMs(p);
+        return Number.isFinite(t) && t >= wStart && t < wEnd;
+      });
+      return { week: w, parts: wParts, count: wParts.length };
+    });
+
+    return { delivery, deliveryAvgLate, deliveryOldest, noPo, noPoThisWeek, noPoOldest, upcoming, weekData };
+  }, [parts, now]);
+
+  const selectedWeek = risk.weekData.find((w) => w.week === upcomingWeek) ?? risk.weekData[0];
+  const selectedParts = selectedWeek?.parts ?? [];
+  const upSuppliers = new Set(selectedParts.map((p) => p.supplier).filter(Boolean)).size;
+  const upNearest = selectedParts.length ? selectedParts.map(dueMs).filter(Number.isFinite).sort((a, b) => a - b)[0] : null;
+
+  const drillRow = (p: FlatPart) => onPartClick(p);
 
   return (
-    <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
-      {/* Delivery Slip */}
-      <div className="overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
-        <div className="flex items-center justify-between gap-3 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
-          <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-sdc-yellow-text">
-            <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-yellow-bg text-[12px] font-extrabold text-sdc-yellow-text">!</span>
-            Delivery Slip
-          </span>
-          <span className="text-xs text-sdc-gray-600">
-            <span className="font-bold text-sdc-navy tabular-nums">{recentlyReceived.length}</span> received in last 14 days
-          </span>
+    <div className="flex flex-col gap-3">
+      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+        {/* Delivery Slip */}
+        <div className="overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
+            <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-sdc-yellow-text">
+              <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-yellow-bg text-[12px] font-extrabold text-sdc-yellow-text">!</span>
+              Delivery Slip
+            </span>
+            <div className="flex items-center gap-4">
+              <Stat label="Parts" value={num(risk.delivery.length)} />
+              <Stat label="Avg Late" value={`+${risk.deliveryAvgLate}d`} tone={risk.deliveryAvgLate > 0 ? "danger" : undefined} />
+              <Stat label="Oldest Req" value={fmtDate(risk.deliveryOldest)} />
+              <SeeAllBtn onClick={() => setSeeAll("delivery")} disabled={risk.delivery.length === 0} />
+            </div>
+          </div>
+          <div className="max-h-40 overflow-y-auto styled-scrollbar">
+            {risk.delivery.length === 0 ? (
+              <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No deliveries due this week.</p>
+            ) : (
+              risk.delivery.map((p, i) => <SlipRow key={`${p.id}-${i}`} p={p} now={now} onClick={() => drillRow(p)} />)
+            )}
+          </div>
         </div>
-        <div className="max-h-40 overflow-y-auto styled-scrollbar">
-          {recentlyReceived.length === 0 ? (
-            <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No parts received in the last 14 days.</p>
-          ) : (
-            recentlyReceived.map((p, i) => (
-              <div
-                key={`${p.id}-${i}`}
-                onClick={() => onPartClick(p)}
-                title="Copy part # · locate row"
-                className="grid cursor-pointer grid-cols-[100px_1fr_auto] items-center gap-3 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+
+        {/* No Purchase Order */}
+        <div className="overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
+          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
+            <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-sdc-red-text">
+              <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-red-bg text-[13px] font-extrabold text-sdc-red-text">×</span>
+              No Purchase Order
+            </span>
+            <div className="flex items-center gap-4">
+              <Stat label="Parts" value={num(risk.noPo.length)} tone={risk.noPo.length ? "danger" : undefined} />
+              <Stat label="This Week" value={num(risk.noPoThisWeek)} />
+              <Stat label="Oldest Req" value={fmtDate(risk.noPoOldest)} />
+              <SeeAllBtn onClick={() => setSeeAll("nopo")} disabled={risk.noPo.length === 0} />
+            </div>
+          </div>
+          <div className="max-h-40 overflow-y-auto styled-scrollbar">
+            {risk.noPo.length === 0 ? (
+              <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">All parts have purchase orders.</p>
+            ) : (
+              risk.noPo.map((p, i) => (
+                <div
+                  key={`${p.id}-${i}`}
+                  onClick={() => drillRow(p)}
+                  title="Copy part # · locate row"
+                  className="grid cursor-pointer grid-cols-[100px_1fr_auto] items-center gap-3 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+                >
+                  <span className="truncate font-mono text-[11px] font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
+                  <span className="truncate text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
+                  <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
+                </div>
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      {/* Upcoming Deliveries */}
+      <div className="overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
+        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
+          <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-sdc-blue-dark">
+            <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-blue-light text-[11px] font-extrabold text-sdc-blue-dark">→</span>
+            Upcoming Deliveries
+          </span>
+          <div className="flex flex-wrap items-center gap-1">
+            {risk.weekData.map((w) => (
+              <button
+                key={w.week}
+                type="button"
+                onClick={() => setUpcomingWeek(w.week)}
+                className={`rounded px-2 py-0.5 text-[11px] font-semibold transition-colors ${
+                  w.week === (selectedWeek?.week ?? 1) ? "bg-sdc-blue text-white" : w.count > 0 ? "bg-sdc-blue-light text-sdc-blue-dark hover:bg-sdc-blue-100" : "text-sdc-gray-400 hover:bg-sdc-gray-100"
+                }`}
               >
-                <span className="truncate font-mono text-[11px] font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
-                <span className="truncate text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
-                <span className="whitespace-nowrap font-mono text-[10px] font-semibold text-sdc-green-text">{fmtDate(p.receivedDate)}</span>
-              </div>
-            ))
+                {w.week}W{w.count > 0 ? <span className="ml-0.5 opacity-80">({w.count})</span> : null}
+              </button>
+            ))}
+            <span className="mx-1 h-4 w-px bg-sdc-border" aria-hidden />
+            <Stat label="Parts" value={num(selectedParts.length)} />
+            <span className="w-3" />
+            <Stat label="Suppliers" value={num(upSuppliers)} />
+            <span className="w-3" />
+            <Stat label="Nearest" value={upNearest ? fmtDate(new Date(upNearest).toISOString()) : "—"} />
+            <span className="w-2" />
+            <SeeAllBtn onClick={() => setSeeAll("upcoming")} disabled={risk.upcoming.length === 0} />
+          </div>
+        </div>
+        <div className="max-h-44 overflow-y-auto styled-scrollbar">
+          {selectedParts.length === 0 ? (
+            <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No parts with an expected date in week {selectedWeek?.week ?? 1}.</p>
+          ) : (
+            selectedParts.map((p, i) => <UpcomingRow key={`${p.id}-${i}`} p={p} onClick={() => drillRow(p)} />)
           )}
         </div>
       </div>
 
-      {/* No Purchase Order */}
-      <div className="overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
-          <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-sdc-red-text">
-            <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-red-bg text-[13px] font-extrabold text-sdc-red-text">×</span>
-            No Purchase Order
-          </span>
-          <span className="text-xs text-sdc-gray-600">
-            <span className="font-bold text-sdc-red-text tabular-nums">{noPo.length}</span> parts · {noPoThisWeek} due this week · oldest req {fmtDate(noPoOldest)}
-          </span>
-        </div>
-        <div className="max-h-40 overflow-y-auto styled-scrollbar">
-          {noPo.length === 0 ? (
-            <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">All parts have purchase orders.</p>
-          ) : (
-            noPo.map((p, i) => (
-              <div
-                key={`${p.id}-${i}`}
-                onClick={() => onPartClick(p)}
-                title="Copy part # · locate row"
-                className="grid cursor-pointer grid-cols-[100px_1fr_auto_auto] items-center gap-3 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
-              >
-                <span className="truncate font-mono text-[11px] font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
-                <span className="truncate text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
-                <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
-                <span className="text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">×{num(p.qty)}</span>
-              </div>
-            ))
-          )}
-        </div>
-      </div>
+      {seeAll && (
+        <SidePanel
+          title={seeAll === "delivery" ? "Delivery Slip" : seeAll === "nopo" ? "Parts without Purchase Order" : "Upcoming Deliveries"}
+          subtitle={
+            seeAll === "delivery"
+              ? `${risk.delivery.length} parts due this week`
+              : seeAll === "nopo"
+                ? `${risk.noPo.length} parts need a PO`
+                : `${risk.upcoming.length} parts due in the next 8 weeks`
+          }
+          onClose={() => setSeeAll(null)}
+        >
+          <table className="w-full border-collapse text-left">
+            <thead className="sticky top-0 z-[1]">
+              <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wider text-white">
+                {seeAll === "upcoming" && <th className="px-3 py-2 font-bold">PO #</th>}
+                <th className="px-3 py-2 font-bold">Part #</th>
+                <th className="px-2 py-2 font-bold">Description</th>
+                {seeAll !== "nopo" && <th className="px-2 py-2 font-bold">Supplier</th>}
+                <th className="px-2 py-2 font-bold">Req</th>
+                {seeAll !== "nopo" && <th className="px-2 py-2 font-bold">Exp</th>}
+              </tr>
+            </thead>
+            <tbody>
+              {(seeAll === "delivery" ? risk.delivery : seeAll === "nopo" ? risk.noPo : risk.upcoming).map((p, i) => (
+                <tr
+                  key={`${p.id}-${i}`}
+                  onClick={() => { onPartClick(p); setSeeAll(null); }}
+                  title="Copy part # · locate row"
+                  className={`cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/25 ${p.st.key === "overdue" ? "bg-sdc-red-bg/40" : ""}`}
+                >
+                  {seeAll === "upcoming" && <td className="px-3 py-1.5 font-mono text-[10px] text-sdc-gray-600">{p.poNumber || "—"}</td>}
+                  <td className="px-3 py-1.5 font-mono text-[11px] font-semibold text-sdc-blue">{p.pn}</td>
+                  <td className="px-2 py-1.5 text-[11px] text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
+                  {seeAll !== "nopo" && <td className="px-2 py-1.5"><SupplierChip supplier={p.supplier} /></td>}
+                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</td>
+                  {seeAll !== "nopo" && <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.expectedDate)}</td>}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </SidePanel>
+      )}
+    </div>
+  );
+}
+
+function SeeAllBtn({ onClick, disabled }: { onClick: () => void; disabled?: boolean }) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      disabled={disabled}
+      className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light disabled:cursor-not-allowed disabled:opacity-40"
+    >
+      See all
+    </button>
+  );
+}
+
+function SlipRow({ p, now, onClick }: { p: FlatPart; now: number; onClick: () => void }) {
+  const expT = p.expectedDate ? new Date(p.expectedDate).getTime() : NaN;
+  const expLate = Number.isFinite(expT) && expT < startOfTodayMs(now);
+  return (
+    <div
+      onClick={onClick}
+      title="Copy part # · locate row"
+      className="grid cursor-pointer grid-cols-[88px_1fr_100px_58px_58px] items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+    >
+      <span className="truncate font-mono text-[11px] font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
+      <span className="truncate text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
+      <span className="truncate text-[10px] text-sdc-gray-600" title={p.supplier ?? ""}>{p.supplier || "—"}</span>
+      <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
+      <span className={`whitespace-nowrap font-mono text-[10px] ${expLate ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(p.expectedDate)}</span>
+    </div>
+  );
+}
+
+function UpcomingRow({ p, onClick }: { p: FlatPart; onClick: () => void }) {
+  return (
+    <div
+      onClick={onClick}
+      title="Copy part # · locate row"
+      className="grid cursor-pointer grid-cols-[58px_88px_1fr_100px_58px_58px] items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+    >
+      <span className="truncate font-mono text-[10px] text-sdc-gray-600" title={p.poNumber ?? ""}>{p.poNumber || "—"}</span>
+      <span className="truncate font-mono text-[11px] font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
+      <span className="truncate text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
+      <span className="truncate text-[10px] text-sdc-gray-600" title={p.supplier ?? ""}>{p.supplier || "—"}</span>
+      <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.expectedDate)}</span>
+      <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
     </div>
   );
 }

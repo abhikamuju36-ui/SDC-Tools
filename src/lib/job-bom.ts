@@ -39,6 +39,7 @@ export type BomPart = {
   expectedDate: string | null; // PO dueDate (DateRequired || PurchaseDateRequired)
   receivedDate: string | null; // LastReceivedDate
   status: "received" | "ordered" | "noPO";
+  hold: boolean; // eps.ItemHold — flagged on hold in Total ETO
   supplier: string | null;
   poId: string | null;
 };
@@ -296,6 +297,7 @@ function makePart(r: BomRow, poIndex: Map<number, PoLine[]>): BomPart {
     expectedDate: line?.dueDate ?? null,
     receivedDate: iso(r.LastReceivedDate),
     status: receivedQty >= qty ? "received" : poQty > 0 ? "ordered" : "noPO",
+    hold: !!r.ItemHold,
     supplier: line?.supplier ?? null,
     poId: line?.poId ?? null,
   };
