@@ -484,7 +484,7 @@ export default async function QuotedPage({
                   {show("job") && (
                     <td
                       style={{ width: "var(--job-col-width, 280px)", minWidth: "var(--job-col-width, 280px)" }}
-                      className={`frozen-col frozen-col-last sticky left-[7rem] z-10 whitespace-nowrap border-l border-r border-sdc-border px-2 py-1.5 text-center text-[10px] font-medium text-sdc-navy ${zebraSticky}`}
+                      className={`frozen-col frozen-col-last sticky left-[7rem] z-10 whitespace-nowrap border-l border-r border-sdc-border px-2 py-1.5 text-left text-[10px] font-medium text-sdc-navy ${zebraSticky}`}
                       title={job.jobName}
                     >
                       <div className="flex min-w-0 items-center gap-1">
@@ -493,7 +493,7 @@ export default async function QuotedPage({
                           name={`jobField__${job.id}__jobName`}
                           defaultValue={job.jobName}
                           aria-label={`Job Name, ${job.jobName}`}
-                          className="w-full min-w-0 flex-1 text-center"
+                          className="w-full min-w-0 flex-1 text-left"
                         />
                         <Link
                           href={`/job-hours?jobs=${encodeURIComponent(job.jobId)}`}
@@ -520,7 +520,7 @@ export default async function QuotedPage({
                   {show("customer") && (
                     <td
                       style={{ width: "var(--customer-col-width, 120px)", minWidth: "var(--customer-col-width, 120px)", maxWidth: "var(--customer-col-width, 120px)" }}
-                      className="overflow-hidden whitespace-nowrap px-2 py-1.5 text-center text-[10px] text-sdc-gray-600"
+                      className="overflow-hidden whitespace-nowrap px-2 py-1.5 text-left text-[10px] text-sdc-gray-600"
                       title={job.customer ?? ""}
                     >
                       <input
@@ -529,7 +529,7 @@ export default async function QuotedPage({
                         defaultValue={job.customer ?? ""}
                         placeholder="—"
                         aria-label={`Customer, ${job.jobName}`}
-                        className="text-center"
+                        className="w-full text-left"
                       />
                     </td>
                   )}

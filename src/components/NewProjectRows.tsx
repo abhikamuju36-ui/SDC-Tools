@@ -58,23 +58,23 @@ export function NewProjectRows({
           {show("job") && (
             <td
               style={{ width: "var(--job-col-width, 280px)", minWidth: "var(--job-col-width, 280px)" }}
-              className="frozen-col frozen-col-last sticky left-[7rem] z-10 whitespace-nowrap border-l border-r border-sdc-border bg-sdc-yellow-bg px-2 py-1.5 text-center text-[10px] font-medium text-sdc-navy"
+              className="frozen-col frozen-col-last sticky left-[7rem] z-10 whitespace-nowrap border-l border-r border-sdc-border bg-sdc-yellow-bg px-2 py-1.5 text-left text-[10px] font-medium text-sdc-navy"
             >
               <input
                 type="text"
                 name={`newRow__${tempId}__jobName`}
                 placeholder="Job Name (defaults to Job Id)"
                 aria-label="New project Job Name"
-                className="w-full min-w-0 text-center"
+                className="w-full min-w-0 text-left"
               />
             </td>
           )}
           {show("customer") && (
             <td
               style={{ width: "var(--customer-col-width, 120px)", minWidth: "var(--customer-col-width, 120px)", maxWidth: "var(--customer-col-width, 120px)" }}
-              className="overflow-hidden whitespace-nowrap px-2 py-1.5 text-center text-[10px] text-sdc-gray-600"
+              className="overflow-hidden whitespace-nowrap px-2 py-1.5 text-left text-[10px] text-sdc-gray-600"
             >
-              <input type="text" name={`newRow__${tempId}__customer`} placeholder="—" aria-label="New project Customer" className="text-center" />
+              <input type="text" name={`newRow__${tempId}__customer`} placeholder="—" aria-label="New project Customer" className="w-full text-left" />
             </td>
           )}
           {show("type") && (
