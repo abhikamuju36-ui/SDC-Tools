@@ -110,18 +110,6 @@ const GROUPS: NavGroup[] = [
     label: "Work",
     items: [
       {
-        href: "/jobs",
-        label: "Jobs",
-        isActive: (p) => p === "/jobs" || p.startsWith("/jobs/"),
-        icon: (
-          <Icon>
-            <line x1="1.5" y1="3.5" x2="14.5" y2="3.5" strokeLinecap="round" />
-            <line x1="1.5" y1="8" x2="14.5" y2="8" strokeLinecap="round" />
-            <line x1="1.5" y1="12.5" x2="14.5" y2="12.5" strokeLinecap="round" />
-          </Icon>
-        ),
-      },
-      {
         href: "/employees",
         label: "Employees",
         isActive: (p) => p === "/employees",
