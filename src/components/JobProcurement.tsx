@@ -244,7 +244,19 @@ type FlatPart = BomPart & {
   poNumber: string | null;
   leadDays: number | null;
   st: PartStatus;
+  // Power BI "Parts Cost" money fields — from the matched PartsCostLine.
+  totalPrice: number; // line totalPrice (fallback unitPrice * qty)
+  invoicedAmount: number;
+  pctInvoiced: number; // round(invoiced / total * 100)
+  jobCostExclSdc: number; // totalPrice, 0 when in-house (SDC)
+  leftToSpend: number; // totalPrice - invoicedAmount
 };
+
+// In-house = made by SDC (manufacturer SDC, or supplier is Steven Douglas / SDC).
+function isInHouse(manufacturer: string | null | undefined, supplier: string | null | undefined): boolean {
+  if ((manufacturer ?? "").trim().toUpperCase() === "SDC") return true;
+  return /steven\s*douglas|\bSDC\b/i.test(supplier ?? "");
+}
 
 function sectionLabelFor(section: BomNode): string {
   const specId = typeof section.id === "string" ? Number(section.id.replace(/\D/g, "")) : Number(section.id);
@@ -357,7 +369,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   const [dateType, setDateType] = useState<"purchase" | "invoice">(() => saved.dateType ?? "purchase");
   const [from, setFrom] = useState(() => saved.from ?? "");
   const [to, setTo] = useState(() => saved.to ?? "");
-  const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set(saved.hiddenPartCols ?? []));
+  const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set(saved.hiddenPartCols ?? ["due", "lead"]));
   const [upcomingWeek, setUpcomingWeek] = useState<number>(() => saved.upcomingWeek ?? 1);
   const [colWidths, setColWidths] = useState<Partial<Record<ColKey, number>>>(() => saved.colWidths ?? {});
 
@@ -453,6 +465,11 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
       if (seen.has(p.id)) return;
       seen.add(p.id);
       const line = lineIndex.get(normPn(p.pn))?.[0] ?? null;
+      const supplier = p.supplier ?? line?.supplier ?? null;
+      const totalPrice = line?.totalPrice ?? p.unitPrice * p.qty;
+      const invoicedAmount = line?.invoicedAmount ?? 0;
+      const pctInvoiced = totalPrice > 0 ? Math.round((invoicedAmount / totalPrice) * 100) : invoicedAmount > 0 ? 100 : 0;
+      const jobCostExclSdc = isInHouse(p.manufacturer, supplier) ? 0 : totalPrice;
       const flat: FlatPart = {
         ...p,
         parentPN,
@@ -463,9 +480,14 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
         purchasedDate: line?.purchaseDate ?? null,
         invoicedDate: line?.invoicedDate ?? null,
         poNumber: p.poId ?? line?.poNumber ?? null,
-        supplier: p.supplier ?? line?.supplier ?? null,
+        supplier,
         leadDays: daysBetween(line?.purchaseDate ?? null, p.expectedDate),
         st: partStatus(p, now),
+        totalPrice,
+        invoicedAmount,
+        pctInvoiced,
+        jobCostExclSdc,
+        leftToSpend: totalPrice - invoicedAmount,
       };
       out.push(flat);
     };
@@ -861,9 +883,29 @@ function PartsDetailTable({
 // Parts List tab
 // ═════════════════════════════════════════════════════════════════════════════
 
-type ColKey = "qty" | "pn" | "desc" | "parent" | "category" | "mfr" | "supplier" | "po" | "purchased" | "exp" | "lead" | "due" | "status";
+type ColKey =
+  | "qty"
+  | "pn"
+  | "desc"
+  | "parent"
+  | "category"
+  | "mfr"
+  | "supplier"
+  | "po"
+  | "purchased"
+  | "invoiceddate"
+  | "exp"
+  | "lead"
+  | "due"
+  | "unit"
+  | "total"
+  | "invoiced"
+  | "pctinv"
+  | "jobcost"
+  | "leftspend"
+  | "status";
 
-const ALL_COLS: { key: ColKey; label: string; align?: "right" }[] = [
+const ALL_COLS: { key: ColKey; label: string; align?: "right"; title?: string }[] = [
   { key: "qty", label: "Qty", align: "right" },
   { key: "pn", label: "Part No" },
   { key: "desc", label: "Desc" },
@@ -873,9 +915,16 @@ const ALL_COLS: { key: ColKey; label: string; align?: "right" }[] = [
   { key: "supplier", label: "Supplier" },
   { key: "po", label: "PO #" },
   { key: "purchased", label: "Purchased" },
+  { key: "invoiceddate", label: "Invoiced" },
   { key: "exp", label: "Exp" },
   { key: "lead", label: "Lead" },
   { key: "due", label: "Due" },
+  { key: "unit", label: "Unit $", align: "right" },
+  { key: "total", label: "Total $", align: "right" },
+  { key: "invoiced", label: "Invoiced $", align: "right" },
+  { key: "pctinv", label: "% Inv", align: "right" },
+  { key: "jobcost", label: "Job Cost", align: "right", title: "Job parts cost, excl SDC supplier" },
+  { key: "leftspend", label: "Left to Spend", align: "right" },
   { key: "status", label: "Status" },
 ];
 
@@ -919,9 +968,16 @@ const DEFAULT_COL_WIDTH: Record<ColKey, number> = {
   supplier: 130,
   po: 72,
   purchased: 80,
+  invoiceddate: 64,
   exp: 80,
   lead: 60,
   due: 68,
+  unit: 72,
+  total: 72,
+  invoiced: 72,
+  pctinv: 52,
+  jobcost: 72,
+  leftspend: 84,
   status: 120,
 };
 const MIN_COL_WIDTH = 48;
@@ -1117,7 +1173,7 @@ function PartRowCells({
   onOpenPo,
 }: {
   p: FlatPart;
-  cols: { key: ColKey; label: string; align?: "right" }[];
+  cols: { key: ColKey; label: string; align?: "right"; title?: string }[];
   now: number;
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
 }) {
@@ -1159,12 +1215,26 @@ function PartRowCells({
         );
       case "purchased":
         return <span className="whitespace-nowrap font-mono text-[10px] font-medium text-sdc-navy">{fmtDate(p.purchasedDate)}</span>;
+      case "invoiceddate":
+        return <span className="whitespace-nowrap font-mono text-[10px] font-medium text-sdc-navy">{fmtDate(p.invoicedDate)}</span>;
       case "exp":
         return <span className="whitespace-nowrap font-mono text-[10px] font-medium text-sdc-navy">{fmtDate(p.expectedDate)}</span>;
       case "lead":
         return <LeadChip ordered={p.purchasedDate} expected={p.expectedDate} />;
       case "due":
         return <DueChip expected={p.expectedDate} received={p.st.key === "received"} now={now} />;
+      case "unit":
+        return <span className="whitespace-nowrap font-mono text-[11px] font-medium tabular-nums text-sdc-navy">{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</span>;
+      case "total":
+        return <span className="whitespace-nowrap font-mono text-[11px] font-semibold tabular-nums text-sdc-navy">{p.totalPrice > 0 ? usd(p.totalPrice) : "—"}</span>;
+      case "invoiced":
+        return <span className="whitespace-nowrap font-mono text-[11px] font-medium tabular-nums text-sdc-navy">{usd(p.invoicedAmount)}</span>;
+      case "pctinv":
+        return <span className="whitespace-nowrap font-mono text-[11px] font-medium tabular-nums text-sdc-gray-600">{p.pctInvoiced}%</span>;
+      case "jobcost":
+        return <span className="whitespace-nowrap font-mono text-[11px] font-semibold tabular-nums text-sdc-navy" title="Job parts cost, excl SDC supplier">{p.jobCostExclSdc > 0 ? usd(p.jobCostExclSdc) : "—"}</span>;
+      case "leftspend":
+        return <span className="whitespace-nowrap font-mono text-[11px] font-medium tabular-nums text-sdc-navy">{usd(p.leftToSpend)}</span>;
       case "status":
         return <StatusPill st={p.st} />;
     }
@@ -1193,7 +1263,7 @@ function PartsTableView({
   setColWidths,
 }: {
   parts: FlatPart[];
-  cols: { key: ColKey; label: string; align?: "right" }[];
+  cols: { key: ColKey; label: string; align?: "right"; title?: string }[];
   onPartClick: (p: DrillablePart) => void;
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
   now: number;
@@ -1238,7 +1308,7 @@ function PartsTableView({
           <thead className="sticky top-0 z-[2]">
             <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wider text-white">
               {cols.map((c) => (
-                <th key={c.key} className={`relative border-r border-white/15 px-2 py-1.5 font-bold ${c.align === "right" ? "text-right" : ""}`}>
+                <th key={c.key} title={c.title} className={`relative border-r border-white/15 px-2 py-1.5 font-bold ${c.align === "right" ? "text-right" : ""}`}>
                   <span className="block truncate">{c.label}</span>
                   <span
                     onMouseDown={(e) => startResize(c.key, e)}
