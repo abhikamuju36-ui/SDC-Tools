@@ -7,11 +7,11 @@ import { useEffect, useState } from "react";
 // localStorage. Quoted hours (the editable inputs) always stay visible; only the
 // actual suffix is shown/hidden. The over/under cell coloring is unaffected.
 export function ShowActualsToggle() {
-  const [show, setShow] = useState(true);
+  const [show, setShow] = useState(false);
 
   useEffect(() => {
     const saved = localStorage.getItem("quoted-show-actuals");
-    const v = saved === null ? true : saved === "1";
+    const v = saved === null ? false : saved === "1";
     setShow(v);
     document.body.classList.toggle("hide-actuals", !v);
   }, []);

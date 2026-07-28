@@ -174,8 +174,12 @@ export default async function QuotedPage({
   // Same "undefined = everything, explicit (even empty) = user's picks" rule as `cols`.
   const selectedTypes = types === undefined ? allTypes : types.split(",").filter(Boolean);
   const selectedCustomers = customers === undefined ? allCustomers : customers.split(",").filter(Boolean);
-  const selectedStatuses = statuses === undefined ? allStatuses : statuses.split(",").filter(Boolean);
-  const selectedBillables = billables === undefined ? BILLABLE_OPTIONS : billables.split(",").filter(Boolean);
+  // Default view (no explicit filter yet): only Active jobs and only Billable
+  // work — the day-to-day view. The filter chips still list every option, so a
+  // user can widen to Complete/Non-Billable any time.
+  const selectedStatuses =
+    statuses === undefined ? (allStatuses.includes("Active") ? ["Active"] : allStatuses) : statuses.split(",").filter(Boolean);
+  const selectedBillables = billables === undefined ? ["Billable"] : billables.split(",").filter(Boolean);
   const showBillable = selectedBillables.includes("Billable");
   const showNonBillable = selectedBillables.includes("Non-Billable");
   // Boolean columns have no Prisma `in` filter — translate the two checkboxes
