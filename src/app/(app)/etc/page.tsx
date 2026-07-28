@@ -1013,12 +1013,12 @@ export default async function MonthlyEtcPage({
 
                   return (
                     <tr key={job.id} className={`hover:bg-sdc-blue-light/40 ${zebra}`}>
-                      <td className={`sticky left-0 z-10 w-10 min-w-10 px-2 py-1 text-center text-sdc-gray-400 ${zebraSticky}`}>{jobIndex + 1}</td>
-                      <td className={`sticky left-10 z-10 w-20 min-w-20 px-3 py-1 text-center font-mono text-sdc-gray-400 ${showJobName ? "" : "border-r-8 border-[#808080]"} ${zebraSticky}`}>{job.jobId}</td>
+                      <td className={`sticky left-0 z-10 w-10 min-w-10 overflow-hidden px-2 py-1 text-center align-middle whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}>{jobIndex + 1}</td>
+                      <td className={`sticky left-10 z-10 w-20 min-w-20 overflow-hidden px-3 py-1 text-center align-middle font-mono whitespace-nowrap text-sdc-gray-400 ${showJobName ? "" : "border-r-8 border-[#808080]"} ${zebraSticky}`}>{job.jobId}</td>
                       {showJobName && (
                         <td
                           style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
-                          className={`sticky left-[7.5rem] z-10 border-r-8 border-[#808080] px-3 py-1 text-center font-medium text-sdc-navy ${zebraSticky}`}
+                          className={`sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] px-3 py-1 text-center align-middle font-medium whitespace-nowrap text-sdc-navy ${zebraSticky}`}
                           title={job.jobName}
                         >
                           <div className="flex min-w-0 items-center justify-center gap-1.5">
@@ -1039,7 +1039,7 @@ export default async function MonthlyEtcPage({
                           return SUB_COLUMNS.map((col, ci) => (
                             <td
                               key={`${s.code}-${col}`}
-                              className={`${ci === 0 ? edge : "border-l border-sdc-border"} ${ETC_COL_W} px-2 py-1 text-center ${
+                              className={`${ci === 0 ? edge : "border-l border-sdc-border"} ${ETC_COL_W} overflow-hidden px-2 py-1 text-center align-middle whitespace-nowrap ${
                                 col === "Prior ETC" ? "bg-[#5E91D3] text-sdc-gray-700" : `${subColBodyBg(col)} text-sdc-gray-400`
                               }`}
                             >
@@ -1082,23 +1082,23 @@ export default async function MonthlyEtcPage({
                         groupGrandTotals[group].newEtc += totals[group].newEtc;
                         return (
                           <Fragment key={group}>
-                            <td className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} bg-[#5E91D3] px-1 py-1 text-center text-[10px] text-sdc-gray-700`} title={String(round2(totals[group].prior))}>
+                            <td className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={String(round2(totals[group].prior))}>
                               {wholeNum(totals[group].prior)}
                             </td>
-                            <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} px-1 py-1 text-center text-[10px] text-sdc-gray-500`} title={String(round2(totals[group].worked))}>
+                            <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-500`} title={String(round2(totals[group].worked))}>
                               {wholeNum(totals[group].worked)}
                             </td>
                             <td
-                              className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} px-1 py-1 text-center text-[10px] text-sdc-gray-500`}
+                              className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-500`}
                               title={`${round2(hoursLeft)} = Prior ETC (${round2(totals[group].prior)}) − Hours Worked (${round2(totals[group].worked)})`}
                             >
                               {wholeNum(hoursLeft)}
                             </td>
-                            <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} px-1 py-1 text-center text-[10px] font-bold text-sdc-navy`} title={String(round2(totals[group].newEtc))}>
+                            <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`} title={String(round2(totals[group].newEtc))}>
                               {monthComplete ? wholeNum(totals[group].newEtc) : "—"}
                             </td>
                             <td
-                              className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} px-1 py-1 text-center text-[10px] text-sdc-gray-700`}
+                              className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
                               title={`${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(totals[group].newEtc)})`}
                             >
                               {wholeNum(diff)}
@@ -1112,7 +1112,7 @@ export default async function MonthlyEtcPage({
                           return PARTS_COST_SUB_COLUMNS.map((col, ci) => (
                             <td
                               key={`parts-cost-${col}`}
-                              className={`${ci === 0 ? PHASE_EDGE : "border-l border-sdc-border"} px-2 py-1 text-center text-sdc-gray-400 ${
+                              className={`${ci === 0 ? PHASE_EDGE : "border-l border-sdc-border"} overflow-hidden px-2 py-1 text-center align-middle whitespace-nowrap text-sdc-gray-400 ${
                                 col === "Prior ETC" ? "bg-[#5E91D3] text-sdc-gray-700" : subColBodyBg(col) || "bg-sdc-gray-50"
                               }`}
                             >
@@ -1141,10 +1141,10 @@ export default async function MonthlyEtcPage({
 
                         return (
                           <Fragment key="parts-cost">
-                            <td className={`${PHASE_EDGE} bg-[#5E91D3] px-1 py-1 text-center text-[10px] text-sdc-gray-700`} title={currencyExact(prior)}>
+                            <td className={`${PHASE_EDGE} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={currencyExact(prior)}>
                               {currency(prior)}
                             </td>
-                            <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} px-1 py-1 text-center`}>
+                            <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle whitespace-nowrap`}>
                               {/* Not manager-editable — always Power BI's actual, passed through as a
                                   hidden field so submitMonth's generic per-entry loop still works. */}
                               <input type="hidden" name={`hoursWorked__${partsCostEntry.id}`} value={spent} />
@@ -1153,7 +1153,7 @@ export default async function MonthlyEtcPage({
                               </span>
                             </td>
                             <td
-                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} px-1 py-1 text-center text-[10px] text-sdc-gray-500`}
+                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-500`}
                               title={`${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(prior)}) − Money Spent (${currencyExact(spent)})`}
                             >
                               {currency(moneyLeft)}
@@ -1178,7 +1178,7 @@ export default async function MonthlyEtcPage({
                               locked={locked}
                             />
                             <td
-                              className={`border-l border-sdc-border ${diffBg(diffCost)} px-1 py-1 text-center text-[10px] text-sdc-gray-700`}
+                              className={`border-l border-sdc-border ${diffBg(diffCost)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
                               title={`${currencyExact(diffCost)} = Money Left (${currencyExact(moneyLeft)}) − New ETC (${currencyExact(effectiveNewEtcCost)})`}
                             >
                               {currency(diffCost)}
@@ -1216,7 +1216,7 @@ export default async function MonthlyEtcPage({
                 )}
                 {visibleJobs.length > 0 && (
                   <tr className="border-t-2 border-sdc-navy bg-sdc-gray-100 font-medium">
-                    <td className="sticky left-0 z-10 bg-sdc-gray-100 px-3 py-2 text-center" colSpan={showJobName ? 3 : 2}>
+                    <td className="sticky left-0 z-10 overflow-hidden bg-sdc-gray-100 px-3 py-2 text-center align-middle whitespace-nowrap" colSpan={showJobName ? 3 : 2}>
                       Total
                     </td>
                     {visibleCols.map((s, sIdx) => {
@@ -1225,17 +1225,17 @@ export default async function MonthlyEtcPage({
                       const diff = hoursLeft - t.newEtc;
                       return (
                         <Fragment key={s.code}>
-                          <td className={`${edgeFor(s.code, sIdx)} ${ETC_COL_W} bg-[#5E91D3] px-1 py-1 text-center text-[10px] text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
-                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} px-1 py-1 text-center text-[10px] text-sdc-navy`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
+                          <td className={`${edgeFor(s.code, sIdx)} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
+                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-navy`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
                           <td
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} px-1 py-1 text-center text-[10px] text-sdc-navy`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-navy`}
                             title={`${round2(hoursLeft)} = Prior ETC (${round2(t.prior)}) − Hours Worked (${round2(t.worked)})`}
                           >
                             {wholeNum(hoursLeft)}
                           </td>
-                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} px-1 py-1 text-center text-[10px] font-bold text-sdc-navy`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
+                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
                           <td
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} px-1 py-1 text-center text-[10px] text-sdc-gray-700`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
                             title={`${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(t.newEtc)})`}
                           >
                             {wholeNum(diff)}
@@ -1249,17 +1249,17 @@ export default async function MonthlyEtcPage({
                       const diff = hoursLeft - t.newEtc;
                       return (
                         <Fragment key={group}>
-                          <td className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} bg-[#5E91D3] px-1 py-1 text-center text-[10px] text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
-                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} px-1 py-1 text-center text-[10px] text-sdc-blue-dark`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
+                          <td className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
+                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-blue-dark`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
                           <td
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} px-1 py-1 text-center text-[10px] text-sdc-blue-dark`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-blue-dark`}
                             title={`${round2(hoursLeft)} = Prior ETC (${round2(t.prior)}) − Hours Worked (${round2(t.worked)})`}
                           >
                             {wholeNum(hoursLeft)}
                           </td>
-                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} px-1 py-1 text-center text-[10px] font-bold text-sdc-blue-dark`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
+                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-blue-dark`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
                           <td
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} px-1 py-1 text-center text-[10px] text-sdc-gray-700`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
                             title={`${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(t.newEtc)})`}
                           >
                             {wholeNum(diff)}
@@ -1273,20 +1273,20 @@ export default async function MonthlyEtcPage({
                       const diffCost = moneyLeft - t.newEtc;
                       return (
                         <Fragment key="parts-cost-total">
-                          <td className={`${PHASE_EDGE} bg-[#5E91D3] px-1 py-1 text-center text-[10px] text-sdc-gray-700`} title={currencyExact(t.prior)}>{currency(t.prior)}</td>
+                          <td className={`${PHASE_EDGE} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={currencyExact(t.prior)}>{currency(t.prior)}</td>
                           {/* Total Money Spent is ALWAYS the live month-to-date
                               total, even while per-job cells are blanked pending
                               month completion. */}
-                          <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} px-1 py-1 text-center text-[10px] text-sdc-navy`} title={`${currencyExact(t.worked)} — live month-to-date total`}>{currency(t.worked)}</td>
+                          <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-navy`} title={`${currencyExact(t.worked)} — live month-to-date total`}>{currency(t.worked)}</td>
                           <td
-                            className={`border-l border-sdc-border ${HOURS_LEFT_BG} px-1 py-1 text-center text-[10px] text-sdc-navy`}
+                            className={`border-l border-sdc-border ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-navy`}
                             title={`${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(t.prior)}) − Money Spent (${currencyExact(t.worked)})`}
                           >
                             {currency(moneyLeft)}
                           </td>
-                          <td className={`border-l border-sdc-border ${newEtcBg(true)} px-1 py-1 text-center text-[10px] font-bold text-sdc-navy`} title={currencyExact(t.newEtc)}>{monthComplete ? currency(t.newEtc) : "—"}</td>
+                          <td className={`border-l border-sdc-border ${newEtcBg(true)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`} title={currencyExact(t.newEtc)}>{monthComplete ? currency(t.newEtc) : "—"}</td>
                           <td
-                            className={`border-l border-sdc-border ${diffBg(diffCost)} px-1 py-1 text-center text-[10px] text-sdc-gray-700`}
+                            className={`border-l border-sdc-border ${diffBg(diffCost)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
                             title={`${currencyExact(diffCost)} = Money Left (${currencyExact(moneyLeft)}) − New ETC (${currencyExact(t.newEtc)})`}
                           >
                             {currency(diffCost)}

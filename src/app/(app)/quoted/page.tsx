@@ -486,7 +486,7 @@ export default async function QuotedPage({
               const zebraSticky = isSdc ? "bg-[#caedfb]" : i % 2 === 1 ? "bg-sdc-gray-50" : "bg-white";
               return (
                 <tr key={job.id} className={`hover:bg-sdc-blue-light/40 ${zebra}`}>
-                  <td className={`frozen-col sticky left-0 z-10 w-8 min-w-8 px-1 py-1.5 text-center text-[10px] text-sdc-gray-400 ${zebraSticky}`}>
+                  <td className={`frozen-col sticky left-0 z-10 w-8 min-w-8 overflow-hidden px-1 py-1.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}>
                     {i + 1}
                   </td>
                   <td
@@ -500,7 +500,7 @@ export default async function QuotedPage({
                   {show("job") && (
                     <td
                       style={{ width: "var(--job-col-width, 280px)", minWidth: "var(--job-col-width, 280px)" }}
-                      className={`frozen-col frozen-col-last sticky left-[7rem] z-10 whitespace-nowrap border-l border-r border-sdc-border px-2 py-1.5 text-left text-[10px] font-medium text-sdc-navy ${zebraSticky}`}
+                      className={`frozen-col frozen-col-last sticky left-[7rem] z-10 overflow-hidden border-l border-r border-sdc-border px-2 py-1.5 text-left align-middle text-[10px] font-medium whitespace-nowrap text-sdc-navy ${zebraSticky}`}
                       title={job.jobName}
                     >
                       <div className="flex min-w-0 items-center gap-1">
@@ -536,7 +536,7 @@ export default async function QuotedPage({
                   {show("customer") && (
                     <td
                       style={{ width: "var(--customer-col-width, 120px)", minWidth: "var(--customer-col-width, 120px)", maxWidth: "var(--customer-col-width, 120px)" }}
-                      className="overflow-hidden whitespace-nowrap px-2 py-1.5 text-left text-[10px] text-sdc-gray-600"
+                      className="overflow-hidden whitespace-nowrap px-2 py-1.5 text-left align-middle text-[10px] text-sdc-gray-600"
                       title={job.customer ?? ""}
                     >
                       <input
@@ -550,7 +550,7 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("type") && (
-                    <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px] text-sdc-gray-600">
+                    <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px] text-sdc-gray-600">
                       <select name={`jobField__${job.id}__type`} defaultValue={job.type ?? ""} aria-label={`Type, ${job.jobName}`} className="text-center">
                         {job.type == null && <option value="">—</option>}
                         {VALID_JOB_TYPES.map((t) => (
@@ -562,7 +562,7 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("billable") && (
-                    <td className="whitespace-nowrap px-1 py-1.5 text-center text-[10px]">
+                    <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px]">
                       {isSdc ? (
                         <span className="text-sdc-gray-500" aria-label={`Billable, ${job.jobName}`} title="SDC's own projects are always non-billable">
                           Non-Billable
@@ -582,7 +582,7 @@ export default async function QuotedPage({
                   )}
                   {show("status") && (
                     <td
-                      className={`whitespace-nowrap px-1 py-1.5 text-center text-[10px] font-medium ${
+                      className={`overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px] font-medium ${
                         job.status === "Complete" ? "text-sdc-green-text" : "text-sdc-blue-dark"
                       }`}
                     >
@@ -601,7 +601,7 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("startDate") && (
-                    <td className="whitespace-nowrap px-1 py-1.5 text-left text-[10px] text-sdc-gray-500">
+                    <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500">
                       <DateCell
                         name={`jobField__${job.id}__startDate`}
                         defaultValue={dateInputValue(job.startDate)}
@@ -610,7 +610,7 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("completeDate") && (
-                    <td className="whitespace-nowrap px-1 py-1.5 text-left text-[10px] text-sdc-gray-500">
+                    <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500">
                       <DateCell
                         name={`jobField__${job.id}__completeDate`}
                         defaultValue={dateInputValue(job.completeDate)}
@@ -644,7 +644,7 @@ export default async function QuotedPage({
                           return (
                             <td
                               key={s.code}
-                              className={`qc quoted-actual-cell w-[40px] min-w-[40px] border-l border-sdc-border px-1 py-1.5 text-center font-mono text-[10px] text-sdc-gray-600 ${tone}`}
+                              className={`qc quoted-actual-cell w-[40px] min-w-[40px] overflow-hidden border-l border-sdc-border px-1 py-1.5 text-center align-middle font-mono text-[10px] whitespace-nowrap text-sdc-gray-600 ${tone}`}
                               title={`Quoted ${exactHours(hours) ?? "0"} / Actual ${exactHours(actual) ?? "0"}`}
                             >
                               <input
@@ -678,7 +678,7 @@ export default async function QuotedPage({
                       const a = sumA(codes);
                       return (
                         <td
-                          className="w-[60px] min-w-[60px] whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center font-mono text-[10px] font-medium"
+                          className="w-[60px] min-w-[60px] overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center align-middle font-mono text-[10px] font-medium"
                           title={`${label} — Quoted ${exactHours(q) ?? "0"} / Actual ${exactHours(a) ?? "0"}`}
                         >
                           <span className="font-semibold text-sdc-blue-dark">{wholeHours(q)}</span>
@@ -693,7 +693,7 @@ export default async function QuotedPage({
                       </>
                     );
                   })()}
-                  <td className={`whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center text-[10px] font-medium text-sdc-navy ${zebra}`}>
+                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center align-middle text-[10px] font-medium text-sdc-navy ${zebra}`}>
                     <div className="flex items-center justify-center gap-0.5">
                       <span className="text-sdc-gray-400">$</span>
                       <input
@@ -708,7 +708,7 @@ export default async function QuotedPage({
                       />
                     </div>
                   </td>
-                  <td className={`whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center text-[10px] text-sdc-gray-600 ${zebra}`}>
+                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center align-middle text-[10px] text-sdc-gray-600 ${zebra}`}>
                     <div className="flex items-center justify-center gap-0.5">
                       <span className="text-sdc-gray-400">$</span>
                       <input

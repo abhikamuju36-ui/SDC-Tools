@@ -110,11 +110,11 @@ export function EtcSectionCells({
 
   return (
     <>
-      <td className={`${edge} ${ETC_COL_W} bg-[#5E91D3] px-1 py-1 text-center text-[10px] text-sdc-gray-700`} title={String(round2(priorEtc))}>
+      <td className={`${edge} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={String(round2(priorEtc))}>
         {wholeNum(priorEtc)}
       </td>
       <td
-        className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} px-1 py-1 text-center text-[10px] text-sdc-navy`}
+        className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-navy`}
         title={String(worked)}
       >
         {/* Read-only — auto-synced from Power BI, not manager-editable. The
@@ -124,12 +124,12 @@ export function EtcSectionCells({
         {workedDisplay}
       </td>
       <td
-        className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} px-1 py-1 text-center text-[10px] text-sdc-gray-500`}
+        className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-500`}
         title={`${round2(hoursLeft)} = Prior ETC (${round2(priorEtc)}) − Hours Worked (${worked})`}
       >
         {wholeNum(hoursLeft)}
       </td>
-      <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(decided)} px-1 py-1 text-center`}>
+      <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(decided)} px-1 py-1 text-center align-middle whitespace-nowrap`}>
         {/* No hours worked -> carry-forward is deterministic, safe to auto-fill.
             Hours worked > 0 -> a manager's judgment call, not auto-filled;
             flagged yellow so it's obviously not done yet — left with no
@@ -150,7 +150,7 @@ export function EtcSectionCells({
         />
       </td>
       <td
-        className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} px-1 py-1 text-center text-[10px] text-sdc-gray-700`}
+        className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
         title={`${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(effective)})`}
       >
         {wholeNum(diff)}
