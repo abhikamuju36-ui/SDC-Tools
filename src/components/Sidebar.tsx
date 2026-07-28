@@ -310,8 +310,8 @@ export default function Sidebar({
       <div
         className={`flex items-center gap-2.5 border-b border-white/10 ${collapsed ? "justify-center px-0 py-4" : "px-4 py-4"}`}
       >
-        <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-[9px] bg-sdc-blue">
-          <Image src="/brand/sdc-logo-white.png" alt="SDC" width={28} height={15} unoptimized />
+        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[10px] bg-sdc-blue">
+          <Image src="/brand/sdc-logo-white.png" alt="SDC" width={40} height={21} unoptimized />
         </div>
         {!collapsed && (
           <div className="min-w-0">
