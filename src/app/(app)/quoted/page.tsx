@@ -361,12 +361,12 @@ export default async function QuotedPage({
               )}
               {show("startDate") && (
                 <th rowSpan={3} className="px-1 py-2 align-bottom">
-                  <SortButton sortKey="startDate" label="Start Date" currentSort={sortKey} currentDir={sortDir} />
+                  <SortButton sortKey="startDate" label={"Start\nDate"} currentSort={sortKey} currentDir={sortDir} />
                 </th>
               )}
               {show("completeDate") && (
                 <th rowSpan={3} className="px-1 py-2 align-bottom">
-                  <SortButton sortKey="completeDate" label="Complete Date" currentSort={sortKey} currentDir={sortDir} />
+                  <SortButton sortKey="completeDate" label={"Complete\nDate"} currentSort={sortKey} currentDir={sortDir} />
                 </th>
               )}
               {PHASE_GROUPS.map((g) => {
@@ -427,7 +427,7 @@ export default async function QuotedPage({
               {PHASE_GROUPS.flatMap((g) => {
                 const sections = visibleSectionsByPhase.get(g.phase) ?? [];
                 return sections.map((s) => (
-                  <th key={s.code} title={s.code} className="qc w-[54px] min-w-[54px] border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
+                  <th key={s.code} title={s.code} className="qc w-[40px] min-w-[40px] border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
                     {s.name}
                     <span className="block font-mono text-[10px] font-normal normal-case tracking-normal text-sdc-gray-400">
                       {s.code}
@@ -642,7 +642,7 @@ export default async function QuotedPage({
                           return (
                             <td
                               key={s.code}
-                              className={`qc quoted-actual-cell w-[54px] min-w-[54px] border-l border-sdc-border px-1 py-1.5 text-center font-mono text-[10px] text-sdc-gray-600 ${tone}`}
+                              className={`qc quoted-actual-cell w-[40px] min-w-[40px] border-l border-sdc-border px-1 py-1.5 text-center font-mono text-[10px] text-sdc-gray-600 ${tone}`}
                               title={`Quoted ${exactHours(hours) ?? "0"} / Actual ${exactHours(actual) ?? "0"}`}
                             >
                               <input

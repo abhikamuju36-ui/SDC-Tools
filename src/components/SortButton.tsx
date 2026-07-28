@@ -31,7 +31,7 @@ export function SortButton({
     <button
       type="button"
       onClick={handleClick}
-      className={`inline-flex items-center gap-1 hover:text-sdc-navy ${active ? "text-sdc-navy" : ""}`}
+      className={`inline-flex items-center gap-1 whitespace-pre-line text-center leading-tight hover:text-sdc-navy ${active ? "text-sdc-navy" : ""}`}
     >
       {label}
       <svg
