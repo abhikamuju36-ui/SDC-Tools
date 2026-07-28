@@ -1,9 +1,14 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { BomNode, BomPart, JobBom } from "@/lib/job-bom";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
 import { usd } from "@/components/ui/format";
+import { useToast } from "@/components/ui/Toast";
+
+// A minimal shape shared by BOM leaf parts (Assemblies detail table) and the
+// flattened Parts List rows — enough to drill + copy.
+type DrillablePart = { id: number; pn: string };
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Procurement drawer — the Build Readiness "Procurement" view, ported to the
@@ -157,7 +162,49 @@ function sectionLabelFor(section: BomNode): string {
 // ─────────────────────────────────────────────────────────────────────────────
 
 export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: PartsCostLine[] }) {
+  const { toast } = useToast();
   const [tab, setTab] = useState<"assemblies" | "parts">("assemblies");
+
+  // Parts List filter/view state lives here (not in PartsListTab) so a drill
+  // from the Assemblies tab can reset every filter + force table mode before
+  // the Parts List even mounts, guaranteeing the target row renders.
+  const [view, setView] = useState<"list" | "card">("list");
+  const [query, setQuery] = useState("");
+  const [status, setStatus] = useState<"all" | BomPart["status"]>("all");
+  const [category, setCategory] = useState("all");
+  const [manufacturer, setManufacturer] = useState("all");
+  const [supplier, setSupplier] = useState("all");
+  const [dateType, setDateType] = useState<"purchase" | "invoice">("purchase");
+  const [from, setFrom] = useState("");
+  const [to, setTo] = useState("");
+
+  // Drill target — key = String(part.id). `nonce` bumps on every drill so the
+  // Parts List effect re-fires even when the same row is targeted twice.
+  const [drill, setDrill] = useState<{ key: string; nonce: number }>({ key: "", nonce: 0 });
+
+  // The primary click action anywhere a part is shown: jump to its Parts-List
+  // row (table mode, filters cleared, then scroll+flash) and copy the part #.
+  const drillToPart = useCallback(
+    (p: DrillablePart) => {
+      setStatus("all");
+      setCategory("all");
+      setManufacturer("all");
+      setSupplier("all");
+      setQuery("");
+      setFrom("");
+      setTo("");
+      setDateType("purchase");
+      setView("list");
+      setTab("parts");
+      setDrill((d) => ({ key: String(p.id), nonce: d.nonce + 1 }));
+      if (p.pn && p.pn !== "—") {
+        navigator.clipboard?.writeText(p.pn).then(() => toast(`Copied ${p.pn}`, "success")).catch(() => {});
+      }
+    },
+    [toast],
+  );
+
+  const partsState = { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo } as const;
 
   // PO purchase lines indexed by normalized part number, newest purchase first.
   const lineIndex = useMemo(() => {
@@ -257,9 +304,9 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
       </div>
 
       {tab === "assemblies" ? (
-        <AssembliesTab bom={bom} />
+        <AssembliesTab bom={bom} onPartClick={drillToPart} />
       ) : (
-        <PartsListTab parts={parts} />
+        <PartsListTab parts={parts} state={partsState} drill={drill} onPartClick={drillToPart} />
       )}
     </div>
   );
@@ -295,7 +342,7 @@ function TabChip({ active, onClick, label, count }: { active: boolean; onClick: 
 // Grid template shared by the dark header + every assembly row so columns align.
 const ASM_GRID = "minmax(220px,1.5fr) minmax(150px,1.4fr) 92px 64px 82px 108px 150px";
 
-function AssembliesTab({ bom }: { bom: JobBom }) {
+function AssembliesTab({ bom, onPartClick }: { bom: JobBom; onPartClick: (p: DrillablePart) => void }) {
   // Every assembly node key — for Expand/Collapse All + collapsed-by-default.
   const { pricedByKey, allKeys } = useMemo(() => {
     const priced = new Map<string, { priced: number; total: number }>();
@@ -367,9 +414,9 @@ function AssembliesTab({ bom }: { bom: JobBom }) {
                 </div>
 
                 {section.children.map((asm) => (
-                  <AssemblyRow key={asm.key} node={asm} depth={0} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} />
+                  <AssemblyRow key={asm.key} node={asm} depth={0} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} onPartClick={onPartClick} />
                 ))}
-                {section.parts.length > 0 && <PartsDetailTable parts={section.parts} depth={0} />}
+                {section.parts.length > 0 && <PartsDetailTable parts={section.parts} depth={0} onPartClick={onPartClick} />}
               </div>
             ))}
 
@@ -398,12 +445,14 @@ function AssemblyRow({
   collapsed,
   toggle,
   pricedByKey,
+  onPartClick,
 }: {
   node: BomNode;
   depth: number;
   collapsed: Set<string>;
   toggle: (key: string) => void;
   pricedByKey: Map<string, { priced: number; total: number }>;
+  onPartClick: (p: DrillablePart) => void;
 }) {
   const isOpen = !collapsed.has(node.key);
   const { text } = barClasses(node.stats.pct);
@@ -455,16 +504,16 @@ function AssemblyRow({
       {isOpen && (
         <div>
           {node.children.map((child) => (
-            <AssemblyRow key={child.key} node={child} depth={depth + 1} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} />
+            <AssemblyRow key={child.key} node={child} depth={depth + 1} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} onPartClick={onPartClick} />
           ))}
-          {node.parts.length > 0 && <PartsDetailTable parts={node.parts} depth={depth + 1} />}
+          {node.parts.length > 0 && <PartsDetailTable parts={node.parts} depth={depth + 1} onPartClick={onPartClick} />}
         </div>
       )}
     </div>
   );
 }
 
-function PartsDetailTable({ parts, depth }: { parts: BomPart[]; depth: number }) {
+function PartsDetailTable({ parts, depth, onPartClick }: { parts: BomPart[]; depth: number; onPartClick: (p: DrillablePart) => void }) {
   return (
     <div className="bg-sdc-gray-50/60" style={{ paddingLeft: `${depth * 18}px` }}>
       <div className="overflow-x-auto styled-scrollbar">
@@ -484,10 +533,22 @@ function PartsDetailTable({ parts, depth }: { parts: BomPart[]; depth: number })
           </thead>
           <tbody>
             {parts.map((p, i) => (
-              <tr key={`${p.id}-${i}`} className="border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/25">
+              <tr
+                key={`${p.id}-${i}`}
+                onClick={() => onPartClick(p)}
+                title="Open in Parts List · copies part #"
+                className="cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/25"
+              >
                 <td className="px-2 py-1.5"><StatusBadge status={p.status} /></td>
                 <td className="px-2 py-1.5 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</td>
-                <td className="px-2 py-1.5"><span className="font-mono text-[11px] font-semibold text-sdc-blue">{p.pn}</span></td>
+                <td className="px-2 py-1.5">
+                  <span className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-sdc-blue">
+                    {p.pn}
+                    <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
+                      <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
+                    </svg>
+                  </span>
+                </td>
                 <td className="px-2 py-1.5 text-[11px] text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
                 <td className="px-2 py-1.5 text-[11px] text-sdc-gray-600" title={p.manufacturer}>
                   <span className="line-clamp-1">{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>
@@ -527,17 +588,60 @@ const ALL_COLS: { key: ColKey; label: string; align?: "right" }[] = [
   { key: "status", label: "Status" },
 ];
 
-function PartsListTab({ parts }: { parts: FlatPart[] }) {
-  const [view, setView] = useState<"list" | "card">("list");
-  const [query, setQuery] = useState("");
-  const [status, setStatus] = useState<"all" | BomPart["status"]>("all");
-  const [category, setCategory] = useState("all");
-  const [manufacturer, setManufacturer] = useState("all");
-  const [supplier, setSupplier] = useState("all");
-  const [dateType, setDateType] = useState<"purchase" | "invoice">("purchase");
-  const [from, setFrom] = useState("");
-  const [to, setTo] = useState("");
+type PartsListState = {
+  view: "list" | "card";
+  setView: (v: "list" | "card") => void;
+  query: string;
+  setQuery: (v: string) => void;
+  status: "all" | BomPart["status"];
+  setStatus: (v: "all" | BomPart["status"]) => void;
+  category: string;
+  setCategory: (v: string) => void;
+  manufacturer: string;
+  setManufacturer: (v: string) => void;
+  supplier: string;
+  setSupplier: (v: string) => void;
+  dateType: "purchase" | "invoice";
+  setDateType: (v: "purchase" | "invoice") => void;
+  from: string;
+  setFrom: (v: string) => void;
+  to: string;
+  setTo: (v: string) => void;
+};
+
+function PartsListTab({
+  parts,
+  state,
+  drill,
+  onPartClick,
+}: {
+  parts: FlatPart[];
+  state: PartsListState;
+  drill: { key: string; nonce: number };
+  onPartClick: (p: DrillablePart) => void;
+}) {
+  const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo } = state;
   const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set());
+
+  // Drill effect — after a short delay, scroll the matching row into center and
+  // flash it. Keyed on `nonce` so re-drilling the same part re-fires. Uses the
+  // sdc-yellow-bg token for the flash (removed after ~1.8s).
+  const rootRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!drill.key) return;
+    const t = window.setTimeout(() => {
+      const el = rootRef.current?.querySelector<HTMLElement>(`[data-part-key="${drill.key}"]`);
+      if (!el) return;
+      el.scrollIntoView({ behavior: "smooth", block: "center" });
+      el.style.transition = "background-color 0.25s ease";
+      el.style.backgroundColor = "var(--sdc-yellow-bg)";
+      window.setTimeout(() => {
+        el.style.backgroundColor = "";
+      }, 1800);
+    }, 200);
+    return () => window.clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drill.nonce]);
 
   const distinct = useMemo(() => {
     const cats = new Set<string>();
@@ -577,8 +681,8 @@ function PartsListTab({ parts }: { parts: FlatPart[] }) {
   const visibleCols = ALL_COLS.filter((c) => !hidden.has(c.key));
 
   return (
-    <div className="flex flex-col gap-3">
-      <RiskCards parts={parts} />
+    <div ref={rootRef} className="flex flex-col gap-3">
+      <RiskCards parts={parts} onPartClick={onPartClick} />
 
       {/* Filter row */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sdc-border bg-white px-3 py-2.5 shadow-sm">
@@ -656,9 +760,9 @@ function PartsListTab({ parts }: { parts: FlatPart[] }) {
           No parts match the current filters.
         </p>
       ) : view === "list" ? (
-        <PartsTableView parts={filtered} cols={visibleCols} />
+        <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} />
       ) : (
-        <PartsCardView parts={filtered} />
+        <PartsCardView parts={filtered} onPartClick={onPartClick} />
       )}
     </div>
   );
@@ -670,7 +774,14 @@ function PartRowCells({ p, cols }: { p: FlatPart; cols: { key: ColKey; label: st
       case "qty":
         return <span className="text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</span>;
       case "pn":
-        return <span className="font-mono text-[11px] font-semibold text-sdc-blue">{p.pn}</span>;
+        return (
+          <span className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-sdc-blue">
+            {p.pn}
+            <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
+              <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
+            </svg>
+          </span>
+        );
       case "desc":
         return <span className="line-clamp-1 text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>;
       case "parent":
@@ -721,7 +832,7 @@ function PartRowCells({ p, cols }: { p: FlatPart; cols: { key: ColKey; label: st
   );
 }
 
-function PartsTableView({ parts, cols }: { parts: FlatPart[]; cols: { key: ColKey; label: string; align?: "right" }[] }) {
+function PartsTableView({ parts, cols, onPartClick }: { parts: FlatPart[]; cols: { key: ColKey; label: string; align?: "right" }[]; onPartClick: (p: DrillablePart) => void }) {
   return (
     <div className="overflow-x-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
       <div className="max-h-[74vh] overflow-y-auto styled-scrollbar">
@@ -735,7 +846,15 @@ function PartsTableView({ parts, cols }: { parts: FlatPart[]; cols: { key: ColKe
           </thead>
           <tbody>
             {parts.map((p, i) => (
-              <tr key={`${p.id}-${i}`} className="border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/25">
+              <tr
+                key={`${p.id}-${i}`}
+                data-part-key={String(p.id)}
+                data-pn={p.pn}
+                data-part-id={p.id}
+                onClick={() => onPartClick(p)}
+                title="Copy part # · locate row"
+                className="cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/25"
+              >
                 <PartRowCells p={p} cols={cols} />
               </tr>
             ))}
@@ -746,11 +865,18 @@ function PartsTableView({ parts, cols }: { parts: FlatPart[]; cols: { key: ColKe
   );
 }
 
-function PartsCardView({ parts }: { parts: FlatPart[] }) {
+function PartsCardView({ parts, onPartClick }: { parts: FlatPart[]; onPartClick: (p: DrillablePart) => void }) {
   return (
     <div className="grid max-h-[74vh] grid-cols-1 gap-2 overflow-y-auto styled-scrollbar sm:grid-cols-2 xl:grid-cols-3">
       {parts.map((p, i) => (
-        <div key={`${p.id}-${i}`} className="flex flex-col gap-2 rounded-lg border border-sdc-border bg-white p-3 shadow-sm">
+        <div
+          key={`${p.id}-${i}`}
+          data-part-key={String(p.id)}
+          data-pn={p.pn}
+          data-part-id={p.id}
+          onClick={() => onPartClick(p)}
+          className="flex cursor-pointer flex-col gap-2 rounded-lg border border-sdc-border bg-white p-3 shadow-sm hover:border-sdc-blue-100"
+        >
           <div className="flex items-start justify-between gap-2">
             <div className="min-w-0">
               <div className="font-mono text-[12px] font-semibold text-sdc-blue">{p.pn}</div>
@@ -777,7 +903,7 @@ function PartsCardView({ parts }: { parts: FlatPart[] }) {
 
 // ── Risk cards: Delivery Slip + No Purchase Order ────────────────────────────
 
-function RiskCards({ parts }: { parts: FlatPart[] }) {
+function RiskCards({ parts, onPartClick }: { parts: FlatPart[]; onPartClick: (p: DrillablePart) => void }) {
   const { recentlyReceived, noPo, noPoThisWeek, noPoOldest } = useMemo(() => {
     const now = Date.now();
     const recentCutoff = now - 14 * DAY;
@@ -822,7 +948,12 @@ function RiskCards({ parts }: { parts: FlatPart[] }) {
             <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No parts received in the last 14 days.</p>
           ) : (
             recentlyReceived.map((p, i) => (
-              <div key={`${p.id}-${i}`} className="grid grid-cols-[100px_1fr_auto] items-center gap-3 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0">
+              <div
+                key={`${p.id}-${i}`}
+                onClick={() => onPartClick(p)}
+                title="Copy part # · locate row"
+                className="grid cursor-pointer grid-cols-[100px_1fr_auto] items-center gap-3 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+              >
                 <span className="truncate font-mono text-[11px] font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
                 <span className="truncate text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
                 <span className="whitespace-nowrap font-mono text-[10px] font-semibold text-sdc-green-text">{fmtDate(p.receivedDate)}</span>
@@ -848,7 +979,12 @@ function RiskCards({ parts }: { parts: FlatPart[] }) {
             <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">All parts have purchase orders.</p>
           ) : (
             noPo.map((p, i) => (
-              <div key={`${p.id}-${i}`} className="grid grid-cols-[100px_1fr_auto_auto] items-center gap-3 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0">
+              <div
+                key={`${p.id}-${i}`}
+                onClick={() => onPartClick(p)}
+                title="Copy part # · locate row"
+                className="grid cursor-pointer grid-cols-[100px_1fr_auto_auto] items-center gap-3 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+              >
                 <span className="truncate font-mono text-[11px] font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
                 <span className="truncate text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
                 <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
