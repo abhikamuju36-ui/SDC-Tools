@@ -443,7 +443,7 @@ export default async function QuotedPage({
               {PHASE_GROUPS.flatMap((g) => {
                 const sections = visibleSectionsByPhase.get(g.phase) ?? [];
                 return sections.map((s) => (
-                  <th key={s.code} title={s.code} className="qc w-[40px] min-w-[40px] border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
+                  <th key={s.code} title={s.code} className="qc w-[40px] min-w-[40px] [overflow-wrap:anywhere] border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
                     {s.name}
                     <span className="block font-mono text-[10px] font-normal normal-case tracking-normal text-sdc-gray-400">
                       {s.code}
