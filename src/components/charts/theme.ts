@@ -12,7 +12,10 @@ export const SERIES = {
 const INK = "#12239e"; // sdc-navy — headings/values
 const MUTED = "#64748b"; // axis / secondary
 const GRID = "#eef1f5"; // recessive gridlines
-const FONT = "Inter, ui-sans-serif, system-ui, sans-serif";
+// Brand web font (Montserrat) so chart labels match the rest of the UI. The
+// webfont is loaded globally via next/font, so it's available to ECharts' SVG
+// text too; the system stack is the fallback until it loads.
+const FONT = "Montserrat, -apple-system, 'Segoe UI', system-ui, sans-serif";
 
 export { usd } from "@/components/ui/format";
 export function compact(n: number): string {

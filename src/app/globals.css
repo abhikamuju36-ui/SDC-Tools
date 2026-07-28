@@ -73,10 +73,11 @@
   --color-sdc-red-text: var(--sdc-red-text);
   --color-sdc-red-border: var(--sdc-red-border);
 
-  /* System-native body/mono stacks — crisper and instant-loading versus a
-     generic downloaded webapp font. Montserrat stays for headings only,
-     since that's the brand guide's actual requirement. */
-  --font-sans: -apple-system, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  /* Montserrat app-wide (body + headings) per the SDC Brand Guide — its
+     designated web-safe stand-in for the brand print font (Core Sans NR). The
+     system stack stays as the fallback until the webfont loads. Mono is left
+     as the OS monospace stack. */
+  --font-sans: var(--font-montserrat), -apple-system, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
   --font-mono: "SF Mono", "Cascadia Code", "Segoe UI Mono", Consolas, monospace;
   --font-heading: var(--font-montserrat);
 

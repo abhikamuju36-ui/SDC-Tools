@@ -3,12 +3,13 @@ import { Montserrat } from "next/font/google";
 import "./globals.css";
 import SessionProvider from "@/components/SessionProvider";
 
-// Web/social headline font per the SDC Brand Guide — closest web-safe match to
-// the brand's print font (Core Sans NR). Body/mono text uses the OS's native
-// font stack instead (see globals.css) — crisper and no download needed.
+// The SDC Brand Guide's web font — Montserrat is the guide's designated
+// closest web-safe match to the brand print font (Core Sans NR), used app-wide
+// (body + headings) so the UI is typographically on-brand and consistent.
+// Body weights (400/500) plus headline weights (600/700).
 const montserrat = Montserrat({
   variable: "--font-montserrat",
-  weight: ["600", "700"],
+  weight: ["400", "500", "600", "700"],
   subsets: ["latin"],
 });
 
