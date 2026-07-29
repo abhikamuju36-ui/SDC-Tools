@@ -27,6 +27,32 @@ const FILE_PATH = "Project Planner V2/Job Hours Report/Job Hours From Paylocity/
 
 let pca: PublicClientApplication | null = null;
 
+// The cache is encrypted with Windows DPAPI under DataProtectionScope.CurrentUser,
+// so it can only be decrypted by the same Windows account that ran the login AND
+// only from a session where that account's profile — and therefore its DPAPI
+// master keys — are actually loaded. A process running in Windows' session 0
+// (e.g. a PM2 daemon started as a service rather than from an interactive
+// logon) cannot reach those keys and fails here with a bare
+// "Encryption/Decryption failed. Error code: 3" (Win32 ERROR_PATH_NOT_FOUND),
+// which names neither the file nor the real cause.
+//
+// This is not hypothetical: that exact failure silently killed every hours and
+// parts sync from 2026-07-24 to 2026-07-29 — the ETC header kept showing the
+// last good "Hours Refreshed Thru" date the whole time, so the numbers quietly
+// aged instead of anything surfacing. Translate it into something a reader can
+// act on.
+function explainTokenCacheFailure(err: unknown): Error {
+  const msg = err instanceof Error ? err.message : String(err);
+  if (!/Encryption\/Decryption failed/i.test(msg)) return err instanceof Error ? err : new Error(msg);
+  return new Error(
+    `Cannot decrypt the SharePoint/Graph token cache at ${CACHE_PATH} (${msg}). ` +
+      "That cache is DPAPI-encrypted for the Windows user who ran `sdc-powerbi-mcp.exe login`, " +
+      "and is only readable from that user's own logged-on session. This process is most likely " +
+      "running in Windows session 0 or as a different account — check that PM2 was started from " +
+      "an interactive session for that user, rather than as a service."
+  );
+}
+
 async function getGraphToken(): Promise<string> {
   if (!pca) {
     const persistence = await PersistenceCreator.createPersistence({
@@ -41,11 +67,23 @@ async function getGraphToken(): Promise<string> {
       cache: { cachePlugin: new PersistenceCachePlugin(persistence) },
     });
   }
-  const accounts = await pca.getTokenCache().getAllAccounts();
+  // Both of these read the encrypted cache off disk, so either can raise the
+  // DPAPI failure above.
+  let accounts;
+  try {
+    accounts = await pca.getTokenCache().getAllAccounts();
+  } catch (err) {
+    throw explainTokenCacheFailure(err);
+  }
   if (accounts.length === 0) {
     throw new Error("No cached login for SharePoint/Graph. Run `sdc-powerbi-mcp.exe login` once to authenticate this machine.");
   }
-  const result = await pca.acquireTokenSilent({ account: accounts[0], scopes: ["https://graph.microsoft.com/.default"] });
+  let result;
+  try {
+    result = await pca.acquireTokenSilent({ account: accounts[0], scopes: ["https://graph.microsoft.com/.default"] });
+  } catch (err) {
+    throw explainTokenCacheFailure(err);
+  }
   if (!result?.accessToken) throw new Error("Failed to acquire Microsoft Graph token silently.");
   return result.accessToken;
 }

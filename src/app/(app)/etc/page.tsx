@@ -477,7 +477,7 @@ export default async function MonthlyEtcPage({
     }),
     auth(),
     prisma.jobMonthlyActualHours.findFirst({ orderBy: { syncedAt: "desc" }, select: { syncedAt: true } }),
-    prisma.powerBiFreshness.findUnique({ where: { source: "hours_actual" }, select: { refreshedThrough: true } }),
+    prisma.powerBiFreshness.findUnique({ where: { source: "hours_actual" }, select: { refreshedThrough: true, status: true, checkedAt: true } }),
   ]);
   const role = (session?.user as { role?: string } | undefined)?.role;
 
@@ -767,6 +767,18 @@ export default async function MonthlyEtcPage({
           {distinctMonths.length === 0 && <> · no ETC history yet</>}
         </span>
       </div>
+
+      {/* A failing hours feed used to be invisible here: the "Hours Refreshed
+          Thru" date above just stopped advancing while every number on the page
+          quietly aged. Say so plainly instead — these are the hours managers
+          submit a month against. */}
+      {hoursActualFreshness?.status?.startsWith("Failed") && (
+        <p className="mb-4 rounded-lg border border-sdc-red-border bg-sdc-red-bg px-3 py-2 text-xs text-sdc-red-text">
+          <strong>Hours data may be stale.</strong> The last sync from Paylocity/SharePoint failed
+          {hoursActualFreshness.checkedAt ? ` (${hoursActualFreshness.checkedAt.toISOString().slice(0, 16).replace("T", " ")})` : ""}
+          , so Hours Worked below may not reflect recent time entries. {hoursActualFreshness.status.replace(/^Failed:\s*/, "")}
+        </p>
+      )}
 
       <p className="mb-4 text-xs text-sdc-gray-400">
         {!started

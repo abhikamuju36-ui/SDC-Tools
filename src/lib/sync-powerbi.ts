@@ -435,9 +435,33 @@ async function syncHoursRefreshedThrough(rows: JobHoursRow[]): Promise<void> {
 
   await prisma.powerBiFreshness.upsert({
     where: { source: "hours_actual" },
-    update: { refreshedThrough: new Date(refreshedThrough), checkedAt: new Date() },
+    // status: null clears any previously recorded failure — this pull just
+    // proved the feed is healthy again.
+    update: { refreshedThrough: new Date(refreshedThrough), checkedAt: new Date(), status: null },
     create: { source: "hours_actual", refreshedThrough: new Date(refreshedThrough) },
   });
+}
+
+// Records that an hours sync FAILED, so the staleness is visible in the app
+// instead of only in a console log nobody reads. Without this, a broken feed
+// leaves the last good "Hours Refreshed Thru" date sitting in the ETC header
+// looking authoritative while the numbers behind it quietly age (exactly what
+// happened 2026-07-24..29 — see sharepoint-hours.ts).
+//
+// Deliberately update-only, never create: refreshedThrough is required and a
+// failed pull has no date to put there. If the row doesn't exist yet the feed
+// has simply never succeeded, and there's no stale figure to warn about.
+// Best-effort — a logging failure must never mask the original sync error.
+export async function recordHoursSyncFailure(err: unknown): Promise<void> {
+  const message = err instanceof Error ? err.message : String(err);
+  try {
+    await prisma.powerBiFreshness.updateMany({
+      where: { source: "hours_actual" },
+      data: { status: `Failed: ${message.slice(0, 300)}`, checkedAt: new Date() },
+    });
+  } catch {
+    // swallow — the caller is already reporting the real error
+  }
 }
 
 interface HoursEstimatedRow {

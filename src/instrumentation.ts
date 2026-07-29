@@ -13,7 +13,7 @@ export async function register() {
   if (g.__pbiAutoSyncStarted) return;
   g.__pbiAutoSyncStarted = true;
 
-  const { syncActualHours, syncHoursWorked, syncPartsCost } = await import("@/lib/sync-powerbi");
+  const { syncActualHours, syncHoursWorked, syncPartsCost, recordHoursSyncFailure } = await import("@/lib/sync-powerbi");
   const { prisma } = await import("@/lib/prisma");
   const { isMonthLocked } = await import("@/lib/etc");
 
@@ -30,6 +30,9 @@ export async function register() {
       );
     } catch (err) {
       console.error("[auto-sync] Actual hours sync failed:", err);
+      // Surface it in the app too — a console-only failure is invisible to the
+      // managers reading (now-stale) hours on the ETC page.
+      await recordHoursSyncFailure(err);
     }
 
     // Keep the current (latest, unlocked) ETC month live — the same pulls a
