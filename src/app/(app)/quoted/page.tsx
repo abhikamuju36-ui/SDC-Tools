@@ -19,8 +19,8 @@ import { AddProjectButton } from "@/components/AddProjectButton";
 import { NewProjectRows } from "@/components/NewProjectRows";
 import { DateCell } from "@/components/DateCell";
 import { SaveQuotedHoursButton } from "@/components/SaveQuotedHoursButton";
-import { SchedulerJobLink } from "@/components/SchedulerJobLink";
-import { getSchedulerLinkContext } from "@/lib/scheduler-link";
+import { JobCellMenu } from "@/components/JobCellMenu";
+import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
 import { saveQuotedHours } from "@/lib/quoted-actions";
 
 // Header banding, matching the real "Estimated Hours" tab's column colors
@@ -345,7 +345,12 @@ export default async function QuotedPage({
       </div>
 
       <DragScroll className="max-h-[calc(100vh-170px)] min-w-[480px] overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm select-none styled-scrollbar">
-        <table className={`w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
+        {/* quiet-controls: hide the per-row dropdown chevrons (Type/Billable/
+            Status) and date calendar icons until the cell is hovered/focused —
+            see globals.css. Scoped to this table so other grids (Employees)
+            keep their always-visible affordances. Also covers the NewProjectRows
+            rows, which render into this same tbody. */}
+        <table className={`quiet-controls w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
           <thead className="sticky top-0 z-20 bg-sdc-gray-100">
             <tr className={TABLE_HEADER_ROW}>
               <th rowSpan={3} className="frozen-col sticky left-0 z-10 w-8 min-w-8 bg-sdc-gray-100 px-1 py-2 text-center align-bottom">
@@ -587,19 +592,33 @@ export default async function QuotedPage({
                   <td className={`frozen-col sticky left-0 z-10 w-8 min-w-8 overflow-hidden px-1 py-1.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}>
                     {i + 1}
                   </td>
-                  <td
-                    title={`Open ${job.jobId} in Job Hour Details`}
+                  {/* Left-click keeps its direct Job Hour Details link (this
+                      column's long-standing behavior); right-click adds the same
+                      menu the Job cell has, so the Scheduler is reachable here
+                      too. */}
+                  <JobCellMenu
+                    jobId={job.jobId}
+                    jobName={job.jobName}
+                    schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId) : null}
+                    title={`Open ${job.jobId} in Job Hour Details — right-click for more`}
                     className={`frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden truncate px-2 py-1.5 text-center font-mono text-[10px] ${zebraSticky}`}
                   >
                     <Link href={`/job-hours?jobs=${encodeURIComponent(job.jobId)}`} className="font-semibold text-sdc-blue-dark hover:underline">
                       {job.jobId}
                     </Link>
-                  </td>
+                  </JobCellMenu>
                   {show("job") && (
-                    <td
+                    // The Job Hour Details / Scheduler icon-links that used to
+                    // sit here moved into JobCellMenu's right-click menu — same
+                    // two destinations, without an icon pair on every row.
+                    <JobCellMenu
+                      jobId={job.jobId}
+                      jobName={job.jobName}
+                      schedulerUrl={
+                        schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId) : null
+                      }
                       style={{ width: "var(--job-col-width, 280px)", minWidth: "var(--job-col-width, 280px)" }}
                       className={`frozen-col frozen-col-last sticky left-[7rem] z-10 overflow-hidden border-l border-r border-sdc-border px-2 py-1.5 text-left align-middle text-[10px] font-medium whitespace-nowrap text-sdc-navy ${zebraSticky}`}
-                      title={job.jobName}
                     >
                       <div className="flex min-h-[14px] min-w-0 items-center gap-1">
                         <input
@@ -609,27 +628,8 @@ export default async function QuotedPage({
                           aria-label={`Job Name, ${job.jobName}`}
                           className="w-full min-w-0 flex-1 text-left"
                         />
-                        <Link
-                          href={`/job-hours?jobs=${encodeURIComponent(job.jobId)}`}
-                          title={`Open ${job.jobName} in Job Hour Details`}
-                          aria-label={`Open ${job.jobName} in Job Hour Details`}
-                          className="shrink-0 text-sdc-gray-400 hover:text-sdc-blue"
-                        >
-                          <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6">
-                            <line x1="2" y1="14" x2="14" y2="14" strokeLinecap="round" />
-                            <rect x="2.5" y="8" width="2.5" height="5" rx="0.5" />
-                            <rect x="6.75" y="4.5" width="2.5" height="8.5" rx="0.5" />
-                            <rect x="11" y="6.5" width="2.5" height="6.5" rx="0.5" />
-                          </svg>
-                        </Link>
-                        <SchedulerJobLink
-                          jobId={job.jobId}
-                          jobName={job.jobName}
-                          baseUrl={schedulerBaseUrl}
-                          available={schedulerJobNumbers.has(job.jobId)}
-                        />
                       </div>
-                    </td>
+                    </JobCellMenu>
                   )}
                   {show("customer") && (
                     <td

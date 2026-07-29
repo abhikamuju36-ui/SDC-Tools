@@ -31,8 +31,8 @@ import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/executio
 import { PageTitle } from "@/components/ui/Typography";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { MonthYearSelect } from "@/components/MonthYearSelect";
-import { SchedulerJobLink } from "@/components/SchedulerJobLink";
-import { getSchedulerLinkContext } from "@/lib/scheduler-link";
+import { JobCellMenu } from "@/components/JobCellMenu";
+import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, TABLE_HEADER_ROW, TABLE_GRID } from "@/components/ui/classnames";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
@@ -819,14 +819,17 @@ export default async function MonthlyEtcPage({
                   </th>
                   {/* When Job Name is hidden, the heavy grey divider before
                       the section blocks moves onto Job Id instead. */}
-                  <th rowSpan={5} className={`sticky left-10 z-10 w-20 min-w-20 bg-sdc-gray-100 px-3 py-3 align-bottom ${showJobName ? "" : "border-r-8 border-[#808080]"}`}>
+                  {/* text-left overrides TABLE_HEADER_ROW's text-center on the
+                      <tr>, so these two headers line up with their now
+                      left-aligned values. */}
+                  <th rowSpan={5} className={`sticky left-10 z-10 w-20 min-w-20 bg-sdc-gray-100 px-3 py-3 text-left align-bottom ${showJobName ? "" : "border-r-8 border-[#808080]"}`}>
                     Job Id
                   </th>
                   {showJobName && (
                     <th
                       rowSpan={5}
                       style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
-                      className="sticky left-[7.5rem] z-10 border-r-8 border-[#808080] bg-sdc-gray-100 px-3 py-3 align-bottom"
+                      className="sticky left-[7.5rem] z-10 border-r-8 border-[#808080] bg-sdc-gray-100 px-3 py-3 text-left align-bottom"
                     >
                       Job Name
                       <div
@@ -1027,23 +1030,35 @@ export default async function MonthlyEtcPage({
                   return (
                     <tr key={job.id} className={`hover:bg-sdc-blue-light/40 ${zebra}`}>
                       <td className={`sticky left-0 z-10 w-10 min-w-10 overflow-hidden px-2 py-1 text-center align-middle text-[10px] leading-none whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}>{jobIndex + 1}</td>
-                      <td className={`sticky left-10 z-10 w-20 min-w-20 overflow-hidden px-3 py-1 text-center align-middle font-mono text-[10px] leading-none whitespace-nowrap text-sdc-gray-400 ${showJobName ? "" : "border-r-8 border-[#808080]"} ${zebraSticky}`}>{job.jobId}</td>
+                      {/* Job Id and Job Name both carry the right-click menu
+                          (Job Hour Details / Project Schedule) — the same one the
+                          Projects grid uses. It replaced the inline Scheduler
+                          gantt icon that used to sit beside the job name. */}
+                      <JobCellMenu
+                        jobId={job.jobId}
+                        jobName={job.jobName}
+                        schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId) : null}
+                        title={`${job.jobId} — right-click for options`}
+                        className={`sticky left-10 z-10 w-20 min-w-20 overflow-hidden px-3 py-1 text-left align-middle font-mono text-[10px] leading-none whitespace-nowrap text-sdc-gray-400 ${showJobName ? "" : "border-r-8 border-[#808080]"} ${zebraSticky}`}
+                      >
+                        {job.jobId}
+                      </JobCellMenu>
                       {showJobName && (
-                        <td
+                        <JobCellMenu
+                          jobId={job.jobId}
+                          jobName={job.jobName}
+                          schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId) : null}
                           style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
-                          className={`sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] px-3 py-1 text-center align-middle text-[10px] font-medium leading-none whitespace-nowrap text-sdc-navy ${zebraSticky}`}
-                          title={job.jobName}
+                          className={`sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] px-3 py-1 text-left align-middle text-[10px] font-medium leading-none whitespace-nowrap text-sdc-navy ${zebraSticky}`}
                         >
-                          <div className="flex min-h-[14px] min-w-0 items-center justify-center gap-1.5">
+                          {/* min-h keeps row heights identical to the Projects
+                              grid now that no icon pads this cell (c51cd42).
+                              justify-start so the truncated name starts at the
+                              cell's left edge, matching text-left above. */}
+                          <div className="flex min-h-[14px] min-w-0 items-center justify-start gap-1.5">
                             <span className="min-w-0 truncate">{job.jobName}</span>
-                            <SchedulerJobLink
-                              jobId={job.jobId}
-                              jobName={job.jobName}
-                              baseUrl={schedulerBaseUrl}
-                              available={schedulerJobNumbers.has(job.jobId)}
-                            />
                           </div>
-                        </td>
+                        </JobCellMenu>
                       )}
                       {visibleCols.map((s, sIdx) => {
                         const edge = edgeFor(s.code, sIdx);

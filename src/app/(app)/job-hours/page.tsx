@@ -1,9 +1,12 @@
+import { prisma } from "@/lib/prisma";
 import { PageTitle } from "@/components/ui/Typography";
 import { card } from "@/components/ui/classnames";
 import { JobHoursDashboard } from "@/components/JobHoursDashboard";
 import { JobMultiSelect } from "@/components/JobMultiSelect";
 import { listDashboardJobs, getJobHoursDashboard, defaultDashboardJobId } from "@/lib/job-hours-dashboard";
 import { getJobPartsCost, type JobPartsCost } from "@/lib/sync-totaleto";
+import { getExecutionEtcByJob } from "@/lib/execution-etc";
+import { PartsCostSummary } from "@/components/PartsCostSummary";
 import { SchedulerJobLink } from "@/components/SchedulerJobLink";
 import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 import { getJobBom, type JobBom } from "@/lib/job-bom";
@@ -45,6 +48,8 @@ export default async function JobHoursPage({
   // Feeds the Procurement Parts List (joined to the BOM by part number).
   // Best-effort: a TotalETO hiccup must not take down the hours dashboard.
   let parts: JobPartsCost | null = null;
+  let partsEtc: number | null = null;
+  let partsBudget: number | null = null;
   if (data) {
     try {
       const perJob = await Promise.all(data.jobRefs.map((r) => getJobPartsCost(r.jobId).catch(() => null)));
@@ -55,6 +60,32 @@ export default async function JobHoursPage({
       parts = { purchased, paid, leftToPay: purchased - paid, lines };
     } catch {
       parts = null;
+    }
+    // "Estimated to Purchase" for the Parts Cost tiles = the parts New ETC for
+    // the latest ETC month, summed across the selected jobs. Restored alongside
+    // PartsCostSummary (it was dropped when the Procurement drawer replaced the
+    // old Parts Cost section). Best-effort, like the parts pull above.
+    if (data.kpis.latestEtcMonth) {
+      try {
+        const map = await getExecutionEtcByJob(data.jobRefs.map((r) => r.id), data.kpis.latestEtcMonth);
+        partsEtc = data.jobRefs.reduce((s, r) => s + (map.get(r.id)?.parts ?? 0), 0);
+      } catch {
+        partsEtc = null;
+      }
+    }
+    // "Part Cost Budget" — the report's [Part Cost Quoted] measure is
+    // SUM('Cost Estimated'[Cost Quoted]), and that same upstream table populates
+    // Job.costQuoted here (syncQuotedFromPowerBi reads EVALUATE 'Cost Estimated'),
+    // so summing it across the selected jobs is the same number.
+    try {
+      const rows = await prisma.job.findMany({
+        where: { id: { in: data.jobRefs.map((r) => r.id) } },
+        select: { costQuoted: true },
+      });
+      const total = rows.reduce((s, j) => s + Number(j.costQuoted ?? 0), 0);
+      partsBudget = total > 0 ? total : null; // no quote on file → hide the budget bar
+    } catch {
+      partsBudget = null;
     }
   }
 
@@ -117,6 +148,18 @@ export default async function JobHoursPage({
             )}
           </div>
           <JobHoursDashboard data={data} />
+
+          {/* Parts Cost money summary — sits between the hours charts above and
+              the Procurement drawer below, so the page reads hours → parts $ →
+              part-level detail. */}
+          {parts && (
+            <PartsCostSummary
+              purchased={parts.purchased}
+              paid={parts.paid}
+              estimatedToPurchase={partsEtc}
+              budget={partsBudget}
+            />
+          )}
 
           {/* Procurement — the two-tab (Assemblies / Parts List) drawer ported
               from the Build Readiness app. It's a per-single-job view (BOM tree +

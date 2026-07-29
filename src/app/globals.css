@@ -200,7 +200,10 @@ td > select {
   appearance: none;
   -webkit-appearance: none;
   -moz-appearance: none;
-  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  /* Held in a custom property so the .quiet-controls reveal rules below can
+   * re-apply the identical glyph without duplicating the data URI. */
+  --grid-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  background-image: var(--grid-select-chevron);
   background-repeat: no-repeat;
   background-position: right 0.15rem center;
   background-size: 7px 7px;
@@ -218,7 +221,13 @@ td > input[type="number"]:focus,
 td > select:focus {
   outline: 2px solid var(--sdc-blue);
   outline-offset: -2px;
-  background: #fff;
+  /* background-COLOR, not the `background` shorthand: the shorthand also resets
+   * background-image/position/repeat/size, and at this rule's higher
+   * specificity it silently clobbered the chevron geometry set on `td > select`
+   * above — a focused select re-drew its arrow tiled from the left edge, over
+   * its own text (seen live on the Projects Status/Billable columns). Only the
+   * fill color should change on focus. */
+  background-color: #fff;
   box-shadow: none !important;
 }
 
@@ -286,6 +295,54 @@ input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
   opacity: 0;
 }
 input[type="date"].date-empty:focus::-webkit-datetime-edit-fields-wrapper {
+  opacity: 1;
+}
+
+/* --- "Quiet controls" (.quiet-controls on a table) -----------------------
+ * Opted into by the Projects grid only. The Type/Billable/Status dropdown
+ * chevrons and the Start/Complete Date calendar icons repeat on every single
+ * row, so at 40+ rows the column reads as a wall of widget chrome instead of
+ * data. Here they're hidden until the user actually interacts with the cell —
+ * hover it or focus the control — at which point the affordance comes back.
+ *
+ * Nothing is ever disabled or removed from the layout, which is the whole
+ * point: `background-image: none` on a select doesn't affect its behavior
+ * (clicking anywhere on an appearance:none select still opens the dropdown),
+ * and the calendar indicator is hidden with `opacity: 0` rather than
+ * `display: none`/`visibility: hidden` so it keeps its box AND keeps
+ * hit-testing — the click that opens the date picker lands on it exactly as
+ * before, visible or not. Reserved padding/width are left untouched too, so
+ * revealing an icon never shifts the row.
+ *
+ * WebKit/Chromium only for the calendar indicator (same caveat as the
+ * date-empty rules above); Firefox keeps its native icon. */
+.quiet-controls td > select {
+  background-image: none;
+}
+/* Geometry is re-declared here, not inherited from `td > select` — any rule
+ * that uses the `background` shorthand at a competing specificity (e.g. the
+ * :focus rule above) resets position/repeat/size, and re-adding only the image
+ * then paints it tiled from the left over the value. Self-contained = one
+ * chevron, pinned right, in every state. */
+.quiet-controls td:hover > select,
+.quiet-controls td > select:focus {
+  background-image: var(--grid-select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 0.15rem center;
+  background-size: 7px 7px;
+}
+.quiet-controls td > input[type="date"]::-webkit-calendar-picker-indicator {
+  opacity: 0;
+}
+.quiet-controls td:hover > input[type="date"]::-webkit-calendar-picker-indicator,
+.quiet-controls td > input[type="date"]:focus::-webkit-calendar-picker-indicator {
+  opacity: 1;
+}
+/* An empty date cell would otherwise be completely blank (the .date-empty rule
+ * hides the mm/dd/yyyy segments, and now the icon is hidden too) — with no hint
+ * it's editable at all. Hovering the cell brings the segments back alongside
+ * the icon, matching the focus behavior that already existed. */
+.quiet-controls td:hover > input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
   opacity: 1;
 }
 

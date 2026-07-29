@@ -17,7 +17,9 @@ const GRID = "#eef1f5"; // recessive gridlines
 // text too; the system stack is the fallback until it loads.
 const FONT = "Montserrat, -apple-system, 'Segoe UI', system-ui, sans-serif";
 
-export { usd } from "@/components/ui/format";
+// Imported (not just re-exported) so the option builders below can call it.
+import { usd } from "@/components/ui/format";
+export { usd };
 export function compact(n: number): string {
   return Math.round(n).toLocaleString();
 }
@@ -29,6 +31,113 @@ export function compact(n: number): string {
 const DIFF_GREEN = "#15803d"; // under (Quoted − Actual > 0)
 const DIFF_RED = "#dc2626"; // over
 const DIFF_GRAY = "#94a3b8"; // even
+
+// Horizontal single-series bar chart for the Parts Cost money measures
+// (Purchased / Estimated to Purchase / Paid / Left to Pay) — the replacement for
+// the Power BI report's gauge.
+//
+// Why a bar chart and not the gauge: the gauge plotted Purchased against the
+// Part Cost BUDGET, so a $20K spend on a $600K job rendered as an unreadable
+// sliver with its axis labels stacked on top of each other, and a gauge can only
+// ever show one value against one target — not these four side by side.
+//
+// Why the budget is NOT a fifth bar: at $600K vs ~$20K it would compress the
+// other three to invisible slivers, which is the same failure in a new shape.
+// Two measures of that different a scale belong in two visuals, so the
+// budget is rendered separately as a share-of-budget progress bar.
+//
+// HORIZONTAL because the category names are long ("Estimated to Purchase") —
+// vertical would need rotated labels.
+//
+// Per-bar colors mirror the Power BI report's own table, where the measure NAMES
+// are colored: Part Cost Purchased in blue, Part Cost Paid in green, and the two
+// derived rows (Estimated to Purchase, Left to Pay) in plain black. Keeping that
+// mapping means the two views read the same way to people who use both. Values
+// come from this app's tokens rather than eyedropped from the report, so the
+// page stays internally consistent — PAID_GREEN is the same green the Paid KPI
+// card's bullet already uses.
+//
+// Color is REDUNDANT here, never the only channel: every bar carries its own
+// axis label plus a direct value label, so the blue/green/neutral distinction is
+// reinforcement rather than the sole way to tell the rows apart. Still no legend
+// — one series, and each bar is named on the axis.
+// Validated with the dataviz palette validator (light surface):
+//   #408bf7 / #475569 / #15803d — lightness band PASS, CVD separation PASS
+//   (worst adjacent green↔slate ΔE 13.1 deutan, 10.9 tritan — target is ≥8),
+//   normal-vision floor PASS (17.3), contrast PASS (all ≥ 3:1).
+// The validator's "chroma floor" check FAILS on the slate, which is expected and
+// correct: that check exists to catch accidentally-muddy categorical hues, and
+// this one is a DELIBERATE neutral standing in for the report's plain-black rows.
+// A darker #334155 separates better still but falls outside the lightness band;
+// lighter greys (#52627a, #64748b) drop tritan separation to 6–7, into the floor
+// band. #475569 is the pick that passes every check that applies.
+export const PARTS_BAR = {
+  purchased: SERIES.planned, // blue — matches the two hours charts above
+  paid: "#15803d", // green — same token as IndicatorCard's Paid bullet
+  neutral: "#475569", // slate — the report's plain-black rows
+} as const;
+
+export function partsCostBarOption(rows: { label: string; value: number; color?: string }[]): EChartsOption {
+  return {
+    color: [SERIES.planned], // fallback only; per-bar colors are set on each datum
+    textStyle: { fontFamily: FONT },
+    // Extra right room so the longest direct value label can't clip, and a real
+    // left inset because at left:8 the first character of the longest category
+    // label was being shaved off (seen live on "Estimated to Purchase").
+    grid: { top: 8, left: 14, right: 78, bottom: 4, containLabel: true },
+    tooltip: {
+      trigger: "axis",
+      axisPointer: { type: "shadow", shadowStyle: { color: "rgba(17,141,255,0.06)" } },
+      backgroundColor: "#ffffff",
+      borderColor: GRID,
+      borderWidth: 1,
+      padding: [8, 12],
+      textStyle: { color: "#0f172a", fontSize: 12 },
+      extraCssText: "box-shadow:0 8px 24px rgba(6,29,57,0.12); border-radius:10px;",
+      formatter: (params: unknown) => {
+        const p = (params as { name: string; value: number }[])[0];
+        if (!p) return "";
+        return `<div style="font-weight:600;color:${INK};margin-bottom:2px">${p.name}</div><b style="color:${INK}">${usd(Number(p.value) || 0)}</b>`;
+      },
+    },
+    xAxis: {
+      type: "value",
+      splitLine: { lineStyle: { color: GRID } },
+      axisLabel: { color: MUTED, fontSize: 11, formatter: (v: number) => usd(v) },
+    },
+    yAxis: {
+      type: "category",
+      // ECharts stacks category 0 at the BOTTOM on a horizontal bar chart;
+      // reversing keeps the rows in the order they're passed (Purchased first).
+      data: rows.map((r) => r.label).reverse(),
+      axisLine: { lineStyle: { color: GRID } },
+      axisTick: { show: false },
+      axisLabel: { color: MUTED, fontSize: 11 },
+    },
+    series: [
+      {
+        type: "bar",
+        // One array of {value, itemStyle} objects rather than parallel value and
+        // color arrays: both have to survive the same .reverse() as the axis
+        // labels, and keeping them in a single datum makes it impossible for a
+        // bar to end up wearing another row's color.
+        data: rows.map((r) => ({ value: r.value, itemStyle: { color: r.color ?? PARTS_BAR.purchased } })).reverse(),
+        barMaxWidth: 18,
+        // Rounded data-end only (the baseline end stays square). Series-level, so
+        // each datum only has to carry its color.
+        itemStyle: { borderRadius: [0, 4, 4, 0] },
+        label: {
+          show: true,
+          position: "right",
+          color: INK,
+          fontSize: 11,
+          fontWeight: "bold",
+          formatter: (p: unknown) => usd(Number((p as { value?: number }).value) || 0),
+        },
+      },
+    ],
+  };
+}
 
 export function groupedBarOption(opts: {
   categories: string[];

@@ -9,11 +9,13 @@ export default function AppShell({
   userEmail,
   role,
   signOutAction,
+  schedulerProjectsUrl,
 }: {
   children: React.ReactNode;
   userEmail?: string | null;
   role?: string;
   signOutAction: () => Promise<void>;
+  schedulerProjectsUrl?: string;
 }) {
   return (
     <div className="flex min-h-screen">
@@ -25,7 +27,7 @@ export default function AppShell({
       >
         Skip to content
       </a>
-      <Sidebar userEmail={userEmail} role={role} signOutAction={signOutAction} />
+      <Sidebar userEmail={userEmail} role={role} signOutAction={signOutAction} schedulerProjectsUrl={schedulerProjectsUrl} />
       <main id="main-content" className="min-w-0 flex-1 bg-background">
         <ToastProvider>{children}</ToastProvider>
       </main>
