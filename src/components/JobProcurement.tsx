@@ -223,7 +223,7 @@ function ReadinessBar({ pct, width = "w-full" }: { pct: number; width?: string }
       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-sdc-gray-100">
         <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
       </div>
-      <span className={`w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums ${text}`}>{pct}%</span>
+      <span className={`w-9 shrink-0 text-right text-[11px] font-bold tabular-nums ${text}`}>{pct}%</span>
     </div>
   );
 }
@@ -262,7 +262,7 @@ function isInHouse(manufacturer: string | null | undefined, supplier: string | n
 function sectionLabelFor(section: BomNode): string {
   const specId = typeof section.id === "string" ? Number(section.id.replace(/\D/g, "")) : Number(section.id);
   const title = SECTION_LABEL_OVERRIDE[specId] ?? section.desc ?? "";
-  return `Spec ${specId}${title ? ` — ${title}` : ""}`;
+  return `Section ${specId}${title ? ` — ${title}` : ""}`;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -617,8 +617,9 @@ function TabChip({ active, onClick, label, count }: { active: boolean; onClick: 
 // Assemblies tab
 // ═════════════════════════════════════════════════════════════════════════════
 
-// Grid template shared by the dark header + every assembly row so columns align.
-const ASM_GRID = "minmax(220px,1.5fr) minmax(150px,1.4fr) 92px 64px 82px 108px 150px";
+// Grid template shared by every assembly row (Scheduler layout — no header row):
+// Assembly · Desc · Priced · Rcvd/Total · Material $ · Readiness
+const ASM_GRID = "minmax(220px,1.5fr) minmax(150px,1.4fr) 92px 72px 108px 150px";
 
 function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClick: (p: DrillablePart) => void; onOpenPo: (supplier: string | null, poNumber: string | null) => void }) {
   const now = useMemo(() => Date.now(), []);
@@ -667,26 +668,12 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
 
       <DragScroll className="max-h-[78vh] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
         <div className="min-w-[846px]">
-          {/* Dark header row — sticky to the single scroll container */}
-          <div
-            className="sticky top-0 z-[2] grid items-center gap-3 bg-sdc-navy px-3 py-2 text-[9px] font-bold uppercase tracking-wider text-white"
-            style={{ gridTemplateColumns: ASM_GRID }}
-          >
-            <span>Assembly</span>
-            <span>Desc</span>
-            <span className="text-right">Rcvd · Total</span>
-            <span className="text-right">No PO</span>
-            <span className="text-right">Priced</span>
-            <span className="text-right">Material $</span>
-            <span>Readiness %</span>
-          </div>
-
           {bom.roots.map((section) => (
             <div key={section.key}>
               {/* Light section header with material-$ subtotal on the right */}
               <div className="flex items-center justify-between gap-2 border-y border-sdc-border-soft bg-sdc-gray-100 px-4 py-2">
                 <span className="text-[13px] font-bold text-sdc-navy">{sectionLabelFor(section)}</span>
-                <span className="whitespace-nowrap text-xs font-semibold text-sdc-gray-600 tabular-nums">
+                <span className="whitespace-nowrap text-xs font-bold text-sdc-gray-600 tabular-nums">
                   {usd(section.totalCost)}
                 </span>
               </div>
@@ -753,29 +740,25 @@ function AssemblyRow({
               <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </span>
-          <span className="shrink-0 truncate rounded bg-sdc-blue px-1.5 py-0.5 font-mono text-[11px] font-semibold text-white" title={node.pn}>
+          <span className="shrink-0 truncate font-mono text-[11px] font-bold text-sdc-blue" title={node.pn}>
             {node.pn || "—"}
           </span>
         </div>
         {/* Description */}
-        <div className="min-w-0 truncate text-[12px] font-medium text-sdc-navy" title={node.desc || node.label}>
+        <div className="min-w-0 truncate text-[13px] font-bold text-sdc-navy" title={node.desc || node.label}>
           {node.desc || node.label || "—"}
-          {node.children.length ? <span className="ml-1 text-[10px] font-normal text-sdc-gray-400">· {node.children.length} sub-assy</span> : null}
+          {node.children.length ? <span className="ml-1 text-[10px] font-medium text-sdc-gray-400">· {node.children.length} sub-assy</span> : null}
         </div>
-        {/* Rcvd · Total */}
-        <span className="text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">
-          <span className={text}>{node.stats.received}</span> · {node.stats.total}
-        </span>
-        {/* No PO */}
-        <span className={`text-right text-[11px] font-semibold tabular-nums ${node.stats.noPO ? "text-sdc-red-text" : "text-sdc-gray-400"}`}>
-          {node.stats.noPO || "—"}
-        </span>
         {/* Priced */}
-        <span className="text-right text-[11px] tabular-nums text-sdc-gray-600">
-          {priced.priced}/{priced.total}
+        <span className="text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600" title="Parts with a price">
+          {priced.priced}/{priced.total} parts
+        </span>
+        {/* Rcvd / Total */}
+        <span className="text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600" title="Received / total parts">
+          <span className={`font-bold ${text}`}>{node.stats.received}</span>/{node.stats.total}
         </span>
         {/* Material $ */}
-        <span className="text-right text-[11px] font-semibold tabular-nums text-sdc-navy">
+        <span className="text-right text-[13px] font-bold tabular-nums text-sdc-navy">
           {node.totalCost ? usd(node.totalCost) : "—"}
         </span>
         {/* Readiness */}
@@ -808,24 +791,11 @@ function PartsDetailTable({
   now: number;
 }) {
   return (
-    <div className="bg-sdc-gray-50/60" style={{ paddingLeft: `${depth * 18}px` }}>
+    <div className="border-l-2 border-sdc-blue bg-sdc-gray-50/60" style={{ marginLeft: `${8 + depth * 18}px` }}>
       <div className="overflow-x-auto styled-scrollbar">
-        <table className="w-full min-w-[980px] border-collapse text-left">
-          <thead>
-            <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wider text-white">
-              <th className="px-2 py-1.5 font-bold">Status</th>
-              <th className="px-2 py-1.5 text-right font-bold">Qty</th>
-              <th className="px-2 py-1.5 font-bold">Part #</th>
-              <th className="px-2 py-1.5 font-bold">Desc</th>
-              <th className="px-2 py-1.5 font-bold">Mfr</th>
-              <th className="px-2 py-1.5 font-bold">Supplier</th>
-              <th className="px-2 py-1.5 font-bold">PO #</th>
-              <th className="px-2 py-1.5 font-bold">Req Date</th>
-              <th className="px-2 py-1.5 font-bold">Expected</th>
-              <th className="px-2 py-1.5 text-right font-bold">Unit $</th>
-              <th className="px-2 py-1.5 text-right font-bold">Extended</th>
-            </tr>
-          </thead>
+        {/* No header row — the Scheduler's procurement detail reads as a plain
+            part list under its assembly (each column is self-evident). */}
+        <table className="w-full min-w-[760px] border-collapse text-left">
           <tbody>
             {parts.map((p, i) => {
               const st = partStatus(p, now);
@@ -836,39 +806,35 @@ function PartsDetailTable({
                   title="Open in Parts List · copies part #"
                   className={`cursor-pointer border-b border-sdc-border-soft/60 ${STATUS_ROW_BG[st.key]}`}
                 >
-                  <td className="px-2 py-1.5"><StatusPill st={st} /></td>
-                  <td className="px-2 py-1.5 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</td>
+                  <td className="w-10 px-2 py-1.5 text-right text-[11px] font-bold tabular-nums text-sdc-gray-600" title={st.sub || st.label}>{num(p.qty)}</td>
                   <td className="px-2 py-1.5">
-                    <span className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-sdc-blue">
+                    <span className="inline-flex items-center gap-1 font-mono text-[11px] font-bold text-sdc-blue">
                       {p.pn}
                       <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
                         <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
                       </svg>
                     </span>
                   </td>
-                  <td className="px-2 py-1.5 text-[11px] text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
-                  <td className="px-2 py-1.5 text-[11px] text-sdc-gray-600" title={p.manufacturer}>
+                  <td className="px-2 py-1.5 text-[11px] font-semibold text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
+                  <td className="px-2 py-1.5 text-[11px] font-semibold text-sdc-gray-600" title={p.manufacturer}>
                     <span className="line-clamp-1">{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>
                   </td>
-                  <td className="px-2 py-1.5 text-[11px] text-sdc-gray-600"><SupplierChip supplier={p.supplier} /></td>
                   <td className="px-2 py-1.5">
                     {p.poId ? (
                       <button
                         type="button"
                         onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poId); }}
                         title="View PO"
-                        className="font-mono text-[10px] font-semibold text-sdc-blue underline decoration-dotted underline-offset-2"
+                        className="font-mono text-[10px] font-bold text-sdc-blue underline decoration-dotted underline-offset-2"
                       >
                         {p.poId}
                       </button>
                     ) : (
-                      <span className="text-[10px] font-semibold text-sdc-red-text">NO PO</span>
+                      <span className="text-[10px] font-bold text-sdc-red-text">NO PO</span>
                     )}
                   </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.expectedDate)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-[10px] text-sdc-gray-600">{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-[10px] font-semibold text-sdc-navy">{p.unitPrice > 0 ? usd(p.unitPrice * p.qty) : "—"}</td>
+                  <td className="px-2 py-1.5 text-right font-mono text-[11px] font-semibold text-sdc-gray-600" title={`Required ${fmtDate(p.requiredDate)} · Expected ${fmtDate(p.expectedDate)}`}>{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
+                  <td className="px-2 py-1.5 text-right font-mono text-[11px] font-bold text-sdc-navy">{p.unitPrice > 0 ? usd(p.unitPrice * p.qty) : "—"}</td>
                 </tr>
               );
             })}
