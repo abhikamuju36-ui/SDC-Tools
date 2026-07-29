@@ -54,17 +54,27 @@ const ZOOM_CONTROLS = "[&_td]:py-[var(--quoted-row-py,6px)] [&_.qc]:px-[var(--qu
 // `w-[40px] min-w-[40px]` only set a floor, so each column still stretched to
 // its own content and no two matched; these three properties together pin it.
 //
-// 4.6rem is measured, not guessed. At the app's table text size (0.68rem, see
-// globals.css) the longest single header word — "Drawings" — renders 57.5px,
-// and the widest quoted/actual pair a cell shows with Actuals on is ~60px;
-// plus px-1 padding both land under 4.6rem (69px at the 15px default root).
-// That's what lets header words wrap only at spaces ("Design &" / "Drawings")
-// instead of shattering mid-word into "DR AWI NGS".
+// The width is `content + padding`, not a flat number, because the Grid Size
+// control drives this column's horizontal padding (--quoted-col-px) anywhere
+// from 0 to 16px per side. A flat width would hand the same box to a 4px and a
+// 16px padding and let the larger one crush the text — and, since the width is
+// pinned with max-width, the column could no longer grow to absorb it the way
+// the old min-width-only rule did. Folding the padding into the width instead
+// keeps the CONTENT box constant at 4.7rem at every density, so raising Grid
+// Size genuinely widens the column (what it says it does) rather than
+// squeezing the words inside it.
+//
+// 4.7rem is measured against the real font, which matters more than it sounds:
+// the app renders in Montserrat, where the longest header word "SOFTWARE" is
+// 69.2px at the grid's 0.68rem text — 23% wider than the same string in the
+// -apple-system/Segoe fallback (56.3px). Measuring in the fallback is exactly
+// how this column got sized too narrow the first time, so if these names ever
+// change, re-measure in Montserrat.
 //
 // Deliberately rem, not px: table text is 0.68rem and scales with the sidebar
-// "Text size" control, so a px width would start clipping words again the
+// "Text size" control, so a px width would start breaking words again the
 // moment anyone raised it — the same rem-vs-px trap the frozen columns hit.
-const DATA_COL = "var(--quoted-data-col-width, 4.6rem)";
+const DATA_COL = "calc(4.7rem + 2 * var(--quoted-col-px, 4px))";
 const DATA_COL_STYLE = { width: DATA_COL, minWidth: DATA_COL, maxWidth: DATA_COL } as const;
 
 // Group sub-bands: lighter SDC brand tints, each distinct, all drawn from the
@@ -524,8 +534,14 @@ export default async function QuotedPage({
             <tr className={TABLE_HEADER_ROW}>
               {PHASE_GROUPS.flatMap((g) => {
                 const sections = visibleSectionsByPhase.get(g.phase) ?? [];
+                // break-word, NOT the `anywhere` this used to use: `anywhere`
+                // breaks a word the moment it would help, which is what
+                // shattered these headers into "DR AWI NGS". `break-word` only
+                // ever breaks a word that has no line of its own, so it sits
+                // dormant at the width above and just guards against a future
+                // section name longer than any of today's.
                 return sections.map((s) => (
-                  <th key={s.code} title={s.code} style={DATA_COL_STYLE} className="qc border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
+                  <th key={s.code} title={s.code} style={DATA_COL_STYLE} className="qc [overflow-wrap:break-word] border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
                     {s.name}
                     <span className="block font-mono text-[10px] font-normal normal-case tracking-normal text-sdc-gray-400">
                       {s.code}
