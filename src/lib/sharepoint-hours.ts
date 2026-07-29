@@ -1,4 +1,4 @@
-import { PublicClientApplication } from "@azure/msal-node";
+import { ConfidentialClientApplication, PublicClientApplication } from "@azure/msal-node";
 import { DataProtectionScope, PersistenceCreator, PersistenceCachePlugin } from "@azure/msal-node-extensions";
 import path from "path";
 import os from "os";
@@ -26,6 +26,72 @@ const SITE = "stevendouglascorp.sharepoint.com:/sites/SDC-PowerBIIntegration";
 const FILE_PATH = "Project Planner V2/Job Hours Report/Job Hours From Paylocity/Current_Job_Hours.xlsx";
 
 let pca: PublicClientApplication | null = null;
+let cca: ConfidentialClientApplication | null = null;
+
+// ── App-only (client credentials) — the service-safe path ────────────────────
+// Preferred when configured: no user, no session, no cache file on disk. The
+// token is fetched per process and held in memory, so this works in Windows
+// session 0, as a service, and after a reboot — none of which the delegated
+// DPAPI cache below can survive (see explainTokenCacheFailure).
+//
+// Deliberately gated on its OWN env vars rather than falling back to the
+// PBI_CLIENT_* service principal that powerbi-refresh.ts already uses. Those
+// are already populated, so reusing them would silently switch this path on
+// before the Graph grant exists — and app-only would then 401 where the
+// delegated login works today. Verified 2026-07-29: that SP acquires a Graph
+// token fine but carries no application permissions, so
+// GET /sites/{...} returns 401 spException.
+//
+// To activate, the app registration needs a Graph APPLICATION permission with
+// admin consent — Sites.Selected plus a read grant on just the
+// SDC-PowerBIIntegration site is least privilege (Sites.Read.All also works but
+// reads every site in the tenant). Then set:
+//   GRAPH_TENANT_ID / GRAPH_CLIENT_ID / GRAPH_CLIENT_SECRET
+function appOnlyConfigured(): boolean {
+  return Boolean(process.env.GRAPH_TENANT_ID && process.env.GRAPH_CLIENT_ID && process.env.GRAPH_CLIENT_SECRET);
+}
+
+async function getAppOnlyToken(): Promise<string> {
+  if (!cca) {
+    cca = new ConfidentialClientApplication({
+      auth: {
+        clientId: process.env.GRAPH_CLIENT_ID!,
+        clientSecret: process.env.GRAPH_CLIENT_SECRET!,
+        authority: `https://login.microsoftonline.com/${process.env.GRAPH_TENANT_ID}`,
+      },
+    });
+  }
+  const result = await cca.acquireTokenByClientCredential({ scopes: ["https://graph.microsoft.com/.default"] });
+  if (!result?.accessToken) throw new Error("Failed to acquire an app-only Microsoft Graph token.");
+  // A client-credentials token is issued even when the app has NO application
+  // permissions — the failure only shows up later as an opaque 401
+  // "spException" on the site lookup. The granted permissions ride in the
+  // token's `roles` claim, so check here: an unusable token must be rejected
+  // now, while the caller can still fall back to the delegated login.
+  const roles = appRoles(result.accessToken);
+  if (!roles.some((r) => /^Sites\.|^Files\./.test(r))) {
+    throw new Error(
+      `the app registration has no Graph Sites/Files application permission (roles: ${
+        roles.length ? roles.join(", ") : "none"
+      }). Grant Sites.Selected with admin consent, then give this app read on the SDC-PowerBIIntegration site.`
+    );
+  }
+  return result.accessToken;
+}
+
+// Application permissions from an access token's `roles` claim. Read-only
+// inspection of a token this process just acquired — not a validation step
+// (Graph does that); [] whenever the claim is absent or unparseable.
+function appRoles(token: string): string[] {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return [];
+    const claims = JSON.parse(Buffer.from(payload, "base64").toString("utf8")) as { roles?: string[] };
+    return Array.isArray(claims.roles) ? claims.roles : [];
+  } catch {
+    return [];
+  }
+}
 
 // The cache is encrypted with Windows DPAPI under DataProtectionScope.CurrentUser,
 // so it can only be decrypted by the same Windows account that ran the login AND
@@ -54,6 +120,27 @@ function explainTokenCacheFailure(err: unknown): Error {
 }
 
 async function getGraphToken(): Promise<string> {
+  // App-only first when configured. If it fails (e.g. the Sites.Selected grant
+  // hasn't been applied yet, or the secret has expired) fall through to the
+  // delegated cache rather than taking the sync down — the whole point of this
+  // path is to make syncing MORE reliable, so it must never be the thing that
+  // breaks it. The reason is logged so a half-finished rollout is visible.
+  if (appOnlyConfigured()) {
+    try {
+      return await getAppOnlyToken();
+    } catch (err) {
+      console.warn(
+        `[sharepoint-hours] app-only Graph auth failed, falling back to the delegated token cache: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+  return getDelegatedToken();
+}
+
+// ── Delegated (cached interactive login) — the legacy path ───────────────────
+async function getDelegatedToken(): Promise<string> {
   if (!pca) {
     const persistence = await PersistenceCreator.createPersistence({
       cachePath: CACHE_PATH,

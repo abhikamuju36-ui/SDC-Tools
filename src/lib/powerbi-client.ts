@@ -1,4 +1,4 @@
-import { PublicClientApplication, type AccountInfo } from "@azure/msal-node";
+import { ConfidentialClientApplication, PublicClientApplication, type AccountInfo } from "@azure/msal-node";
 import { DataProtectionScope, PersistenceCreator, PersistenceCachePlugin } from "@azure/msal-node-extensions";
 import path from "path";
 import os from "os";
@@ -90,7 +90,66 @@ async function getAccount(pca: PublicClientApplication): Promise<AccountInfo> {
   return accounts[0];
 }
 
+// ── App-only (client credentials) — the service-safe path ────────────────────
+// Preferred when the PBI_* service-principal vars are set. No user, no session,
+// no DPAPI cache on disk: the token is fetched per process and held in memory,
+// so this survives Windows session 0, running as a service, and reboots — none
+// of which the delegated cache above can (see sharepoint-hours.ts for the same
+// treatment and the outage it caused).
+//
+// Verified live 2026-07-29 with the "SDC Sheet" registration
+// (6ec09511-0e91-4354-b7cc-2eb735a02ba6 = PBI_CLIENT_ID): workspace visible,
+// dataset visible, executeQueries returned real rows (30,924 from 'Hours
+// Actual'). It already works because that SP is an Admin on the SDC Reports
+// workspace AND the tenant's "service principals can use Fabric APIs" switch is
+// on — both prerequisites, neither of them something this code can check for.
+//
+// One semantic difference worth knowing: delegated queries run AS the signed-in
+// user, so row-level security applies. A service principal has no user identity,
+// so RLS does not filter it — it sees the whole model. Fine for the ETC rollups
+// this app reads; relevant if anything user-scoped is ever added.
+let ccaPromise: ConfidentialClientApplication | null = null;
+
+function appOnlyConfigured(): boolean {
+  return Boolean(process.env.PBI_TENANT_ID && process.env.PBI_CLIENT_ID && process.env.PBI_CLIENT_SECRET);
+}
+
+async function getAppOnlyToken(): Promise<string> {
+  if (!ccaPromise) {
+    ccaPromise = new ConfidentialClientApplication({
+      auth: {
+        clientId: process.env.PBI_CLIENT_ID!,
+        clientSecret: process.env.PBI_CLIENT_SECRET!,
+        authority: `https://login.microsoftonline.com/${process.env.PBI_TENANT_ID}`,
+      },
+    });
+  }
+  const result = await ccaPromise.acquireTokenByClientCredential({ scopes: SCOPES });
+  if (!result?.accessToken) throw new Error("Failed to acquire an app-only Power BI token.");
+  return result.accessToken;
+}
+
 async function getAccessToken(): Promise<string> {
+  // App-only first. On any failure — expired secret, the tenant switch turned
+  // back off, the SP removed from the workspace — fall back to the delegated
+  // cache rather than taking the sync down, and log why so a regression is
+  // visible instead of silent.
+  if (appOnlyConfigured()) {
+    try {
+      return await getAppOnlyToken();
+    } catch (err) {
+      console.warn(
+        `[powerbi-client] app-only auth failed, falling back to the delegated token cache: ${
+          err instanceof Error ? err.message : String(err)
+        }`
+      );
+    }
+  }
+  return getDelegatedAccessToken();
+}
+
+// ── Delegated (cached interactive login) — the legacy path ───────────────────
+async function getDelegatedAccessToken(): Promise<string> {
   const pca = await getPca();
   const account = await withCacheContentionRetry(() => getAccount(pca));
   const result = await withCacheContentionRetry(() => pca.acquireTokenSilent({ account, scopes: SCOPES }));
