@@ -387,22 +387,22 @@ export function StandardGrandCells() {
 
   return (
     <>
-      <td className={`${STD_EDGE} px-2 py-1 text-center text-[10px] text-sdc-navy`} title={currencyExact(grand.totalEtcDollars)}>
+      <td className={`${STD_EDGE} px-2 py-2.5 text-center text-[10px] text-sdc-navy`} title={currencyExact(grand.totalEtcDollars)}>
         {currency(grand.totalEtcDollars)}
       </td>
-      <td className="border-l border-sdc-border px-2 py-1 text-center text-[10px] text-sdc-navy" title={`${(grand.percentOfTotal * 100).toFixed(6)}%`}>
+      <td className="border-l border-sdc-border px-2 py-2.5 text-center text-[10px] text-sdc-navy" title={`${(grand.percentOfTotal * 100).toFixed(6)}%`}>
         {percent(grand.percentOfTotal)}
       </td>
-      <td className={`${STD_EDGE} px-2 py-1 text-center text-[10px] text-sdc-navy`} title={currencyExact(grand.standardFees)}>
+      <td className={`${STD_EDGE} px-2 py-2.5 text-center text-[10px] text-sdc-navy`} title={currencyExact(grand.standardFees)}>
         {currency(grand.standardFees)}
       </td>
-      <td className={`${STD_EDGE} px-2 py-1 text-center text-[10px] text-sdc-navy`} title={grand.contingencyAmount ? currencyExact(grand.contingencyAmount) : undefined}>
+      <td className={`${STD_EDGE} px-2 py-2.5 text-center text-[10px] text-sdc-navy`} title={grand.contingencyAmount ? currencyExact(grand.contingencyAmount) : undefined}>
         {grand.contingencyAmount ? currency(grand.contingencyAmount) : "—"}
       </td>
-      <td className={`${STD_EDGE} px-2 py-1 text-center text-[10px] font-semibold text-sdc-navy`} title={currencyExact(grand.totalStandardFees)}>
+      <td className={`${STD_EDGE} px-2 py-2.5 text-center text-[10px] font-semibold text-sdc-navy`} title={currencyExact(grand.totalStandardFees)}>
         {currency(grand.totalStandardFees)}
       </td>
-      <td className={`${STD_EDGE} px-2 py-1 text-center`} />
+      <td className={`${STD_EDGE} px-2 py-2.5 text-center`} />
     </>
   );
 }
