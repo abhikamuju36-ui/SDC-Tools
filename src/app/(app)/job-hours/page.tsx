@@ -7,6 +7,7 @@ import { listDashboardJobs, getJobHoursDashboard, defaultDashboardJobId } from "
 import { getJobPartsCost, type JobPartsCost } from "@/lib/sync-totaleto";
 import { getExecutionEtcByJob } from "@/lib/execution-etc";
 import { PartsCostSummary } from "@/components/PartsCostSummary";
+import { computePartsBudgetProjection } from "@/lib/parts-budget-projection";
 import { SchedulerJobLink } from "@/components/SchedulerJobLink";
 import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 import { getJobBom, type JobBom } from "@/lib/job-bom";
@@ -49,6 +50,7 @@ export default async function JobHoursPage({
   // Best-effort: a TotalETO hiccup must not take down the hours dashboard.
   let parts: JobPartsCost | null = null;
   let partsEtc: number | null = null;
+  let partsProjection: number | null = null;
   let partsBudget: number | null = null;
   if (data) {
     try {
@@ -58,6 +60,14 @@ export default async function JobHoursPage({
       const purchased = lines.reduce((s, l) => s + l.totalPrice, 0);
       const paid = lines.reduce((s, l) => s + l.invoicedAmount, 0);
       parts = { purchased, paid, leftToPay: purchased - paid, lines };
+      // "Part Cost Budget Projection" — the report's [Budget Projection]. Its
+      // estimate half is only in the semantic model, so this is one DAX query;
+      // best-effort like the parts pull above, and a failure just drops the bar.
+      partsProjection = await computePartsBudgetProjection(
+        data.jobRefs.map((r) => r.jobId),
+        lines,
+        new Date(),
+      ).catch(() => null);
     } catch {
       parts = null;
     }
@@ -157,6 +167,7 @@ export default async function JobHoursPage({
               purchased={parts.purchased}
               paid={parts.paid}
               estimatedToPurchase={partsEtc}
+              budgetProjection={partsProjection}
               budget={partsBudget}
             />
           )}

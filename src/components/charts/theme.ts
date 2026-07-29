@@ -75,6 +75,9 @@ export const PARTS_BAR = {
   purchased: SERIES.planned, // blue — matches the two hours charts above
   paid: "#15803d", // green — same token as IndicatorCard's Paid bullet
   neutral: "#475569", // slate — the report's plain-black rows
+  // Amber for "Part Cost Budget Projection" — the only forward-looking bar, so
+  // it shouldn't share a color with money actually purchased or invoiced.
+  projection: "#b45309",
 } as const;
 
 export function partsCostBarOption(rows: { label: string; value: number; color?: string }[]): EChartsOption {
