@@ -34,16 +34,20 @@ export function AppTextSize({ collapsed }: { collapsed?: boolean }) {
     window.localStorage.setItem(KEY, String(c));
   };
 
-  const btn = "flex h-5 w-5 items-center justify-center rounded border border-white/20 font-semibold leading-none text-sdc-blue-100 hover:bg-white/10 disabled:opacity-30";
+  // Dark navy sidebar styling (#061D39 panel — see Sidebar.tsx). The enclosing
+  // footer block owns the border and padding now, so this row is just the label
+  // + stepper.
+  const btn =
+    "flex h-5 w-5 items-center justify-center rounded-[5px] bg-[#0B2846] text-[13px] leading-none text-[#A9BCD0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157] disabled:opacity-40";
 
   if (collapsed) return null;
 
   return (
-    <div className="flex items-center justify-between gap-2 border-t border-white/10 px-4 py-2.5 text-xs font-medium text-sdc-blue-100/70">
-      <span>Text size</span>
-      <div className="flex items-center gap-1.5">
+    <div className="flex h-[34px] items-center justify-between gap-2 px-[10px]">
+      <span className="text-[12px] text-[#7E93AC]">Text size</span>
+      <div className="flex items-center gap-1">
         <button type="button" onClick={() => apply(px - STEP)} disabled={px <= MIN} className={btn} aria-label="Decrease text size">−</button>
-        <span className="w-5 text-center tabular-nums text-sdc-blue-100">{px}</span>
+        <span className="min-w-[18px] text-center font-mono text-[11.5px] tabular-nums text-[#C3D1E0]">{px}</span>
         <button type="button" onClick={() => apply(px + STEP)} disabled={px >= MAX} className={btn} aria-label="Increase text size">+</button>
       </div>
     </div>

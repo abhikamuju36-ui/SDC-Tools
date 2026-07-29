@@ -9,7 +9,7 @@ import { AppTextSize } from "@/components/AppTextSize";
 
 const COLLAPSE_KEY = "sdc-etc-planner-sidebar-collapsed";
 const WIDTH_KEY = "sdc-etc-planner-sidebar-width";
-const DEFAULT_WIDTH = 240; // matches the old fixed w-60
+const DEFAULT_WIDTH = 276; // the Porcelain design's sidebar width (was 240)
 const MIN_WIDTH = 180;
 const MAX_WIDTH = 420;
 
@@ -189,14 +189,47 @@ export default function Sidebar({
   userEmail,
   role,
   signOutAction,
+  schedulerProjectsUrl,
 }: {
   userEmail?: string | null;
   role?: string;
   signOutAction: () => Promise<void>;
+  // Absolute URL of the SDC Scheduler's Projects page, resolved server-side in
+  // the layout (SCHEDULER_BASE_URL). Undefined hides the link rather than
+  // rendering a dead one.
+  schedulerProjectsUrl?: string;
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const groups = role === "ADMIN" ? [...GROUPS, ADMIN_GROUP] : GROUPS;
+  const allGroups = role === "ADMIN" ? [...GROUPS, ADMIN_GROUP] : GROUPS;
+
+  // Nav filter behind the search field. Groups whose every item is filtered out
+  // drop away with their heading, so there are no orphan labels.
+  const [query, setQuery] = useState("");
+  const searchRef = useRef<HTMLInputElement>(null);
+  const q = query.trim().toLowerCase();
+  const groups = q
+    ? allGroups
+        .map((g) => ({ ...g, items: g.items.filter((i) => i.label.toLowerCase().includes(q)) }))
+        .filter((g) => g.items.length > 0)
+    : allGroups;
+
+  // Ctrl+K focuses the filter. The hint is static "Ctrl K" rather than the mock's
+  // ⌘K, and deliberately not platform-detected: everyone reaches this app from
+  // Windows (it's LAN-only on SERVER-APP1), and detecting via `navigator` needs
+  // either a setState-in-effect or a hydration-mismatching lazy initial state.
+  // The handler still accepts ⌘ as well, so a Mac visitor isn't locked out.
+  useEffect(() => {
+    function onKey(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        searchRef.current?.focus();
+        searchRef.current?.select();
+      }
+    }
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
 
   // Hidden entry point for the password-gated Standard Sheet columns: the box
   // that reveals them is intentionally undiscoverable on the /etc page itself
@@ -303,7 +336,14 @@ export default function Sidebar({
       // (Text size / Refresh / Collapse / user) far down the page — making the
       // item positions appear to shift between tabs. sticky+h-screen keeps it
       // fixed to the viewport regardless of how tall the page content is.
-      className={`sticky top-0 z-20 flex h-screen max-h-screen shrink-0 flex-col self-start bg-sdc-navy text-white ${
+      // Dark navy sidebar (#061D39) — the "Porcelain" layout (design ref: SDC
+      // Sidebar.html, variant 1B) recolored to the SDC brand navy.
+      // Sizes are in px, not rem, deliberately: the Text size control scales the
+      // root font-size to size the DATA GRIDS (commit 245ebe7), and letting the
+      // app chrome grow with it made the nav crowd the content. The design was
+      // authored at fixed sizes, so the sidebar now holds its proportions while
+      // Text size keeps doing its real job on the grids.
+      className={`sticky top-0 z-20 flex h-screen max-h-screen shrink-0 flex-col self-start border-r border-[#12314F] bg-[#061D39] ${
         dragWidth === null ? "transition-[width] duration-150" : ""
       } ${collapsed ? "w-16" : ""}`}
     >
@@ -311,50 +351,77 @@ export default function Sidebar({
         <div
           onMouseDown={startResize}
           title="Drag to resize"
-          className="absolute top-0 right-0 z-10 h-full w-1.5 -mr-0.5 cursor-col-resize hover:bg-white/10 active:bg-white/10"
+          className="absolute top-0 right-0 z-10 h-full w-1.5 -mr-0.5 cursor-col-resize hover:bg-white/[0.10] active:bg-white/[0.10]"
         />
       )}
-      <div
-        className={`flex items-center gap-2.5 border-b border-white/10 ${collapsed ? "justify-center px-0 py-4" : "px-4 py-4"}`}
-      >
-        <div className="flex h-12 w-12 shrink-0 items-center justify-center rounded-[10px] bg-sdc-blue">
-          <Image src="/brand/sdc-logo-white.png" alt="SDC" width={40} height={21} unoptimized />
+      <div className={`flex items-center gap-[11px] ${collapsed ? "justify-center px-0 pt-5 pb-[18px]" : "px-[18px] pt-5 pb-[18px]"}`}>
+        {/* Slightly lifted tile so the white-on-navy SDC mark still reads as a
+            distinct badge against the navy panel behind it. */}
+        <div className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-[#0D2A49] shadow-[inset_0_0_0_1px_#1B4270]">
+          <Image src="/brand/sdc-logo-white.png" alt="SDC" width={26} height={14} unoptimized />
         </div>
         {!collapsed && (
           <div className="min-w-0">
-            <p className="truncate text-sm font-semibold leading-tight text-white">SDC Projects Reports</p>
-            <p className="truncate text-[11px] text-sdc-blue-100/80">Steven Douglas Corp.</p>
+            <p className="truncate text-[13.5px] font-semibold leading-tight tracking-[-0.005em] text-[#F3F6FA]">SDC Projects Reports</p>
+            <p className="truncate text-[11.5px] text-[#7E93AC]">Steven Douglas Corp.</p>
           </div>
         )}
       </div>
 
-      {canGoBack && (
-        <button
-          onClick={handleBack}
-          title="Go back to the previous page"
-          className={`flex items-center gap-2.5 border-b border-white/10 text-sm font-medium text-sdc-blue-100/80 hover:bg-white/5 hover:text-white ${
-            collapsed ? "justify-center px-0 py-3" : "px-4 py-2.5"
-          }`}
-        >
-          <span className="flex h-5 w-5 shrink-0 items-center justify-center">
-            <Icon>
-              <path d="M9.5 3 L4.5 8 L9.5 13" strokeLinecap="round" strokeLinejoin="round" />
-              <line x1="4.5" y1="8" x2="13" y2="8" strokeLinecap="round" />
-            </Icon>
-          </span>
-          {!collapsed && <span>Back</span>}
-        </button>
+      {/* Search — the design shows this field, so it had to be real rather than
+          decorative: it filters the nav below by label. ⌘/Ctrl+K focuses it,
+          Escape clears. Hidden when collapsed (no room for a text field). */}
+      {!collapsed && (
+        <div className="px-[14px] pb-[14px]">
+          <div className="flex h-8 items-center gap-[9px] rounded-[7px] bg-[#0B2846] px-[10px] shadow-[inset_0_0_0_1px_#17395C,0_1px_1px_rgba(0,0,0,0.35)] focus-within:shadow-[inset_0_0_0_1px_#4C8DE8]">
+            <span className="h-[11px] w-[11px] shrink-0 rounded-full shadow-[inset_0_0_0_1.4px_#5F7B98]" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setQuery("");
+              }}
+              placeholder="Search reports"
+              aria-label="Filter navigation"
+              className="min-w-0 flex-1 bg-transparent text-[12.5px] text-[#C3D1E0] placeholder:text-[#7189A3] focus:outline-none"
+            />
+            {query === "" && <span className="ml-auto font-mono text-[10px] tracking-[0.04em] text-[#6E86A0]">Ctrl K</span>}
+          </div>
+        </div>
       )}
 
-      <nav aria-label="Application sections" className="flex-1 space-y-4 overflow-y-auto px-3 py-4">
+      {canGoBack && (
+        <div className={collapsed ? "px-0 pb-1" : "px-[14px] pb-1"}>
+          <button
+            onClick={handleBack}
+            title="Go back to the previous page"
+            className={`flex h-8 w-full items-center gap-[10px] rounded-[7px] text-[12.5px] text-[#A9BCD0] hover:bg-[#0E3157] hover:text-[#F3F6FA] ${
+              collapsed ? "justify-center px-0" : "px-[10px]"
+            }`}
+          >
+            <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+              <Icon>
+                <path d="M9.5 3 L4.5 8 L9.5 13" strokeLinecap="round" strokeLinejoin="round" />
+                <line x1="4.5" y1="8" x2="13" y2="8" strokeLinecap="round" />
+              </Icon>
+            </span>
+            {/* "Back" not the mock's "Back to workspace": this runs router.back(),
+                so the honest label is the one that matches the behavior. */}
+            {!collapsed && <span>Back</span>}
+          </button>
+        </div>
+      )}
+
+      <nav aria-label="Application sections" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-[14px]">
         {groups.map((group) => (
-          <div key={group.label}>
+          <div key={group.label} className="flex flex-col gap-[3px]">
             {!collapsed && (
-              <p className="mb-1.5 px-2 text-[10.5px] font-semibold tracking-wider text-sdc-blue-100/50 uppercase">
+              <p className="px-[10px] pb-[7px] font-mono text-[9.5px] tracking-[0.16em] text-[#6E88A5] uppercase">
                 {group.label}
               </p>
             )}
-            <div className="space-y-0.5">
+            <div className="flex flex-col gap-[3px]">
               {group.items.map((item) => {
                 const active = item.isActive(pathname);
                 return (
@@ -363,15 +430,19 @@ export default function Sidebar({
                     href={item.href}
                     onClick={(e) => handleNavClick(e, item.href)}
                     title={collapsed ? item.label : undefined}
-                    className={`flex items-center gap-2.5 rounded-md px-2.5 py-2 text-sm font-medium transition-colors ${
+                    // Active state is a raised white "card" (ring + 1px shadow)
+                    // with a 2px inset accent bar, not a filled block — the mock's
+                    // way of marking the current page on a light panel.
+                    className={`relative flex h-9 items-center gap-[11px] rounded-[7px] px-[10px] text-[13px] transition-colors ${
                       collapsed ? "justify-center" : ""
                     } ${
                       active
-                        ? "border-l-2 border-sdc-blue bg-sdc-blue/20 text-white"
-                        : "text-sdc-blue-100/70 hover:bg-white/5 hover:text-white"
+                        ? "bg-[#0E3159] font-medium text-[#FFFFFF] shadow-[inset_0_0_0_1px_#1B4270,0_1px_2px_rgba(0,0,0,0.45)]"
+                        : "text-[#C3D1E0] hover:bg-[#0E3157]"
                     }`}
                   >
-                    <span className={`flex h-5 w-5 shrink-0 items-center justify-center ${active ? "text-white" : "text-sdc-blue-100/60"}`}>
+                    {active && <span className="absolute top-[9px] bottom-[9px] left-0 w-[2px] rounded-r-[2px] bg-[#4C8DE8]" />}
+                    <span className={`flex h-[15px] w-[15px] shrink-0 items-center justify-center ${active ? "text-[#4C8DE8]" : "text-[#8FA6BE]"}`}>
                       {item.icon}
                     </span>
                     {!collapsed && <span className="truncate">{item.label}</span>}
@@ -381,57 +452,113 @@ export default function Sidebar({
             </div>
           </div>
         ))}
-      </nav>
 
-      <AppTextSize collapsed={collapsed} />
-
-      <button
-        onClick={handleRefresh}
-        title="Refresh this page (reload — re-reads the latest data)"
-        className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3 text-xs font-medium text-sdc-blue-100/70 hover:bg-white/5 hover:text-white"
-      >
-        <Icon>
-          <path d="M12.8 5.2 A5 5 0 1 0 13.6 9.2" strokeLinecap="round" strokeLinejoin="round" />
-          <path d="M13.2 2 L13.2 5.4 L9.8 5.4" strokeLinecap="round" strokeLinejoin="round" />
-        </Icon>
-        {!collapsed && <span>Refresh</span>}
-      </button>
-
-      <button
-        onClick={toggleCollapsed}
-        className="flex items-center gap-2.5 border-t border-white/10 px-4 py-3 text-xs font-medium text-sdc-blue-100/70 hover:bg-white/5 hover:text-white"
-      >
-        <Icon>
-          {collapsed ? (
-            <path d="M6 3 L11 8 L6 13" strokeLinecap="round" strokeLinejoin="round" />
-          ) : (
-            <path d="M10 3 L5 8 L10 13" strokeLinecap="round" strokeLinejoin="round" />
-          )}
-        </Icon>
-        {!collapsed && <span>Collapse</span>}
-      </button>
-
-      <div className={`flex items-center gap-2 border-t border-white/10 px-4 py-3 ${collapsed ? "justify-center px-0" : ""}`}>
-        <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-sdc-blue text-[11px] font-semibold text-white">
-          {userEmail?.[0]?.toUpperCase() ?? "?"}
-        </div>
-        {!collapsed && (
-          <div className="min-w-0 flex-1">
-            <p className="truncate text-xs text-sdc-blue-100/90">{userEmail}</p>
-            <form action={signOutAction}>
-              <button
-                onClick={(e) => {
-                  if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Sign out anyway?")) {
-                    e.preventDefault();
-                  }
-                }}
-                className="text-[11px] text-sdc-blue-100/60 underline hover:text-white"
-              >
-                Sign out
-              </button>
-            </form>
+        {/* Cross-app link out to the SDC Scheduler. Deliberately NOT part of
+            GROUPS: those are internal next/link routes with an isActive test,
+            while this is a different app on another port — a plain <a> in a new
+            tab, so the report you're on is never lost. The Scheduler has the
+            mirror-image button back to here. */}
+        {schedulerProjectsUrl && (
+          <div className="flex flex-col gap-[3px]">
+            {!collapsed && (
+              <p className="px-[10px] pb-[7px] font-mono text-[9.5px] tracking-[0.16em] text-[#6E88A5] uppercase">Apps</p>
+            )}
+            <a
+              href={schedulerProjectsUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              title="Open the SDC Scheduler's Projects page in a new tab"
+              className={`flex h-9 items-center gap-[11px] rounded-[7px] px-[10px] text-[13px] text-[#C3D1E0] transition-colors hover:bg-[#0E3157] ${
+                collapsed ? "justify-center" : ""
+              }`}
+            >
+              <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center text-[#8FA6BE]">
+                {/* Same staggered gantt bars used for the Scheduler link in the
+                    grids, so the two read as the same destination. */}
+                <Icon>
+                  <line x1="2.5" y1="3.5" x2="9.5" y2="3.5" strokeLinecap="round" />
+                  <line x1="5.5" y1="8" x2="13.5" y2="8" strokeLinecap="round" />
+                  <line x1="3.5" y1="12.5" x2="10.5" y2="12.5" strokeLinecap="round" />
+                </Icon>
+              </span>
+              {!collapsed && (
+                <>
+                  <span className="truncate">Project Scheduler</span>
+                  {/* External-link cue, matching the new-tab behavior. */}
+                  <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" className="ml-auto shrink-0 text-[#6E88A5]">
+                    <path d="M6 3 H13 V10" strokeLinecap="round" strokeLinejoin="round" />
+                    <line x1="13" y1="3" x2="6.5" y2="9.5" strokeLinecap="round" />
+                  </svg>
+                </>
+              )}
+            </a>
           </div>
         )}
+      </nav>
+
+      {/* Footer block — one bordered group holding Text size, the Refresh/
+          Collapse pair, and the account row, per the mock. */}
+      <div className={`flex flex-col border-t border-[#12314F] ${collapsed ? "px-0 pt-2.5 pb-3" : "px-[14px] pt-2.5 pb-3"}`}>
+        <AppTextSize collapsed={collapsed} />
+
+        {/* Side-by-side in the mock rather than the two stacked full-width rows
+            this used to be — it reclaims a row of vertical space. Stacks again
+            when collapsed, where there's no width for two. */}
+        <div className={`flex gap-1.5 pt-1 pb-2.5 ${collapsed ? "flex-col" : ""}`}>
+          <button
+            onClick={handleRefresh}
+            title="Refresh this page (reload — re-reads the latest data)"
+            className="flex h-[30px] flex-1 items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] text-[12px] text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157]"
+          >
+            <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+              <Icon>
+                <path d="M12.8 5.2 A5 5 0 1 0 13.6 9.2" strokeLinecap="round" strokeLinejoin="round" />
+                <path d="M13.2 2 L13.2 5.4 L9.8 5.4" strokeLinecap="round" strokeLinejoin="round" />
+              </Icon>
+            </span>
+            {!collapsed && <span>Refresh</span>}
+          </button>
+
+          <button
+            onClick={toggleCollapsed}
+            title={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
+            className="flex h-[30px] flex-1 items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] text-[12px] text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157]"
+          >
+            <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
+              <Icon>
+                {collapsed ? (
+                  <path d="M6 3 L11 8 L6 13" strokeLinecap="round" strokeLinejoin="round" />
+                ) : (
+                  <path d="M10 3 L5 8 L10 13" strokeLinecap="round" strokeLinejoin="round" />
+                )}
+              </Icon>
+            </span>
+            {!collapsed && <span>Collapse</span>}
+          </button>
+        </div>
+
+        <div className={`flex items-center gap-[10px] border-t border-[#12314F] pt-2.5 ${collapsed ? "justify-center" : "px-[10px]"}`}>
+          <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-[#123B66] text-[11px] font-semibold text-[#4C8DE8]">
+            {userEmail?.[0]?.toUpperCase() ?? "?"}
+          </div>
+          {!collapsed && (
+            <div className="min-w-0 flex-1">
+              <p className="truncate text-[11.5px] text-[#C3D1E0]">{userEmail}</p>
+              <form action={signOutAction}>
+                <button
+                  onClick={(e) => {
+                    if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Sign out anyway?")) {
+                      e.preventDefault();
+                    }
+                  }}
+                  className="text-[11px] text-[#7189A3] hover:text-[#C3D1E0] hover:underline"
+                >
+                  Sign out
+                </button>
+              </form>
+            </div>
+          )}
+        </div>
       </div>
     </aside>
   );
