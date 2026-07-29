@@ -360,28 +360,88 @@ export default async function QuotedPage({
                 </th>
               )}
               {show("type") && (
-                <th rowSpan={3} className="px-1 py-2 align-bottom">
+                <th
+                  rowSpan={3}
+                  style={{ width: "var(--type-col-width, 90px)", minWidth: "var(--type-col-width, 90px)" }}
+                  className="relative px-1 py-2 align-bottom"
+                >
                   Type
+                  <div
+                    className="col-resize-handle absolute right-0 inset-y-0 z-10 w-3"
+                    data-resize-var="--type-col-width"
+                    data-resize-min="60"
+                    data-resize-max="300"
+                    title="Drag to resize"
+                    style={{ touchAction: "none" }}
+                  />
                 </th>
               )}
               {show("billable") && (
-                <th rowSpan={3} className="px-1 py-2 align-bottom">
+                <th
+                  rowSpan={3}
+                  style={{ width: "var(--billable-col-width, 110px)", minWidth: "var(--billable-col-width, 110px)" }}
+                  className="relative px-1 py-2 align-bottom"
+                >
                   Billable
+                  <div
+                    className="col-resize-handle absolute right-0 inset-y-0 z-10 w-3"
+                    data-resize-var="--billable-col-width"
+                    data-resize-min="70"
+                    data-resize-max="300"
+                    title="Drag to resize"
+                    style={{ touchAction: "none" }}
+                  />
                 </th>
               )}
               {show("status") && (
-                <th rowSpan={3} className="px-1 py-2 align-bottom">
+                <th
+                  rowSpan={3}
+                  style={{ width: "var(--status-col-width, 100px)", minWidth: "var(--status-col-width, 100px)" }}
+                  className="relative px-1 py-2 align-bottom"
+                >
                   <SortButton sortKey="status" label="Status" currentSort={sortKey} currentDir={sortDir} />
+                  <div
+                    className="col-resize-handle absolute right-0 inset-y-0 z-10 w-3"
+                    data-resize-var="--status-col-width"
+                    data-resize-min="70"
+                    data-resize-max="300"
+                    title="Drag to resize"
+                    style={{ touchAction: "none" }}
+                  />
                 </th>
               )}
               {show("startDate") && (
-                <th rowSpan={3} className="px-1 py-2 align-bottom">
+                <th
+                  rowSpan={3}
+                  style={{ width: "var(--startdate-col-width, 92px)", minWidth: "var(--startdate-col-width, 92px)" }}
+                  className="relative px-1 py-2 align-bottom"
+                >
                   <SortButton sortKey="startDate" label={"Start\nDate"} currentSort={sortKey} currentDir={sortDir} />
+                  <div
+                    className="col-resize-handle absolute right-0 inset-y-0 z-10 w-3"
+                    data-resize-var="--startdate-col-width"
+                    data-resize-min="65"
+                    data-resize-max="300"
+                    title="Drag to resize"
+                    style={{ touchAction: "none" }}
+                  />
                 </th>
               )}
               {show("completeDate") && (
-                <th rowSpan={3} className="px-1 py-2 align-bottom">
+                <th
+                  rowSpan={3}
+                  style={{ width: "var(--completedate-col-width, 92px)", minWidth: "var(--completedate-col-width, 92px)" }}
+                  className="relative px-1 py-2 align-bottom"
+                >
                   <SortButton sortKey="completeDate" label={"Complete\nDate"} currentSort={sortKey} currentDir={sortDir} />
+                  <div
+                    className="col-resize-handle absolute right-0 inset-y-0 z-10 w-3"
+                    data-resize-var="--completedate-col-width"
+                    data-resize-min="65"
+                    data-resize-max="300"
+                    title="Drag to resize"
+                    style={{ touchAction: "none" }}
+                  />
                 </th>
               )}
               {PHASE_GROUPS.map((g) => {
@@ -551,7 +611,10 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("type") && (
-                    <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px] text-sdc-gray-600">
+                    <td
+                      style={{ width: "var(--type-col-width, 90px)", minWidth: "var(--type-col-width, 90px)", maxWidth: "var(--type-col-width, 90px)" }}
+                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px] text-sdc-gray-600"
+                    >
                       <select name={`jobField__${job.id}__type`} defaultValue={job.type ?? ""} aria-label={`Type, ${job.jobName}`} className="text-center">
                         {job.type == null && <option value="">—</option>}
                         {VALID_JOB_TYPES.map((t) => (
@@ -563,7 +626,10 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("billable") && (
-                    <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px]">
+                    <td
+                      style={{ width: "var(--billable-col-width, 110px)", minWidth: "var(--billable-col-width, 110px)", maxWidth: "var(--billable-col-width, 110px)" }}
+                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px]"
+                    >
                       {isSdc ? (
                         <span className="text-sdc-gray-500" aria-label={`Billable, ${job.jobName}`} title="SDC's own projects are always non-billable">
                           Non-Billable
@@ -583,6 +649,7 @@ export default async function QuotedPage({
                   )}
                   {show("status") && (
                     <td
+                      style={{ width: "var(--status-col-width, 100px)", minWidth: "var(--status-col-width, 100px)", maxWidth: "var(--status-col-width, 100px)" }}
                       className={`overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px] font-medium ${
                         job.status === "Complete" ? "text-sdc-green-text" : "text-sdc-blue-dark"
                       }`}
@@ -602,7 +669,10 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("startDate") && (
-                    <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500">
+                    <td
+                      style={{ width: "var(--startdate-col-width, 92px)", minWidth: "var(--startdate-col-width, 92px)", maxWidth: "var(--startdate-col-width, 92px)" }}
+                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500"
+                    >
                       <DateCell
                         name={`jobField__${job.id}__startDate`}
                         defaultValue={dateInputValue(job.startDate)}
@@ -611,7 +681,10 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("completeDate") && (
-                    <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500">
+                    <td
+                      style={{ width: "var(--completedate-col-width, 92px)", minWidth: "var(--completedate-col-width, 92px)", maxWidth: "var(--completedate-col-width, 92px)" }}
+                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500"
+                    >
                       <DateCell
                         name={`jobField__${job.id}__completeDate`}
                         defaultValue={dateInputValue(job.completeDate)}

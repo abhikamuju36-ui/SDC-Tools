@@ -258,14 +258,22 @@ td.quoted-actual-cell > .actual-suffix {
  * DateCell removes this class and the value displays normally. WebKit/
  * Chromium-only pseudo-elements — Firefox falls back to the native look. */
 /* Date cells hug their content too — drop the native min-width and trim the
- * internal padding so the date column isn't padded out with dead space. */
+ * internal padding so the date column isn't padded out with dead space.
+ * `width: auto` alone isn't enough here: Chrome's native date-input box
+ * resolves "auto" to a generously wide built-in size (room for every
+ * mm/dd/yyyy segment at its own reserved width, plus space before the
+ * calendar icon) regardless of the actual digits shown — that reserved gap
+ * is exactly the dead space users saw between a filled-in date and the
+ * icon, and it also set a floor under the column-resize drag no width var
+ * could shrink past. Pinning an explicit, snug width overrides that native
+ * floor so both the value-to-icon gap and the resize floor shrink together. */
 td > input[type="date"] {
   min-width: 0;
-  width: auto;
-  padding: 0.2rem 0.2rem;
+  width: 5.75rem;
+  padding: 0.2rem 0.15rem;
 }
 td > input[type="date"]::-webkit-calendar-picker-indicator {
-  margin-left: 0.1rem;
+  margin-left: 0.05rem;
   padding: 0;
 }
 input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
