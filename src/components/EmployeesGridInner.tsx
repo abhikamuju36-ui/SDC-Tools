@@ -48,6 +48,29 @@ type GridContext = {
   supByName: Map<string, number>;
 };
 
+const NO_DEPT = "No department"; // bucket for employees with a blank Dept
+
+// The grid is fed a flat list where each department's employees are preceded by
+// a synthetic header row (`__group` set). Those render as full-width rows —
+// AG Grid Community has no rowGroup (Enterprise only), so this is how the
+// "Dept 1, then all of Dept 1's people, then Dept 2…" layout is built.
+// `seq` is the per-department line number, so the # column restarts at 1 in
+// every group instead of counting header rows.
+type GridRow = EmployeeRow & { __group?: string; __count?: number; seq?: number };
+
+function GroupRowRenderer(p: ICellRendererParams<GridRow>) {
+  const row = p.data;
+  if (!row?.__group) return null;
+  return (
+    <div className="flex h-full w-full items-center justify-between gap-2 border-y border-sdc-navy bg-sdc-navy px-4">
+      <span className="text-[13px] font-bold tracking-wide text-white">{row.__group}</span>
+      <span className="whitespace-nowrap text-xs font-bold tabular-nums text-white/70">
+        {row.__count} {row.__count === 1 ? "employee" : "employees"}
+      </span>
+    </div>
+  );
+}
+
 // Community-safe replacement for the Enterprise Set Filter: a native dropdown
 // of the column's known values, so Discipline/Department filter by picking a
 // value directly instead of the text filter's Contains/Equals operators.
@@ -126,6 +149,42 @@ export default function EmployeesGridInner({
     [rows]
   );
 
+  // Department-grouped row list: one header row per department, then that
+  // department's employees A→Z. "No department" always sorts last.
+  const groupedRows = useMemo<GridRow[]>(() => {
+    const byDept = new Map<string, EmployeeRow[]>();
+    for (const r of rows) {
+      const dept = r.department?.trim() && r.department !== DASH ? r.department.trim() : NO_DEPT;
+      const list = byDept.get(dept);
+      if (list) list.push(r);
+      else byDept.set(dept, [r]);
+    }
+    const depts = [...byDept.keys()].sort((a, b) =>
+      a === NO_DEPT ? 1 : b === NO_DEPT ? -1 : a.localeCompare(b)
+    );
+    const out: GridRow[] = [];
+    let headerId = -1;
+    for (const dept of depts) {
+      const people = byDept.get(dept)!.slice().sort((a, b) => a.name.localeCompare(b.name));
+      // `department` is carried on the header row so the Dept dropdown filter
+      // keeps the matching group's heading visible.
+      out.push({
+        id: headerId--,
+        name: "",
+        discipline: "",
+        supervisor: "",
+        department: dept === NO_DEPT ? "" : dept,
+        active: true,
+        billingGroup: "",
+        paylocityId: "",
+        __group: dept,
+        __count: people.length,
+      });
+      people.forEach((p, i) => out.push({ ...p, seq: i + 1 }));
+    }
+    return out;
+  }, [rows]);
+
   const context: GridContext = {
     supByName,
     onSave: (row) => {
@@ -160,15 +219,14 @@ export default function EmployeesGridInner({
     },
   };
 
-  const columnDefs: ColDef<EmployeeRow>[] = [
-    { headerName: "#", width: 64, valueGetter: (p) => (p.node?.rowIndex ?? 0) + 1, sortable: false, filter: false, resizable: false },
+  const columnDefs: ColDef<GridRow>[] = [
+    { headerName: "#", width: 64, valueGetter: (p) => p.data?.seq ?? "", sortable: false, filter: false, resizable: false },
     { field: "name", headerName: "Name", editable: true, minWidth: 180, flex: 1 },
     {
       field: "discipline",
       headerName: "Discipline",
       editable: true,
       width: 200,
-      sort: "asc",
       cellEditor: "agSelectCellEditor",
       cellEditorParams: { values: [DASH, ...disciplines] },
       filter: "agTextColumnFilter",
@@ -188,20 +246,37 @@ export default function EmployeesGridInner({
       floatingFilterComponentParams: { values: departments },
     },
     { field: "active", headerName: "Status", width: 120, editable: false, cellRenderer: StatusRenderer, valueGetter: (p) => (p.data?.active ? "Active" : "Inactive") },
-    { headerName: "Actions", width: 190, editable: false, sortable: false, filter: false, cellRenderer: ActionsRenderer },
+    // Hidden by request. Kept (rather than deleted) because it's the only home
+    // for Deactivate/Reactivate — flip `hide` to bring both buttons back.
+    { headerName: "Actions", width: 190, hide: true, editable: false, sortable: false, filter: false, cellRenderer: ActionsRenderer },
   ];
 
   return (
     <div style={{ height: "calc(100vh - 175px)", width: "100%" }}>
-      <AgGridReact<EmployeeRow>
+      <AgGridReact<GridRow>
         theme={sdcTheme}
-        rowData={rows}
+        rowData={groupedRows}
         columnDefs={columnDefs}
         context={context}
-        defaultColDef={{ sortable: true, filter: true, resizable: true, floatingFilter: true }}
+        getRowId={(p) => String(p.data.id)}
+        // Header rows render across the full width; the column cells (Save /
+        // Deactivate / Status) would be meaningless on them.
+        isFullWidthRow={(p) => !!(p.rowNode.data as GridRow | undefined)?.__group}
+        fullWidthCellRenderer={GroupRowRenderer}
+        // Column sorting is off: the row order IS the grouping (department, then
+        // name). Sorting by any column would scatter the header rows away from
+        // the people they belong to. Filtering still works.
+        defaultColDef={{ sortable: false, filter: true, resizable: true, floatingFilter: true }}
         suppressMenuHide
         quickFilterText={quickFilter}
         stopEditingWhenCellsLoseFocus
+        // The Actions column (and with it the per-row Save button) is hidden, so
+        // committing a cell edit is now what persists the row — otherwise a typed
+        // change would be silently dropped on the next refresh.
+        onCellValueChanged={(e) => {
+          if (e.data?.__group) return; // department header row — nothing to save
+          context.onSave(e.data);
+        }}
         animateRows
       />
     </div>

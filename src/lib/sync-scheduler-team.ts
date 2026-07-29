@@ -1,6 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
+import { DISCIPLINE_LABEL } from "@/lib/disciplines";
 import { fetchSchedulerTeam } from "@/lib/scheduler-db";
 
 // Mirrors the SDC Scheduler's team grouping (team_members.discipline) into each
@@ -13,16 +14,10 @@ import { fetchSchedulerTeam } from "@/lib/scheduler-db";
 // "Josh"/"Joshua" — is NOT guessed; those names are returned in the unmatched
 // lists so a human can rename them to line up (after which the sync is exact).
 
-// The Scheduler stores discipline as short codes; ETC groups by the full
-// labels (see the Employees page DISCIPLINES). Map codes → ETC labels. An
-// unknown code is passed through verbatim so it surfaces rather than vanishing.
-const DISCIPLINE_LABEL: Record<string, string> = {
-  pm: "Project Management",
-  mech: "Mechanical Engineers",
-  controls: "Controls Engineers",
-  build: "Builders",
-  wire: "Electricians",
-};
+// The Scheduler stores discipline as short codes; ETC groups by the full labels.
+// The code → label map lives in lib/disciplines.ts, shared with the Employees
+// page and the integration route. An unknown code is passed through verbatim so
+// it surfaces rather than vanishing.
 function toEtcDiscipline(code: string): string {
   return DISCIPLINE_LABEL[code.trim().toLowerCase()] ?? code;
 }

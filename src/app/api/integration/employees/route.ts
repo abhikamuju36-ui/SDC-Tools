@@ -1,3 +1,4 @@
+import { DISCIPLINE_LABEL_SET } from "@/lib/disciplines";
 import { prisma } from "@/lib/prisma";
 import type { NextRequest } from "next/server";
 import { revalidatePath } from "next/cache";
@@ -14,14 +15,8 @@ import { logAudit } from "@/lib/audit";
 // PATCH → push a grouping decision back to ETC (set/clear an employee's
 //         discipline), so a drag on the Scheduler board reflects in ETC too.
 
-// The five ETC discipline labels (must match the Employees page + sync map).
-const ETC_DISCIPLINES = new Set([
-  "Project Management",
-  "Mechanical Engineers",
-  "Controls Engineers",
-  "Builders",
-  "Electricians",
-]);
+// Shared with the Employees page and the sync map — see lib/disciplines.ts.
+const ETC_DISCIPLINES = DISCIPLINE_LABEL_SET;
 
 export async function GET(req: NextRequest) {
   const denied = checkSchedulerToken(req);

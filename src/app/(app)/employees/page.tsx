@@ -4,11 +4,12 @@ import { SyncSchedulerTeamButton } from "@/components/SyncSchedulerTeamButton";
 import { ImportSupervisorsButton } from "@/components/ImportSupervisorsButton";
 import { ReconcileRosterButton } from "@/components/ReconcileRosterButton";
 import { EmployeesGrid } from "@/components/EmployeesGrid";
+import { DISCIPLINE_LABELS } from "@/lib/disciplines";
 import type { EmployeeRow } from "@/components/EmployeesGridInner";
 
 // Team groupings, matching the SDC Scheduler app's team_members.discipline
 // categories. Now a sortable AG Grid column (Community can't do row grouping).
-const DISCIPLINES = ["Project Management", "Mechanical Engineers", "Controls Engineers", "Builders", "Electricians"];
+const DISCIPLINES = DISCIPLINE_LABELS;
 const DASH = "—";
 
 // Replaces the "Employees" tab of Project Planner Data Control.xlsx.
@@ -43,7 +44,7 @@ export default async function EmployeesPage() {
         <div>
           <PageTitle className="mb-1">Employees</PageTitle>
           <p className="text-sm text-sdc-gray-600">
-            Replaces the Project Planner workbook&apos;s Employees tab. Deactivated employees keep all historical hours. Edit a cell, then Save the row.
+            Replaces the Project Planner workbook&apos;s Employees tab. Deactivated employees keep all historical hours. Rows are grouped by department; edits save as soon as you leave the cell.
           </p>
         </div>
         <div className="flex items-center gap-2">
