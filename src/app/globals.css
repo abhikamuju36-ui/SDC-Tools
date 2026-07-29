@@ -237,8 +237,14 @@ td.quoted-actual-cell {
   white-space: nowrap;
   text-align: center;
 }
+/* 1.9rem, not the old 2.5rem: the section columns are now pinned to one
+ * uniform width (DATA_COL in the Projects page), and with Actuals on this
+ * input has to share that width with the "/actual" suffix. 1.9rem still
+ * clears the widest real quoted figure (4 digits ≈ 1.5rem) with room to
+ * spare, while leaving the pair comfortably inside the column instead of
+ * overflowing it. */
 td.quoted-actual-cell > input[type="number"] {
-  width: 2.5rem !important;
+  width: 1.9rem !important;
   min-width: 0;
   display: inline-block;
   vertical-align: middle;

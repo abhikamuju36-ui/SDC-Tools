@@ -48,6 +48,25 @@ const PHASE_HEADER_COLOR: Record<string, string> = {
 // padding isn't a "column width" in the same sense.
 const ZOOM_CONTROLS = "[&_td]:py-[var(--quoted-row-py,6px)] [&_.qc]:px-[var(--quoted-col-px,4px)]";
 
+// Every repeated data column — the per-section quoted/actual cells and the two
+// grand-total columns — renders at ONE uniform width, so the grid reads as an
+// even matrix instead of the ragged one auto-layout produced. The old
+// `w-[40px] min-w-[40px]` only set a floor, so each column still stretched to
+// its own content and no two matched; these three properties together pin it.
+//
+// 4.6rem is measured, not guessed. At the app's table text size (0.68rem, see
+// globals.css) the longest single header word — "Drawings" — renders 57.5px,
+// and the widest quoted/actual pair a cell shows with Actuals on is ~60px;
+// plus px-1 padding both land under 4.6rem (69px at the 15px default root).
+// That's what lets header words wrap only at spaces ("Design &" / "Drawings")
+// instead of shattering mid-word into "DR AWI NGS".
+//
+// Deliberately rem, not px: table text is 0.68rem and scales with the sidebar
+// "Text size" control, so a px width would start clipping words again the
+// moment anyone raised it — the same rem-vs-px trap the frozen columns hit.
+const DATA_COL = "var(--quoted-data-col-width, 4.6rem)";
+const DATA_COL_STYLE = { width: DATA_COL, minWidth: DATA_COL, maxWidth: DATA_COL } as const;
+
 // Group sub-bands: lighter SDC brand tints, each distinct, all drawn from the
 // brand palette (blue/green/yellow tints + light blue), with one bold brand
 // blue for the large General Engineering block so it reads as its own zone.
@@ -462,14 +481,16 @@ export default async function QuotedPage({
               })}
               <th
                 rowSpan={3}
-                className="w-[60px] min-w-[60px] border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-[11px] leading-tight text-sdc-blue-dark"
+                style={DATA_COL_STYLE}
+                className="border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-[11px] leading-tight text-sdc-blue-dark"
               >
                 ENG
                 <span className="block font-semibold">TOTAL</span>
               </th>
               <th
                 rowSpan={3}
-                className="w-[60px] min-w-[60px] border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-[11px] leading-tight text-sdc-blue-dark"
+                style={DATA_COL_STYLE}
+                className="border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-[11px] leading-tight text-sdc-blue-dark"
               >
                 SHOP
                 <span className="block font-semibold">TOTAL</span>
@@ -504,7 +525,7 @@ export default async function QuotedPage({
               {PHASE_GROUPS.flatMap((g) => {
                 const sections = visibleSectionsByPhase.get(g.phase) ?? [];
                 return sections.map((s) => (
-                  <th key={s.code} title={s.code} className="qc w-[40px] min-w-[40px] [overflow-wrap:anywhere] border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
+                  <th key={s.code} title={s.code} style={DATA_COL_STYLE} className="qc border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
                     {s.name}
                     <span className="block font-mono text-[10px] font-normal normal-case tracking-normal text-sdc-gray-400">
                       {s.code}
@@ -718,7 +739,8 @@ export default async function QuotedPage({
                           return (
                             <td
                               key={s.code}
-                              className={`qc quoted-actual-cell w-[40px] min-w-[40px] overflow-hidden border-l border-sdc-border px-1 py-1.5 text-center align-middle font-mono text-[10px] whitespace-nowrap text-sdc-gray-600 ${tone}`}
+                              style={DATA_COL_STYLE}
+                              className={`qc quoted-actual-cell overflow-hidden border-l border-sdc-border px-1 py-1.5 text-center align-middle font-mono text-[10px] whitespace-nowrap text-sdc-gray-600 ${tone}`}
                               title={`Quoted ${exactHours(hours) ?? "0"} / Actual ${exactHours(actual) ?? "0"}`}
                             >
                               <input
@@ -752,7 +774,8 @@ export default async function QuotedPage({
                       const a = sumA(codes);
                       return (
                         <td
-                          className="w-[60px] min-w-[60px] overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center align-middle font-mono text-[10px] font-medium"
+                          style={DATA_COL_STYLE}
+                          className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center align-middle font-mono text-[10px] font-medium"
                           title={`${label} — Quoted ${exactHours(q) ?? "0"} / Actual ${exactHours(a) ?? "0"}`}
                         >
                           <span className="font-semibold text-sdc-blue-dark">{wholeHours(q)}</span>
