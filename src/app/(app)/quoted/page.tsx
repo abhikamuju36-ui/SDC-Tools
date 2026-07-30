@@ -12,6 +12,7 @@ import { listSharedViews } from "@/lib/saved-views-actions";
 import { ProjectsFilterMenu } from "@/components/ProjectsFilterMenu";
 import { ProjectsSectionsMenu } from "@/components/ProjectsSectionsMenu";
 import { ProjectsDisplayMenu } from "@/components/ProjectsDisplayMenu";
+import { ProjectsShowAllSwitch } from "@/components/ProjectsShowAllSwitch";
 import { SortButton } from "@/components/SortButton";
 import { AddProjectButton } from "@/components/AddProjectButton";
 import { NewProjectRows } from "@/components/NewProjectRows";
@@ -349,6 +350,15 @@ export default async function QuotedPage({
         />
         <ProjectsDisplayMenu />
         <ProjectViewsMenu sharedViews={sharedViews} teamDefault={teamDefault} />
+        {/* Show all / Reset — last, and visually a switch rather than another
+            dropdown, because it's the only binary control here. */}
+        <ProjectsShowAllSwitch
+          allCustomers={allCustomers}
+          allTypes={allTypes}
+          allStatuses={allStatuses}
+          allBillables={BILLABLE_OPTIONS}
+          allSectionCodes={SECTIONS.map((s) => s.code)}
+        />
       </div>
 
       <DragScroll className="max-h-[calc(100vh-170px)] min-w-[480px] overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm select-none styled-scrollbar">

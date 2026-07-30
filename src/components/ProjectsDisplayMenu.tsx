@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { TOOLBAR_BTN, TOOLBAR_BTN_NEUTRAL } from "@/components/ui/classnames";
 import { GridZoomBody } from "@/components/GridZoomControls";
+import { readShowActuals, writeShowActuals, subscribeShowActuals } from "@/lib/quoted-display-prefs";
 
 // "Display ▾" — how the grid looks rather than what's in it: the Actuals toggle
 // and the two density steppers, replacing two more toolbar buttons.
@@ -18,29 +19,15 @@ const ROW_VAR = "--quoted-row-py";
 const COL_VAR = "--quoted-col-px";
 const ROW_KEY = "quoted-grid-row-py";
 const COL_KEY = "quoted-grid-col-px";
-const ACTUALS_KEY = "quoted-show-actuals";
-const ACTUALS_EVENT = "quoted-show-actuals-change";
-
-// localStorage read through useSyncExternalStore rather than
-// useState + useEffect. The old ShowActualsToggle did the latter, which trips
-// react-hooks/set-state-in-effect and costs an extra render on every mount;
-// this reads the real value on the client and a stable `false` during SSR, so
-// there's no hydration mismatch and no state to sync.
-function subscribeActuals(onChange: () => void) {
-  window.addEventListener(ACTUALS_EVENT, onChange);
-  // `storage` covers the same page open in another tab.
-  window.addEventListener("storage", onChange);
-  return () => {
-    window.removeEventListener(ACTUALS_EVENT, onChange);
-    window.removeEventListener("storage", onChange);
-  };
-}
 
 export function ProjectsDisplayMenu() {
   const detailsRef = useRef<HTMLDetailsElement>(null);
+  // Read through useSyncExternalStore rather than useState + useEffect: no state
+  // to sync, one fewer render per mount, no react-hooks/set-state-in-effect, and
+  // it picks up a change made by the Show-all switch or another tab.
   const showActuals = useSyncExternalStore(
-    subscribeActuals,
-    () => window.localStorage.getItem(ACTUALS_KEY) === "1",
+    subscribeShowActuals,
+    readShowActuals,
     () => false, // server snapshot: hidden until the client says otherwise
   );
 
@@ -51,12 +38,7 @@ export function ProjectsDisplayMenu() {
     document.body.classList.toggle("hide-actuals", !showActuals);
   }, [showActuals]);
 
-  const toggleActuals = useCallback(() => {
-    const next = window.localStorage.getItem(ACTUALS_KEY) === "1" ? "0" : "1";
-    window.localStorage.setItem(ACTUALS_KEY, next);
-    // localStorage writes don't notify the writing tab, so say so explicitly.
-    window.dispatchEvent(new Event(ACTUALS_EVENT));
-  }, []);
+  const toggleActuals = useCallback(() => writeShowActuals(!readShowActuals()), []);
 
   // Restore the saved density. This used to live in GridZoomControls, which the
   // Projects toolbar no longer renders — without moving it here, a chosen row
