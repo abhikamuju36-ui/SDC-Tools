@@ -1,5 +1,19 @@
 # App-only Graph auth for the hours sync — setup runbook
 
+> **STATUS 2026-07-30 — the sync is DOWN and this is the fix.**
+> Last successful sync: **2026-07-29 19:56:28**. Failing every 10 minutes since;
+> 258 `Cannot decrypt … Error code: 3` entries across the PM2 error logs. A
+> user-triggered Refresh on Monthly ETC now surfaces it as "Submission rejected"
+> (digest `100648713`, `etc-actions.ts:447` → `sync-powerbi.ts:18` →
+> `sharepoint-hours.ts:113`) instead of silently ageing the numbers.
+>
+> **The blocker is unchanged and is one click: admin consent, Step 1.**
+> `Sites.Selected` is already added to the registration and still shows
+> "Not granted for Steven Douglas Corp".
+>
+> For the Power BI / Fabric side (trial expiry, secret expiry, fallback plan),
+> see [POWERBI-CONTINUITY.md](POWERBI-CONTINUITY.md).
+
 **Why:** the SharePoint hours sync currently borrows a *user's* cached login
 (`akamuju`, via `sdc-powerbi-mcp.exe login`). That cache is DPAPI-encrypted under
 `DataProtectionScope.CurrentUser`, so it can only be decrypted from that user's
@@ -7,8 +21,10 @@ own logged-on Windows session. Consequences, all of which have actually bitten:
 
 - A process in Windows **session 0** (PM2 started as a service, a scheduled
   task, or a daemon respawned by anything in session 0) cannot read it. This
-  silently killed every hours + parts sync from **2026-07-24 to 2026-07-29**, and
-  again on **2026-07-29 12:13**.
+  silently killed every hours + parts sync from **2026-07-24 to 2026-07-29**,
+  again on **2026-07-29 12:13**, and again from **2026-07-29 19:56 onward** —
+  the outage that is live as of this writing. Three occurrences in a week is the
+  argument: this is not an incident, it's the design.
 - **Logging off** ends the session and unloads the DPAPI keys — sync stops.
 - The delegated **refresh token expires** eventually (inactivity / CA policy), so
   someone must re-run `sdc-powerbi-mcp.exe login` by hand.
@@ -185,9 +201,11 @@ Two things to keep in mind:
   as the signed-in user, so RLS applied. An app identity sees the whole model.
   Fine for the ETC rollups this app reads; relevant if anything user-scoped is
   added later.
-- **The Power BI trial.** As of 2026-07-29 the tenant showed *"free Power BI trial
-  ends in 3 days"*. App-only auth doesn't change licensing — if the trial lapses,
-  these API paths are affected regardless of how they authenticate.
+- **The Power BI trial.** As of **2026-07-30** the tenant shows *"free Power BI
+  trial ends in 2 days"*. App-only auth doesn't change licensing — if the trial
+  lapses, these API paths are affected regardless of how they authenticate. This
+  is now the more urgent of the two problems; see
+  [POWERBI-CONTINUITY.md](POWERBI-CONTINUITY.md).
 
 So after Step 4, `sharepoint-hours.ts` is the **last** consumer of the DPAPI
 cache. Once `Sites.Selected` is consented, nothing in this app depends on an
