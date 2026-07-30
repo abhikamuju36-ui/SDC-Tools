@@ -4,6 +4,7 @@ import { Fragment } from "react";
 import { VALID_JOB_TYPES } from "@/lib/job-filters";
 import { useNewProjectRowIds, removeNewProjectRow } from "@/components/NewProjectRowsStore";
 import { DateCell } from "@/components/DateCell";
+import { MoneyCell } from "@/components/MoneyCell";
 
 type PhaseGroup = { phase: string; sections: { code: string; name: string }[] };
 
@@ -148,28 +149,22 @@ export function NewProjectRows({
           <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-2 py-1.5 text-center align-middle text-[10px] font-medium text-sdc-navy">
             <div className="flex items-center justify-center gap-0.5">
               <span className="text-sdc-gray-400">$</span>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
+              <MoneyCell
                 name={`newRow__${tempId}__costQuoted`}
-                placeholder="—"
-                aria-label="New project Cost Quoted"
-                className="w-full min-w-0 border-none bg-transparent text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                defaultValue=""
+                ariaLabel="New project Cost Quoted"
+                className="w-full min-w-0 border-none bg-transparent text-right tabular-nums outline-none"
               />
             </div>
           </td>
           <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-2 py-1.5 text-center align-middle text-[10px] text-sdc-gray-600">
             <div className="flex items-center justify-center gap-0.5">
               <span className="text-sdc-gray-400">$</span>
-              <input
-                type="number"
-                step="0.01"
-                min="0"
+              <MoneyCell
                 name={`newRow__${tempId}__costActualHistorical`}
-                placeholder="—"
-                aria-label="New project Cost Actual"
-                className="w-full min-w-0 border-none bg-transparent text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                defaultValue=""
+                ariaLabel="New project Cost Actual"
+                className="w-full min-w-0 border-none bg-transparent text-right tabular-nums outline-none"
               />
             </div>
           </td>

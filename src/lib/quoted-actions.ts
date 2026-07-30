@@ -121,9 +121,16 @@ function parseDate(raw: string): Date | null {
   return d;
 }
 
+// Accepts what a human would type or paste into a money cell — "1,300,000",
+// "$1,300,000", "1 300 000" — not just what <input type="number"> used to emit.
+// The grid's cells are currency-formatted now (MoneyCell), and people paste
+// figures straight out of Excel, so a bare Number() here rejected values that
+// were perfectly valid to a reader. Stripping is limited to currency/grouping
+// punctuation: anything else still fails loudly rather than being coerced.
 function parseMoney(raw: string, field: string, label: number | string): number | null {
-  if (raw === "") return null;
-  const n = Number(raw);
+  const cleaned = raw.replace(/[$\s,]/g, "");
+  if (cleaned === "") return null;
+  const n = Number(cleaned);
   if (!Number.isFinite(n) || n < 0) {
     throw new Error(`Invalid ${field} "${raw}" for ${typeof label === "number" ? `job ${label}` : label}.`);
   }

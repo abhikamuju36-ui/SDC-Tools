@@ -18,6 +18,7 @@ import { SortButton } from "@/components/SortButton";
 import { AddProjectButton } from "@/components/AddProjectButton";
 import { NewProjectRows } from "@/components/NewProjectRows";
 import { DateCell } from "@/components/DateCell";
+import { MoneyCell } from "@/components/MoneyCell";
 import { SaveQuotedHoursButton } from "@/components/SaveQuotedHoursButton";
 import { JobCellMenu } from "@/components/JobCellMenu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
@@ -76,6 +77,12 @@ const ZOOM_CONTROLS = "[&_td]:py-[var(--quoted-row-py,6px)] [&_.qc]:px-[var(--qu
 // moment anyone raised it — the same rem-vs-px trap the frozen columns hit.
 const DATA_COL = "calc(4.7rem + 2 * var(--quoted-col-px, 4px))";
 const DATA_COL_STYLE = { width: DATA_COL, minWidth: DATA_COL, maxWidth: DATA_COL } as const;
+
+// The two money columns (Cost Quoted / Cost Actual). Right-aligned, unlike the
+// rest of the grid: these are the only figures here with a variable digit count,
+// and a right edge is what lets "$8,600" and "$1,406,923" be compared at a
+// glance. tabular-nums keeps the digits in columns while editing.
+const MONEY_INPUT = "w-full min-w-0 border-none bg-transparent text-right tabular-nums outline-none";
 
 // Group sub-bands: lighter SDC brand tints, each distinct, all drawn from the
 // brand palette (blue/green/yellow tints + light blue), with one bold brand
@@ -809,30 +816,22 @@ export default async function QuotedPage({
                   <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center align-middle text-[10px] font-medium text-sdc-navy ${zebra}`}>
                     <div className="flex items-center justify-center gap-0.5">
                       <span className="text-sdc-gray-400">$</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
+                      <MoneyCell
                         name={`jobField__${job.id}__costQuoted`}
                         defaultValue={job.costQuoted != null ? Number(job.costQuoted).toString() : ""}
-                        placeholder="—"
-                        aria-label={`Cost Quoted, ${job.jobName}`}
-                        className="w-full min-w-0 border-none bg-transparent text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                        ariaLabel={`Cost Quoted, ${job.jobName}`}
+                        className={MONEY_INPUT}
                       />
                     </div>
                   </td>
                   <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center align-middle text-[10px] text-sdc-gray-600 ${zebra}`}>
                     <div className="flex items-center justify-center gap-0.5">
                       <span className="text-sdc-gray-400">$</span>
-                      <input
-                        type="number"
-                        step="0.01"
-                        min="0"
+                      <MoneyCell
                         name={`jobField__${job.id}__costActualHistorical`}
                         defaultValue={job.costActualHistorical != null ? Number(job.costActualHistorical).toString() : ""}
-                        placeholder="—"
-                        aria-label={`Cost Actual, ${job.jobName}`}
-                        className="w-full min-w-0 border-none bg-transparent text-center outline-none [appearance:textfield] [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none"
+                        ariaLabel={`Cost Actual, ${job.jobName}`}
+                        className={MONEY_INPUT}
                       />
                     </div>
                   </td>
