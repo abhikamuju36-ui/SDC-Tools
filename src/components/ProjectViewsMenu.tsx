@@ -62,8 +62,10 @@ function snapshotView(): ViewConfig {
 }
 
 // Apply a view: restore the client prefs into localStorage, then hard-navigate
-// to /quoted with the saved params so GridZoomControls/ShowActualsToggle
-// re-initialise from localStorage on mount (they only read it once).
+// to /quoted with the saved params so ProjectsDisplayMenu re-initialises from
+// localStorage on mount (it restores density there, and reads the actuals flag
+// straight from storage). The two separate controls this used to name were
+// folded into that one menu when the toolbar was bucketed.
 function applyView(name: string, config: ViewConfig) {
   if (config.grid?.rowPy != null) window.localStorage.setItem(GRID_ROW_KEY, String(config.grid.rowPy));
   if (config.grid?.colPx != null) window.localStorage.setItem(GRID_COL_KEY, String(config.grid.colPx));

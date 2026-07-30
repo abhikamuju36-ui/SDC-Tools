@@ -7,13 +7,11 @@ import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
 import { PageTitle } from "@/components/ui/Typography";
 import { TABLE_HEADER_ROW, TABLE_GRID, BUTTON_PRIMARY } from "@/components/ui/classnames";
-import { PhaseColumnPicker } from "@/components/PhaseColumnPicker";
-import { ColumnToggle } from "@/components/ColumnToggle";
-import { GridZoomControls } from "@/components/GridZoomControls";
 import { ProjectViewsMenu } from "@/components/ProjectViewsMenu";
 import { listSharedViews } from "@/lib/saved-views-actions";
-import { ShowActualsToggle } from "@/components/ShowActualsToggle";
-import { MultiSelectFilter } from "@/components/MultiSelectFilter";
+import { ProjectsFilterMenu } from "@/components/ProjectsFilterMenu";
+import { ProjectsSectionsMenu } from "@/components/ProjectsSectionsMenu";
+import { ProjectsDisplayMenu } from "@/components/ProjectsDisplayMenu";
 import { SortButton } from "@/components/SortButton";
 import { AddProjectButton } from "@/components/AddProjectButton";
 import { NewProjectRows } from "@/components/NewProjectRows";
@@ -325,29 +323,31 @@ export default async function QuotedPage({
         </span>
       </p>
 
+      {/* Toolbar, bucketed (2026-07-30). It had twelve buttons: four row
+          filters, four phase pickers, Actuals, Columns, Grid Size, Views. They
+          collapse into four by what they DO — filter rows, choose columns,
+          change appearance, recall a saved view — with each button carrying the
+          count the individual buttons used to show, so nothing became invisible.
+          Filters and Sections apply on close; Display is instant (client-only). */}
       <div className="mb-5 flex flex-wrap gap-2.5">
-        <MultiSelectFilter label="Customer" paramName="customers" options={allCustomers} selected={selectedCustomers} />
-        <MultiSelectFilter label="Type" paramName="types" options={allTypes} selected={selectedTypes} />
-        <MultiSelectFilter label="Status" paramName="statuses" options={allStatuses} selected={selectedStatuses} />
-        <MultiSelectFilter label="Billable" paramName="billables" options={BILLABLE_OPTIONS} selected={selectedBillables} />
-        {PHASE_GROUPS.map((g) => (
-          <PhaseColumnPicker
-            key={g.phase}
-            phase={g.phase}
-            sections={SECTIONS.filter((s) => s.phase === g.phase)}
-            visibleCodes={visibleCodes}
-          />
-        ))}
-        <ShowActualsToggle />
-        <ColumnToggle columns={[...TOGGLE_COLUMNS]} hidden={[...hiddenCols]} />
-        <GridZoomControls
-          rowVar="--quoted-row-py"
-          colVar="--quoted-col-px"
-          rowStorageKey="quoted-grid-row-py"
-          colStorageKey="quoted-grid-col-px"
-          defaultRowPx={6}
-          defaultColPx={4}
+        <ProjectsFilterMenu
+          filters={[
+            { key: "customers", label: "Customer", options: allCustomers, selected: selectedCustomers, searchable: true },
+            { key: "types", label: "Type", options: allTypes, selected: selectedTypes },
+            { key: "statuses", label: "Status", options: allStatuses, selected: selectedStatuses },
+            { key: "billables", label: "Billable", options: BILLABLE_OPTIONS, selected: selectedBillables },
+          ]}
         />
+        <ProjectsSectionsMenu
+          phases={PHASE_GROUPS.map((g) => ({
+            phase: g.phase,
+            sections: SECTIONS.filter((s) => s.phase === g.phase).map((s) => ({ code: s.code, name: s.name })),
+          }))}
+          visibleCodes={visibleCodes}
+          infoColumns={[...TOGGLE_COLUMNS]}
+          hiddenInfo={[...hiddenCols]}
+        />
+        <ProjectsDisplayMenu />
         <ProjectViewsMenu sharedViews={sharedViews} teamDefault={teamDefault} />
       </div>
 

@@ -1,7 +1,5 @@
 "use client";
 
-import { useEffect, useRef } from "react";
-import { TOOLBAR_BTN, TOOLBAR_BTN_NEUTRAL } from "@/components/ui/classnames";
 
 // Density controls for a data grid — "Row height" scales every body cell's
 // vertical padding, "Column width" scales the grid's repeated data columns'
@@ -38,7 +36,15 @@ function step(cssVar: string, storageKey: string, defaultPx: number, delta: numb
   window.localStorage.setItem(storageKey, String(next));
 }
 
-export function GridZoomControls({
+// The steppers, for a menu that already has its own popover to host them —
+// currently the Projects toolbar's bucketed "Display". The self-contained
+// dropdown version that used to live here went with the un-bucketed toolbar;
+// nothing rendered it any more.
+//
+// The mount-time localStorage restore is the CALLER's job (see
+// ProjectsDisplayMenu): it has to run whether or not the menu is ever opened,
+// so it belongs in something always rendered, which this popover body isn't.
+export function GridZoomBody({
   rowVar,
   colVar,
   rowStorageKey,
@@ -53,48 +59,19 @@ export function GridZoomControls({
   defaultRowPx: number;
   defaultColPx: number;
 }) {
-  const detailsRef = useRef<HTMLDetailsElement>(null);
-
-  useEffect(() => {
-    const savedRow = window.localStorage.getItem(rowStorageKey);
-    const savedCol = window.localStorage.getItem(colStorageKey);
-    if (savedRow != null) document.documentElement.style.setProperty(rowVar, `${clamp(Number(savedRow))}px`);
-    if (savedCol != null) document.documentElement.style.setProperty(colVar, `${clamp(Number(savedCol))}px`);
-    // Keys/vars are static per page — only the mount-time restore needs to run once.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  // Same details/summary dropdown pattern as ColumnToggle/DeptColumnFilter —
-  // click-outside closes it, no JS library needed.
-  useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (detailsRef.current?.open && !detailsRef.current.contains(e.target as Node)) detailsRef.current.open = false;
-    }
-    document.addEventListener("click", onClick);
-    return () => document.removeEventListener("click", onClick);
-  }, []);
-
   return (
-    <details ref={detailsRef} className="group relative inline-block text-xs text-sdc-gray-500">
-      <summary className={`${TOOLBAR_BTN} ${TOOLBAR_BTN_NEUTRAL}`}>
-        Grid Size
-        <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" className="shrink-0 opacity-70 transition-transform duration-150 group-open:rotate-180">
-          <path d="M3.5 6 L8 10.5 L12.5 6" strokeLinecap="round" strokeLinejoin="round" />
-        </svg>
-      </summary>
-      <div className="absolute left-0 top-full z-30 mt-2 flex w-max flex-col gap-2 rounded-lg border border-sdc-border bg-white p-2.5 shadow-lg">
-        <ZoomStepper
-          label="Row height"
-          onDecrease={() => step(rowVar, rowStorageKey, defaultRowPx, -STEP_PX)}
-          onIncrease={() => step(rowVar, rowStorageKey, defaultRowPx, STEP_PX)}
-        />
-        <ZoomStepper
-          label="Column width"
-          onDecrease={() => step(colVar, colStorageKey, defaultColPx, -STEP_PX)}
-          onIncrease={() => step(colVar, colStorageKey, defaultColPx, STEP_PX)}
-        />
-      </div>
-    </details>
+    <>
+      <ZoomStepper
+        label="Row height"
+        onDecrease={() => step(rowVar, rowStorageKey, defaultRowPx, -STEP_PX)}
+        onIncrease={() => step(rowVar, rowStorageKey, defaultRowPx, STEP_PX)}
+      />
+      <ZoomStepper
+        label="Column width"
+        onDecrease={() => step(colVar, colStorageKey, defaultColPx, -STEP_PX)}
+        onIncrease={() => step(colVar, colStorageKey, defaultColPx, STEP_PX)}
+      />
+    </>
   );
 }
 

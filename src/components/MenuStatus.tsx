@@ -40,3 +40,77 @@ export function MenuApplyHint({ dirty }: { dirty: boolean }) {
     </p>
   );
 }
+
+// A collapsible group inside a bucketed menu (Filters/Sections). `count` is the
+// "3/11"-style summary that lets you read the state without opening the group,
+// which is what keeps two-clicks-deep from feeling blind.
+//
+// `defaultOpen` should be set when the group is actively narrowing something —
+// an active filter you'd have to hunt for is worse than a slightly taller menu.
+export function MenuGroup({
+  label,
+  count,
+  defaultOpen = false,
+  children,
+}: {
+  label: string;
+  count?: string;
+  defaultOpen?: boolean;
+  children: React.ReactNode;
+}) {
+  return (
+    <details open={defaultOpen} className="group/g border-b border-sdc-border-soft last:border-b-0">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 px-1.5 py-1.5 text-[11px] font-semibold text-sdc-navy hover:bg-sdc-gray-100">
+        <svg
+          viewBox="0 0 16 16"
+          width="8"
+          height="8"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2.4"
+          className="shrink-0 opacity-60 transition-transform duration-150 group-open/g:rotate-90"
+        >
+          <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+        <span className="flex-1 truncate">{label}</span>
+        {count && <span className="shrink-0 font-normal tabular-nums text-sdc-gray-400">{count}</span>}
+      </summary>
+      <div className="pb-1 pl-2.5">{children}</div>
+    </details>
+  );
+}
+
+// Select all / Clear pair, repeated in every group.
+export function MenuBulkActions({ onAll, onNone }: { onAll: () => void; onNone: () => void }) {
+  return (
+    <div className="flex items-center gap-3 px-1.5 pb-1 text-[10px] text-sdc-gray-400">
+      <button type="button" onClick={onAll} className="underline hover:text-sdc-navy">
+        Select all
+      </button>
+      <button type="button" onClick={onNone} className="underline hover:text-sdc-navy">
+        Clear
+      </button>
+    </div>
+  );
+}
+
+// One checkbox row. `suffix` carries the section code on the Sections menu.
+export function MenuCheckbox({
+  label,
+  checked,
+  onChange,
+  suffix,
+}: {
+  label: string;
+  checked: boolean;
+  onChange: () => void;
+  suffix?: string;
+}) {
+  return (
+    <label className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-sdc-gray-100">
+      <input type="checkbox" checked={checked} onChange={onChange} className="h-3.5 w-3.5 shrink-0" />
+      <span className="flex-1 truncate">{label}</span>
+      {suffix && <span className="shrink-0 font-mono text-[10px] text-sdc-gray-400">{suffix}</span>}
+    </label>
+  );
+}
