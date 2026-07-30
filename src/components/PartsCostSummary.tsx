@@ -61,21 +61,33 @@ export function PartsCostSummary({
   // ratios far worse (see partsCostBarOption). Uncapped label, capped fill, so
   // an overrun still reads as one.
   const pctOfBudget = budget != null && budget > 0 ? purchased / budget : null;
+  // Per Dan (2026-07-30): "should have % expected based on projection". The
+  // meter above is where the job IS (purchased/budget); this is where it's
+  // HEADING (projection/budget) — the number that says whether it lands over
+  // budget, while there's still time to act. Both are shown because a job at 80%
+  // purchased and 130% projected is the case worth catching, and one meter alone
+  // can't say that.
+  const pctProjected = budget != null && budget > 0 && budgetProjection != null ? budgetProjection.total / budget : null;
 
   return (
-    <div className="mt-8 space-y-4">
-      <p className="font-heading text-lg font-bold tracking-tight text-sdc-navy">Parts Cost</p>
-
+    // Tightened by request (Dan, 2026-07-30): this block was taking most of a
+    // screen on its way to Procurement, which is where the actual part detail
+    // lives. mt-6 not mt-8, one header line instead of a title plus a heading
+    // plus a subtitle, a 150px chart instead of 190, and the two meters share a
+    // row. Nothing was removed — it's the same five bars and the same figures.
+    <div className="mt-6 space-y-3">
       {/* The four KPI cards that used to sit to the left of this chart are gone
           by request — every figure they showed is already labelled on its own
           bar, so they were a second copy of the same four numbers. The chart now
           spans the full width, which is also what makes the bars readable at
           these magnitudes. */}
       <div className="flex flex-col rounded-xl border border-sdc-border bg-white p-4 shadow-sm">
-        <p className="mb-1 text-sm font-semibold text-sdc-navy">Parts cost breakdown</p>
-        <p className="mb-2 text-xs text-sdc-gray-500">Purchased, planned and invoiced dollars across the selected job(s).</p>
+        <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
+          <p className="font-heading text-lg font-bold tracking-tight text-sdc-navy">Parts Cost</p>
+          <p className="text-xs text-sdc-gray-500">Purchased, planned and invoiced dollars across the selected job(s).</p>
+        </div>
         <EChart
-          height={190}
+          height={150}
           option={partsCostBarOption([
             // Estimated first: it's the plan, so the bars now read plan →
             // committed → invoiced → outstanding rather than starting mid-story.
@@ -133,30 +145,64 @@ export function PartsCostSummary({
           ])}
         />
 
-        {/* Budget, on its own scale — what the gauge was actually trying to
-            say. mt-auto pins it to the card's bottom edge however tall the
-            card gets. */}
-        {pctOfBudget != null && budget != null && (
-          <div className="mt-auto border-t border-sdc-border pt-3">
-            <div className="flex items-baseline justify-between gap-2">
-              <p
-                className="cursor-help text-xs font-semibold text-sdc-gray-600"
+        {/* Budget meters, on their own scale — what the gauge was actually
+            trying to say. Side by side on anything wider than a phone so the
+            pair costs one row rather than two: this block sits above
+            Procurement, and every row it takes is a row of parts pushed off
+            screen. mt-auto pins them to the card's bottom edge. */}
+        {budget != null && (pctOfBudget != null || pctProjected != null) && (
+          <div className="mt-auto grid gap-3 border-t border-sdc-border pt-3 sm:grid-cols-2">
+            {pctOfBudget != null && (
+              <Meter
+                label="Purchased vs Part Cost Budget"
+                pct={pctOfBudget}
+                budget={budget}
                 title={`${usd(purchased)} committed against the ${usd(budget)} Cost Quoted budget. Turns red above 100%; the fill caps at 100% but the percentage doesn't, so an overrun still reads as one.`}
-              >
-                Purchased vs Part Cost Budget
-              </p>
-              <p className="font-heading text-sm font-bold tabular-nums text-sdc-navy">
-                {(pctOfBudget * 100).toFixed(1)}% of {usd(budget)}
-              </p>
-            </div>
-            <div className="relative mt-2 h-2 w-full overflow-hidden rounded-full bg-sdc-gray-100">
-              <div
-                className="absolute inset-y-0 left-0 rounded-full"
-                style={{ width: `${Math.min(100, pctOfBudget * 100)}%`, background: pctOfBudget > 1 ? "#dc2626" : "#408bf7" }}
               />
-            </div>
+            )}
+            {pctProjected != null && budgetProjection != null && (
+              <Meter
+                label="Projected vs Part Cost Budget"
+                pct={pctProjected}
+                budget={budget}
+                title={`Where this job is HEADING: the ${usd(budgetProjection.total)} projection against the ${usd(budget)} Cost Quoted budget. Watch this one rather than Purchased — it turns red while there's still time to act, instead of once the money is already committed.`}
+              />
+            )}
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// One budget meter. Uncapped label, capped fill, so an overrun still reads as
+// one instead of silently pinning at 100%.
+function Meter({
+  label,
+  pct,
+  budget,
+  title,
+}: {
+  label: string;
+  pct: number;
+  budget: number;
+  title: string;
+}) {
+  return (
+    <div>
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="cursor-help text-xs font-semibold text-sdc-gray-600" title={title}>
+          {label}
+        </p>
+        <p className="font-heading text-sm font-bold tabular-nums text-sdc-navy">
+          {(pct * 100).toFixed(1)}% of {usd(budget)}
+        </p>
+      </div>
+      <div className="relative mt-2 h-2 w-full overflow-hidden rounded-full bg-sdc-gray-100">
+        <div
+          className="absolute inset-y-0 left-0 rounded-full"
+          style={{ width: `${Math.min(100, pct * 100)}%`, background: pct > 1 ? "#dc2626" : "#408bf7" }}
+        />
       </div>
     </div>
   );

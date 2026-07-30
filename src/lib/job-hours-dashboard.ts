@@ -42,6 +42,12 @@ export type JobHoursDashboard = {
   sections: SectionHours[];
   phaseGroups: { phase: string; count: number }[];
   billingGroups: { group: string; quoted: number; etc: number; actual: number }[];
+  // Per-section month-by-month worked hours, oldest first — the detail behind a
+  // section's Actual bar. Keyed by section code; a section with no ETC history
+  // is absent rather than present-and-empty. Feeds the drill-through panel: the
+  // charts could say a section was 680 hours over, but not when that happened,
+  // which is the first thing anyone asks next.
+  monthlyBySection: Record<string, { month: string; worked: number }[]>;
 };
 
 // Effective New ETC — the same rule the ETC grid renders with (execution-etc.ts).
@@ -162,6 +168,30 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
     actual: actualBy.get(s.code) ?? 0,
   }));
 
+  // Per-section monthly worked hours. Summed across the selected jobs, so an
+  // aggregate view reads as one timeline rather than interleaved per-job rows.
+  // Zero-hour months are dropped — a month where nobody touched the section is
+  // noise in a drill-down, not information.
+  const monthlyBySection: Record<string, { month: string; worked: number }[]> = {};
+  {
+    // section -> month -> hours. Nested rather than a composite string key, so
+    // no separator has to be chosen that a section code or month can't contain.
+    const bySection = new Map<string, Map<string, number>>();
+    for (const e of entries) {
+      if (e.section === PARTS_COST_SECTION) continue;
+      const worked = Number(e.hoursWorked);
+      if (!worked) continue;
+      let months = bySection.get(e.section);
+      if (!months) bySection.set(e.section, (months = new Map()));
+      months.set(e.month, (months.get(e.month) ?? 0) + worked);
+    }
+    for (const [section, months] of bySection) {
+      monthlyBySection[section] = [...months].map(([month, worked]) => ({ month, worked }));
+    }
+    // YYYY-MM sorts correctly as a string, so no date parsing needed.
+    for (const list of Object.values(monthlyBySection)) list.sort((a, b) => a.month.localeCompare(b.month));
+  }
+
   // Billing-group rollups (Engineering / Shop).
   const bgMap = new Map<string, { quoted: number; etc: number; actual: number }>();
   for (const s of sections) {
@@ -193,5 +223,6 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
     sections,
     phaseGroups: PHASE_GROUPS,
     billingGroups,
+    monthlyBySection,
   };
 }

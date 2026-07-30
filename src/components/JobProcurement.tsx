@@ -371,7 +371,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   const [from, setFrom] = useState(() => saved.from ?? "");
   const [to, setTo] = useState(() => saved.to ?? "");
   // Default hidden columns (fresh users; anyone with a stored set keeps theirs).
-  const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set(saved.hiddenPartCols ?? ["parent", "category", "exp", "lead", "due"]));
+  const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set(saved.hiddenPartCols ?? DEFAULT_HIDDEN_COLS));
   const [upcomingWeek, setUpcomingWeek] = useState<number>(() => saved.upcomingWeek ?? 1);
   const [colWidths, setColWidths] = useState<Partial<Record<ColKey, number>>>(() => saved.colWidths ?? {});
 
@@ -894,6 +894,11 @@ const ALL_COLS: { key: ColKey; label: string; align?: "right"; title?: string }[
   { key: "status", label: "Status" },
 ];
 
+// Columns hidden on a first visit. Named so "Reset" can actually restore them —
+// it used to be an inline literal at the useState call, which left Reset and
+// "Show all" doing the identical thing (clear the set), so Reset never reset.
+const DEFAULT_HIDDEN_COLS: ColKey[] = ["parent", "category", "exp", "lead", "due"];
+
 type PartsListState = {
   view: "list" | "card";
   setView: (v: "list" | "card") => void;
@@ -990,6 +995,23 @@ function PartsListTab({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drill.nonce]);
 
+  // Columns menu: close when the click lands outside it, the way every other
+  // dropdown here behaves (JobSelect, the ETC view menu). A bare <details> stays
+  // open until its own summary is clicked again, so it sat over the table.
+  //
+  // Deliberately NOT closing when a checkbox is toggled — picking columns is
+  // usually several picks in a row, and closing after each one would mean
+  // reopening the menu per column.
+  const colMenuRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      const el = colMenuRef.current;
+      if (el?.open && !el.contains(e.target as Node)) el.open = false;
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
   const distinct = useMemo(() => {
     const cats = new Set<string>();
     const mfrs = new Set<string>();
@@ -1041,7 +1063,7 @@ function PartsListTab({
         />
         {/* Columns toggle (table mode only) */}
         {view === "list" && (
-          <details className="relative">
+          <details ref={colMenuRef} className="relative">
             <summary className={`flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md border px-3 text-xs font-medium hover:bg-sdc-blue-light ${hidden.size ? "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark" : "border-sdc-border bg-white text-sdc-navy"}`}>
               Columns
               {hidden.size > 0 && <span className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-sdc-blue px-1 text-[10px] font-bold text-white tabular-nums">{hidden.size}</span>}
@@ -1067,7 +1089,7 @@ function PartsListTab({
               ))}
               <div className="mt-1.5 flex flex-wrap gap-2 border-t border-sdc-border-soft pt-1.5">
                 <button type="button" onClick={() => setHidden(() => new Set())} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light">Show all</button>
-                <button type="button" onClick={() => setHidden(() => new Set())} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light">Reset</button>
+                <button type="button" onClick={() => setHidden(() => new Set(DEFAULT_HIDDEN_COLS))} title="Back to the default column set" className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light">Reset</button>
                 <button type="button" onClick={() => setColWidths(() => ({}))} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light" title="Restore default column widths">Reset widths</button>
               </div>
             </div>
@@ -1351,6 +1373,21 @@ function PartsTableView({
 
 const NO_PO_KEY = "__NO_PO__";
 
+// What a PO row's dot conveys. Deliberately its own type rather than reusing
+// PoGroup["status"], which has no way to say "open, on time, nothing in yet" —
+// the gap that made a not-yet-due PO render as if it had no PO.
+type PoRowState = "received" | "partial" | "open" | "late" | "noPO";
+
+// The dot is the only thing carrying this state, so it gets a tooltip — a bare
+// colour with no legend is what let "red" be read as "late".
+const PO_ROW_STATE_LABEL: Record<PoRowState, string> = {
+  received: "All lines received",
+  partial: "Partially received — on time",
+  open: "On order — nothing received yet, not yet due",
+  late: "Past due",
+  noPO: "No PO raised",
+};
+
 type PoGroup = {
   poKey: string;
   poNumber: string | null;
@@ -1446,7 +1483,16 @@ function PartsCardView({
   // Vendor readiness bar color: >=90 green, >=60 amber, else blue.
   const vendorBar = (pct: number) => (pct >= 90 ? "bg-sdc-green" : pct >= 60 ? "bg-sdc-yellow" : "bg-sdc-blue");
   const vendorText = (pct: number) => (pct >= 90 ? "text-sdc-green-text" : pct >= 60 ? "text-sdc-yellow-text" : "text-sdc-blue-dark");
-  const dotColor = (s: PoGroup["status"]) => (s === "received" ? "bg-sdc-green" : s === "noPO" ? "bg-sdc-red" : "bg-sdc-blue");
+  // PO row dot. Red means "needs someone's attention" and nothing else — no PO
+  // raised, or a PO whose date has passed. An open PO that simply hasn't
+  // arrived yet is blue, however little of it has been received.
+  //
+  // Per Dan (2026-07-30): a PO due in August with nothing received was showing
+  // red, reading as late when it isn't. The cause was `dotKey` bucketing any PO
+  // under 60% received into "noPO" — the same state as having no PO at all —
+  // so low-receipt and missing-PO were painted identically.
+  const dotColor = (s: PoRowState) =>
+    s === "received" ? "bg-sdc-green" : s === "partial" ? "bg-sdc-yellow" : s === "late" || s === "noPO" ? "bg-sdc-red" : "bg-sdc-blue";
 
   return (
     <div
@@ -1499,7 +1545,19 @@ function PartsCardView({
               const rc = apo ? apo.received : po.received;
               const tot = apo ? apo.itemCount : po.total;
               const effPct = apo ? apo.pct : po.total ? Math.round((po.received / po.total) * 100) : 0;
-              const dotKey: PoGroup["status"] = po.poKey === NO_PO_KEY ? "noPO" : effPct >= 100 ? "received" : effPct >= 60 ? "ordered" : "noPO";
+              // Order matters: fully received wins over past due (a PO that
+              // arrived can't be late), and past due wins over any partial
+              // progress. Only a genuinely missing PO is "noPO".
+              const dotKey: PoRowState =
+                po.poKey === NO_PO_KEY
+                  ? "noPO"
+                  : effPct >= 100
+                    ? "received"
+                    : po.pastDue
+                      ? "late"
+                      : effPct > 0
+                        ? "partial"
+                        : "open";
               return (
                 <button
                   key={rowKey}
@@ -1527,7 +1585,10 @@ function PartsCardView({
                   <span className="text-right text-[10px] tabular-nums text-sdc-gray-600" title={apo ? "Supplier PO line count" : "BOM-derived count"}>{rc}/{tot} rcvd</span>
                   <span className={`text-right font-mono text-[10px] ${po.pastDue ? "text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(po.expected)}</span>
                   <span className="flex items-center gap-1.5">
-                    <span aria-hidden className={`inline-block h-2 w-2 rounded-full ${dotColor(dotKey)}`} />
+                    <span
+                      title={PO_ROW_STATE_LABEL[dotKey]}
+                      className={`inline-block h-2 w-2 rounded-full ${dotColor(dotKey)}`}
+                    />
                     <svg viewBox="0 0 16 16" width="11" height="11" fill="none" stroke="currentColor" strokeWidth="2" className="text-sdc-gray-400" aria-hidden>
                       <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>

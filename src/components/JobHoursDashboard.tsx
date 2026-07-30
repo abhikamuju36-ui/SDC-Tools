@@ -43,6 +43,13 @@ export function JobHoursDashboard({ data }: { data: DashData }) {
   // Fixed template — always show these phases/sections, even at zero hours.
   const [activePhases, setActivePhases] = useState<Set<string>>(() => new Set(TEMPLATE_PHASES));
 
+  // Drill-through target: the section code whose monthly detail is open, or null.
+  // Parts already had a drill (JobProcurement's drillToPart); the hours charts
+  // had no click behaviour at all, so a section 680 hours over told you nothing
+  // about WHEN that happened. Stored as a code rather than the row object so it
+  // survives a Quoted/ETC toggle re-deriving `hierRows`.
+  const [drillCode, setDrillCode] = useState<string | null>(null);
+
   const templateSections = useMemo(
     () => data.sections.filter((s) => TEMPLATE_PHASES.includes(s.phase) && s.code !== "10-111"),
     [data.sections],
@@ -56,6 +63,11 @@ export function JobHoursDashboard({ data }: { data: DashData }) {
   const bgChart = data.billingGroups
     .filter((g) => g.quoted || g.etc || g.actual)
     .map((g) => ({ name: g.group, planned: hoursType === "Quoted" ? g.quoted : g.etc, actual: g.actual }));
+
+  // Resolved against the CURRENT rows, so hiding the drilled section's phase (or
+  // it dropping out of the template) closes the panel rather than leaving it
+  // showing a section that's no longer on the chart.
+  const drillRow = drillCode ? (hierRows.find((r) => r.code === drillCode) ?? null) : null;
 
   const togglePhase = (p: string) =>
     setActivePhases((prev) => {
@@ -120,8 +132,19 @@ export function JobHoursDashboard({ data }: { data: DashData }) {
       {/* Charts */}
       <div className="grid grid-cols-1 gap-5 lg:grid-cols-[2fr_1fr]">
         <div className={`${card("p-4")} overflow-x-auto`}>
-          <p className="mb-3 font-heading text-base font-bold tracking-tight text-sdc-navy">Estimate to Complete vs Actual</p>
-          <SectionHierarchyChart rows={hierRows} plannedLabel={plannedLabel} />
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3">
+            <p className="font-heading text-base font-bold tracking-tight text-sdc-navy">Estimate to Complete vs Actual</p>
+            <p className="text-[11px] text-sdc-gray-400">Click a section for its month-by-month detail</p>
+          </div>
+          <SectionHierarchyChart rows={hierRows} plannedLabel={plannedLabel} onDrill={setDrillCode} drillCode={drillCode} />
+          {drillRow && (
+            <SectionDrill
+              row={drillRow}
+              plannedLabel={plannedLabel}
+              monthly={data.monthlyBySection[drillRow.code] ?? []}
+              onClose={() => setDrillCode(null)}
+            />
+          )}
         </div>
         <div className={card("p-4")}>
           <p className="mb-1 font-heading text-base font-bold tracking-tight text-sdc-navy">{plannedLabel} and Actual by Billing Group</p>
@@ -150,7 +173,17 @@ type HierRow = { code: string; name: string; group: string; phase: string; plann
 // Section names → Department → Phase, with dashed dividers between groups. Shows
 // every template section, even at zero. Grid columns = sections so the tiers
 // line up by construction (no pixel math).
-function SectionHierarchyChart({ rows, plannedLabel }: { rows: HierRow[]; plannedLabel: string }) {
+function SectionHierarchyChart({
+  rows,
+  plannedLabel,
+  onDrill,
+  drillCode,
+}: {
+  rows: HierRow[];
+  plannedLabel: string;
+  onDrill: (code: string | null) => void;
+  drillCode: string | null;
+}) {
   const BAR_H = 300;
   const max = Math.max(1, ...rows.flatMap((r) => [r.planned, r.actual]));
   const deptRuns = groupRuns(rows, (r) => `${r.phase}|${r.group}`, (r) => r.group);
@@ -193,7 +226,21 @@ function SectionHierarchyChart({ rows, plannedLabel }: { rows: HierRow[]; planne
           return (
             <div
               key={r.code}
-              className={`flex h-full flex-col rounded-sm transition-opacity duration-150 hover:bg-sdc-blue-light/30 ${hover && hover.row.code !== r.code ? "opacity-40" : "opacity-100"}`}
+              // A real button: the whole column is the drill target, and it's
+              // keyboard-reachable. Clicking the open section closes it again.
+              role="button"
+              tabIndex={0}
+              aria-pressed={drillCode === r.code}
+              title={`${r.name} — click for month-by-month detail`}
+              onClick={() => onDrill(drillCode === r.code ? null : r.code)}
+              onKeyDown={(e) => {
+                if (e.key !== "Enter" && e.key !== " ") return;
+                e.preventDefault();
+                onDrill(drillCode === r.code ? null : r.code);
+              }}
+              className={`flex h-full cursor-pointer flex-col rounded-sm transition-opacity duration-150 hover:bg-sdc-blue-light/30 ${
+                drillCode === r.code ? "bg-sdc-blue-light/60 ring-1 ring-sdc-blue" : ""
+              } ${hover && hover.row.code !== r.code ? "opacity-40" : "opacity-100"}`}
               onMouseMove={(e) => {
                 const box = e.currentTarget.parentElement!.getBoundingClientRect();
                 setHover({ row: r, x: e.clientX - box.left, y: e.clientY - box.top });
@@ -252,6 +299,104 @@ function SectionHierarchyChart({ rows, plannedLabel }: { rows: HierRow[]; planne
           </div>
         ))}
       </div>
+    </div>
+  );
+}
+
+// Drill-through detail for one section, opened by clicking its column above.
+//
+// The charts answer "how much" and "how far off"; this answers "when". Actual
+// hours arrive one ETC month at a time, so a section 680 hours over is either a
+// steady overrun or one bad month, and those call for different conversations.
+// Everything here comes from EtcEntry rows the page already loads — no extra
+// query, which is why the panel opens instantly.
+function SectionDrill({
+  row,
+  plannedLabel,
+  monthly,
+  onClose,
+}: {
+  row: HierRow;
+  plannedLabel: string;
+  monthly: { month: string; worked: number }[];
+  onClose: () => void;
+}) {
+  const diff = row.planned - row.actual; // + = under plan
+  const peak = Math.max(1, ...monthly.map((m) => m.worked));
+  // Running total, so you can see where the plan was crossed rather than
+  // inferring it from the monthly bars. Built with an explicit loop rather than
+  // a map() closing over a mutable accumulator — the latter reassigns during
+  // render, which the react-hooks/immutability rule (correctly) rejects.
+  const rowsWithRunning: { month: string; worked: number; running: number }[] = [];
+  for (const m of monthly) {
+    const prev = rowsWithRunning[rowsWithRunning.length - 1]?.running ?? 0;
+    rowsWithRunning.push({ ...m, running: prev + m.worked });
+  }
+
+  return (
+    <div className="mt-4 rounded-lg border border-sdc-blue-100 bg-sdc-blue-light/30 p-3">
+      <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
+        <div>
+          <p className="text-sm font-bold text-sdc-navy">{row.name}</p>
+          <p className="text-[11px] text-sdc-gray-500">
+            {row.phase} · {row.group} · {row.code}
+          </p>
+        </div>
+        <button
+          type="button"
+          onClick={onClose}
+          className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light"
+        >
+          Close
+        </button>
+      </div>
+
+      <div className="mb-3 flex flex-wrap gap-x-6 gap-y-1 text-xs">
+        <span className="text-sdc-gray-600">
+          {plannedLabel}: <span className="font-semibold tabular-nums text-sdc-navy">{fmt(row.planned)}</span>
+        </span>
+        <span className="text-sdc-gray-600">
+          Actual: <span className="font-semibold tabular-nums text-sdc-navy">{fmt(row.actual)}</span>
+        </span>
+        <span className={`font-semibold tabular-nums ${diff > 0 ? "text-sdc-green-text" : diff < 0 ? "text-red-600" : "text-sdc-gray-400"}`}>
+          {diff > 0 ? "Under" : diff < 0 ? "Over" : "On"} {plannedLabel} by {fmt(Math.abs(diff))}
+        </span>
+      </div>
+
+      {rowsWithRunning.length === 0 ? (
+        // Distinct from "0 hours": a section can carry a quote and a historical
+        // Excel actual with no month-by-month ETC history behind it at all.
+        <p className="text-xs text-sdc-gray-500">
+          No month-by-month history for this section — its actual comes from the migrated Excel total, not from ETC tracking.
+        </p>
+      ) : (
+        <div className="space-y-1">
+          <div className="grid grid-cols-[5rem_1fr_4rem_4.5rem] gap-2 text-[10px] font-semibold uppercase tracking-wide text-sdc-gray-400">
+            <span>Month</span>
+            <span />
+            <span className="text-right">Hours</span>
+            <span className="text-right">Running</span>
+          </div>
+          {rowsWithRunning.map((m) => (
+            <div key={m.month} className="grid grid-cols-[5rem_1fr_4rem_4.5rem] items-center gap-2">
+              <span className="font-mono text-[11px] text-sdc-navy">{m.month}</span>
+              <div className="h-2 w-full overflow-hidden rounded-full bg-white">
+                <div className="h-full rounded-full" style={{ width: `${(m.worked / peak) * 100}%`, background: SERIES.actual }} />
+              </div>
+              <span className="text-right text-[11px] font-semibold tabular-nums text-sdc-navy">{fmt(m.worked)}</span>
+              {/* Running total turns red once it passes the plan — the month the
+                  section went over, which is the whole point of the panel. */}
+              <span
+                className={`text-right text-[11px] tabular-nums ${
+                  row.planned > 0 && m.running > row.planned ? "font-semibold text-red-600" : "text-sdc-gray-500"
+                }`}
+              >
+                {fmt(m.running)}
+              </span>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }
