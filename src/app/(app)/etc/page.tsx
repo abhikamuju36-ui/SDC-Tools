@@ -335,8 +335,13 @@ const SUBGROUP_EDGE = "border-l-8! border-l-[#808080]!";
 // than clipping it. Fallback 10px reproduces the current text-[10px] exactly.
 // Body data cells (td), their inputs, and inner spans scale; the sticky label
 // columns and section headers keep their fixed sizing.
+// Row height is scoped to TBODY on purpose. It used to hit every `td`, which
+// included the grand-total row — so that row's own py-2.5 was overridden down to
+// 4px and it read as a hairline strip under the data (reported 2026-07-30:
+// "bottom header too thin"). Horizontal padding and font size stay grid-wide,
+// because the totals must keep column alignment with the rows above them.
 const ZOOM_CONTROLS =
-  "[&_td]:py-[var(--etc-row-py,4px)] [&_td]:leading-none [&_td_input]:py-[var(--etc-row-py,4px)] [&_td_input]:leading-none [&_td:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_th:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_td_input:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_td:not([class*='sticky'])]:text-[length:var(--etc-font-size,10px)] [&_td_input]:text-[length:var(--etc-font-size,10px)] [&_td_span]:text-[length:var(--etc-font-size,10px)]";
+  "[&_tbody_td]:py-[var(--etc-row-py,4px)] [&_tbody_td]:leading-none [&_td_input]:py-[var(--etc-row-py,4px)] [&_td_input]:leading-none [&_td:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_th:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_td_input:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_td:not([class*='sticky'])]:text-[length:var(--etc-font-size,10px)] [&_td_input]:text-[length:var(--etc-font-size,10px)] [&_td_span]:text-[length:var(--etc-font-size,10px)]";
 
 function currentMonth() {
   const d = new Date();
@@ -810,7 +815,7 @@ export default async function MonthlyEtcPage({
               provider wraps both so the panel's live pulled/rate edits flow into
               the grid's job Standard Fees. */}
           <form key={month} id="etc-month-form" action={submitMonth.bind(null, month)} className="min-w-0 flex-1">
-          <DragScroll className="max-h-[calc(100vh-185px)] overflow-auto border border-sdc-border border-t-[#808080] bg-white shadow-sm select-none styled-scrollbar">
+          <DragScroll className="max-h-[calc(100vh-215px)] overflow-auto border border-sdc-border border-t-[#808080] bg-white shadow-sm select-none styled-scrollbar">
             <table className={`w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
               <thead className="sticky top-0 z-20 bg-sdc-gray-100">
                 <tr className={TABLE_HEADER_ROW}>
@@ -1242,6 +1247,12 @@ export default async function MonthlyEtcPage({
                     </td>
                   </tr>
                 )}
+              </tbody>
+              {/* tfoot, not the last row of tbody: it's what takes the totals out
+                  of the row-height variable's reach (see ZOOM_CONTROLS), and it
+                  lets the row pin to the bottom of the scroller so the grand
+                  totals stay on screen while scrolling a 59-job month. */}
+              <tfoot className="sticky bottom-0 z-20">
                 {visibleJobs.length > 0 && (
                   <tr className="border-t-2 border-sdc-navy bg-sdc-gray-100 font-medium">
                     {/* Mirror the body's THREE separate frozen cells (same widths
@@ -1341,7 +1352,7 @@ export default async function MonthlyEtcPage({
                     )}
                   </tr>
                 )}
-              </tbody>
+              </tfoot>
             </table>
           </DragScroll>
           </form>
