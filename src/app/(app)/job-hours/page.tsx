@@ -168,7 +168,6 @@ export default async function JobHoursPage({
               paid={parts.paid}
               estimated={partsBudget}
               budgetProjection={partsProjection}
-              budget={partsBudget}
             />
           )}
 

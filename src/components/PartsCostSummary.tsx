@@ -27,15 +27,18 @@ export function PartsCostSummary({
   paid,
   estimated,
   budgetProjection,
-  budget,
 }: {
   purchased: number;
   paid: number;
   // The Cost Quoted figure from the Projects tab (Job.costQuoted), summed across
   // the selected jobs — per Dan, "Estimated" here is ALWAYS the quoted cost. It
   // was previously the parts New ETC, which read $0 for jobs with no parts ETC
-  // rows (job 1142 against a $1.3M quote). Same number as `budget` below, shown
-  // twice on purpose: once as a bar in the breakdown, once as the meter's target.
+  // rows (job 1142 against a $1.3M quote).
+  //
+  // Serves double duty: the Estimated bar, and the variance meter's baseline.
+  // There used to be a separate `budget` prop for the meter, fed the same
+  // Job.costQuoted from the same page — two names for one number, which is how
+  // the card ended up printing "87.2% of $636,234" twice.
   // Null when no selected job has a quote on file.
   estimated: number | null;
   // "Part Cost Budget Projection": purchased + estimate-to-purchase, the latter
@@ -46,28 +49,35 @@ export function PartsCostSummary({
   // is then omitted rather than drawn with half the formula missing. Both halves
   // arrive so the tooltip can show the arithmetic.
   budgetProjection: { purchased: number; estimateToPurchase: number; total: number } | null;
-  // "Part Cost Budget" in the report = its [Part Cost Quoted] measure,
-  // SUM('Cost Estimated'[Cost Quoted]) — which is the same upstream table that
-  // populates Job.costQuoted here (see syncQuotedFromPowerBi). Null when no
-  // selected job has a quoted cost.
-  budget: number | null;
 }) {
   const leftToPay = purchased - paid;
   // Treat a ZERO quote as "nothing on file", not as a $0 target — an absent
   // estimate must not read as $0 estimated.
   const estimate = estimated != null && estimated > 0 ? estimated : null;
-  // Share of budget consumed. Deliberately its own control rather than a fifth
-  // bar: a $1.3M budget beside these figures still compresses them, and at other
-  // ratios far worse (see partsCostBarOption). Uncapped label, capped fill, so
-  // an overrun still reads as one.
-  const pctOfBudget = budget != null && budget > 0 ? purchased / budget : null;
-  // Per Dan (2026-07-30): "should have % expected based on projection". The
-  // meter above is where the job IS (purchased/budget); this is where it's
-  // HEADING (projection/budget) — the number that says whether it lands over
-  // budget, while there's still time to act. Both are shown because a job at 80%
-  // purchased and 130% projected is the case worth catching, and one meter alone
-  // can't say that.
-  const pctProjected = budget != null && budget > 0 && budgetProjection != null ? budgetProjection.total / budget : null;
+
+  // ONE meter: where the job is HEADING against what it was sold for.
+  //
+  // Was two (purchased-vs-budget and projected-vs-budget), which showed the same
+  // "87.2% of $636,234" twice on a job that has finished buying — two controls
+  // saying one thing. Purchased is already a bar above, so the only figure that
+  // needed its own control is the forward-looking one.
+  //
+  // Stated as a signed VARIANCE rather than a share: "12.8% under" is the
+  // sentence someone actually needs, where "87.2% of budget" makes the reader do
+  // the subtraction. Sign convention matches the Projects grid — under budget is
+  // green, over is red.
+  const variance =
+    estimate != null && budgetProjection != null
+      ? {
+          projection: budgetProjection.total,
+          estimate,
+          dollars: budgetProjection.total - estimate, // + = over
+          pct: (budgetProjection.total - estimate) / estimate,
+          // Fill is the share consumed, capped; the label stays uncapped so an
+          // overrun still reads as one.
+          fill: Math.min(100, (budgetProjection.total / estimate) * 100),
+        }
+      : null;
 
   return (
     // Tightened by request (Dan, 2026-07-30): this block was taking most of a
@@ -119,64 +129,51 @@ export function PartsCostSummary({
           ])}
         />
 
-        {/* Budget meters, on their own scale — what the gauge was actually
-            trying to say. Side by side on anything wider than a phone so the
-            pair costs one row rather than two: this block sits above
-            Procurement, and every row it takes is a row of parts pushed off
-            screen. mt-auto pins them to the card's bottom edge. */}
-        {budget != null && (pctOfBudget != null || pctProjected != null) && (
-          <div className="mt-auto grid gap-3 border-t border-sdc-border pt-3 sm:grid-cols-2">
-            {pctOfBudget != null && (
-              <Meter
-                label="Purchased vs Part Cost Budget"
-                pct={pctOfBudget}
-                budget={budget}
-                title={`${usd(purchased)} committed against the ${usd(budget)} Cost Quoted budget. Turns red above 100%; the fill caps at 100% but the percentage doesn't, so an overrun still reads as one.`}
+        {/* Projection vs Estimated — the one figure that says whether this job
+            lands over what it was sold for, while there's still time to act.
+            mt-auto pins it to the card's bottom edge. */}
+        {variance != null && (
+          <div className="mt-auto border-t border-sdc-border pt-3">
+            <div className="flex items-baseline justify-between gap-2">
+              <p
+                className="cursor-help text-xs font-semibold text-sdc-gray-600"
+                title={
+                  `Projected part cost ${usd(variance.projection)} against the ${usd(variance.estimate)} Cost Quoted estimate — ` +
+                  `${usd(Math.abs(variance.dollars))} ${variance.dollars > 0 ? "over" : "under"}. ` +
+                  "Projection = Purchased + estimate to purchase (the Parts New ETC), so this moves as parts are bought and the ETC is revised."
+                }
+              >
+                Projection vs Estimated
+              </p>
+              <p className="font-heading text-sm font-bold tabular-nums">
+                {/* Zero handled separately: "0.0% over" reads as a rounding
+                    artefact where "on estimate" is unambiguous. */}
+                {Math.abs(variance.pct) < 0.0005 ? (
+                  <span className="text-sdc-gray-500">On estimate · {usd(variance.estimate)}</span>
+                ) : (
+                  <>
+                    <span className={variance.dollars > 0 ? "text-sdc-red-text" : "text-sdc-green-text"}>
+                      {Math.abs(variance.pct * 100).toFixed(1)}% {variance.dollars > 0 ? "over" : "under"}
+                    </span>
+                    {/* The dollar figure alongside the percentage: 13% of a $30K
+                        job and 13% of a $1.4M job are very different problems. */}
+                    <span className="text-sdc-gray-500">
+                      {" "}
+                      ({variance.dollars > 0 ? "+" : "−"}
+                      {usd(Math.abs(variance.dollars))})
+                    </span>
+                  </>
+                )}
+              </p>
+            </div>
+            <div className="relative mt-2 h-2 w-full overflow-hidden rounded-full bg-sdc-gray-100">
+              <div
+                className="absolute inset-y-0 left-0 rounded-full"
+                style={{ width: `${variance.fill}%`, background: variance.dollars > 0 ? "#dc2626" : "#408bf7" }}
               />
-            )}
-            {pctProjected != null && budgetProjection != null && (
-              <Meter
-                label="Projected vs Part Cost Budget"
-                pct={pctProjected}
-                budget={budget}
-                title={`Where this job is HEADING: the ${usd(budgetProjection.total)} projection against the ${usd(budget)} Cost Quoted budget. Watch this one rather than Purchased — it turns red while there's still time to act, instead of once the money is already committed.`}
-              />
-            )}
+            </div>
           </div>
         )}
-      </div>
-    </div>
-  );
-}
-
-// One budget meter. Uncapped label, capped fill, so an overrun still reads as
-// one instead of silently pinning at 100%.
-function Meter({
-  label,
-  pct,
-  budget,
-  title,
-}: {
-  label: string;
-  pct: number;
-  budget: number;
-  title: string;
-}) {
-  return (
-    <div>
-      <div className="flex items-baseline justify-between gap-2">
-        <p className="cursor-help text-xs font-semibold text-sdc-gray-600" title={title}>
-          {label}
-        </p>
-        <p className="font-heading text-sm font-bold tabular-nums text-sdc-navy">
-          {(pct * 100).toFixed(1)}% of {usd(budget)}
-        </p>
-      </div>
-      <div className="relative mt-2 h-2 w-full overflow-hidden rounded-full bg-sdc-gray-100">
-        <div
-          className="absolute inset-y-0 left-0 rounded-full"
-          style={{ width: `${Math.min(100, pct * 100)}%`, background: pct > 1 ? "#dc2626" : "#408bf7" }}
-        />
       </div>
     </div>
   );
