@@ -11,7 +11,7 @@
 > `Sites.Selected` is already added to the registration and still shows
 > "Not granted for Steven Douglas Corp".
 >
-> For the Power BI / Fabric side (trial expiry, secret expiry, fallback plan),
+> For the Power BI / Fabric side (secret expiry, fallback plan, warehouse option),
 > see [POWERBI-CONTINUITY.md](POWERBI-CONTINUITY.md).
 
 **Why:** the SharePoint hours sync currently borrows a *user's* cached login
@@ -201,11 +201,11 @@ Two things to keep in mind:
   as the signed-in user, so RLS applied. An app identity sees the whole model.
   Fine for the ETC rollups this app reads; relevant if anything user-scoped is
   added later.
-- **The Power BI trial.** As of **2026-07-30** the tenant shows *"free Power BI
-  trial ends in 2 days"*. App-only auth doesn't change licensing — if the trial
-  lapses, these API paths are affected regardless of how they authenticate. This
-  is now the more urgent of the two problems; see
-  [POWERBI-CONTINUITY.md](POWERBI-CONTINUITY.md).
+- **Licensing is separate from auth.** A portal banner about a Power BI trial is
+  about capacity, not credentials — app-only auth doesn't change it either way.
+  (An earlier version of this note treated a "trial ends in 2 days" banner as
+  urgent. It isn't expiring; that was a misread. See
+  [POWERBI-CONTINUITY.md](POWERBI-CONTINUITY.md).)
 
 So after Step 4, `sharepoint-hours.ts` is the **last** consumer of the DPAPI
 cache. Once `Sites.Selected` is consented, nothing in this app depends on an

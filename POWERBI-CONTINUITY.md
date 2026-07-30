@@ -1,15 +1,21 @@
 # Power BI / Fabric continuity — runbook
 
-Written **2026-07-30**. Companion to [GRAPH-APP-ONLY-SETUP.md](GRAPH-APP-ONLY-SETUP.md),
-which covers the SharePoint hours sync. This one covers the two things that are
-*working today but on a clock*.
+Written **2026-07-30**, corrected the same day. Companion to
+[GRAPH-APP-ONLY-SETUP.md](GRAPH-APP-ONLY-SETUP.md), which covers the SharePoint
+hours sync, and to [SEMANTIC-MODEL-MAP.md](SEMANTIC-MODEL-MAP.md), which inventories
+what the app actually reads from the model.
 
-## The two clocks
+> **Correction.** The first version of this document was built around a Power BI
+> trial expiring in 2 days, read off the portal banner. **The trial is not
+> expiring** — confirmed by the user. Every "2 days" deadline here was wrong, and
+> the buy/migrate/accept decision below is not time-boxed. What remains real is
+> the client secret, which nobody has checked.
+
+## The one clock
 
 | | window | consequence when it fires |
 |---|---|---|
-| **Power BI trial expiring** | **2 days** (banner, 2026-07-30) | Workspace loses capacity. `runDax` and the Fabric warehouse path both fail. |
-| **`PBI_CLIENT_SECRET` expiring** | **unknown — nobody has checked** | Same, plus it takes the SharePoint fix down with it. |
+| **`PBI_CLIENT_SECRET` expiring** | **unknown — nobody has checked** | `runDax`, the Fabric warehouse path, and the pending SharePoint fix all stop. |
 
 ### Why the secret matters more than it looks
 
@@ -45,29 +51,39 @@ Only three modules call `runDax`. This is the complete blast radius:
 | `sync-powerbi.ts` | `[Cost Quoted]` → `Job.costQuoted`; category pools (`[Hours being pulled this month]`, `[Previous Month Pulled Hours]`, `[Hours Available]`, `[Rate]`, `[Standard Fee]`) | **Job cost budget + the Standard Fees pool panel stop updating.** Stored values persist. |
 | `sync-etc-history.ts` | `[ETC Historical Hours/Costs]`, `…Prior Month`, `…Left`, `[ETC Name]`, `[ETC Begin Date]` | **Backfill only.** The 10 months already backfilled are in MySQL. Nothing live breaks. |
 | `parts-budget-projection.ts` | `[Part Cost Estimated To Complete]` | **Nothing.** As of 2026-07-30 this is reconciliation-only — the projection was moved onto the app's own Parts New ETC. |
-| `job-bom.ts` | the `Assembly` table (BOM cost hierarchy on `/jobs/[id]`) | **BOM cost report stops.** No app-owned equivalent. |
+
+> **Second correction (2026-07-30).** An earlier version of this table listed
+> `job-bom.ts` as a fourth caller reading the model's `Assembly` table, and said
+> the BOM cost report would stop. **Wrong on both counts.** `job-bom.ts` imports
+> `mssql` and queries TotalETO directly (`tblSpec`, `tblEngTop`,
+> `tblPurchaseOrderDetails`, `tblReceiverLog`); it contains no `runDax` call. The
+> model's `Assembly` table (37,341 rows) is a parallel copy the app never reads.
+> The BOM report is unaffected by anything in this document.
 
 What does **not** depend on Power BI at all: hours (SharePoint), parts cost
-(TotalETO), the whole ETC month lifecycle, employees, the Scheduler links.
+(TotalETO), the BOM cost report (TotalETO), the whole ETC month lifecycle,
+employees, the Scheduler links.
 
-So a lapsed trial degrades the app; it does not stop it. The daily ETC workflow
-survives. Know this before paying under time pressure.
+So losing the model would degrade the app, not stop it: quoted hours, quoted
+cost, the Standard Fees pools, and the history backfill. The daily ETC workflow
+survives. See [SEMANTIC-MODEL-MAP.md](SEMANTIC-MODEL-MAP.md) for the
+table-by-table detail behind this.
 
 ---
 
-## Decision to make before the trial lapses
+## If the model ever does become unavailable
 
-### Option A — buy the licence / capacity
+Not a live deadline — the trial isn't expiring. Kept because the secret still
+can, and because Option B is worth doing on its own merits.
 
-Simplest. Nothing in the code changes. Choose this if the BOM cost report and
-live quoted-cost sync matter, which they probably do.
+### Option A — restore/keep the licence or capacity
 
-Note what's actually needed: the workspace needs **capacity**, and the service
-principal needs its workspace role (SDC Sheet is already an Admin on
-`SDC Reports`) plus the tenant's *"service principals can use Fabric APIs"*
-switch, which is already on. Buying a per-user Pro licence for one person is
-**not** necessarily the same thing as keeping a workspace's capacity — confirm
-with whoever owns the tenant which SKU restores the `executeQueries` path.
+Nothing in the code changes. What's actually needed: the workspace needs
+**capacity**, and the service principal needs its workspace role (SDC Sheet is
+already an Admin on `SDC Reports`) plus the tenant's *"service principals can use
+Fabric APIs"* switch, which is already on. A per-user Pro licence is **not**
+necessarily the same thing as a workspace's capacity — confirm with whoever owns
+the tenant which SKU restores the `executeQueries` path.
 
 ### Option B — move to the Fabric warehouse (`fabric-warehouse.ts`)
 
@@ -83,20 +99,19 @@ is strictly fewer moving parts for the same data. What it has today:
 - `getEstimateToClose()` → the ETC/Standard-Fees history rows
 - `queryWarehouse<T>(sql)` → arbitrary read-only T-SQL
 
-**Important:** Option B is not an escape from the trial. The Fabric SQL endpoint
-lives on the same capacity. If capacity lapses, this path lapses with it. Option
-B buys resilience against *refresh and gateway* failure, not against
-*licensing*. Don't confuse the two — that mistake is easy to make here.
+**Important:** Option B is not an escape from *licensing* — the Fabric SQL
+endpoint lives on the same capacity, so if capacity ever lapses this path lapses
+with it. What B buys is resilience against **refresh and gateway** failure. Don't
+confuse the two; that mistake is easy to make here.
 
 ### Option C — accept the degradation
 
-Let the trial lapse, keep the stored values, lose the BOM report and live quoted
-sync. Defensible if the BOM report isn't being used. Requires a deliberate
-decision, not a default.
+Keep the stored values and lose the live quoted-cost sync and pool refresh.
+Defensible, but it should be a decision rather than a default.
 
-**Recommendation:** A now (it's a deadline), then B afterwards on your own
-schedule, because B removes the refresh/gateway fragility regardless of
-licensing.
+**Recommendation:** B, on your own schedule. It removes the refresh/gateway
+fragility regardless of licensing, and the module is already written and tested —
+it just has no callers.
 
 ---
 
@@ -119,25 +134,28 @@ npx tsx scripts/check-graph-auth.ts
 Checks: env vars → token → `roles` claim → site lookup → file download. Use this
 to confirm the SharePoint consent landed *before* restarting anything.
 
-**Run `check-powerbi-auth.ts` today**, while the trial is still alive, so you
-have a known-good baseline to compare against after it lapses. Without that
-baseline you won't be able to tell a licensing failure from a secret expiry —
+**Run `check-powerbi-auth.ts` while things work**, so there's a known-good
+baseline. Without one you can't tell a licensing failure from a secret expiry —
 they present almost identically.
 
 ---
 
 ## Order of operations
 
-1. **Read the secret's expiry date.** Five minutes, unblocks nothing else but
-   removes the largest unquantified risk.
-2. **Run both check scripts** and save the output as a baseline.
-3. **Decide on the trial** (A / B / C above) — 2 days.
-4. **Get admin consent** for `Sites.Selected` (Step 1 of
-   [GRAPH-APP-ONLY-SETUP.md](GRAPH-APP-ONLY-SETUP.md)), then Step 2's per-site
-   grant, then the `GRAPH_*` env vars and a restart. This fixes the live outage.
-5. **Stopgap until 4 lands:** `pm2 kill` then start PM2 from an interactive
-   `akamuju` logon. Restores the hours sync until that session ends. It is not a
-   fix, and if you log off it breaks again.
+Ordered by what's actually urgent — the live outage first, since nothing else
+here is on a deadline.
 
-Items 1–2 need no approvals. Item 3 needs a budget holder. Item 4 needs an Entra
-admin plus someone with site admin / `Sites.FullControl.All`.
+1. **Get admin consent** for `Sites.Selected` (Step 1 of
+   [GRAPH-APP-ONLY-SETUP.md](GRAPH-APP-ONLY-SETUP.md)), then Step 2's per-site
+   grant, then the `GRAPH_*` env vars and a restart. **This fixes the live
+   outage.** Needs an Entra admin plus someone with site admin /
+   `Sites.FullControl.All`.
+2. **Stopgap until 1 lands:** `pm2 kill`, then start PM2 from an interactive
+   `akamuju` logon. Restores the hours sync until that session ends. Not a fix —
+   log off and it breaks again. The other stopgap is the `Hours Actual` fallback
+   in [SEMANTIC-MODEL-MAP.md](SEMANTIC-MODEL-MAP.md), which needs code but no
+   approvals.
+3. **Read the secret's expiry date** and set a reminder 30 days early. Five
+   minutes, no approvals, removes the largest unquantified risk here.
+4. **Run both check scripts** and keep the output as a baseline.
+5. **Consider Option B** (the Fabric warehouse) whenever it suits — no deadline.
