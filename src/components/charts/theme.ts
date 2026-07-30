@@ -80,7 +80,16 @@ export const PARTS_BAR = {
   projection: "#b45309",
 } as const;
 
-export function partsCostBarOption(rows: { label: string; value: number; color?: string }[]): EChartsOption {
+// `hint` is the one-line explanation of what a row MEANS — these five figures
+// are easy to mix up (Purchased vs Paid vs Projection all sit within a few
+// percent of each other on a finishing job), and the bar label alone only
+// repeats the axis. Shown under the value in the tooltip.
+export function partsCostBarOption(
+  rows: { label: string; value: number; color?: string; hint?: string }[],
+): EChartsOption {
+  // Reversed ONCE, so the axis labels, the bar data and the tooltip's
+  // dataIndex→hint lookup can't drift out of step with each other.
+  const ordered = [...rows].reverse();
   return {
     color: [SERIES.planned], // fallback only; per-bar colors are set on each datum
     textStyle: { fontFamily: FONT },
@@ -98,9 +107,18 @@ export function partsCostBarOption(rows: { label: string; value: number; color?:
       textStyle: { color: "#0f172a", fontSize: 12 },
       extraCssText: "box-shadow:0 8px 24px rgba(6,29,57,0.12); border-radius:10px;",
       formatter: (params: unknown) => {
-        const p = (params as { name: string; value: number }[])[0];
+        const p = (params as { name: string; value: number; dataIndex: number }[])[0];
         if (!p) return "";
-        return `<div style="font-weight:600;color:${INK};margin-bottom:2px">${p.name}</div><b style="color:${INK}">${usd(Number(p.value) || 0)}</b>`;
+        const hint = ordered[p.dataIndex]?.hint;
+        return (
+          `<div style="font-weight:600;color:${INK};margin-bottom:2px">${p.name}</div>` +
+          `<b style="color:${INK}">${usd(Number(p.value) || 0)}</b>` +
+          // max-width + wrapping: these run to a full sentence, and without it
+          // the tooltip stretches off the card.
+          (hint
+            ? `<div style="color:${MUTED};font-size:11px;line-height:1.45;margin-top:5px;max-width:250px;white-space:normal">${hint}</div>`
+            : "")
+        );
       },
     },
     xAxis: {
@@ -112,7 +130,7 @@ export function partsCostBarOption(rows: { label: string; value: number; color?:
       type: "category",
       // ECharts stacks category 0 at the BOTTOM on a horizontal bar chart;
       // reversing keeps the rows in the order they're passed (Purchased first).
-      data: rows.map((r) => r.label).reverse(),
+      data: ordered.map((r) => r.label),
       axisLine: { lineStyle: { color: GRID } },
       axisTick: { show: false },
       axisLabel: { color: MUTED, fontSize: 11 },
@@ -124,7 +142,7 @@ export function partsCostBarOption(rows: { label: string; value: number; color?:
         // color arrays: both have to survive the same .reverse() as the axis
         // labels, and keeping them in a single datum makes it impossible for a
         // bar to end up wearing another row's color.
-        data: rows.map((r) => ({ value: r.value, itemStyle: { color: r.color ?? PARTS_BAR.purchased } })).reverse(),
+        data: ordered.map((r) => ({ value: r.value, itemStyle: { color: r.color ?? PARTS_BAR.purchased } })),
         barMaxWidth: 18,
         // Rounded data-end only (the baseline end stays square). Series-level, so
         // each datum only has to carry its color.

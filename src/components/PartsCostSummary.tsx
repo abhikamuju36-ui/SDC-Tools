@@ -25,23 +25,27 @@ import { partsCostBarOption, PARTS_BAR } from "@/components/charts/theme";
 export function PartsCostSummary({
   purchased,
   paid,
-  estimatedToPurchase,
+  estimated,
   budgetProjection,
   budget,
 }: {
   purchased: number;
   paid: number;
-  // Parts New ETC for the latest ETC month, summed across the selected jobs.
-  // Null when there's no ETC month yet or the lookup failed — the chart still
-  // renders, with the Estimated bar at zero.
-  estimatedToPurchase: number | null;
-  // The report's [Budget Projection]: invoiced before the 1st of this month +
-  // [Part Cost Estimated To Complete]. Computed in lib/parts-budget-projection.ts
-  // — see there for the verified definition and why the estimate half has to
-  // come from the semantic model rather than from the app's parts New ETC.
-  // Null when the estimate couldn't be read; the bar is then omitted rather than
-  // drawn with half the formula missing.
-  budgetProjection: number | null;
+  // The Cost Quoted figure from the Projects tab (Job.costQuoted), summed across
+  // the selected jobs — per Dan, "Estimated" here is ALWAYS the quoted cost. It
+  // was previously the parts New ETC, which read $0 for jobs with no parts ETC
+  // rows (job 1142 against a $1.3M quote). Same number as `budget` below, shown
+  // twice on purpose: once as a bar in the breakdown, once as the meter's target.
+  // Null when no selected job has a quote on file.
+  estimated: number | null;
+  // "Part Cost Budget Projection": purchased + estimate-to-purchase, the latter
+  // being the app's Parts New ETC (= the month's opening estimate to complete
+  // less what was spent this month). Computed in lib/parts-budget-projection.ts
+  // — see there for the definition and for why Power BI's estimate-to-complete
+  // measure can't be the estimate half. Null when there's no ETC month; the bar
+  // is then omitted rather than drawn with half the formula missing. Both halves
+  // arrive so the tooltip can show the arithmetic.
+  budgetProjection: { purchased: number; estimateToPurchase: number; total: number } | null;
   // "Part Cost Budget" in the report = its [Part Cost Quoted] measure,
   // SUM('Cost Estimated'[Cost Quoted]) — which is the same upstream table that
   // populates Job.costQuoted here (see syncQuotedFromPowerBi). Null when no
@@ -49,12 +53,9 @@ export function PartsCostSummary({
   budget: number | null;
 }) {
   const leftToPay = purchased - paid;
-  // Treat a ZERO estimate as "no estimate on file", not as a $0 target. Seen
-  // live: a job with no parts ETC rows summed to 0, and comparing against it
-  // produced a red "▲ $1,406,923 vs estimated to purchase" delta plus a
-  // meaningless 0-target bullet. Kept now that those tiles are gone because the
-  // distinction still matters — an absent estimate must not read as $0 spent.
-  const estimate = estimatedToPurchase != null && estimatedToPurchase > 0 ? estimatedToPurchase : null;
+  // Treat a ZERO quote as "nothing on file", not as a $0 target — an absent
+  // estimate must not read as $0 estimated.
+  const estimate = estimated != null && estimated > 0 ? estimated : null;
   // Share of budget consumed. Deliberately its own control rather than a fifth
   // bar: a $1.3M budget beside these figures still compresses them, and at other
   // ratios far worse (see partsCostBarOption). Uncapped label, capped fill, so
@@ -82,17 +83,52 @@ export function PartsCostSummary({
             // Purchase" clipped here before.
             // Colors mirror the report's colored measure names: Purchased blue,
             // Paid green, the two derived rows plain/neutral.
-            { label: "Estimated", value: estimate ?? 0, color: PARTS_BAR.neutral },
-            { label: "Purchased", value: purchased, color: PARTS_BAR.purchased },
-            { label: "Paid", value: paid, color: PARTS_BAR.paid },
-            { label: "Left to pay", value: leftToPay, color: PARTS_BAR.neutral },
+            {
+              label: "Estimated",
+              value: estimate ?? 0,
+              color: PARTS_BAR.neutral,
+              hint:
+                estimate != null
+                  ? "Cost Quoted for the selected job(s) — the same figure the Projects tab shows. The part-cost budget this job was sold against."
+                  : "No Cost Quoted on file for the selected job(s).",
+            },
+            {
+              label: "Purchased",
+              value: purchased,
+              color: PARTS_BAR.purchased,
+              hint: "Every part committed to a purchase order, whether or not the supplier has invoiced yet.",
+            },
+            {
+              label: "Paid",
+              value: paid,
+              color: PARTS_BAR.paid,
+              hint: "The invoiced share of Purchased — money that has actually gone out the door.",
+            },
+            {
+              label: "Left to pay",
+              value: leftToPay,
+              color: PARTS_BAR.neutral,
+              hint: "Purchased − Paid: already committed on a PO, not yet invoiced.",
+            },
             // Budget projection last: it's a projected TOTAL, not another
             // component of the ones above, so it reads as a summary line rather
             // than part of the running breakdown. Amber to separate it from the
             // actuals — it's the only forward-looking figure here. Omitted
             // entirely when null (see the prop docs) rather than drawn as $0.
             ...(budgetProjection != null
-              ? [{ label: "Projection", value: budgetProjection, color: PARTS_BAR.projection }]
+              ? [
+                  {
+                    label: "Projection",
+                    value: budgetProjection.total,
+                    color: PARTS_BAR.projection,
+                    hint:
+                      `Where part cost lands when the job finishes: Purchased ${usd(budgetProjection.purchased)} + ` +
+                      `estimate to purchase ${usd(budgetProjection.estimateToPurchase)}.` +
+                      (budgetProjection.estimateToPurchase === 0
+                        ? " Nothing left to commit — the Parts New ETC is zero, so the projection equals Purchased."
+                        : " Estimate to purchase = the Parts New ETC: this month's opening estimate to complete, less what was spent this month."),
+                  },
+                ]
               : []),
           ])}
         />
@@ -103,7 +139,12 @@ export function PartsCostSummary({
         {pctOfBudget != null && budget != null && (
           <div className="mt-auto border-t border-sdc-border pt-3">
             <div className="flex items-baseline justify-between gap-2">
-              <p className="text-xs font-semibold text-sdc-gray-600">Purchased vs Part Cost Budget</p>
+              <p
+                className="cursor-help text-xs font-semibold text-sdc-gray-600"
+                title={`${usd(purchased)} committed against the ${usd(budget)} Cost Quoted budget. Turns red above 100%; the fill caps at 100% but the percentage doesn't, so an overrun still reads as one.`}
+              >
+                Purchased vs Part Cost Budget
+              </p>
               <p className="font-heading text-sm font-bold tabular-nums text-sdc-navy">
                 {(pctOfBudget * 100).toFixed(1)}% of {usd(budget)}
               </p>

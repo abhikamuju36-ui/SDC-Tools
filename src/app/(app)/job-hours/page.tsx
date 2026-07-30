@@ -2,12 +2,11 @@ import { prisma } from "@/lib/prisma";
 import { PageTitle } from "@/components/ui/Typography";
 import { card } from "@/components/ui/classnames";
 import { JobHoursDashboard } from "@/components/JobHoursDashboard";
-import { JobMultiSelect } from "@/components/JobMultiSelect";
+import { JobSelect } from "@/components/JobSelect";
 import { listDashboardJobs, getJobHoursDashboard, defaultDashboardJobId } from "@/lib/job-hours-dashboard";
 import { getJobPartsCost, type JobPartsCost } from "@/lib/sync-totaleto";
-import { getExecutionEtcByJob } from "@/lib/execution-etc";
 import { PartsCostSummary } from "@/components/PartsCostSummary";
-import { computePartsBudgetProjection } from "@/lib/parts-budget-projection";
+import { computePartsBudgetProjection, type PartsBudgetProjection } from "@/lib/parts-budget-projection";
 import { SchedulerJobLink } from "@/components/SchedulerJobLink";
 import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 import { getJobBom, type JobBom } from "@/lib/job-bom";
@@ -49,8 +48,7 @@ export default async function JobHoursPage({
   // Feeds the Procurement Parts List (joined to the BOM by part number).
   // Best-effort: a TotalETO hiccup must not take down the hours dashboard.
   let parts: JobPartsCost | null = null;
-  let partsEtc: number | null = null;
-  let partsProjection: number | null = null;
+  let partsProjection: PartsBudgetProjection | null = null;
   let partsBudget: number | null = null;
   if (data) {
     try {
@@ -60,28 +58,17 @@ export default async function JobHoursPage({
       const purchased = lines.reduce((s, l) => s + l.totalPrice, 0);
       const paid = lines.reduce((s, l) => s + l.invoicedAmount, 0);
       parts = { purchased, paid, leftToPay: purchased - paid, lines };
-      // "Part Cost Budget Projection" — the report's [Budget Projection]. Its
-      // estimate half is only in the semantic model, so this is one DAX query;
-      // best-effort like the parts pull above, and a failure just drops the bar.
+      // "Part Cost Budget Projection" — purchased + estimate-to-purchase, the
+      // latter being the Parts New ETC for the latest ETC month (see
+      // parts-budget-projection.ts for why that field IS Dan's estimate to
+      // purchase). Best-effort like the parts pull above; a failure drops the bar.
       partsProjection = await computePartsBudgetProjection(
-        data.jobRefs.map((r) => r.jobId),
+        data.jobRefs.map((r) => r.id),
         lines,
-        new Date(),
+        data.kpis.latestEtcMonth,
       ).catch(() => null);
     } catch {
       parts = null;
-    }
-    // "Estimated to Purchase" for the Parts Cost tiles = the parts New ETC for
-    // the latest ETC month, summed across the selected jobs. Restored alongside
-    // PartsCostSummary (it was dropped when the Procurement drawer replaced the
-    // old Parts Cost section). Best-effort, like the parts pull above.
-    if (data.kpis.latestEtcMonth) {
-      try {
-        const map = await getExecutionEtcByJob(data.jobRefs.map((r) => r.id), data.kpis.latestEtcMonth);
-        partsEtc = data.jobRefs.reduce((s, r) => s + (map.get(r.id)?.parts ?? 0), 0);
-      } catch {
-        partsEtc = null;
-      }
     }
     // "Part Cost Budget" — the report's [Part Cost Quoted] measure is
     // SUM('Cost Estimated'[Cost Quoted]), and that same upstream table populates
@@ -119,8 +106,10 @@ export default async function JobHoursPage({
       <div className="mb-1 flex flex-wrap items-end justify-between gap-4">
         <PageTitle>Job Hour Details</PageTitle>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-sdc-gray-500">Jobs</span>
-          <JobMultiSelect jobs={jobs} selected={selectedJobIds} />
+          <span className="text-xs text-sdc-gray-500">Job</span>
+          {/* Single-job picker. A ?jobs=a,b deep link still aggregates below —
+              the control just shows the first of them as the current job. */}
+          <JobSelect jobs={jobs} selected={selectedJobIds[0] ?? null} />
         </div>
       </div>
       <p className="mb-5 text-sm text-sdc-gray-600">
@@ -166,7 +155,7 @@ export default async function JobHoursPage({
             <PartsCostSummary
               purchased={parts.purchased}
               paid={parts.paid}
-              estimatedToPurchase={partsEtc}
+              estimated={partsBudget}
               budgetProjection={partsProjection}
               budget={partsBudget}
             />
