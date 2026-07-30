@@ -19,10 +19,13 @@ import type { JobHoursDetail } from "@/lib/job-hours-detail";
 export function HoursDetailPanel({
   detail,
   initialSection,
+  title,
   onClose,
 }: {
   detail: JobHoursDetail;
   initialSection?: string | null;
+  // Overrides the heading — the Monthly ETC drill names the month it's showing.
+  title?: string;
   onClose: () => void;
 }) {
   const [section, setSection] = useState<string>(
@@ -34,11 +37,25 @@ export function HoursDetailPanel({
     () => [...new Set(detail.rows.map((r) => r.employee))].sort((a, b) => a.localeCompare(b)),
     [detail.rows],
   );
+  // The Job column only appears when the detail actually spans jobs (the Monthly
+  // ETC month view). On the per-job drill it would repeat the page heading on
+  // every row, so it's inferred from the data rather than passed as a flag.
+  const showJob = detail.rows.some((r) => r.job);
+  const jobs = useMemo(
+    () => [...new Set(detail.rows.map((r) => r.job).filter((j): j is string => Boolean(j)))].sort((a, b) => a.localeCompare(b)),
+    [detail.rows],
+  );
+  const [job, setJob] = useState<string>("");
 
   const rows = useMemo(
     () =>
-      detail.rows.filter((r) => (!section || r.section === section) && (!employee || r.employee === employee)),
-    [detail.rows, section, employee],
+      detail.rows.filter(
+        (r) =>
+          (!section || r.section === section) &&
+          (!employee || r.employee === employee) &&
+          (!job || r.job === job),
+      ),
+    [detail.rows, section, employee, job],
   );
   const total = rows.reduce((s, r) => s + r.hours, 0);
 
@@ -49,9 +66,10 @@ export function HoursDetailPanel({
     <div className="mt-4 rounded-lg border border-sdc-blue-100 bg-white p-3">
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div>
-          <p className="text-sm font-bold text-sdc-navy">Hours Detail</p>
+          <p className="text-sm font-bold text-sdc-navy">{title ?? "Hours Detail"}</p>
           <p className="text-[11px] text-sdc-gray-500">
-            Every booked punch on this job — {rows.length.toLocaleString()} of {detail.rows.length.toLocaleString()} lines
+            {showJob ? "Every booked punch this month" : "Every booked punch on this job"} — {rows.length.toLocaleString()} of{" "}
+            {detail.rows.length.toLocaleString()} lines
             {detail.truncated && " (capped at 4,000 — oldest lines omitted)"}
           </p>
         </div>
@@ -72,6 +90,16 @@ export function HoursDetailPanel({
               </option>
             ))}
           </select>
+          {showJob && (
+            <select value={job} onChange={(e) => setJob(e.target.value)} aria-label="Filter by job" className={SELECT}>
+              <option value="">All jobs</option>
+              {jobs.map((j) => (
+                <option key={j} value={j}>
+                  {j}
+                </option>
+              ))}
+            </select>
+          )}
           <button
             type="button"
             onClick={onClose}
@@ -96,6 +124,7 @@ export function HoursDetailPanel({
             <thead className="sticky top-0 z-10 bg-sdc-navy">
               <tr className={`${TABLE_HEADER_ROW} [&>th]:px-2 [&>th]:py-1.5 [&>th]:text-left [&>th]:text-white`}>
                 <th className="w-24">Date</th>
+                {showJob && <th className="w-56">Job</th>}
                 <th>Employee</th>
                 <th className="w-44">Department</th>
                 <th className="w-20">Section</th>
@@ -110,6 +139,11 @@ export function HoursDetailPanel({
                   className={`text-[11px] hover:bg-sdc-blue-light/40 ${i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}`}
                 >
                   <td className="px-2 py-1 font-mono text-sdc-navy">{r.date}</td>
+                  {showJob && (
+                    <td className="px-2 py-1 text-sdc-navy" title={r.job}>
+                      <span className="line-clamp-1">{r.job}</span>
+                    </td>
+                  )}
                   <td className="px-2 py-1 text-sdc-navy">{r.employee}</td>
                   <td className="px-2 py-1 text-sdc-gray-600">{r.department}</td>
                   <td className="px-2 py-1 font-mono text-sdc-gray-600">{r.section}</td>
@@ -122,7 +156,7 @@ export function HoursDetailPanel({
             </tbody>
             <tfoot className="sticky bottom-0 bg-sdc-gray-100">
               <tr className="text-[11px] font-bold text-sdc-navy">
-                <td className="px-2 py-1.5" colSpan={5}>
+                <td className="px-2 py-1.5" colSpan={showJob ? 6 : 5}>
                   Total
                 </td>
                 <td className="px-2 py-1.5 text-right tabular-nums">

@@ -6,6 +6,9 @@ import { EtcViewMenu } from "@/components/EtcViewMenu";
 import { EtcSyncMenu } from "@/components/EtcSyncMenu";
 import { SyncHistoryButton } from "@/components/SyncHistoryButton";
 import { getEtcMonthJobWhere } from "@/lib/etc-month-jobs";
+import { getEtcMonthKpis } from "@/lib/etc-month-kpis";
+import { getEtcMonthHoursDetail } from "@/lib/job-hours-detail";
+import { EtcMonthKpiCards } from "@/components/EtcMonthKpiCards";
 import { PartsCostNewEtcCell } from "@/components/PartsCostNewEtcCell";
 import { EtcSectionCells } from "@/components/EtcSectionCells";
 import { StandardRatesProvider, EtcStandardCells, StandardGrandCells } from "@/components/EtcStandardColumns";
@@ -501,6 +504,19 @@ export default async function MonthlyEtcPage({
       })
     : jobs;
 
+  // KPI cards above the grid, built from `visibleJobs` — the same rows the grid
+  // renders and the same rows its grand-total row sums, so the strip at the top
+  // and the total at the bottom can never disagree. The punch detail behind the
+  // drill is scoped to those jobs for the same reason. Cheap: the KPIs reuse the
+  // etcEntries already loaded above, and the detail is one indexed query.
+  const [monthKpis, monthHoursDetail] = await Promise.all([
+    getEtcMonthKpis(month, visibleJobs),
+    getEtcMonthHoursDetail(
+      month,
+      visibleJobs.map((j) => j.id),
+    ),
+  ]);
+
   // "Open in Scheduler" icon target + which of these jobs actually have a
   // Scheduler project (fail-soft empty set when its DB isn't configured).
   const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers } = await getSchedulerLinkContext();
@@ -792,6 +808,12 @@ export default async function MonthlyEtcPage({
             ? `${month} is submitted and locked — these numbers are frozen exactly as submitted. Pick a month above to view any past submission.`
             : `"Refresh Data" pulls the latest hours (Paylocity) and parts costs (TotalETO) for the selected month. Enter Hours Worked, confirm or override each New ETC (suggestion shown in yellow), then Submit and Lock.`}
       </p>
+
+      {/* KPI strip. Computed from the same rows the grid's grand-total row sums
+          (see getEtcMonthKpis), so the cards and the bottom of the table can't
+          disagree. "Detail" opens the punch-level drill: who booked what, on
+          which date, against which job. */}
+      {started && <EtcMonthKpiCards month={month} kpis={monthKpis} detail={monthHoursDetail} />}
 
       {started && (
         /* key={month}: the month picker soft-navigates (router.push), which
