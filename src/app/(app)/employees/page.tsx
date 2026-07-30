@@ -5,7 +5,7 @@ import { ImportSupervisorsButton } from "@/components/ImportSupervisorsButton";
 import { ReconcileRosterButton } from "@/components/ReconcileRosterButton";
 import { EmployeesGrid } from "@/components/EmployeesGrid";
 import { DISCIPLINE_LABELS } from "@/lib/disciplines";
-import type { EmployeeRow } from "@/components/EmployeesGridInner";
+import type { EmployeeRow } from "@/components/EmployeesTable";
 
 // Team groupings, matching the SDC Scheduler app's team_members.discipline
 // categories. Now a sortable AG Grid column (Community can't do row grouping).
