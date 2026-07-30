@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { TABLE_HEADER_ROW, TABLE_GRID } from "@/components/ui/classnames";
+import { hours as fmtHours, hoursCell, hoursExact } from "@/components/ui/format";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
 
 // In-app equivalent of the Power BI report's "Hours Detail" drillthrough page:
@@ -148,8 +149,10 @@ export function HoursDetailPanel({
                   <td className="px-2 py-1 text-sdc-gray-600">{r.department}</td>
                   <td className="px-2 py-1 font-mono text-sdc-gray-600">{r.section}</td>
                   <td className="px-2 py-1 text-sdc-gray-600">{r.sectionName}</td>
-                  <td className="px-2 py-1 text-right font-semibold tabular-nums text-sdc-navy">
-                    {r.hours.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                  {/* Rounded, like every other hours figure in the app; the
+                      title keeps the exact punch reachable. */}
+                  <td className="px-2 py-1 text-right font-semibold tabular-nums text-sdc-navy" title={hoursExact(r.hours)}>
+                    {hoursCell(r.hours)}
                   </td>
                 </tr>
               ))}
@@ -159,8 +162,8 @@ export function HoursDetailPanel({
                 <td className="px-2 py-1.5" colSpan={showJob ? 6 : 5}>
                   Total
                 </td>
-                <td className="px-2 py-1.5 text-right tabular-nums">
-                  {total.toLocaleString(undefined, { maximumFractionDigits: 2 })}
+                <td className="px-2 py-1.5 text-right tabular-nums" title={hoursExact(total)}>
+                  {fmtHours(total)}
                 </td>
               </tr>
             </tfoot>

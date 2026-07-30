@@ -7,6 +7,7 @@ import { PageTitle, SectionTitle } from "@/components/ui/Typography";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PillLinks } from "@/components/ui/PillLinks";
 import { card, INPUT, BUTTON_PRIMARY, BUTTON_SECONDARY, LABEL, TABLE_HEADER_ROW, TABLE_GRID, TABLE_CARD } from "@/components/ui/classnames";
+import { hours as fmtHours } from "@/components/ui/format";
 import { saveJobTask, deleteJobTask } from "@/lib/jobtask-actions";
 import { ProjectReleasePanel } from "@/components/ProjectReleasePanel";
 import { ConfirmSubmit } from "@/components/ConfirmSubmit";
@@ -210,7 +211,7 @@ export default async function JobDetailPage({
               <p className="text-xs text-sdc-gray-600">Sections tracked</p>
             </div>
             <div className={card("p-4")}>
-              <p className="text-2xl font-bold text-sdc-blue">{totalWorked.toFixed(1)}</p>
+              <p className="text-2xl font-bold text-sdc-blue">{fmtHours(totalWorked)}</p>
               <p className="text-xs text-sdc-gray-600">Hours worked ({month})</p>
             </div>
             <div className={needsReviewCount > 0 ? `${card("p-4")} border-sdc-yellow bg-sdc-yellow-bg/40` : card("p-4")}>
