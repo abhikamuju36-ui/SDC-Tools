@@ -282,40 +282,50 @@ td.quoted-actual-cell > .actual-suffix {
  * icon, and it also set a floor under the column-resize drag no width var
  * could shrink past. Pinning an explicit, snug width overrides that native
  * floor so both the value-to-icon gap and the resize floor shrink together. */
+/* width:100% (was a pinned 5.75rem) because the whole cell is now the click
+ * target that opens the calendar — see DateCell.tsx. A narrower-than-cell input
+ * left a dead strip on the right where a click did nothing. min-width:0 still
+ * defeats the native floor described above, so the column resizes freely. */
 td > input[type="date"] {
   min-width: 0;
-  width: 5.75rem;
+  width: 100%;
   padding: 0.2rem 0.15rem;
+  cursor: pointer;
 }
+/* No calendar icon at all. It repeated on every row, the grid had to hide it
+ * until hover to keep the column readable, and hidden-until-hover made it the
+ * hardest part of the cell to find — users were dragging the column wider
+ * looking for it. DateCell opens the picker on click instead, so the icon has
+ * no job left, and dropping it (rather than hiding it) reclaims its reserved
+ * width too. WebKit/Chromium pseudo-element; Firefox has no icon here anyway. */
 td > input[type="date"]::-webkit-calendar-picker-indicator {
-  margin-left: 0.05rem;
-  padding: 0;
+  display: none;
 }
 input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
   opacity: 0;
 }
+/* An empty cell with no icon has nothing to look at, so hover/focus brings the
+ * faint "mm/dd/yyyy" segments up as the affordance the icon used to be. */
 input[type="date"].date-empty:focus::-webkit-datetime-edit-fields-wrapper {
   opacity: 1;
+}
+td:hover > input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
+  opacity: 0.4;
 }
 
 /* --- "Quiet controls" (.quiet-controls on a table) -----------------------
  * Opted into by the Projects grid only. The Type/Billable/Status dropdown
- * chevrons and the Start/Complete Date calendar icons repeat on every single
- * row, so at 40+ rows the column reads as a wall of widget chrome instead of
- * data. Here they're hidden until the user actually interacts with the cell —
- * hover it or focus the control — at which point the affordance comes back.
+ * chevrons repeat on every single row, so at 40+ rows the column reads as a
+ * wall of widget chrome instead of data. Here they're hidden until the user
+ * actually interacts with the cell — hover it or focus the control — at which
+ * point the affordance comes back. (Date cells were part of this too until the
+ * calendar icon was removed outright; see the indicator rule above.)
  *
  * Nothing is ever disabled or removed from the layout, which is the whole
- * point: `background-image: none` on a select doesn't affect its behavior
- * (clicking anywhere on an appearance:none select still opens the dropdown),
- * and the calendar indicator is hidden with `opacity: 0` rather than
- * `display: none`/`visibility: hidden` so it keeps its box AND keeps
- * hit-testing — the click that opens the date picker lands on it exactly as
- * before, visible or not. Reserved padding/width are left untouched too, so
- * revealing an icon never shifts the row.
- *
- * WebKit/Chromium only for the calendar indicator (same caveat as the
- * date-empty rules above); Firefox keeps its native icon. */
+ * point: `background-image: none` on a select doesn't affect its behavior —
+ * clicking anywhere on an appearance:none select still opens the dropdown.
+ * Reserved padding/width are left untouched too, so revealing a chevron never
+ * shifts the row. */
 .quiet-controls td > select {
   background-image: none;
 }
@@ -331,13 +341,10 @@ input[type="date"].date-empty:focus::-webkit-datetime-edit-fields-wrapper {
   background-position: right 0.15rem center;
   background-size: 7px 7px;
 }
-.quiet-controls td > input[type="date"]::-webkit-calendar-picker-indicator {
-  opacity: 0;
-}
-.quiet-controls td:hover > input[type="date"]::-webkit-calendar-picker-indicator,
-.quiet-controls td > input[type="date"]:focus::-webkit-calendar-picker-indicator {
-  opacity: 1;
-}
+/* The date rules that used to live here (hide the calendar icon until hover)
+ * are gone with the icon itself — see the `display: none` on the indicator
+ * above. Dates need no quiet-controls treatment now: an empty cell shows
+ * nothing and a filled one shows only its value, in every state. */
 /* An empty date cell would otherwise be completely blank (the .date-empty rule
  * hides the mm/dd/yyyy segments, and now the icon is hidden too) — with no hint
  * it's editable at all. Hovering the cell brings the segments back alongside
