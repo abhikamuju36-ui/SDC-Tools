@@ -21,12 +21,17 @@ export function HoursDetailPanel({
   detail,
   initialSection,
   title,
+  note,
   onClose,
 }: {
   detail: JobHoursDetail;
   initialSection?: string | null;
   // Overrides the heading — the Monthly ETC drill names the month it's showing.
   title?: string;
+  // Shown under the subtitle. Used to explain a gap between this table's total
+  // and the figure on the card that opened it, rather than leaving the reader to
+  // spot the difference and assume something is broken.
+  note?: string;
   onClose: () => void;
 }) {
   const [section, setSection] = useState<string>(
@@ -73,6 +78,7 @@ export function HoursDetailPanel({
             {detail.rows.length.toLocaleString()} lines
             {detail.truncated && " (capped at 4,000 — oldest lines omitted)"}
           </p>
+          {note && <p className="mt-0.5 max-w-2xl text-[11px] leading-tight text-sdc-yellow-text">{note}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           <select value={section} onChange={(e) => setSection(e.target.value)} aria-label="Filter by section" className={SELECT}>

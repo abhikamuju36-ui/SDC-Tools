@@ -1,10 +1,19 @@
 "use client";
 
-import { useState } from "react";
-import { usd } from "@/components/ui/format";
+import { useMemo, useState } from "react";
+import { usd, hours as fmtHours } from "@/components/ui/format";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
+import { ETC_SECTIONS } from "@/lib/sections";
 import type { EtcMonthKpis } from "@/lib/etc-month-kpis";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
+
+// Section code -> billing group, so the drill can be narrowed to the card that
+// opened it. Same mapping the grid's column bands and the KPI totals use, from
+// the same source, so "Engineering" means the identical set of sections in the
+// card, the grid and the drill.
+const SECTION_GROUP = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]));
+
+type DrillScope = "Engineering" | "Shop" | "All";
 
 // KPI strip at the top of the Monthly ETC page: hours worked and variance for
 // Engineering and Shop, parts money spent, and how many people booked time —
@@ -21,8 +30,6 @@ import type { JobHoursDetail } from "@/lib/job-hours-detail";
 // that backwards here while the grid had it right would be worse than not showing
 // it at all.
 
-const fmtHours = (n: number) => Math.round(n).toLocaleString();
-
 export function EtcMonthKpiCards({
   month,
   kpis,
@@ -32,12 +39,46 @@ export function EtcMonthKpiCards({
   kpis: EtcMonthKpis;
   detail: JobHoursDetail;
 }) {
-  const [drill, setDrill] = useState<string | null>(null); // null = closed, else a group name
+  const [drill, setDrill] = useState<DrillScope | null>(null); // null = closed
 
-  // The drill panel filters by section, and a "group" is a set of sections, so
-  // opening it from a group card shows the whole month and lets the section
-  // dropdown narrow it. Passing a group as a section filter would match nothing.
-  const openDrill = (label: string) => setDrill(label);
+  // The drill shows ONLY the sections belonging to the card that opened it —
+  // Engineering from the Engineering card, Shop from Shop. It used to hand the
+  // panel every punch in the month regardless, so a drill "opened from Shop"
+  // listed ME Gen and Software rows and totalled the whole month, which made the
+  // card and its own detail disagree.
+  //
+  // Narrowed here rather than in the panel: the panel's section dropdown and its
+  // footer total both read off `detail`, so filtering the data is what keeps the
+  // dropdown offering only this group's sections and the total matching the card.
+  const scopedDetail = useMemo<JobHoursDetail>(() => {
+    if (!drill || drill === "All") return detail;
+    const rows = detail.rows.filter((r) => SECTION_GROUP.get(r.section) === drill);
+    // Section totals recomputed from the kept rows, so the dropdown's per-section
+    // figures still add up to the footer.
+    const bySection = new Map<string, number>();
+    for (const r of rows) bySection.set(r.section, (bySection.get(r.section) ?? 0) + r.hours);
+    return {
+      rows,
+      total: rows.reduce((s, r) => s + r.hours, 0),
+      sections: detail.sections.filter((s) => bySection.has(s.code)).map((s) => ({ ...s, hours: bySection.get(s.code)! })),
+      truncated: detail.truncated,
+    };
+  }, [detail, drill]);
+
+  // The card and its drill come from two different tables: the card sums
+  // EtcEntry.hoursWorked (written by the hours sync), the drill sums the punch
+  // rows in JobHoursDetail. They agree to within a couple of hours but not
+  // exactly, because the two were last written at different times — measured
+  // 2026-07-30, Engineering was 2086.54 on the card against 2078.52 in the
+  // punches. Small, real, and guaranteed to look like a bug if left unexplained,
+  // so say it out loud whenever the gap would be visible.
+  const cardWorked = drill === "Engineering" ? kpis.engineering.worked : drill === "Shop" ? kpis.shop.worked : null;
+  const gap = cardWorked == null ? 0 : scopedDetail.total - cardWorked;
+  const scopeNote =
+    Math.abs(gap) >= 1 && cardWorked != null
+      ? `The card reads ${fmtHours(cardWorked)} — these punch rows total ${fmtHours(scopedDetail.total)}. ` +
+        `The card comes from the ETC grid's Hours Worked; these rows are the Paylocity punches behind it, and the two were last synced at different times.`
+      : undefined;
 
   return (
     <div className="mb-4">
@@ -48,7 +89,7 @@ export function EtcMonthKpiCards({
           diff={kpis.engineering.diff}
           people={kpis.engineering.people}
           hasPunchData={kpis.hasPunchData}
-          onDrill={() => openDrill("Engineering")}
+          onDrill={() => setDrill("Engineering")}
         />
         <GroupCard
           label="Shop hours"
@@ -56,7 +97,7 @@ export function EtcMonthKpiCards({
           diff={kpis.shop.diff}
           people={kpis.shop.people}
           hasPunchData={kpis.hasPunchData}
-          onDrill={() => openDrill("Shop")}
+          onDrill={() => setDrill("Shop")}
         />
         <Card label="Parts spent" value={usd(kpis.parts.spent)}>
           <Variance
@@ -74,7 +115,7 @@ export function EtcMonthKpiCards({
                 `${kpis.engineering.people} engineering · ${kpis.shop.people} shop (distinct overall)`
               : "No punch-level hours stored for this month yet"
           }
-          onDrill={kpis.hasPunchData ? () => openDrill("All") : undefined}
+          onDrill={kpis.hasPunchData ? () => setDrill("All") : undefined}
         />
         <Card
           label="Total hours worked"
@@ -85,8 +126,12 @@ export function EtcMonthKpiCards({
 
       {drill && (
         <HoursDetailPanel
-          detail={detail}
-          title={`Hours Detail — ${month}${drill === "All" ? "" : ` (opened from ${drill})`}`}
+          detail={scopedDetail}
+          note={scopeNote}
+          // Names the scope rather than where the click came from: "Engineering
+          // hours" says what the table contains, where "(opened from
+          // Engineering)" only said how you got here.
+          title={drill === "All" ? `Hours Detail — ${month}` : `${drill} hours — ${month}`}
           onClose={() => setDrill(null)}
         />
       )}
