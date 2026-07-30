@@ -798,12 +798,14 @@ function PartsDetailTable({
         {/* Thin header row, by request. The Scheduler's version has none, and
             this list went without one for the same reason (bc56a97) — but with
             seven columns, two of them money and two of them free text, "which
-            price is this" isn't self-evident after all. Kept deliberately quiet
-            so it labels the list without competing with the assembly heading
-            above it: 9px, uppercase, muted, no fill, one hairline rule. */}
+            price is this" isn't self-evident after all.
+            Dark navy fill (also by request), which is what every other grid in
+            the app uses for a header — the first pass was muted grey on no fill
+            and read as another data row rather than a header. Still thin: 9px,
+            uppercase, one line of padding. */}
         <table className="w-full min-w-[760px] border-collapse text-left">
           <thead>
-            <tr className="border-b border-sdc-border text-[9px] font-bold uppercase tracking-wide text-sdc-gray-400 [&>th]:px-2 [&>th]:py-1 [&>th]:font-bold">
+            <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wide text-white [&>th]:px-2 [&>th]:py-1 [&>th]:font-bold">
               <th className="w-10 text-right">Qty</th>
               <th>Part #</th>
               <th>Description</th>
