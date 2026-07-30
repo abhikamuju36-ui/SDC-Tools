@@ -617,8 +617,10 @@ function TabChip({ active, onClick, label, count }: { active: boolean; onClick: 
 // Assemblies tab
 // ═════════════════════════════════════════════════════════════════════════════
 
-// Grid template shared by every assembly row (Scheduler layout — no header row):
+// Grid template shared by every assembly row (Scheduler layout):
 // Assembly · Desc · Priced · Rcvd/Total · Material $ · Readiness
+// The ASSEMBLY rows still carry no header — each cell is labelled in place or
+// self-evident. The part list nested inside them does have one (see PartsDetailTable).
 const ASM_GRID = "minmax(220px,1.5fr) minmax(150px,1.4fr) 92px 72px 108px 150px";
 
 function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClick: (p: DrillablePart) => void; onOpenPo: (supplier: string | null, poNumber: string | null) => void }) {
@@ -793,9 +795,24 @@ function PartsDetailTable({
   return (
     <div className="border-l-2 border-sdc-blue bg-sdc-gray-50/60" style={{ marginLeft: `${8 + depth * 18}px` }}>
       <div className="overflow-x-auto styled-scrollbar">
-        {/* No header row — the Scheduler's procurement detail reads as a plain
-            part list under its assembly (each column is self-evident). */}
+        {/* Thin header row, by request. The Scheduler's version has none, and
+            this list went without one for the same reason (bc56a97) — but with
+            seven columns, two of them money and two of them free text, "which
+            price is this" isn't self-evident after all. Kept deliberately quiet
+            so it labels the list without competing with the assembly heading
+            above it: 9px, uppercase, muted, no fill, one hairline rule. */}
         <table className="w-full min-w-[760px] border-collapse text-left">
+          <thead>
+            <tr className="border-b border-sdc-border text-[9px] font-bold uppercase tracking-wide text-sdc-gray-400 [&>th]:px-2 [&>th]:py-1 [&>th]:font-bold">
+              <th className="w-10 text-right">Qty</th>
+              <th>Part #</th>
+              <th>Description</th>
+              <th>Manufacturer</th>
+              <th>PO</th>
+              <th className="text-right">Unit $</th>
+              <th className="text-right">Total $</th>
+            </tr>
+          </thead>
           <tbody>
             {parts.map((p, i) => {
               const st = partStatus(p, now);
