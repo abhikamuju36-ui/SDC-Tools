@@ -80,15 +80,15 @@ export const PARTS_BAR = {
   projection: "#b45309",
 } as const;
 
-// `hint` is the one-line explanation of what a row MEANS — these five figures
-// are easy to mix up (Purchased vs Paid vs Projection all sit within a few
-// percent of each other on a finishing job), and the bar label alone only
-// repeats the axis. Shown under the value in the tooltip.
+// No tooltip on these bars, by request (2026-07-30). Each bar already carries
+// its category on the axis and its value as a direct label, so the hover panel
+// was repeating both — and at this card's width it overhung the chart and
+// covered the neighbouring content instead of explaining it. The per-figure
+// explanations live on the budget meters' own title attributes.
 export function partsCostBarOption(
-  rows: { label: string; value: number; color?: string; hint?: string }[],
+  rows: { label: string; value: number; color?: string }[],
 ): EChartsOption {
-  // Reversed ONCE, so the axis labels, the bar data and the tooltip's
-  // dataIndex→hint lookup can't drift out of step with each other.
+  // Reversed ONCE, so the axis labels and the bar data can't drift out of step.
   const ordered = [...rows].reverse();
   return {
     color: [SERIES.planned], // fallback only; per-bar colors are set on each datum
@@ -97,30 +97,8 @@ export function partsCostBarOption(
     // left inset because at left:8 the first character of the longest category
     // label was being shaved off (seen live on "Estimated to Purchase").
     grid: { top: 8, left: 14, right: 78, bottom: 4, containLabel: true },
-    tooltip: {
-      trigger: "axis",
-      axisPointer: { type: "shadow", shadowStyle: { color: "rgba(17,141,255,0.06)" } },
-      backgroundColor: "#ffffff",
-      borderColor: GRID,
-      borderWidth: 1,
-      padding: [8, 12],
-      textStyle: { color: "#0f172a", fontSize: 12 },
-      extraCssText: "box-shadow:0 8px 24px rgba(6,29,57,0.12); border-radius:10px;",
-      formatter: (params: unknown) => {
-        const p = (params as { name: string; value: number; dataIndex: number }[])[0];
-        if (!p) return "";
-        const hint = ordered[p.dataIndex]?.hint;
-        return (
-          `<div style="font-weight:600;color:${INK};margin-bottom:2px">${p.name}</div>` +
-          `<b style="color:${INK}">${usd(Number(p.value) || 0)}</b>` +
-          // max-width + wrapping: these run to a full sentence, and without it
-          // the tooltip stretches off the card.
-          (hint
-            ? `<div style="color:${MUTED};font-size:11px;line-height:1.45;margin-top:5px;max-width:250px;white-space:normal">${hint}</div>`
-            : "")
-        );
-      },
-    },
+    // Hover panel deliberately off — see the note above the function.
+    tooltip: { show: false },
     xAxis: {
       type: "value",
       splitLine: { lineStyle: { color: GRID } },

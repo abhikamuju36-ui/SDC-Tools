@@ -95,52 +95,26 @@ export function PartsCostSummary({
             // Purchase" clipped here before.
             // Colors mirror the report's colored measure names: Purchased blue,
             // Paid green, the two derived rows plain/neutral.
-            {
-              label: "Estimated",
-              value: estimate ?? 0,
-              color: PARTS_BAR.neutral,
-              hint:
-                estimate != null
-                  ? "Cost Quoted for the selected job(s) — the same figure the Projects tab shows. The part-cost budget this job was sold against."
-                  : "No Cost Quoted on file for the selected job(s).",
-            },
-            {
-              label: "Purchased",
-              value: purchased,
-              color: PARTS_BAR.purchased,
-              hint: "Every part committed to a purchase order, whether or not the supplier has invoiced yet.",
-            },
-            {
-              label: "Paid",
-              value: paid,
-              color: PARTS_BAR.paid,
-              hint: "The invoiced share of Purchased — money that has actually gone out the door.",
-            },
-            {
-              label: "Left to pay",
-              value: leftToPay,
-              color: PARTS_BAR.neutral,
-              hint: "Purchased − Paid: already committed on a PO, not yet invoiced.",
-            },
+            // What each bar means (Estimated = Cost Quoted, Purchased = on a PO
+            // whether invoiced or not, Paid = the invoiced share, Left to pay =
+            // Purchased − Paid) used to be hover text on the bars. Removed by
+            // request — the panel covered the card. Kept as documentation here.
+            { label: "Estimated", value: estimate ?? 0, color: PARTS_BAR.neutral },
+            { label: "Purchased", value: purchased, color: PARTS_BAR.purchased },
+            { label: "Paid", value: paid, color: PARTS_BAR.paid },
+            { label: "Left to pay", value: leftToPay, color: PARTS_BAR.neutral },
             // Budget projection last: it's a projected TOTAL, not another
             // component of the ones above, so it reads as a summary line rather
             // than part of the running breakdown. Amber to separate it from the
             // actuals — it's the only forward-looking figure here. Omitted
             // entirely when null (see the prop docs) rather than drawn as $0.
+            // Projection = Purchased + estimate to purchase (the Parts New ETC:
+            // this month's opening estimate to complete, less what was spent this
+            // month). It equals Purchased exactly when that ETC is zero — nothing
+            // left to commit. The Projected meter below carries this in its own
+            // tooltip, which is where the explanation lives now.
             ...(budgetProjection != null
-              ? [
-                  {
-                    label: "Projection",
-                    value: budgetProjection.total,
-                    color: PARTS_BAR.projection,
-                    hint:
-                      `Where part cost lands when the job finishes: Purchased ${usd(budgetProjection.purchased)} + ` +
-                      `estimate to purchase ${usd(budgetProjection.estimateToPurchase)}.` +
-                      (budgetProjection.estimateToPurchase === 0
-                        ? " Nothing left to commit — the Parts New ETC is zero, so the projection equals Purchased."
-                        : " Estimate to purchase = the Parts New ETC: this month's opening estimate to complete, less what was spent this month."),
-                  },
-                ]
+              ? [{ label: "Projection", value: budgetProjection.total, color: PARTS_BAR.projection }]
               : []),
           ])}
         />
