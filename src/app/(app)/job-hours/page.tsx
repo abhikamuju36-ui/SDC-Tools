@@ -10,8 +10,13 @@ import { computePartsBudgetProjection, type PartsBudgetProjection } from "@/lib/
 import { SchedulerJobLink } from "@/components/SchedulerJobLink";
 import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 import { getJobBom, type JobBom } from "@/lib/job-bom";
+import { getJobHoursDetail, type JobHoursDetail } from "@/lib/job-hours-detail";
 import { JobProcurement } from "@/components/JobProcurement";
 import { EmptyState } from "@/components/ui/EmptyState";
+
+// No-job-selected placeholder, so the dashboard's prop stays non-nullable and
+// the panel has one shape to render.
+const EMPTY_HOURS_DETAIL: JobHoursDetail = { rows: [], total: 0, sections: [], truncated: false };
 
 // "Job Hour Details" — web recreation of the Power BI "Job Hours Report —
 // Management Level" drillthrough. Supports one OR many jobs (aggregated), like
@@ -39,6 +44,12 @@ export default async function JobHoursPage({
   }
   const selectedInternalIds = selectedJobIds.map((s) => idByJobId.get(s)!).filter((n) => n != null);
   const data = selectedInternalIds.length ? await getJobHoursDashboard(selectedInternalIds) : null;
+
+  // Punch-level hours for the drill-through panel. Straight from the app's own
+  // MySQL (populated by the hours sync), so it costs one indexed query and can't
+  // disagree with the section totals above it. Empty when nothing's ingested yet
+  // — the panel says so rather than looking broken.
+  const hoursDetail = data ? await getJobHoursDetail(data.jobRefs.map((r) => r.id)) : EMPTY_HOURS_DETAIL;
 
   // "Open in Scheduler" icon target + which jobs have a Scheduler project
   // (fail-soft empty set when its DB isn't configured).
@@ -146,7 +157,7 @@ export default async function JobHoursPage({
               </>
             )}
           </div>
-          <JobHoursDashboard data={data} />
+          <JobHoursDashboard data={data} hoursDetail={hoursDetail} />
 
           {/* Parts Cost money summary — sits between the hours charts above and
               the Procurement drawer below, so the page reads hours → parts $ →

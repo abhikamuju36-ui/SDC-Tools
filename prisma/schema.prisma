@@ -122,6 +122,7 @@ model Job {
   actualHours         ActualHours[]
   tasks               JobTask[]
   monthlyActualHours  JobMonthlyActualHours[]
+  hoursDetail         JobHoursDetail[]
   executionRate       ExecutionRate?
   feeAllotments       FeeAllotment[]
   standardSheetSnapshots StandardSheetSnapshot[]
@@ -159,6 +160,43 @@ model ProjectRelease {
 // Actual, Est to Date" measure — the same one the legacy "Monthly ETC
 // Process" sheet's PivotTable used, scoped by the model's own
 // Date[Is ETC to Date] cutoff (see sync-powerbi.ts).
+// Punch-level actual hours — one row per employee per day per job per section.
+// The detail behind JobMonthlyActualHours' rollups, recreating the Power BI
+// report's "Hours Detail" drillthrough page inside the app.
+//
+// Deliberately fed from the SAME source as the rollups (the Paylocity export in
+// sharepoint-hours.ts), not from Power BI's 'Hours Actual'. The two feeds
+// disagree on which section a punch belongs to — measured 2026-07-30, job 1067
+// June 2026 was 249.7 hrs here against 37.3 in the model, because the model's
+// Function Hierarchy assigns sections the app's MachineSec-Function transform
+// maps elsewhere. Sourcing the detail from the model would mean a drill-down
+// whose total didn't match the number you clicked to open it.
+//
+// `employeeId` is Paylocity's Employee Id as a STRING, not a FK to Employee:
+// the export contains ids for people who aren't on the roster (2 of 69 on
+// 2026-07-30 — leavers), and dropping their hours to satisfy a foreign key would
+// silently lose time that the rollups DO count. Resolved to a name at read time
+// via Employee.paylocityId, falling back to showing the raw id.
+model JobHoursDetail {
+  id         Int      @id @default(autoincrement())
+  jobId      Int
+  job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  section    String // Section-Function Code, e.g. "10-211"
+  month      String // "2026-07" — denormalised from workDate so a month can be replaced wholesale
+  workDate   DateTime @db.Date
+  employeeId String // Paylocity Employee Id
+  hours      Decimal  @db.Decimal(10, 2)
+  source     String   @default("sharepoint")
+  syncedAt   DateTime @default(now())
+
+  // One punch per employee/day/job/section. The Paylocity export is already
+  // aggregated to this grain, so a duplicate means the same row was ingested
+  // twice rather than someone booking twice.
+  @@unique([jobId, section, workDate, employeeId])
+  // The drill queries by job (all sections, like the report's page).
+  @@index([jobId, month])
+}
+
 model JobMonthlyActualHours {
   id             Int      @id @default(autoincrement())
   jobId          Int

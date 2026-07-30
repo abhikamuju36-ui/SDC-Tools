@@ -175,7 +175,19 @@ async function getDelegatedToken(): Promise<string> {
   return result.accessToken;
 }
 
-export type JobHoursRow = { jobId: string; section: string; year: number; month: number; date: Date; hours: number };
+// `employeeId` is Paylocity's Employee Id, carried through so the punch-level
+// Hours Detail drill can name who booked the time (resolved via
+// Employee.paylocityId at read time). Empty string when the export omits it —
+// the hours still count, they just can't be attributed.
+export type JobHoursRow = {
+  jobId: string;
+  section: string;
+  year: number;
+  month: number;
+  date: Date;
+  hours: number;
+  employeeId: string;
+};
 
 function serialToDate(serial: number): Date {
   // Excel's epoch is 1899-12-30 (accounts for the 1900 leap-year bug).
@@ -205,9 +217,9 @@ export async function fetchJobHoursRows(): Promise<JobHoursRow[]> {
   const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
 
   const out: JobHoursRow[] = [];
-  const push = (jobId: string, section: string, date: Date, hours: number) => {
+  const push = (jobId: string, section: string, date: Date, hours: number, employeeId: string) => {
     if (!ETC_TRACKED_CODES.has(section)) return;
-    out.push({ jobId, section, year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, date, hours });
+    out.push({ jobId, section, year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, date, hours, employeeId });
   };
   for (const r of raw) {
     const serial = Number(r["Work Date"]);
@@ -220,13 +232,16 @@ export async function fetchJobHoursRows(): Promise<JobHoursRow[]> {
     if (rawJob == null || String(rawJob).trim() === "") continue;
     const jobId = String(Number(rawJob)); // normalize leading zeros to match app job keys
     const hours = Number(r["Total Hours Worked"]) || 0;
+    const employeeId = String(r["Employee Id"] ?? "").trim();
     const section = `${machineSec}-${fn}`;
     if (section === "10-311") {
-      // Split into design (312, 30%) and software (313, 70%), per PBI.
-      push(jobId, "10-312", date, hours * 0.3);
-      push(jobId, "10-313", date, hours * 0.7);
+      // Split into design (312, 30%) and software (313, 70%), per PBI. Both
+      // halves keep the employee, so the Hours Detail drill shows one punch as
+      // two attributed lines that still sum to what was booked.
+      push(jobId, "10-312", date, hours * 0.3, employeeId);
+      push(jobId, "10-313", date, hours * 0.7, employeeId);
     } else {
-      push(jobId, section, date, hours);
+      push(jobId, section, date, hours, employeeId);
     }
   }
   return out;

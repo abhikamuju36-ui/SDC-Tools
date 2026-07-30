@@ -14,6 +14,7 @@ export async function syncActualHours(): Promise<{
   rowsUpserted: number;
   jobsNotFound: number;
   rowsSkippedOverridden: number;
+  detailRowsWritten: number;
 }> {
   const rows = await fetchJobHoursRows();
   // Sum every tracked section to a per-job, per-month total.
@@ -63,9 +64,73 @@ export async function syncActualHours(): Promise<{
     rowsUpserted++;
   }
 
+  const detailRowsWritten = await syncJobHoursDetail(rows, jobByJobId);
+
   await syncHoursRefreshedThrough(rows);
 
-  return { rowsUpserted, jobsNotFound, rowsSkippedOverridden };
+  return { rowsUpserted, jobsNotFound, rowsSkippedOverridden, detailRowsWritten };
+}
+
+// Punch-level rows behind those rollups — one per employee/day/job/section —
+// feeding the in-app Hours Detail drill (the Power BI drillthrough page's
+// equivalent). Same `rows` the rollups were summed from, so the drill can never
+// disagree with the total you clicked to open it.
+//
+// Replace-by-(job, month) rather than upsert-per-row: at ~13k rows an upsert
+// apiece is thousands of round-trips, and a month present in the export is
+// wholly described by it, so deleting and re-inserting that month is both faster
+// and self-healing (a punch deleted upstream disappears here too, which an
+// upsert-only pass would leave behind forever).
+//
+// Months NOT in the export are left untouched — the file is a rolling window,
+// and treating absence as deletion would erase history the rollups still carry.
+async function syncJobHoursDetail(
+  rows: JobHoursRow[],
+  jobByJobId: Map<string, { id: number; jobId: string }>,
+): Promise<number> {
+  // job pk + month -> the rows for it
+  const byJobMonth = new Map<string, { jobPk: number; month: string; rows: JobHoursRow[] }>();
+  for (const r of rows) {
+    const job = jobByJobId.get(r.jobId);
+    if (!job) continue; // counted as jobsNotFound by the caller already
+    const month = `${r.year}-${String(r.month).padStart(2, "0")}`;
+    const key = `${job.id}::${month}`;
+    const bucket = byJobMonth.get(key);
+    if (bucket) bucket.rows.push(r);
+    else byJobMonth.set(key, { jobPk: job.id, month, rows: [r] });
+  }
+
+  let written = 0;
+  for (const { jobPk, month, rows: monthRows } of byJobMonth.values()) {
+    // Collapse to the unique key before writing: the export is already one row
+    // per employee/day/job/section, but the 10-311 → 312/313 split can emit two
+    // rows for the same key if a person books that function twice in a day.
+    const merged = new Map<string, { section: string; workDate: Date; employeeId: string; hours: number }>();
+    for (const r of monthRows) {
+      const day = new Date(Date.UTC(r.date.getUTCFullYear(), r.date.getUTCMonth(), r.date.getUTCDate()));
+      const k = `${r.section}::${day.toISOString().slice(0, 10)}::${r.employeeId}`;
+      const cur = merged.get(k);
+      if (cur) cur.hours += r.hours;
+      else merged.set(k, { section: r.section, workDate: day, employeeId: r.employeeId, hours: r.hours });
+    }
+
+    await prisma.$transaction([
+      prisma.jobHoursDetail.deleteMany({ where: { jobId: jobPk, month } }),
+      prisma.jobHoursDetail.createMany({
+        data: [...merged.values()].map((m) => ({
+          jobId: jobPk,
+          section: m.section,
+          month,
+          workDate: m.workDate,
+          employeeId: m.employeeId,
+          hours: round2(m.hours),
+          source: "sharepoint",
+        })),
+      }),
+    ]);
+    written += merged.size;
+  }
+  return written;
 }
 
 // Actual hours worked per job PER SECTION for `month`, overwriting

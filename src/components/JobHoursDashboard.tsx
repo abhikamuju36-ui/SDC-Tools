@@ -7,6 +7,8 @@ import { EChart } from "@/components/charts/EChart";
 import { groupedBarOption, SERIES } from "@/components/charts/theme";
 import { IndicatorCard } from "@/components/charts/IndicatorCard";
 import type { JobHoursDashboard as DashData, HoursType } from "@/lib/job-hours-dashboard";
+import type { JobHoursDetail as JobHoursDetailData } from "@/lib/job-hours-detail";
+import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 
 // Web recreation of the Power BI "Job Detail" dashboard (hours half). The Hours
 // Type toggle (Quoted / ETC) swaps the planned-basis series across the matrix
@@ -35,7 +37,7 @@ function groupRuns<T>(rows: T[], keyOf: (r: T) => string, labelOf: (r: T) => str
   return out;
 }
 
-export function JobHoursDashboard({ data }: { data: DashData }) {
+export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hoursDetail: JobHoursDetailData }) {
   const [hoursType, setHoursType] = useState<HoursType>("Quoted");
   const planned = (s: { quoted: number; etc: number }) => (hoursType === "Quoted" ? s.quoted : s.etc);
   const plannedLabel = hoursType === "Quoted" ? "Quoted" : "ETC";
@@ -138,12 +140,18 @@ export function JobHoursDashboard({ data }: { data: DashData }) {
           </div>
           <SectionHierarchyChart rows={hierRows} plannedLabel={plannedLabel} onDrill={setDrillCode} drillCode={drillCode} />
           {drillRow && (
-            <SectionDrill
-              row={drillRow}
-              plannedLabel={plannedLabel}
-              monthly={data.monthlyBySection[drillRow.code] ?? []}
-              onClose={() => setDrillCode(null)}
-            />
+            <>
+              <SectionDrill
+                row={drillRow}
+                plannedLabel={plannedLabel}
+                monthly={data.monthlyBySection[drillRow.code] ?? []}
+                onClose={() => setDrillCode(null)}
+              />
+              {/* The punch-level table, preselected to the section just clicked
+                  — the report's drillthrough page, one level further down than
+                  the monthly summary above it. */}
+              <HoursDetailPanel detail={hoursDetail} initialSection={drillRow.code} onClose={() => setDrillCode(null)} />
+            </>
           )}
         </div>
         <div className={card("p-4")}>
