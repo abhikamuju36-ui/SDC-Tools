@@ -48,6 +48,7 @@ const SUB_COLUMNS = ["Prior ETC", "Hours Worked Month", "Hours Left", "New ETC",
 const PARTS_COST_SUB_COLUMNS = ["Prior ETC", "Money Spent Month", "Money Left", "New ETC", "Diff"] as const;
 const TOTAL_SUB_COLUMNS = ["Prior ETC", "Hours Worked", "Hours Left", "Total New ETC", "Diff"] as const;
 
+
 // The sheet's 5-level header above the column labels: Phase -> billing group
 // (Engineering/Shop) -> sub-group (ME / CE / General Engineering / dept
 // abbreviations) -> colored section cell. Rather than hardcode column counts
@@ -863,7 +864,16 @@ export default async function MonthlyEtcPage({
           (see getEtcMonthKpis), so the cards and the bottom of the table can't
           disagree. "Detail" opens the punch-level drill: who booked what, on
           which date, against which job. */}
-      {started && <EtcMonthKpiCards month={month} kpis={monthKpis} detail={monthHoursDetail} />}
+      {started && (
+        <EtcMonthKpiCards
+          month={month}
+          kpis={monthKpis}
+          detail={monthHoursDetail}
+          // Same rows the amber banner below is built from, so the card and the
+          // banner state one number rather than two that could drift.
+          importIssues={importIssues.map((i) => ({ label: i.label, rows: i.rows, hours: Number(i.hours) }))}
+        />
+      )}
 
       {started && (
         /* key={month}: the month picker soft-navigates (router.push), which

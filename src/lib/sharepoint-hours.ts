@@ -276,16 +276,34 @@ export type HoursImportIssue = {
   hours: number;
 };
 
+// One rejected PUNCH, not a total. The aggregate above says 171 hours are
+// unattributed; only this says whose they are, and "somebody booked to Not
+// Defined" is not actionable in Paylocity without a name and a date. Collected
+// on the same pass at no extra cost — the loop already has every field.
+export type UnattributedRow = {
+  month: string;
+  label: string; // the raw "Jobs" cell that isn't a job number
+  date: Date;
+  employeeId: string;
+  section: string;
+  hours: number;
+};
+
 // Reads and transforms the hours file into tracked per-row records, alongside
 // the rows it had to reject. Prefers the locally synced copy when configured
 // (no auth, works in session 0), otherwise downloads via Graph.
-export async function fetchJobHoursRowsWithIssues(): Promise<{ rows: JobHoursRow[]; issues: HoursImportIssue[] }> {
+export async function fetchJobHoursRowsWithIssues(): Promise<{
+  rows: JobHoursRow[];
+  issues: HoursImportIssue[];
+  unattributed: UnattributedRow[];
+}> {
   const buffer = (await readLocalWorkbook()) ?? (await downloadWorkbookViaGraph());
   const wb = XLSX.read(buffer, { type: "buffer" });
   const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
 
   const out: JobHoursRow[] = [];
   const unattributed = new Map<string, HoursImportIssue>(); // `${month}::${label}`
+  const unattributedRows: UnattributedRow[] = [];
   const push = (jobId: string, section: string, date: Date, hours: number, employeeId: string) => {
     if (!ETC_TRACKED_CODES.has(section)) return;
     out.push({ jobId, section, year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, date, hours, employeeId });
@@ -314,6 +332,14 @@ export async function fetchJobHoursRowsWithIssues(): Promise<{ rows: JobHoursRow
         const key = `${month}::${jobText}`;
         const seen = unattributed.get(key) ?? { month, label: jobText, rows: 0, hours: 0 };
         unattributed.set(key, { ...seen, rows: seen.rows + 1, hours: seen.hours + hours });
+        unattributedRows.push({
+          month,
+          label: jobText,
+          date,
+          employeeId: String(r["Employee Id"] ?? "").trim(),
+          section,
+          hours,
+        });
       }
       continue;
     }
@@ -338,7 +364,7 @@ export async function fetchJobHoursRowsWithIssues(): Promise<{ rows: JobHoursRow
         `(${issues.length} month/label combinations). Worth chasing upstream in Paylocity.`
     );
   }
-  return { rows: out, issues };
+  return { rows: out, issues, unattributed: unattributedRows };
 }
 
 // Rows only — the common case, and what the reconciliation scripts want.

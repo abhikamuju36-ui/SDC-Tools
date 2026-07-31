@@ -1,11 +1,13 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, useTransition } from "react";
 import { usd, hours as fmtHours } from "@/components/ui/format";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 import { ETC_SECTIONS } from "@/lib/sections";
 import type { EtcMonthKpis } from "@/lib/etc-month-kpis";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
+import type { UnattributedDetail } from "@/lib/unattributed-hours";
+import { loadUnattributedDetail } from "@/lib/unattributed-actions";
 
 // Section code -> billing group, so the drill can be narrowed to the card that
 // opened it. Same mapping the grid's column bands and the KPI totals use, from
@@ -13,7 +15,7 @@ import type { JobHoursDetail } from "@/lib/job-hours-detail";
 // card, the grid and the drill.
 const SECTION_GROUP = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]));
 
-type DrillScope = "Engineering" | "Shop" | "All";
+type DrillScope = "Engineering" | "Shop" | "All" | "Unattributed";
 
 // KPI strip at the top of the Monthly ETC page: hours worked and variance for
 // Engineering and Shop, parts money spent, and how many people booked time —
@@ -34,12 +36,22 @@ export function EtcMonthKpiCards({
   month,
   kpis,
   detail,
+  importIssues,
 }: {
   month: string;
   kpis: EtcMonthKpis;
   detail: JobHoursDetail;
+  // Time booked to something that isn't a job number. Passed in from the page,
+  // which already loads it for the amber banner — one query, one number, so the
+  // card and the banner cannot disagree.
+  importIssues: { label: string; rows: number; hours: number }[];
 }) {
   const [drill, setDrill] = useState<DrillScope | null>(null); // null = closed
+  // The unattributed drill is fetched on click, not with the page: it re-parses
+  // the hours export, which nobody should pay for unless they open it.
+  const [unattributed, setUnattributed] = useState<UnattributedDetail | null>(null);
+  const [loadingUnattributed, startUnattributed] = useTransition();
+  const [unattributedError, setUnattributedError] = useState<string | null>(null);
 
   // The drill shows ONLY the sections belonging to the card that opened it —
   // Engineering from the Engineering card, Shop from Shop. It used to hand the
@@ -87,9 +99,34 @@ export function EtcMonthKpiCards({
   // someone comparing Engineering against Shop is actually asking for.
   const toggleDrill = (scope: DrillScope) => setDrill((current) => (current === scope ? null : scope));
 
+  const unattributedTotal = importIssues.reduce((s, i) => s + i.hours, 0);
+  const unattributedEntries = importIssues.reduce((s, i) => s + i.rows, 0);
+
+  function toggleUnattributed() {
+    if (drill === "Unattributed") {
+      setDrill(null);
+      return;
+    }
+    setDrill("Unattributed");
+    // Fetched once per page visit — the underlying export only changes on a
+    // sync, and re-parsing it on every open would make the panel feel broken.
+    if (unattributed || loadingUnattributed) return;
+    setUnattributedError(null);
+    startUnattributed(async () => {
+      try {
+        setUnattributed(await loadUnattributedDetail(month));
+      } catch (err) {
+        // Surfaced in the panel rather than thrown: this reads a file that can be
+        // missing or stale, and losing the whole ETC page to an error boundary
+        // over an optional drill would be a bad trade.
+        setUnattributedError(err instanceof Error ? err.message : "Could not read the hours export.");
+      }
+    });
+  }
+
   return (
     <div className="mb-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
         <GroupCard
           label="Engineering hours"
           worked={kpis.engineering.worked}
@@ -132,18 +169,66 @@ export function EtcMonthKpiCards({
           value={fmtHours(kpis.engineering.worked + kpis.shop.worked)}
           hint={`${fmtHours(kpis.engineering.worked)} eng + ${fmtHours(kpis.shop.worked)} shop`}
         />
+        {/* Hours booked to something that isn't a job number. A card, not just
+            the banner above the grid, because this is the one figure here that
+            is MISSING from every other figure — it belongs beside the totals it
+            is absent from, not only in a notice people learn to scroll past.
+            Shown even at zero: "0 unattributed" is a daily reassurance that the
+            import is clean, where an absent card says nothing either way. */}
+        <Card
+          label="Unattributed hours"
+          value={fmtHours(unattributedTotal)}
+          tone={unattributedTotal > 0 ? "warn" : undefined}
+          hint={
+            unattributedTotal > 0
+              ? `${unattributedEntries} ${unattributedEntries === 1 ? "entry" : "entries"} · ${importIssues
+                  .map((i) => i.label)
+                  .join(", ")} — not counted in any figure here`
+              : "Every punch this month has a valid job number"
+          }
+          drillOpen={drill === "Unattributed"}
+          onDrill={unattributedTotal > 0 ? toggleUnattributed : undefined}
+        />
       </div>
 
-      {drill && (
-        <HoursDetailPanel
-          detail={scopedDetail}
-          note={scopeNote}
-          // Names the scope rather than where the click came from: "Engineering
-          // hours" says what the table contains, where "(opened from
-          // Engineering)" only said how you got here.
-          title={drill === "All" ? `Hours Detail — ${month}` : `${drill} hours — ${month}`}
-          onClose={() => setDrill(null)}
-        />
+      {drill === "Unattributed" ? (
+        loadingUnattributed || (!unattributed && !unattributedError) ? (
+          <p className="rounded-xl border border-sdc-border bg-white p-4 text-xs text-sdc-gray-500 shadow-sm">
+            Reading the hours export…
+          </p>
+        ) : unattributedError ? (
+          <p className="rounded-xl border border-sdc-red-border bg-sdc-red-bg p-4 text-xs font-medium text-sdc-red-text shadow-sm">
+            Could not load the unattributed detail — {unattributedError}
+          </p>
+        ) : (
+          <HoursDetailPanel
+            detail={unattributed!}
+            // The card counts what the last SYNC stored; these rows are read live
+            // from the export. Normally identical — but if the file has moved on,
+            // say so rather than letting a card and its own drill quietly differ.
+            note={
+              Math.abs(unattributed!.total - unattributed!.storedTotal) >= 1
+                ? `The card reads ${fmtHours(unattributed!.storedTotal)} from the last sync — the export now holds ${fmtHours(
+                    unattributed!.total,
+                  )}. Refresh Data to bring the stored figure up to date.`
+                : "These punches reach no figure on this page. Correct the job number in Paylocity, then Refresh Data."
+            }
+            title={`Unattributed hours — ${month}`}
+            onClose={() => setDrill(null)}
+          />
+        )
+      ) : (
+        drill && (
+          <HoursDetailPanel
+            detail={scopedDetail}
+            note={scopeNote}
+            // Names the scope rather than where the click came from: "Engineering
+            // hours" says what the table contains, where "(opened from
+            // Engineering)" only said how you got here.
+            title={drill === "All" ? `Hours Detail — ${month}` : `${drill} hours — ${month}`}
+            onClose={() => setDrill(null)}
+          />
+        )
       )}
     </div>
   );
@@ -156,18 +241,27 @@ function Card({
   children,
   onDrill,
   drillOpen = false,
+  tone,
 }: {
   label: string;
   value: string;
   hint?: string;
   children?: React.ReactNode;
   onDrill?: () => void;
+  // "warn" tints the card amber — used for a figure that represents work to do
+  // rather than work done. Deliberately not red: nothing is broken, some hours
+  // are mis-keyed upstream.
+  tone?: "warn";
   // Whether THIS card's panel is the one currently open, so the link can say so
   // instead of reading "Detail" while the detail is already on screen.
   drillOpen?: boolean;
 }) {
   return (
-    <div className="rounded-xl border border-sdc-border bg-white p-3 shadow-sm">
+    <div
+      className={`rounded-xl border p-3 shadow-sm ${
+        tone === "warn" ? "border-sdc-yellow bg-sdc-yellow-bg/50" : "border-sdc-border bg-white"
+      }`}
+    >
       <div className="flex items-baseline justify-between gap-2">
         <p className="text-[11px] font-semibold uppercase tracking-wide text-sdc-gray-500">{label}</p>
         {onDrill && (
