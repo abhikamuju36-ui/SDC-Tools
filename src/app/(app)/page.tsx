@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { syncFromTotalEto } from "@/lib/sync-totaleto";
 import { syncActualHours, syncQuotedFromPowerBi } from "@/lib/sync-powerbi";
+import { runAllSyncs, SYNC_SOURCES, SYNC_INTERVAL_MS } from "@/lib/auto-sync";
 import { validJobTypeFilter } from "@/lib/job-filters";
 import { PageTitle, SectionTitle } from "@/components/ui/Typography";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -23,6 +24,18 @@ async function runPowerBiSync() {
   "use server";
   await syncActualHours();
   revalidatePath("/");
+}
+
+// Runs the EXACT pass the 6-hour schedule runs — same sources, same order, same
+// single month. A manual refresh that covered a different combination than the
+// automatic one is how "which of these numbers is current?" became unanswerable
+// in the first place, so there is deliberately no second definition of the work.
+async function runFullSync() {
+  "use server";
+  await runAllSyncs("manual");
+  revalidatePath("/");
+  revalidatePath("/etc");
+  revalidatePath("/quoted");
 }
 
 async function runQuotedSync() {
@@ -61,7 +74,7 @@ export default async function Home() {
     lastTotalEtoSync,
     lastPowerBiSync,
     lastQuotedSync,
-    hoursActualFreshness,
+    freshnessRows,
   ] = await Promise.all([
     prisma.job.count({ where: validJobTypeFilter }),
     prisma.job.count({ where: { status: "Active", ...validJobTypeFilter } }),
@@ -71,7 +84,7 @@ export default async function Home() {
     prisma.job.findFirst({ where: { totEtoSyncedAt: { not: null } }, orderBy: { totEtoSyncedAt: "desc" }, select: { totEtoSyncedAt: true } }),
     prisma.jobMonthlyActualHours.findFirst({ orderBy: { syncedAt: "desc" }, select: { syncedAt: true } }),
     prisma.estimatedHours.findFirst({ orderBy: { updatedAt: "desc" }, select: { updatedAt: true } }),
-    prisma.powerBiFreshness.findUnique({ where: { source: "hours_actual" }, select: { refreshedThrough: true } }),
+    prisma.powerBiFreshness.findMany(),
   ]);
 
   const stats = [
@@ -80,6 +93,26 @@ export default async function Home() {
     { label: "Active Employees", value: employeeCount, href: "/employees" },
     { label: "ETC Entries Needing Review", value: needsReviewCount, href: "/etc", alert: needsReviewCount > 0 },
   ];
+
+  // The scheduled feeds, straight off SYNC_SOURCES so this card cannot drift from
+  // what actually runs. `checkedAt` is when the app last asked; `refreshedThrough`
+  // is how current the DATA is — two different questions that were previously
+  // collapsed into one "last synced" line per row.
+  const freshnessBySource = new Map(freshnessRows.map((r) => [r.source, r]));
+  const scheduledFeeds = SYNC_SOURCES.map((f) => {
+    const row = freshnessBySource.get(f.source);
+    return {
+      ...f,
+      checkedAt: row?.checkedAt ?? null,
+      refreshedThrough: row?.refreshedThrough ?? null,
+      // status is null when healthy; a string means the last attempt failed and
+      // this feed is aging. Never hidden — that was the whole lesson of DEVLOG §12.
+      failure: row?.status ?? null,
+      everRan: Boolean(row),
+    };
+  });
+  const failingFeeds = scheduledFeeds.filter((f) => f.failure);
+  const hoursActualFreshness = freshnessBySource.get("hours_actual");
 
   const syncRows = [
     { label: "Jobs from TotalETO", action: runTotalEtoSync, lastSynced: lastTotalEtoSync?.totEtoSyncedAt, dataThrough: null },
@@ -190,9 +223,78 @@ export default async function Home() {
         </Link>
       </div>
 
+      {/* The schedule itself — every feed that refreshes automatically, its real
+          state, and one button that runs the identical pass on demand. Rendered
+          from SYNC_SOURCES so a feed can't appear here without being on the
+          schedule, or run on the schedule without appearing here. */}
       <div className={`${card("p-6")} mb-6`}>
-        <SectionTitle>Data Sync</SectionTitle>
-        <p className="mb-1 mt-1 text-xs text-sdc-gray-400">Same sources the original spreadsheet used.</p>
+        <div className="mb-1 flex items-start justify-between gap-4">
+          <div>
+            <SectionTitle>Refresh Schedule</SectionTitle>
+            <p className="mt-1 text-xs text-sdc-gray-400">
+              All of these refresh together every {SYNC_INTERVAL_MS / 3_600_000} hours, in one pass. Historical months and
+              app-owned figures (quoted hours, New ETC) are deliberately excluded — they are never overwritten by a sync.
+            </p>
+          </div>
+          <form action={runFullSync}>
+            <button type="submit" className={BUTTON_PRIMARY}>
+              Refresh all now
+            </button>
+          </form>
+        </div>
+
+        {failingFeeds.length > 0 && (
+          <p className="mt-3 rounded-lg border border-sdc-red-border bg-sdc-red-bg px-3.5 py-2.5 text-xs font-medium text-sdc-red-text">
+            {failingFeeds.length} feed{failingFeeds.length === 1 ? "" : "s"} failed on the last attempt and{" "}
+            {failingFeeds.length === 1 ? "is" : "are"} now aging. Figures drawn from{" "}
+            {failingFeeds.map((f) => f.label).join(", ")} may be out of date.
+          </p>
+        )}
+
+        <div className="mt-3 divide-y divide-sdc-border-soft">
+          {scheduledFeeds.map((f) => (
+            <div key={f.source} className="flex items-start justify-between gap-4 py-3">
+              <div className="min-w-0">
+                <div className="flex items-center gap-2.5">
+                  <span
+                    className={`h-1.75 w-1.75 shrink-0 rounded-full ${
+                      f.failure ? "bg-sdc-red" : f.everRan ? "bg-sdc-green" : "bg-sdc-gray-400"
+                    }`}
+                  />
+                  <p className="truncate text-sm font-semibold text-sdc-navy">{f.label}</p>
+                  {f.monthScoped && (
+                    <span
+                      className="shrink-0 rounded bg-sdc-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-sdc-gray-600"
+                      title="Only the latest open ETC month — a submitted month is frozen and never touched"
+                    >
+                      open month only
+                    </span>
+                  )}
+                </div>
+                {f.failure && <p className="mt-1 pl-4.5 text-xs break-words text-sdc-red-text">{f.failure}</p>}
+              </div>
+              <span className="shrink-0 text-right text-xs text-sdc-gray-400">
+                {f.everRan ? `Checked ${timeAgo(f.checkedAt!)}` : "Never run"}
+                {formatDataThrough(f.refreshedThrough) && (
+                  <>
+                    <br />
+                    <span title="How current the source data itself is, not when the app last asked">
+                      {formatDataThrough(f.refreshedThrough)}
+                    </span>
+                  </>
+                )}
+              </span>
+            </div>
+          ))}
+        </div>
+      </div>
+
+      <div className={`${card("p-6")} mb-6`}>
+        <SectionTitle>Run One Source</SectionTitle>
+        <p className="mb-1 mt-1 text-xs text-sdc-gray-400">
+          Individual pulls, for when one feed needs re-running without waiting for the next pass. Prefer &ldquo;Refresh all
+          now&rdquo; above — it runs the same combination the schedule does.
+        </p>
         <div className="divide-y divide-sdc-border-soft">
           {syncRows.map((row) => (
             <div key={row.label} className="flex items-center justify-between py-3.5">

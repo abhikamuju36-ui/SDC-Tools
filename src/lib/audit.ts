@@ -39,15 +39,34 @@ async function writeAuditLog(entry: AuditEntry & { userId: number | null; userEm
   }
 }
 
-// Call from inside a server action / page action — reads the signed-in user
-// from the current session.
+// Call from inside a server action / page action — reads the signed-in user from
+// the current session.
+//
+// Also safe to call with NO request at all, which is not a hypothetical: the
+// 6-hour pass in auto-sync.ts runs on a timer, and `auth()` there reads
+// `headers()` and throws "`headers` was called outside a request scope". That
+// threw straight out of the sync step that was only trying to record what it
+// did — proven live 2026-07-31, the Scheduler roster step failing AFTER it had
+// already written its updates. An audit entry is a record OF an operation and
+// must never be able to fail one; an unattended run simply has no user, which
+// is a fact to record rather than an error.
 export async function logAudit(entry: AuditEntry): Promise<void> {
-  const session = await auth();
-  const userId = (session?.user as { id?: string } | undefined)?.id;
+  let userId: string | undefined;
+  let userEmail: string | null = null;
+  try {
+    const session = await auth();
+    userId = (session?.user as { id?: string } | undefined)?.id;
+    userEmail = session?.user?.email ?? null;
+  } catch {
+    // No request scope (scheduled/background work). Attributed to the system
+    // below rather than left blank, so the audit log distinguishes "nobody was
+    // signed in" from "we could not tell".
+    userEmail = "system@auto-sync";
+  }
   await writeAuditLog({
     ...entry,
     userId: userId ? Number(userId) : null,
-    userEmail: session?.user?.email ?? null,
+    userEmail,
   });
 }
 

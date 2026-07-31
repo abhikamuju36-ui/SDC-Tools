@@ -214,13 +214,20 @@ export async function syncSchedulerTeam(): Promise<TeamSyncResult> {
     .filter((m) => !matchedSchedulerKeys.has(normalizeName(m.name)))
     .map((m) => m.name);
 
-  await logAudit({
-    action: "employee.syncSchedulerTeam",
-    entityType: "Employee",
-    entityId: 0,
-    summary: `Synced team grouping from Scheduler: ${updated.length} updated, ${unchanged} already matched, ${unmatchedEtc.length} ETC unmatched, ${unmatchedScheduler.length} Scheduler unmatched`,
-    metadata: { updated, unmatchedEtc, unmatchedScheduler },
-  });
+  // Only audited when it actually changed something. This runs unattended every
+  // 6 hours now (auto-sync.ts), and a run that re-grouped nobody is not an event
+  // — logging it would add ~4 rows a day of "nothing happened" and bury the real
+  // entries a reader comes to the audit log for. A no-op run is still visible as
+  // a freshness stamp, which is the right place for "when did this last work".
+  if (updated.length > 0) {
+    await logAudit({
+      action: "employee.syncSchedulerTeam",
+      entityType: "Employee",
+      entityId: 0,
+      summary: `Synced team grouping from Scheduler: ${updated.length} updated, ${unchanged} already matched, ${unmatchedEtc.length} ETC unmatched, ${unmatchedScheduler.length} Scheduler unmatched`,
+      metadata: { updated, unmatchedEtc, unmatchedScheduler },
+    });
+  }
 
   return { ok: true, updated, unchanged, unmatchedEtc, unmatchedScheduler };
 }

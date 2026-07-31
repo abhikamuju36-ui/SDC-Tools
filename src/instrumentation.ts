@@ -1,71 +1,29 @@
-const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
-
-// Runs once when the Next.js server process starts. Guarded against
-// re-registering on hot reload / multiple invocations in dev.
+// Starts the app's one refresh schedule. WHAT gets refreshed, and the rules it
+// follows, live in lib/auto-sync.ts — this file only decides when it runs.
 export async function register() {
-  // instrumentation.ts's register() runs in both the Node.js and Edge
-  // runtimes (the latter for proxy.ts/middleware) — the Power BI client's
-  // Node-only imports (os, path, the native MSAL cache module) can't load
-  // under Edge, so skip entirely there.
+  // register() runs in both the Node.js and Edge runtimes (the latter for
+  // proxy.ts/middleware). Every sync behind runAllSyncs pulls in Node-only
+  // modules — mssql, MSAL's native token cache, fs — which cannot load under
+  // Edge, so skip entirely there.
   if (process.env.NEXT_RUNTIME !== "nodejs") return;
 
-  const g = globalThis as typeof globalThis & { __pbiAutoSyncStarted?: boolean };
-  if (g.__pbiAutoSyncStarted) return;
-  g.__pbiAutoSyncStarted = true;
+  const g = globalThis as typeof globalThis & { __sdcAutoSyncStarted?: boolean };
+  if (g.__sdcAutoSyncStarted) return; // guard against HMR / repeated registration
+  g.__sdcAutoSyncStarted = true;
 
-  const { syncActualHours, syncHoursWorked, syncPartsCost, recordHoursSyncFailure } = await import("@/lib/sync-powerbi");
-  const { prisma } = await import("@/lib/prisma");
-  const { isMonthLocked } = await import("@/lib/etc");
+  const { runAllSyncs, SYNC_INTERVAL_MS } = await import("@/lib/auto-sync");
 
-  // Every data source below is now direct — SharePoint (Paylocity hours) and
-  // TotalETO (parts) — with no Power BI dataset in the loop. Quoted hours are
-  // owned by the app (Projects tab) so they're no longer pulled; the pool
-  // "New Hours Added" driver and the on-demand history/pool backfills remain
-  // as separate admin tools.
-  const runSync = async () => {
-    try {
-      const result = await syncActualHours();
-      console.log(
-        `[auto-sync] Actual hours (SharePoint): ${result.rowsUpserted} upserted, ${result.jobsNotFound} jobs not found, ${result.rowsSkippedOverridden} overridden preserved`
-      );
-    } catch (err) {
-      console.error("[auto-sync] Actual hours sync failed:", err);
-      // Surface it in the app too — a console-only failure is invisible to the
-      // managers reading (now-stale) hours on the ETC page.
-      await recordHoursSyncFailure(err);
-    }
-
-    // Keep the current (latest, unlocked) ETC month live — the same pulls a
-    // manual Run Report does: per-section Hours Worked (SharePoint) and the
-    // Parts Cost block (TotalETO). A locked month is frozen history and is
-    // never touched outside an admin reopen.
-    try {
-      const latest = await prisma.etcEntry.findFirst({ orderBy: { month: "desc" }, select: { month: true } });
-      if (!latest) return;
-      const entries = await prisma.etcEntry.findMany({ where: { month: latest.month }, select: { needsReview: true } });
-      if (isMonthLocked(entries)) return;
-
-      const result = await syncHoursWorked(latest.month);
-      console.log(
-        `[auto-sync] ETC hours worked (${latest.month}): ${result.rowsUpdated} updated, ${result.rowsSkipped} skipped` +
-          // Called out separately rather than folded into "updated": a row being
-          // zeroed means the source dropped hours it previously reported, which
-          // is worth noticing rather than burying in a total.
-          (result.rowsZeroed > 0 ? `, ${result.rowsZeroed} zeroed (no longer in the export)` : "")
-      );
-
-      const parts = await syncPartsCost(latest.month);
-      console.log(`[auto-sync] Parts cost (${latest.month}): ${parts.rowsUpserted} upserted`);
-    } catch (err) {
-      console.error("[auto-sync] ETC current-month sync failed:", err);
-      // Recorded against its OWN source, not "hours_actual": syncActualHours
-      // above may well have succeeded and stamped that one healthy, and the
-      // whole point of a separate record is that this failure is not hidden
-      // behind that success.
-      await recordHoursSyncFailure(err, "etc_hours_worked");
-    }
+  // Once at boot, then every 6 hours. Note there is still NO retry policy: the
+  // interval is happy-path spacing, so a failed pass waits the full six hours.
+  // That trade is only survivable because every step records its own failure
+  // where the app can show it — see auto-sync.ts rule 3.
+  const tick = (trigger: "startup" | "interval") => {
+    // runAllSyncs catches per step, so a rejection reaching here means the runner
+    // itself broke. Caught anyway: an unhandled rejection can take the process
+    // down, and losing the server is a worse outcome than losing one pass.
+    runAllSyncs(trigger).catch((err) => console.error("[auto-sync] pass could not run:", err));
   };
 
-  runSync();
-  setInterval(runSync, SYNC_INTERVAL_MS);
+  tick("startup");
+  setInterval(() => tick("interval"), SYNC_INTERVAL_MS);
 }

@@ -578,7 +578,14 @@ async function syncHoursRefreshedThrough(rows: JobHoursRow[]): Promise<void> {
 
 // Marks a sync source healthy. `status: null` clears any recorded failure —
 // this run just proved the path works again.
-async function recordSyncSuccess(source: string, refreshedThrough: Date | null): Promise<void> {
+//
+// Exported for auto-sync.ts, which stamps the sources whose own sync function
+// has no natural "refreshed through" date of its own (parts, TotalETO jobs, the
+// Scheduler roster) and passes the moment of the successful read. The hours
+// sources deliberately stamp themselves instead: their refreshedThrough is the
+// latest WORK DATE in the export, which says how current the data is rather than
+// when we last asked — re-stamping those with `now` would throw that away.
+export async function recordSyncSuccess(source: string, refreshedThrough: Date | null): Promise<void> {
   if (!refreshedThrough) return; // refreshedThrough is required; nothing to claim
   try {
     await prisma.powerBiFreshness.upsert({
@@ -622,7 +629,7 @@ async function recordImportIssues(issues: HoursImportIssue[]): Promise<void> {
 // failed pull has no date to put there. If the row doesn't exist yet the feed
 // has simply never succeeded, and there's no stale figure to warn about.
 // Best-effort — a logging failure must never mask the original sync error.
-export async function recordHoursSyncFailure(err: unknown, source = "hours_actual"): Promise<void> {
+export async function recordSyncFailure(err: unknown, source = "hours_actual"): Promise<void> {
   const message = err instanceof Error ? err.message : String(err);
   try {
     await prisma.powerBiFreshness.updateMany({
