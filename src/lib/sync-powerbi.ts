@@ -571,8 +571,19 @@ export async function recordHoursSyncFailure(err: unknown): Promise<void> {
       where: { source: "hours_actual" },
       data: { status: `Failed: ${message.slice(0, 300)}`, checkedAt: new Date() },
     });
-  } catch {
-    // swallow — the caller is already reporting the real error
+  } catch (writeErr) {
+    // Best-effort, so still non-fatal — but NOT silent. A bare `catch {}` here
+    // hid a real bug for weeks: `status` was varchar(191) while this writes up
+    // to 308 chars, so every failure threw "value too long for the column's
+    // type" and vanished. The header kept showing a confident last-good date
+    // while the numbers aged, which is the exact outcome this function exists
+    // to prevent. Widened to @db.Text 2026-07-31; the log stays so that if this
+    // path ever breaks again it says so instead of pretending to work.
+    console.error(
+      `[sync] could not record the hours-sync failure (the failure itself is reported separately): ${
+        writeErr instanceof Error ? writeErr.message : String(writeErr)
+      }`
+    );
   }
 }
 

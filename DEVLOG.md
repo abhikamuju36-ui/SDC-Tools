@@ -586,14 +586,48 @@ a large percentage there would have meant the export was wrong, not the
 database. After applying, stored vs live agrees to 0.01/−0.02, which is the
 10-311 split's rounding floor.
 
+### `recordHoursSyncFailure()` silently failing — root-caused and fixed
+Every sync failure logged to the console, yet `hours_actual` kept
+`status=null`. The cause, proven by replaying the exact write:
+
+`status` was `varchar(191)` (Prisma's MySQL default for `String?`), while the
+function writes `` `Failed: ${message.slice(0, 300)}` `` — up to 308 chars. The
+real DPAPI message is ~440 chars, so **every** failure threw
+"The provided value for the column is too long for the column's type" — and the
+bare `catch {}` swallowed it.
+
+So the one mechanism built to make stale data visible was itself silently
+broken, by a `catch` that hid its own failure. Both halves fixed: the column
+widened to `@db.Text`, and the catch now logs. A diagnostic field must never be
+the thing that fails to record a diagnosis, and an error handler that cannot
+report its own errors is not a handler.
+
+### Hours booked to non-job values — now reported instead of vanishing
+`String(Number("Not Defined"))` is `"NaN"`, and the importer wrote that straight
+into the job id, producing rows that matched no `Job` and disappeared with no
+trace. Non-numeric job values are now counted and skipped explicitly, with a
+warning naming each one.
+
+First run of the fixed importer, across the export's full 7-month window:
+
+```
+"Not Defined"  2167.40h across 810 rows
+"2026 SERVICE"   51.30h across  21 rows
+"2025 SERVICE"   31.00h across  10 rows
+"2023_SER"        1.73h across   1 row
+```
+
+~2,251 hours booked with no valid job number. The three `SERVICE` variants look
+like job *names* typed where a number belongs — job 10001 is literally named
+"2025 Service" — so those may be recoverable by mapping, unlike "Not Defined".
+This is an upstream Paylocity data-entry problem, not a code bug; the code's
+only fault was hiding it.
+
 ### Still open
-- **`recordHoursSyncFailure()` does not write.** Four logged failures on
-  2026-07-31, yet `hours_actual` still read `status=null,
-  checkedAt=2026-07-30 12:50`. The call is reached (its log lines print) and the
-  built bundle contains it. Unexplained — and it is the exact mechanism meant to
-  prevent the silent staleness above.
 - **`syncHoursWorked()` has no freshness tracking at all**, unlike
   `syncActualHours()`.
+- **~2,251 unattributed hours** (above) are reported in the log but still
+  invisible in the UI, and nobody has been asked to chase them.
 - **Nothing watches the OneDrive copy's age** beyond a console warning.
 - **Pre-2026-01 hours cannot be regenerated.** `JobHoursDetail` starts at
   2026-01 because the export is a rolling window; the 1,148 older

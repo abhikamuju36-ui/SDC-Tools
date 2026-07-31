@@ -227,7 +227,14 @@ model PowerBiFreshness {
   // header so a silently failing upstream refresh (found live 2026-07-18:
   // CredentialsNotSpecified, two days of stale hours) is visible instead
   // of quietly aging the data.
-  status           String?
+  // @db.Text, not the default varchar(191). Real failure messages are long —
+  // the DPAPI one that broke the sync for weeks is ~440 chars — and
+  // recordHoursSyncFailure writes up to 308. Against varchar(191) that write
+  // threw "value too long for the column's type" on EVERY failure, and the
+  // catch there swallowed it, so the one mechanism meant to make stale data
+  // visible was itself silently broken. A diagnostic field must never be the
+  // thing that fails to record a diagnosis.
+  status           String?  @db.Text
 }
 
 // Per-job, per-section-code hours across three snapshots, confirmed from the
