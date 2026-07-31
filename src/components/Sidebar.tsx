@@ -3,6 +3,15 @@
 import Image from "next/image";
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import {
+  applyNavOrder,
+  moveItem,
+  readNavOrder,
+  subscribeNavOrder,
+  writeNavOrder,
+  clearNavOrder,
+  NO_NAV_ORDER,
+} from "@/lib/nav-order";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isEtcDirty } from "@/lib/etc-dirty-tracker";
 import { AppTextSize } from "@/components/AppTextSize";
@@ -201,7 +210,32 @@ export default function Sidebar({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const allGroups = role === "ADMIN" ? [...GROUPS, ADMIN_GROUP] : GROUPS;
+  const baseGroups = role === "ADMIN" ? [...GROUPS, ADMIN_GROUP] : GROUPS;
+
+  // User-chosen link order (localStorage, per browser). useSyncExternalStore
+  // rather than reading storage in render — that would hydrate differently from
+  // the server — and rather than setState-in-effect, which flickers the default
+  // order for a frame and is a lint error in this repo.
+  const navOrder = useSyncExternalStore(subscribeNavOrder, readNavOrder, () => NO_NAV_ORDER);
+  const allGroups = baseGroups.map((g) => ({ ...g, items: applyNavOrder(g.label, g.items, navOrder) }));
+  const hasCustomOrder = Object.keys(navOrder).length > 0;
+
+  // The drag SOURCE lives in a ref, not state: dragover/drop can fire in the same
+  // tick as dragstart, and a state update isn't visible to those handlers yet —
+  // which silently dropped the reorder. The ref is read synchronously and is always
+  // current. State mirrors it purely so the row can dim while it's being dragged.
+  const dragRef = useRef<{ group: string; index: number } | null>(null);
+  const [drag, setDrag] = useState<{ group: string; index: number } | null>(null);
+  const [over, setOver] = useState<{ group: string; index: number } | null>(null);
+
+  function reorder(group: string, items: { href: string }[], from: number, to: number) {
+    const hrefs = moveItem(items, from, to);
+    // Nothing moved (Alt+Up on the first item, a drop onto itself, a one-item
+    // group): write nothing. Persisting a no-op would light up "Reset order" as
+    // though the user had customised something.
+    if (hrefs.every((h, i) => h === items[i].href)) return;
+    writeNavOrder({ ...navOrder, [group]: hrefs });
+  }
 
   // Nav filter behind the search field. Groups whose every item is filtered out
   // drop away with their heading, so there are no orphan labels.
@@ -422,14 +456,55 @@ export default function Sidebar({
               </p>
             )}
             <div className="flex flex-col gap-[3px]">
-              {group.items.map((item) => {
+              {group.items.map((item, index) => {
                 const active = item.isActive(pathname);
+                const isDragging = drag?.group === group.label && drag.index === index;
+                const isOver = over?.group === group.label && over.index === index && !isDragging;
                 return (
                   <Link
                     key={item.href}
                     href={item.href}
                     onClick={(e) => handleNavClick(e, item.href)}
-                    title={collapsed ? item.label : undefined}
+                    title={collapsed ? item.label : `${item.label} — drag to reorder, or Alt+↑/↓`}
+                    // Reorderable by drag, and by Alt+Arrow for anyone not using a
+                    // mouse. Only within this group: the headings above say what
+                    // these links are, so a link that moved out from under one
+                    // would make the heading wrong.
+                    draggable={group.items.length > 1}
+                    onDragStart={(e) => {
+                      dragRef.current = { group: group.label, index };
+                      setDrag({ group: group.label, index });
+                      // Firefox ignores a drag with no payload; the href is also the
+                      // sensible thing to hand to anything else that accepts a drop.
+                      e.dataTransfer.setData("text/plain", item.href);
+                      e.dataTransfer.effectAllowed = "move";
+                    }}
+                    onDragOver={(e) => {
+                      const src = dragRef.current;
+                      if (!src || src.group !== group.label) return; // never across groups
+                      e.preventDefault(); // required, or the drop never fires
+                      e.dataTransfer.dropEffect = "move";
+                      setOver({ group: group.label, index });
+                    }}
+                    onDrop={(e) => {
+                      const src = dragRef.current;
+                      if (!src || src.group !== group.label) return;
+                      e.preventDefault();
+                      reorder(group.label, group.items, src.index, index);
+                      dragRef.current = null;
+                      setDrag(null);
+                      setOver(null);
+                    }}
+                    onDragEnd={() => {
+                      dragRef.current = null;
+                      setDrag(null);
+                      setOver(null);
+                    }}
+                    onKeyDown={(e) => {
+                      if (!e.altKey || (e.key !== "ArrowUp" && e.key !== "ArrowDown")) return;
+                      e.preventDefault(); // don't scroll the nav while moving an item
+                      reorder(group.label, group.items, index, index + (e.key === "ArrowUp" ? -1 : 1));
+                    }}
                     // Active state is a raised white "card" (ring + 1px shadow)
                     // with a 2px inset accent bar, not a filled block — the mock's
                     // way of marking the current page on a light panel.
@@ -439,6 +514,10 @@ export default function Sidebar({
                       active
                         ? "bg-[#0E3159] font-medium text-[#FFFFFF] shadow-[inset_0_0_0_1px_#1B4270,0_1px_2px_rgba(0,0,0,0.45)]"
                         : "text-[#C3D1E0] hover:bg-[#0E3157]"
+                    } ${isDragging ? "opacity-40" : ""} ${
+                      // Insertion line where the dragged item would land, drawn on
+                      // the target rather than moving anything until the drop.
+                      isOver ? "shadow-[inset_0_2px_0_0_#4C8DE8]" : ""
                     }`}
                   >
                     {active && <span className="absolute top-[9px] bottom-[9px] left-0 w-[2px] rounded-r-[2px] bg-[#4C8DE8]" />}
@@ -452,6 +531,19 @@ export default function Sidebar({
             </div>
           </div>
         ))}
+
+        {/* Only offered once the order has actually been customised — a permanent
+            "Reset order" would be clutter for the majority who never drag anything. */}
+        {hasCustomOrder && !collapsed && (
+          <button
+            type="button"
+            onClick={clearNavOrder}
+            className="self-start px-[10px] text-[10px] text-[#6E88A5] underline decoration-dotted underline-offset-2 hover:text-[#C3D1E0]"
+            title="Put the sidebar links back in their default order"
+          >
+            Reset order
+          </button>
+        )}
 
         {/* Cross-app link out to the SDC Scheduler. Deliberately NOT part of
             GROUPS: those are internal next/link routes with an isActive test,
