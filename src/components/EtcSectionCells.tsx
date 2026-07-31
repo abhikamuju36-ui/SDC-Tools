@@ -4,13 +4,10 @@ import { useState } from "react";
 import { calcHoursLeft, suggestNewEtc, round2 } from "@/lib/etc";
 import { markEtcDirty } from "@/lib/etc-dirty-tracker";
 import { hours as formatHours } from "@/components/ui/format";
+import { ETC_COL_W } from "@/components/ui/classnames";
 
 const HOURS_WORKED_BG = "bg-[#C7DAF7]";
 const HOURS_LEFT_BG = "bg-[#F1F6FD]";
-// Uniform fixed width for every hour data column — must match ETC_COL_W in
-// the /etc page so a section's 5 body cells line up with their headers and
-// with every other hour column in the grid.
-const ETC_COL_W = "w-[46px] min-w-[46px]";
 function newEtcBg(hasValue: boolean) {
   return hasValue ? "bg-[#F2F2F2]" : "bg-[#FAFAC4]";
 }

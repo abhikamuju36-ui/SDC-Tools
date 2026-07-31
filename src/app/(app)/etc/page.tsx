@@ -37,7 +37,7 @@ import { hours as formatHours } from "@/components/ui/format";
 import { MonthYearSelect } from "@/components/MonthYearSelect";
 import { JobCellMenu } from "@/components/JobCellMenu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
-import { BUTTON_PRIMARY, BUTTON_SECONDARY, TABLE_HEADER_ROW, TABLE_GRID } from "@/components/ui/classnames";
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, TABLE_HEADER_ROW, TABLE_GRID, ETC_COL_W } from "@/components/ui/classnames";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
 
@@ -47,17 +47,6 @@ import { DragScroll } from "@/components/DragScroll";
 const SUB_COLUMNS = ["Prior ETC", "Hours Worked Month", "Hours Left", "New ETC", "Diff"] as const;
 const PARTS_COST_SUB_COLUMNS = ["Prior ETC", "Money Spent Month", "Money Left", "New ETC", "Diff"] as const;
 const TOTAL_SUB_COLUMNS = ["Prior ETC", "Hours Worked", "Hours Left", "Total New ETC", "Diff"] as const;
-
-// Every HOUR data column holds the same kind of value (a 4-digit-max hour
-// count), so they all get one uniform fixed width — matching what the Projects
-// grid did (commit 43b8a28). Applied to BOTH the header <th> and body <td> of
-// every hour sub-column (the per-section SUB_COLUMNS and the Total rollup
-// TOTAL_SUB_COLUMNS), so the column is truly uniform regardless of content.
-// Long header words wrap within the width via [overflow-wrap:anywhere] rather
-// than forcing the column wider. Deliberately NOT applied to the Parts Cost
-// dollar columns, which hold large "$" figures (e.g. -$974,979) and must size
-// to fit.
-const ETC_COL_W = "w-[46px] min-w-[46px]";
 
 // The sheet's 5-level header above the column labels: Phase -> billing group
 // (Engineering/Shop) -> sub-group (ME / CE / General Engineering / dept
@@ -1022,7 +1011,7 @@ export default async function MonthlyEtcPage({
                         key={s.code}
                         title={`${s.name} (${s.code})`}
                         colSpan={SUB_COLUMNS.length}
-                        className={`${edgeFor(s.code, i)} [overflow-wrap:anywhere] px-2 py-1 text-center ${color ?? ""}`}
+                        className={`${edgeFor(s.code, i)} break-normal px-2 py-1 text-center ${color ?? ""}`}
                       >
                         {s.sectionDisplay}
                       </th>
@@ -1043,7 +1032,7 @@ export default async function MonthlyEtcPage({
                     SUB_COLUMNS.map((col, ci) => (
                       <th
                         key={`${s.code}-${col}`}
-                        className={`${ci === 0 ? edgeFor(s.code, i) : "border-l border-sdc-border"} ${ETC_COL_W} [overflow-wrap:anywhere] px-1 py-1.5 text-center text-[10px] ${
+                        className={`${ci === 0 ? edgeFor(s.code, i) : "border-l border-sdc-border"} ${ETC_COL_W} break-normal px-1 py-1.5 text-center text-[10px] ${
                           subColHeaderBg(col) || SECTION_HEADER_COLOR_LIGHT[s.code] || ""
                         }`}
                       >
@@ -1055,7 +1044,7 @@ export default async function MonthlyEtcPage({
                     TOTAL_SUB_COLUMNS.map((col, ci) => (
                       <th
                         key={`${group}-${col}`}
-                        className={`${ci === 0 && gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} [overflow-wrap:anywhere] px-1 py-1.5 text-center text-[10px] ${
+                        className={`${ci === 0 && gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} break-normal px-1 py-1.5 text-center text-[10px] ${
                           subColHeaderBg(col) || "bg-sdc-yellow-bg text-sdc-navy"
                         }`}
                       >

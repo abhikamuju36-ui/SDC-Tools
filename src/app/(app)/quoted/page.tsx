@@ -606,7 +606,7 @@ export default async function QuotedPage({
                 // dormant at the width above and just guards against a future
                 // section name longer than any of today's.
                 return sections.map((s) => (
-                  <th key={s.code} title={s.code} style={DATA_COL_STYLE} className="qc [overflow-wrap:break-word] border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
+                  <th key={s.code} title={s.code} style={DATA_COL_STYLE} className="qc break-normal border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
                     {s.name}
                     <span className="block font-mono text-[10px] font-normal normal-case tracking-normal text-sdc-gray-400">
                       {s.code}

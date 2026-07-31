@@ -50,6 +50,23 @@ export const LABEL = "text-[13px] font-semibold text-sdc-navy";
 export const TABLE_HEADER_ROW =
   "border-b-2 border-sdc-border text-center text-[10px] font-semibold uppercase tracking-wider text-sdc-gray-600";
 
+// Uniform width for every hour data column on the Monthly ETC grid — header and
+// body alike, so a column is one width regardless of what is in it.
+//
+// 61px is not a taste call, it is the measurement. The sub-column labels render
+// at 10px semibold uppercase with tracking-wider (TABLE_HEADER_ROW), where the
+// longest word, "WORKED", is 52.2px in Montserrat — measured in the running app,
+// not estimated, because the fallback font is ~20% narrower and measuring in it
+// is how this column got sized too small the first time. Add the cells' px-1
+// either side and the column must be at least 60.2px for that word to fit on one
+// line; 61 gives it a pixel of slack.
+//
+// It was 46px, which left 38px of content and made "HOURS WORKED MONTH" render
+// as "HOUR S WOR KED MONT H" — the header was being broken mid-word to fit. If
+// these labels ever change, re-measure the longest WORD (not the phrase) and
+// resize; never solve it by letting words break.
+export const ETC_COL_W = "w-[61px] min-w-[61px]";
+
 export const TABLE_ROW_HOVER = "transition-colors hover:bg-sdc-blue-light/40";
 
 // Full gridlines + tabular-width numerals — makes data tables read like a

@@ -384,6 +384,29 @@ tr.row-selected > td:first-child {
  * gray track with a hard-edged corner square where the horizontal and
  * vertical tracks meet, which reads as a stray box floating over the table.
  * Themeing it to match the app's flat design removes that. */
+/* Never split a word across lines. A column label rendered as "HOUR S WOR KED
+   MONT H" is not a narrow column, it is an unreadable one — the fix is always a
+   wider column, a shorter label or a smaller font, never a broken word.
+
+   Scoped to the elements that hold LABELS (headers, buttons, form labels, option
+   text) rather than everything: free-text content still needs to be able to break
+   an unbroken 400-character string, which is why the toast and sync-failure
+   messages keep their explicit break-words. Those are messages, not labels.
+
+   This is a backstop, not the fix: a label that no longer fits will now overflow
+   or clip, which is visible and gets reported, where a silently mangled word
+   survives for months. */
+th,
+button,
+label,
+option,
+legend,
+summary {
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+}
+
 .styled-scrollbar {
   scrollbar-width: thin;
   scrollbar-color: var(--sdc-border) var(--sdc-gray-50);
