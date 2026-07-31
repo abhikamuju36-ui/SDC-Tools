@@ -39,6 +39,9 @@ export function DateCell({
       type="date"
       name={name}
       defaultValue={defaultValue}
+      // The server's value, for dirty-form.ts: this cell is submitted only when
+      // the picked date differs from it.
+      data-baseline={defaultValue}
       aria-label={ariaLabel}
       className={empty ? "date-empty" : undefined}
       // onMouseDown, not onClick: mousedown is what focuses a date segment, so

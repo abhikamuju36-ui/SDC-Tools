@@ -22,18 +22,19 @@ import { SaveQuotedHoursButton } from "@/components/SaveQuotedHoursButton";
 import { JobCellMenu } from "@/components/JobCellMenu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
 import { saveQuotedHours } from "@/lib/quoted-actions";
+import { QuotedSaveForm } from "@/components/QuotedSaveForm";
 import { decodeParamList } from "@/lib/quoted-display-prefs";
 
 // Header banding, matching the real "Estimated Hours" tab's column colors
-// exactly (extracted from its theme + explicit fills) â€” phase row, then a
+// exactly (extracted from its theme + explicit fills) — phase row, then a
 // department-band row (Function Group), then the section name.
 // Re-themed to the SDC brand palette (see brand color sheet): phase banners
 // use the bold brand *core* colors, group sub-bands below use lighter brand
 // *tints* so the two-tier header hierarchy reads at a glance. Each value
 // carries its own text color so it can win over the base cell class reliably.
 const PHASE_HEADER_COLOR: Record<string, string> = {
-  "Complete Design & Build": "bg-sdc-navy text-white", // #061D39 â€” anchor phase
-  "Machine Testing": "bg-sdc-blue text-white", // #1574C4 â€” primary brand
+  "Complete Design & Build": "bg-sdc-navy text-white", // #061D39 — anchor phase
+  "Machine Testing": "bg-sdc-blue text-white", // #1574C4 — primary brand
   "Teardown & Install": "bg-sdc-green text-white", // #74C415
   Warranty: "bg-sdc-yellow text-sdc-navy", // #FFDE51 (dark text for contrast)
 };
@@ -42,15 +43,15 @@ const PHASE_HEADER_COLOR: Record<string, string> = {
 // root. Row height applies to every body cell uniformly (they're already a
 // consistent py-1.5 today, so nothing changes until a user clicks +/-).
 // Column width only targets cells marked with the "qc" ("quoted column")
-// class below â€” the repeated per-section header/data columns, which are
-// already a consistent px-1 â€” deliberately excluding the sticky #/Job Id/Job/
+// class below — the repeated per-section header/data columns, which are
+// already a consistent px-1 — deliberately excluding the sticky #/Job Id/Job/
 // Cost columns (own fixed widths) and the optional metadata columns
 // (Customer/Type/Status/Dates, px-2) and phase/group banner headers, whose
 // padding isn't a "column width" in the same sense.
 const ZOOM_CONTROLS = "[&_td]:py-[var(--quoted-row-py,6px)] [&_.qc]:px-[var(--quoted-col-px,4px)]";
 
-// Every repeated data column â€” the per-section quoted/actual cells and the two
-// grand-total columns â€” renders at ONE uniform width, so the grid reads as an
+// Every repeated data column — the per-section quoted/actual cells and the two
+// grand-total columns — renders at ONE uniform width, so the grid reads as an
 // even matrix instead of the ragged one auto-layout produced. The old
 // `w-[40px] min-w-[40px]` only set a floor, so each column still stretched to
 // its own content and no two matched; these three properties together pin it.
@@ -58,7 +59,7 @@ const ZOOM_CONTROLS = "[&_td]:py-[var(--quoted-row-py,6px)] [&_.qc]:px-[var(--qu
 // The width is `content + padding`, not a flat number, because the Grid Size
 // control drives this column's horizontal padding (--quoted-col-px) anywhere
 // from 0 to 16px per side. A flat width would hand the same box to a 4px and a
-// 16px padding and let the larger one crush the text â€” and, since the width is
+// 16px padding and let the larger one crush the text — and, since the width is
 // pinned with max-width, the column could no longer grow to absorb it the way
 // the old min-width-only rule did. Folding the padding into the width instead
 // keeps the CONTENT box constant at 4.7rem at every density, so raising Grid
@@ -67,14 +68,14 @@ const ZOOM_CONTROLS = "[&_td]:py-[var(--quoted-row-py,6px)] [&_.qc]:px-[var(--qu
 //
 // 4.7rem is measured against the real font, which matters more than it sounds:
 // the app renders in Montserrat, where the longest header word "SOFTWARE" is
-// 69.2px at the grid's 0.68rem text â€” 23% wider than the same string in the
+// 69.2px at the grid's 0.68rem text — 23% wider than the same string in the
 // -apple-system/Segoe fallback (56.3px). Measuring in the fallback is exactly
 // how this column got sized too narrow the first time, so if these names ever
 // change, re-measure in Montserrat.
 //
 // Deliberately rem, not px: table text is 0.68rem and scales with the sidebar
 // "Text size" control, so a px width would start breaking words again the
-// moment anyone raised it â€” the same rem-vs-px trap the frozen columns hit.
+// moment anyone raised it — the same rem-vs-px trap the frozen columns hit.
 const DATA_COL = "calc(4.7rem + 2 * var(--quoted-col-px, 4px))";
 const DATA_COL_STYLE = { width: DATA_COL, minWidth: DATA_COL, maxWidth: DATA_COL } as const;
 
@@ -95,7 +96,7 @@ const GROUP_HEADER_COLOR: Record<string, string> = {
   Shop: "bg-sdc-yellow-bg text-sdc-navy", // #fff6d6
   Engineering: "bg-sdc-blue-100 text-sdc-navy", // #aacee8
 };
-// Full names for the department abbreviations above â€” only defined where the
+// Full names for the department abbreviations above — only defined where the
 // header actually abbreviates something ("General Engineering"/"Shop"/
 // "Engineering" are already spelled out).
 const GROUP_FULL_NAME: Record<string, string> = {
@@ -117,19 +118,19 @@ function groupRuns(sections: { code: string; group: string }[]) {
   return runs;
 }
 
-// <input type="date"> wants "" or "YYYY-MM-DD" â€” never "â€”" (formatDate's
+// <input type="date"> wants "" or "YYYY-MM-DD" — never "—" (formatDate's
 // display placeholder), which the browser would reject as an invalid date.
 function dateInputValue(d: Date | null): string {
   return d ? d.toISOString().slice(0, 10) : "";
 }
 
-// Hours display everywhere on this page is whole numbers â€” no decimals,
+// Hours display everywhere on this page is whole numbers — no decimals,
 // rounded rather than truncated. Use this for any hours value added later too.
 function wholeHours(n: unknown): string {
-  if (n == null) return "â€”";
+  if (n == null) return "—";
   return Math.round(Number(n)).toString();
 }
-// Un-rounded counterpart to wholeHours() above, for tooltips â€” in case a
+// Un-rounded counterpart to wholeHours() above, for tooltips — in case a
 // stored hours value ever carries a fraction.
 function exactHours(n: unknown): string | undefined {
   if (n == null) return undefined;
@@ -170,10 +171,10 @@ export default async function QuotedPage({
   }>;
 }) {
   const { cols, sort, dir, customers, types, statuses, billables, hide } = await searchParams;
-  // Saved/published grid views ("Views â–¾") â€” loaded for everyone; the team
+  // Saved/published grid views ("Views ▾") — loaded for everyone; the team
   // default + shared list come from the DB, personal views live in the browser.
   const { default: teamDefault, shared: sharedViews } = await listSharedViews();
-  // Column show/hide â€” `hide` is a comma-separated list of hidden column
+  // Column show/hide — `hide` is a comma-separated list of hidden column
   // keys (absent = all shown). Drives the "Columns" dropdown.
   const hiddenCols = new Set(decodeParamList(hide ?? null));
   const show = (key: string) => !hiddenCols.has(key);
@@ -192,7 +193,7 @@ export default async function QuotedPage({
   const sortKey: SortKey = SORT_KEYS.includes(sort as SortKey) ? (sort as SortKey) : "jobId";
   const sortDir = dir === "desc" ? "desc" : "asc";
 
-  // Real job types are a fixed, known set (job-filters.ts) â€” no query needed.
+  // Real job types are a fixed, known set (job-filters.ts) — no query needed.
   // Customers are open-ended, so pull the distinct list actually in use.
   const allTypes: string[] = [...VALID_JOB_TYPES];
   const distinctCustomers = await prisma.job.findMany({
@@ -221,14 +222,14 @@ export default async function QuotedPage({
   const selectedTypes = types === undefined ? allTypes : decodeParamList(types);
   const selectedCustomers = customers === undefined ? allCustomers : decodeParamList(customers);
   // Default view (no explicit filter yet): only Active jobs and only Billable
-  // work â€” the day-to-day view. The filter chips still list every option, so a
+  // work — the day-to-day view. The filter chips still list every option, so a
   // user can widen to Complete/Non-Billable any time.
   const selectedStatuses =
     statuses === undefined ? (allStatuses.includes("Active") ? ["Active"] : allStatuses) : decodeParamList(statuses);
   const selectedBillables = billables === undefined ? ["Billable"] : decodeParamList(billables);
   const showBillable = selectedBillables.includes("Billable");
   const showNonBillable = selectedBillables.includes("Non-Billable");
-  // Boolean columns have no Prisma `in` filter â€” translate the two checkboxes
+  // Boolean columns have no Prisma `in` filter — translate the two checkboxes
   // into an equals/no-match condition instead (both checked = no filter at all).
   const billableWhere =
     showBillable && showNonBillable
@@ -240,7 +241,7 @@ export default async function QuotedPage({
           : { id: -1 }; // neither checked -> match nothing, same as an empty `in` elsewhere
 
   // Prisma `in` never matches NULL, so a plain customer `in` filter would
-  // permanently hide any job with no Customer set â€” including one just added
+  // permanently hide any job with no Customer set — including one just added
   // on this very page (saveNewRows allows a blank Customer). With no filter
   // active, null-customer jobs must show; with a filter active they're
   // excluded like any other non-selected value.
@@ -259,7 +260,7 @@ export default async function QuotedPage({
     // etcEntries (unfiltered by month) is how "actual hours" gets built below:
     // a closed/historical job's real total lives entirely in
     // estimatedHours.actualHistoricalHours (an Excel-migration snapshot, never
-    // touched again once EtcEntry rows exist for it â€” see sync-powerbi.ts),
+    // touched again once EtcEntry rows exist for it — see sync-powerbi.ts),
     // while an actively ETC-tracked job's total is the sum of every month's
     // hoursWorked instead. The two never overlap for the same job, so adding
     // them is always safe.
@@ -267,13 +268,13 @@ export default async function QuotedPage({
     orderBy: { [sortKey]: sortDir },
   });
   if (sortKey === "jobId") {
-    // Job Id is a string column â€” re-sort numerically (979 before 1020 before 10000).
+    // Job Id is a string column — re-sort numerically (979 before 1020 before 10000).
     jobs.sort((a, b) => (sortDir === "desc" ? -1 : 1) * compareJobIds(a.jobId, b.jobId));
   }
   // SDC's own internal projects (customer "SDC" / "Steven Douglas Corp.")
   // always sink to the very bottom, regardless of the chosen sort. This is
-  // keyed on isSdcCustomer â€” the SAME predicate that gives them their
-  // light-blue row highlight below â€” so ordering and highlight always agree,
+  // keyed on isSdcCustomer — the SAME predicate that gives them their
+  // light-blue row highlight below — so ordering and highlight always agree,
   // even if a row's stored billable flag is momentarily stale. Array#sort is
   // stable, so this only reorders across the SDC / non-SDC boundary and leaves
   // each group's existing order untouched.
@@ -297,7 +298,7 @@ export default async function QuotedPage({
       return sum + visible.length; // fully-hidden phases render no column
     }, 0) + 2;
 
-  // Currently-visible section codes split by billing group â€” the two grand
+  // Currently-visible section codes split by billing group — the two grand
   // totals sum exactly these, so they track the column pickers. Shop = the
   // sheet's "Shop" department band; everything else (PM/ME/CE/General
   // Engineering/Engineering) rolls into Engineering, matching the header bands.
@@ -306,7 +307,10 @@ export default async function QuotedPage({
   const shopCodes = visibleSectionsFlat.filter((s) => s.group === "Shop").map((s) => s.code);
 
   return (
-    <form action={saveQuotedHours} className="w-full px-8 py-10 md:px-13 md:py-11">
+    // QuotedSaveForm (client) owns the <form> so the Save button can read what the
+    // action returned — counts on success, the message on failure. The grid below
+    // stays a server component, passed through as children.
+    <QuotedSaveForm action={saveQuotedHours} className="w-full px-8 py-10 md:px-13 md:py-11">
       <div className="mb-1 flex items-end justify-between gap-4">
         <PageTitle>Projects</PageTitle>
         <div className="flex items-center gap-2.5">
@@ -315,7 +319,7 @@ export default async function QuotedPage({
         </div>
       </div>
       <p className="mb-2 text-sm text-sdc-gray-600">
-        {jobs.length} jobs â€” quoted hours by section, quoted vs. actual cost. Click a phase to choose which section columns to show.
+        {jobs.length} jobs — quoted hours by section, quoted vs. actual cost. Click a phase to choose which section columns to show.
       </p>
       <p className="mb-5 flex items-center gap-4 text-xs text-sdc-gray-500">
         <span className="flex items-center gap-1.5">
@@ -329,8 +333,8 @@ export default async function QuotedPage({
 
       {/* Toolbar, bucketed (2026-07-30). It had twelve buttons: four row
           filters, four phase pickers, Actuals, Columns, Grid Size, Views. They
-          collapse into four by what they DO â€” filter rows, choose columns,
-          change appearance, recall a saved view â€” with each button carrying the
+          collapse into four by what they DO — filter rows, choose columns,
+          change appearance, recall a saved view — with each button carrying the
           count the individual buttons used to show, so nothing became invisible.
           Filters and Sections apply on close; Display is instant (client-only). */}
       <div className="mb-5 flex flex-wrap gap-2.5">
@@ -353,7 +357,7 @@ export default async function QuotedPage({
         />
         <ProjectsDisplayMenu />
         <ProjectViewsMenu sharedViews={sharedViews} teamDefault={teamDefault} />
-        {/* Show all / Reset â€” last, and visually a switch rather than another
+        {/* Show all / Reset — last, and visually a switch rather than another
             dropdown, because it's the only binary control here. */}
         <ProjectsShowAllSwitch
           allCustomers={allCustomers}
@@ -366,7 +370,7 @@ export default async function QuotedPage({
 
       <DragScroll className="max-h-[calc(100vh-170px)] min-w-[480px] overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm select-none styled-scrollbar">
         {/* quiet-controls: hide the per-row dropdown chevrons (Type/Billable/
-            Status) and date calendar icons until the cell is hovered/focused â€”
+            Status) and date calendar icons until the cell is hovered/focused —
             see globals.css. Scoped to this table so other grids (Employees)
             keep their always-visible affordances. Also covers the NewProjectRows
             rows, which render into this same tbody. */}
@@ -502,7 +506,7 @@ export default async function QuotedPage({
                 const visible = visibleSectionsByPhase.get(g.phase) ?? [];
                 const color = PHASE_HEADER_COLOR[g.phase] ?? "bg-sdc-blue-light";
                 // A phase with no visible sections renders no column at all
-                // (e.g. Warranty, hidden by default) â€” re-enable a section via
+                // (e.g. Warranty, hidden by default) — re-enable a section via
                 // its phase picker to bring the column back.
                 return visible.length ? (
                   <th
@@ -594,7 +598,7 @@ export default async function QuotedPage({
               const hoursBySection = new Map(job.estimatedHours.map((eh) => [eh.section, eh.quotedHours]));
               // Actual hours to date, per section: Excel-migration snapshot
               // (closed jobs) + everything since accumulated via ETC tracking
-              // (active jobs) â€” see the query comment above for why these
+              // (active jobs) — see the query comment above for why these
               // two never double-count.
               const actualBySection = new Map(job.estimatedHours.map((eh) => [eh.section, Number(eh.actualHistoricalHours)]));
               for (const e of job.etcEntries) {
@@ -602,7 +606,7 @@ export default async function QuotedPage({
               }
               // SDC's own internal projects are always non-billable and get a
               // permanent light-blue highlight so they stand out from customer
-              // work at a glance â€” this is driven by Customer, not the stored
+              // work at a glance — this is driven by Customer, not the stored
               // billable flag, so it's correct even before the next save.
               const isSdc = isSdcCustomer(job.customer);
               const zebra = isSdc ? "bg-[#caedfb]" : i % 2 === 1 ? "bg-sdc-gray-50/60" : "";
@@ -620,7 +624,7 @@ export default async function QuotedPage({
                     jobId={job.jobId}
                     jobName={job.jobName}
                     schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId) : null}
-                    title={`Open ${job.jobId} in Job Hour Details â€” right-click for more`}
+                    title={`Open ${job.jobId} in Job Hour Details — right-click for more`}
                     className={`frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden truncate px-2 py-1.5 text-center font-mono text-[10px] ${zebraSticky}`}
                   >
                     <Link href={`/job-hours?jobs=${encodeURIComponent(job.jobId)}`} className="font-semibold text-sdc-blue-dark hover:underline">
@@ -629,7 +633,7 @@ export default async function QuotedPage({
                   </JobCellMenu>
                   {show("job") && (
                     // The Job Hour Details / Scheduler icon-links that used to
-                    // sit here moved into JobCellMenu's right-click menu â€” same
+                    // sit here moved into JobCellMenu's right-click menu — same
                     // two destinations, without an icon pair on every row.
                     <JobCellMenu
                       jobId={job.jobId}
@@ -645,6 +649,7 @@ export default async function QuotedPage({
                           type="text"
                           name={`jobField__${job.id}__jobName`}
                           defaultValue={job.jobName}
+                          data-baseline={job.jobName}
                           aria-label={`Job Name, ${job.jobName}`}
                           className="w-full min-w-0 flex-1 text-left"
                         />
@@ -661,7 +666,8 @@ export default async function QuotedPage({
                         type="text"
                         name={`jobField__${job.id}__customer`}
                         defaultValue={job.customer ?? ""}
-                        placeholder="â€”"
+                        data-baseline={job.customer ?? ""}
+                        placeholder="—"
                         aria-label={`Customer, ${job.jobName}`}
                         className="w-full text-left"
                       />
@@ -672,8 +678,14 @@ export default async function QuotedPage({
                       style={{ width: "var(--type-col-width, 90px)", minWidth: "var(--type-col-width, 90px)", maxWidth: "var(--type-col-width, 90px)" }}
                       className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px] text-sdc-gray-600"
                     >
-                      <select name={`jobField__${job.id}__type`} defaultValue={job.type ?? ""} aria-label={`Type, ${job.jobName}`} className="text-center">
-                        {job.type == null && <option value="">â€”</option>}
+                      <select
+                        name={`jobField__${job.id}__type`}
+                        defaultValue={job.type ?? ""}
+                        data-baseline={job.type ?? ""}
+                        aria-label={`Type, ${job.jobName}`}
+                        className="text-center"
+                      >
+                        {job.type == null && <option value="">—</option>}
                         {VALID_JOB_TYPES.map((t) => (
                           <option key={t} value={t}>
                             {t}
@@ -695,6 +707,7 @@ export default async function QuotedPage({
                         <select
                           name={`jobField__${job.id}__billable`}
                           defaultValue={job.billable ? "Billable" : "Non-Billable"}
+                          data-baseline={job.billable ? "Billable" : "Non-Billable"}
                           aria-label={`Billable, ${job.jobName}`}
                           className={`text-center ${job.billable ? "text-sdc-green-text" : "text-sdc-gray-500"}`}
                         >
@@ -714,6 +727,7 @@ export default async function QuotedPage({
                       <select
                         name={`jobField__${job.id}__status`}
                         defaultValue={job.status}
+                        data-baseline={job.status}
                         aria-label={`Status, ${job.jobName}`}
                         className="text-center"
                       >
@@ -785,7 +799,8 @@ export default async function QuotedPage({
                                 min="0"
                                 name={`quoted__${job.id}__${s.code}`}
                                 defaultValue={hours != null ? Math.round(Number(hours)).toString() : ""}
-                                placeholder="â€”"
+                                data-baseline={hours != null ? Math.round(Number(hours)).toString() : ""}
+                                placeholder="—"
                                 aria-label={`Quoted hours, ${job.jobName}, ${s.name}`}
                                 className="text-center font-semibold text-sdc-blue-dark"
                               />
@@ -799,7 +814,7 @@ export default async function QuotedPage({
                     );
                   })}
                   {(() => {
-                    // Two grand totals â€” Engineering and Shop â€” each summing the
+                    // Two grand totals — Engineering and Shop — each summing the
                     // currently-visible sections in that billing group. The
                     // "/ actual" half uses the same .actual-suffix hook as the
                     // section cells, so it hides when Actuals is toggled off.
@@ -812,7 +827,7 @@ export default async function QuotedPage({
                         <td
                           style={DATA_COL_STYLE}
                           className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center align-middle font-mono text-[10px] font-medium"
-                          title={`${label} â€” Quoted ${exactHours(q) ?? "0"} / Actual ${exactHours(a) ?? "0"}`}
+                          title={`${label} — Quoted ${exactHours(q) ?? "0"} / Actual ${exactHours(a) ?? "0"}`}
                         >
                           <span className="font-semibold text-sdc-blue-dark">{wholeHours(q)}</span>
                           <span className="actual-suffix text-sdc-gray-400"> /<span className="font-semibold text-sdc-green-text"> {wholeHours(a)}</span></span>
@@ -854,6 +869,6 @@ export default async function QuotedPage({
           </tbody>
         </table>
       </DragScroll>
-    </form>
+    </QuotedSaveForm>
   );
 }

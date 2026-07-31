@@ -19,6 +19,15 @@ type PlainField = (typeof PLAIN_FIELDS)[number];
 type DateField = (typeof DATE_FIELDS)[number];
 type MoneyField = (typeof MONEY_FIELDS)[number];
 
+// What the Save button gets back. Returned rather than thrown, deliberately:
+// this action used to only throw, which handed every validation slip to the
+// route's error boundary — replacing the entire grid, and with it any unsaved
+// edits in the other cells, over one mistyped number. A returned error keeps the
+// user's work on screen next to the message about it.
+export type SaveQuotedResult =
+  | { ok: true; cells: number; jobs: number; created: number }
+  | { ok: false; error: string };
+
 // Saves every edited cell from the Projects grid — quoted hours by section
 // AND the job-level fields (Job Name, Customer, Type, Status, Start/Complete
 // Date, Cost Quoted, Cost Actual) — in one submission. Only cells whose
@@ -26,20 +35,35 @@ type MoneyField = (typeof MONEY_FIELDS)[number];
 // flagged manually-edited so the next TotalETO/Power BI sync can't silently
 // overwrite a manager's correction (same pattern as quotedHoursManuallyEdited
 // below) — those two are the only job fields either sync ever touches.
-export async function saveQuotedHours(formData: FormData) {
-  // Sequential, new-rows FIRST: saveNewRows carries the batch's validation
-  // (blank Job Id / bad Type reject the whole submission), so it must run
-  // before any other write lands. Running the three concurrently meant a
-  // validation error could surface AFTER hours/job-field edits had already
-  // committed — the user sees "failed", assumes nothing saved, and re-edits
-  // against silently half-saved state.
-  await saveNewRows(formData);
-  await saveHoursCells(formData);
-  await saveJobFields(formData);
-  revalidatePath("/quoted");
+// Signature is (previousState, formData) for useActionState — the form is driven
+// by QuotedSaveForm, which needs the result to show the confirmation banner.
+export async function saveQuotedHours(_prev: SaveQuotedResult | null, formData: FormData): Promise<SaveQuotedResult> {
+  try {
+    // Sequential, new-rows FIRST: saveNewRows carries the batch's validation
+    // (blank Job Id / bad Type reject the whole submission), so it must run
+    // before any other write lands. Running the three concurrently meant a
+    // validation error could surface AFTER hours/job-field edits had already
+    // committed — the user sees "failed", assumes nothing saved, and re-edits
+    // against silently half-saved state.
+    const created = await saveNewRows(formData);
+    const cells = await saveHoursCells(formData);
+    const jobs = await saveJobFields(formData);
+    revalidatePath("/quoted");
+    return { ok: true, cells, jobs, created };
+  } catch (err) {
+    // Every message these helpers throw is written for a manager to read, so it
+    // goes straight to the UI. Logged as well because this catch also swallows
+    // the unexpected kind (a dropped DB connection), which the console is the
+    // only remaining record of.
+    console.error("[saveQuotedHours] failed:", err);
+    return { ok: false, error: err instanceof Error ? err.message : "Save failed." };
+  }
 }
 
-async function saveHoursCells(formData: FormData) {
+// Returns the number of cells actually WRITTEN, not the number submitted — the
+// whole grid is one form, so every visible cell resubmits on every save and a
+// submitted count would report thousands for a one-cell edit.
+async function saveHoursCells(formData: FormData): Promise<number> {
   const edits: { jobId: number; section: string; quotedHours: number }[] = [];
 
   for (const [key, rawValue] of formData.entries()) {
@@ -59,7 +83,7 @@ async function saveHoursCells(formData: FormData) {
     edits.push({ jobId, section, quotedHours });
   }
 
-  if (edits.length === 0) return;
+  if (edits.length === 0) return 0;
 
   // Fetch by the (bounded) set of distinct job ids, not a giant OR-of-pairs:
   // the whole Projects grid is one <form>, so `edits` is jobs × sections
@@ -87,7 +111,7 @@ async function saveHoursCells(formData: FormData) {
     return Math.round(current) !== e.quotedHours;
   });
 
-  if (changed.length === 0) return;
+  if (changed.length === 0) return 0;
 
   await prisma.$transaction(
     changed.map((e) =>
@@ -112,6 +136,8 @@ async function saveHoursCells(formData: FormData) {
     summary: `Updated quoted hours for ${changed.length} job/section cell${changed.length === 1 ? "" : "s"}`,
     metadata: { changed },
   });
+
+  return changed.length;
 }
 
 function parseDate(raw: string): Date | null {
@@ -137,7 +163,7 @@ function parseMoney(raw: string, field: string, label: number | string): number 
   return n;
 }
 
-async function saveJobFields(formData: FormData) {
+async function saveJobFields(formData: FormData): Promise<number> {
   // jobId -> field -> raw string value, collected from every jobField__ input present.
   const byJob = new Map<number, Map<string, string>>();
   for (const [key, rawValue] of formData.entries()) {
@@ -151,7 +177,7 @@ async function saveJobFields(formData: FormData) {
     if (!byJob.has(jobId)) byJob.set(jobId, new Map());
     byJob.get(jobId)!.set(field, String(rawValue));
   }
-  if (byJob.size === 0) return;
+  if (byJob.size === 0) return 0;
 
   const jobIds = [...byJob.keys()];
   const currentJobs = await prisma.job.findMany({
@@ -237,7 +263,7 @@ async function saveJobFields(formData: FormData) {
     }
   }
 
-  if (updates.length === 0) return;
+  if (updates.length === 0) return 0;
 
   await prisma.$transaction(updates.map((u) => prisma.job.update({ where: { id: u.id }, data: u.data })));
 
@@ -247,6 +273,8 @@ async function saveJobFields(formData: FormData) {
     summary: `Updated fields on ${updates.length} job${updates.length === 1 ? "" : "s"}`,
     metadata: { changed: changedFieldSummaries },
   });
+
+  return updates.length;
 }
 
 // Creates every "+ Add Project" blank row the manager filled in. Job Id is
@@ -254,7 +282,7 @@ async function saveJobFields(formData: FormData) {
 // falls back to the Job Id, Status to "Active", Type/dates/costs to null) —
 // per explicit request, a missing Job Id blocks the WHOLE save with a clear
 // error rather than silently skipping that row or inventing a placeholder.
-async function saveNewRows(formData: FormData) {
+async function saveNewRows(formData: FormData): Promise<number> {
   const fieldsByTemp = new Map<string, Map<string, string>>();
   const hoursByTemp = new Map<string, Map<string, string>>();
 
@@ -278,7 +306,7 @@ async function saveNewRows(formData: FormData) {
     }
   }
 
-  if (fieldsByTemp.size === 0) return;
+  if (fieldsByTemp.size === 0) return 0;
 
   type NewRow = {
     jobId: string;
@@ -362,7 +390,7 @@ async function saveNewRows(formData: FormData) {
     rows.push({ jobId, jobName, customer, type, billable, status, startDate, completeDate, costQuoted, costActualHistorical, hours });
   }
 
-  if (rows.length === 0) return;
+  if (rows.length === 0) return 0;
 
   const existing = await prisma.job.findMany({ where: { jobId: { in: rows.map((r) => r.jobId) } }, select: { jobId: true } });
   if (existing.length > 0) {
@@ -398,4 +426,6 @@ async function saveNewRows(formData: FormData) {
     summary: `Added ${created.length} new project${created.length === 1 ? "" : "s"} from the Projects tab`,
     metadata: { jobIds: created.map((j) => j.jobId) },
   });
+
+  return created.length;
 }

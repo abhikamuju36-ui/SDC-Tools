@@ -41,7 +41,12 @@ export function MoneyCell({
 
   return (
     <>
-      <input type="hidden" name={name} value={raw} />
+      {/* data-baseline is the SERVER's value, never `raw` — dirty-form.ts compares
+          the two to decide whether this cell is submitted at all. It has to be the
+          prop rather than a mount-time copy, so that a re-render (after a save, or
+          after a filter swaps the rows) re-states the baseline instead of leaving a
+          stale one behind. */}
+      <input type="hidden" name={name} value={raw} data-baseline={defaultValue} />
       <input
         type="text"
         // decimal, not numeric: numeric hides the minus/decimal keys on mobile.
