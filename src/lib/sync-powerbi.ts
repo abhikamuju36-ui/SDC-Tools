@@ -13,17 +13,28 @@ import {
   type JobHoursRow,
 } from "@/lib/sharepoint-hours";
 
+// One parse of the Paylocity export, shared by the two syncs that read it.
+// Exported so a caller running both (auto-sync's pass, the ETC Refresh Data
+// button) can fetch once and hand the same object to each.
+export type HoursExport = { rows: JobHoursRow[]; issues: HoursImportIssue[] };
+
 // Actual hours worked per job per month, upserted into JobMonthlyActualHours
 // (the job-level rollup the dashboard / job detail use). Now summed directly
 // from the SharePoint Paylocity export (all tracked sections per job per
 // month) instead of Power BI — same underlying data, no dataset dependency.
-export async function syncActualHours(): Promise<{
+// `prefetched` lets a caller that also runs syncHoursWorked hand both functions
+// the SAME parse of the export. Reading and parsing that ~12,600-row workbook
+// costs ~900ms (measured 2026-07-31), and every pass ran it twice — visible as
+// the doubled "[sharepoint-hours] 12603 rows imported" log line. Passing it in
+// halves that. Omit it and this fetches its own copy exactly as before, so no
+// caller is obliged to care.
+export async function syncActualHours(prefetched?: HoursExport): Promise<{
   rowsUpserted: number;
   jobsNotFound: number;
   rowsSkippedOverridden: number;
   detailRowsWritten: number;
 }> {
-  const { rows, issues } = await fetchJobHoursRowsWithIssues();
+  const { rows, issues } = prefetched ?? (await fetchJobHoursRowsWithIssues());
   await recordImportIssues(issues);
   // Sum every tracked section to a per-job, per-month total.
   const byJobMonth = new Map<string, number>(); // `${jobId}::${YYYY-MM}` -> hours
@@ -154,7 +165,11 @@ async function syncJobHoursDetail(
 // charged to a section that was never quoted, so startMonth didn't seed it),
 // the entry is CREATED rather than the hours silently dropped. Prior ETC for
 // these comes from the previous month's entry if one exists, else 0.
-export async function syncHoursWorked(month: string): Promise<{ rowsUpdated: number; rowsSkipped: number; rowsZeroed: number }> {
+// `prefetchedRows` — see syncActualHours: one parse shared between the two.
+export async function syncHoursWorked(
+  month: string,
+  prefetchedRows?: JobHoursRow[],
+): Promise<{ rowsUpdated: number; rowsSkipped: number; rowsZeroed: number }> {
   // Re-checked here, not just trusted from the caller's earlier check — this
   // sync does one DB round-trip per row, so it can run long enough for a
   // manager to Submit and Lock this exact month mid-sync. A locked month is
@@ -167,7 +182,7 @@ export async function syncHoursWorked(month: string): Promise<{ rowsUpdated: num
   }
 
   const [year, monthNum] = month.split("-").map(Number);
-  const allRows = await fetchJobHoursRows();
+  const allRows = prefetchedRows ?? (await fetchJobHoursRows());
   const spentByKey = hoursByJobSection(allRows, year, monthNum);
 
   // Resolve every job once, up front (one query), instead of the same

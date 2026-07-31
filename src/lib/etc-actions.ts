@@ -6,6 +6,7 @@ import { auth } from "@/lib/auth";
 import { calcHoursLeft, suggestNewEtc, isMonthLocked, round2, prevMonth, nextMonth, isValidMonth, isSafeForLiveEtcSync } from "@/lib/etc";
 import { etcActiveJobFilter } from "@/lib/job-filters";
 import { syncActualHours, syncHoursWorked, syncPartsCost } from "@/lib/sync-powerbi";
+import { fetchJobHoursRowsWithIssues } from "@/lib/sharepoint-hours";
 import { syncEtcHistoryFromPowerBi } from "@/lib/sync-etc-history";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
 import { revalidatePath } from "next/cache";
@@ -117,6 +118,28 @@ async function seedMonth(month: string) {
       const priorByKey = new Map(priorEntries.map((e) => [`${e.jobId}-${e.section}`, e]));
       const existingByKey = new Map(existingEntries.map((e) => [`${e.jobId}-${e.section}`, e]));
 
+      // Collected, then written in two shapes: one createMany for the rows that
+      // don't exist yet, and an update per row that genuinely CHANGED.
+      //
+      // This used to issue an upsert per TRACKED job/section — 380 of them on
+      // the current data, awaited one at a time inside this transaction, on
+      // every Refresh Data click. Almost all of them wrote values identical to what was
+      // already stored, because Prior ETC only moves when last month's New ETC
+      // does. Now a repeat refresh writes nothing at all, and the transaction
+      // holds open for a fraction of the time — which matters more than the
+      // milliseconds, since submitMonth contends for these same rows.
+      const toCreate: {
+        jobId: number;
+        section: string;
+        month: string;
+        priorEtc: number;
+        hoursWorked: number;
+        hoursLeftCalc: number;
+        newEtc: number;
+        needsReview: boolean;
+      }[] = [];
+      const toUpdate: { id: number; priorEtc: number; hoursLeftCalc: number }[] = [];
+
       for (const job of jobs) {
         for (const eh of job.estimatedHours) {
           if (!ETC_TRACKED_CODES.has(eh.section)) continue;
@@ -134,18 +157,13 @@ async function seedMonth(month: string) {
           const priorEtc = priorEntry ? Number(priorEntry.newEtc) : Number(eh.quotedHours);
           const hoursWorked = existing ? Number(existing.hoursWorked) : 0;
 
-          await tx.etcEntry.upsert({
-            where: { jobId_section_month: { jobId: job.id, section: eh.section, month } },
-            // newEtc is deliberately NOT written here — it's a manager-entered
-            // value (submitMonth falls back to the suggestion only at
-            // submission time). Rows display the live suggestion as a
-            // placeholder until then; nothing needs to overwrite the column
-            // on every startMonth/Refresh Data click before that.
-            update: {
-              priorEtc,
-              hoursLeftCalc: round2(calcHoursLeft(priorEtc, hoursWorked)),
-            },
-            create: {
+          // newEtc is deliberately NOT written for an existing row — it's a
+          // manager-entered value (submitMonth falls back to the suggestion only
+          // at submission time). Rows display the live suggestion as a
+          // placeholder until then; nothing needs to overwrite the column on
+          // every startMonth/Refresh Data click before that.
+          if (!existing) {
+            toCreate.push({
               jobId: job.id,
               section: eh.section,
               month,
@@ -154,10 +172,41 @@ async function seedMonth(month: string) {
               hoursLeftCalc: priorEtc,
               newEtc: priorEtc,
               needsReview: true,
-            },
-          });
+            });
+            continue;
+          }
+
+          const hoursLeftCalc = round2(calcHoursLeft(priorEtc, hoursWorked));
+          // Compare on the ROUNDED figures actually stored, not raw Decimals:
+          // Number(Decimal) round-trips can differ in the last bit, and treating
+          // that as a change would write all 380 rows every time and defeat the
+          // point of comparing at all.
+          const unchanged =
+            round2(Number(existing.priorEtc)) === round2(priorEtc) &&
+            round2(Number(existing.hoursLeftCalc)) === hoursLeftCalc;
+          if (unchanged) continue;
+          toUpdate.push({ id: existing.id, priorEtc, hoursLeftCalc });
         }
       }
+
+      // One round-trip for every new row. skipDuplicates covers the narrow race
+      // where a concurrent writer created the same (job, section, month) between
+      // this transaction's read and this write: the other row wins, which is the
+      // same outcome the per-row upsert gave.
+      if (toCreate.length > 0) {
+        await tx.etcEntry.createMany({ data: toCreate, skipDuplicates: true });
+      }
+      // Still one statement per changed row — each carries different values — but
+      // now only for rows that moved, which on a repeat refresh is none.
+      for (const u of toUpdate) {
+        await tx.etcEntry.update({
+          where: { id: u.id },
+          data: { priorEtc: u.priorEtc, hoursLeftCalc: u.hoursLeftCalc },
+        });
+      }
+      console.log(
+        `[seedMonth] ${month}: ${toCreate.length} created, ${toUpdate.length} updated (of ${jobs.length} active jobs)`,
+      );
     },
     { timeout: 20000 },
   );
@@ -444,8 +493,12 @@ export async function syncPowerBiForEtc(month: string, _formData: FormData) {
   await assertCurrentEtcMonth(month);
 
   await seedMonth(month);
-  await syncActualHours();
-  await syncHoursWorked(month);
+  // ONE parse of the ~12,600-row export, shared by both hours syncs. They read
+  // the same file and parsing it costs ~900ms, so fetching per sync spent ~1.6s
+  // of every click on reading the same workbook twice (measured 2026-07-31).
+  const hoursExport = await fetchJobHoursRowsWithIssues();
+  await syncActualHours(hoursExport);
+  await syncHoursWorked(month, hoursExport.rows);
   await syncPartsCost(month);
   await logAudit({ action: "etc.syncPowerBiForEtc", entityType: "EtcMonth", entityId: month, summary: `Refreshed Power BI data for ETC month ${month}` });
   revalidatePath("/etc");

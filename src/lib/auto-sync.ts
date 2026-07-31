@@ -86,6 +86,7 @@ export async function runAllSyncs(trigger: SyncTrigger): Promise<SyncRunResult> 
   // instrumentation.ts, which also runs under the Edge runtime, where the Node
   // built-ins these pull in (mssql, msal's native cache, fs) cannot load at all.
   const { syncActualHours, syncHoursWorked, syncPartsCost, recordSyncSuccess, recordSyncFailure } = await import("@/lib/sync-powerbi");
+  const { fetchJobHoursRowsWithIssues } = await import("@/lib/sharepoint-hours");
   const { syncFromTotalEto } = await import("@/lib/sync-totaleto");
   const { syncSchedulerTeam } = await import("@/lib/sync-scheduler-team");
   const { prisma } = await import("@/lib/prisma");
@@ -134,16 +135,27 @@ export async function runAllSyncs(trigger: SyncTrigger): Promise<SyncRunResult> 
     }
   }
 
+  // ONE parse of the ~12,600-row export for the whole pass. Both hours steps
+  // read the same file, and parsing it costs ~900ms, so doing it per step threw
+  // away most of a second every pass for nothing.
+  //
+  // Memoised rather than fetched up front, deliberately: rule 2 says a step's
+  // failure must not take another step down with it. If the read throws inside
+  // the first step, `cached` stays null and the second step retries it and fails
+  // with its own message, exactly as when each fetched independently.
+  let cached: import("@/lib/sync-powerbi").HoursExport | null = null;
+  const hoursExport = async () => (cached ??= await fetchJobHoursRowsWithIssues());
+
   // Hours first: they're the figures the whole app is judged on, and the parts
   // and mirror steps below are independent of them.
   await step("hours_actual", labelFor("hours_actual"), false, async () => {
-    const r = await syncActualHours();
+    const r = await syncActualHours(await hoursExport());
     return `${r.rowsUpserted} upserted, ${r.jobsNotFound} jobs not found, ${r.rowsSkippedOverridden} overridden preserved`;
   });
 
   await step("etc_hours_worked", labelFor("etc_hours_worked"), false, async () => {
     if (!month) return null; // no open month — see rule notes above
-    const r = await syncHoursWorked(month);
+    const r = await syncHoursWorked(month, (await hoursExport()).rows);
     return (
       `${r.rowsUpdated} updated, ${r.rowsSkipped} skipped` +
       // Called out rather than folded into "updated": a zeroed row means the
