@@ -568,6 +568,7 @@ export default async function MonthlyEtcPage({
   let standardRates: StandardRates = { engrRate: 170, shopRate: 140, partsMarkup: 1.2 };
   let poolPanelRows: PoolPanelRow[] = [];
   let poolsCarriedFrom: string | null = null;
+  let poolsUpstreamNote: string | null = null;
   // Frozen snapshot rows for a submitted month — the grid renders these instead
   // of live math so a later rate/pool edit can't mutate a locked month.
   let frozenStandardRows: FrozenStandardRow[] | undefined;
@@ -583,6 +584,16 @@ export default async function MonthlyEtcPage({
     ]);
     const pools = effective.pools;
     poolsCarriedFrom = effective.carriedFrom;
+    // The pools sync records WHY a month has no figures of its own (normally:
+    // Power BI has not published the period yet). Read here so the panel can say
+    // it, rather than telling people to click a Refresh that cannot help.
+    const poolsFreshness = await prisma.powerBiFreshness.findUnique({
+      where: { source: "standard_pools" },
+      select: { status: true },
+    });
+    poolsUpstreamNote = poolsFreshness?.status?.startsWith("Waiting: ")
+      ? poolsFreshness.status.slice("Waiting: ".length)
+      : null;
     contingencyRate = setting ? Number(setting.contingencyRate) : 1.2;
     standardRates = {
       engrRate: setting ? Number(setting.engrRate) : 170,
@@ -1432,6 +1443,7 @@ export default async function MonthlyEtcPage({
             <StandardPoolPanel
               month={month}
               carriedFrom={poolsCarriedFrom}
+              upstreamNote={poolsUpstreamNote}
               rows={poolPanelRows}
               isSubmitted={standardSheetSubmitted}
               isAdmin={role === "ADMIN"}

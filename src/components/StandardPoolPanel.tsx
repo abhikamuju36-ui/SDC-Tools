@@ -64,6 +64,7 @@ const INPUT = "w-20 rounded border border-sdc-border px-1.5 py-0.5 text-right te
 export function StandardPoolPanel({
   month,
   carriedFrom,
+  upstreamNote,
   rows,
   isSubmitted,
   isAdmin,
@@ -75,6 +76,10 @@ export function StandardPoolPanel({
 }: {
   month: string;
   carriedFrom: string | null;
+  // Why this month has no pools of its own, when the sync knows. Written by the
+  // 6-hour pass onto the standard_pools freshness row — normally "Power BI has no
+  // ETC period for <month> yet".
+  upstreamNote?: string | null;
   rows: PoolPanelRow[];
   isSubmitted: boolean;
   isAdmin: boolean;
@@ -136,7 +141,14 @@ export function StandardPoolPanel({
         <>
           {carriedFrom && !isSubmitted && (
             <p className="border-b border-sdc-border bg-sdc-yellow-bg/60 px-3 py-2 text-[11px] text-sdc-gray-600">
-              No pool data pulled for {month} yet — showing {carriedFrom}&apos;s figures as an estimate. Click Refresh to pull {month}.
+              No pool data pulled for {month} yet — showing {carriedFrom}&apos;s figures as an estimate.{" "}
+              {/* Telling someone to click Refresh is worse than saying nothing when
+                  Refresh cannot help: upstream publishes these figures roughly two
+                  months behind, so for the in-progress month there is nothing to
+                  pull and the button reports success having written nothing
+                  (verified 2026-07-31 — latest published period was May 2026).
+                  When the sync has recorded WHY, say that instead. */}
+              {upstreamNote ?? `Refresh pulls ${month} once Power BI publishes it; the sync also retries every 6 hours.`}
             </p>
           )}
 

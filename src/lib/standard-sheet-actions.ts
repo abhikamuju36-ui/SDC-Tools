@@ -7,8 +7,9 @@ import { logAudit } from "@/lib/audit";
 import { assertStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
 import { getEtcMonthJobWhere } from "@/lib/etc-month-jobs";
 import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/execution-etc";
-import { isValidMonth, round2 } from "@/lib/etc";
+import { round2 } from "@/lib/etc";
 import { syncCategoryPoolsFromPowerBi } from "@/lib/sync-powerbi";
+import { poolRefreshBlockedBy } from "@/lib/standard-pool-eligibility";
 import {
   calcTotalEtcDollars,
   calcPercentOfTotal,
@@ -50,12 +51,18 @@ export async function loadEffectivePools(month: string) {
 // `prior.newEtcHours` forward), and a later refresh of the FOLLOWING month
 // would then inherit the tampered balance — the same class of bug the June
 // 2026 pool-reset investigation found and fixed.
+// The rule itself lives in standard-pool-eligibility.ts, because the 6-hour pass
+// applies the SAME rule (as a skip rather than an error) and a ledger rule that
+// exists in two places is a ledger rule that will eventually disagree with
+// itself. This function only turns a block into the message a human needs.
 async function assertMonthNotSubmitted(month: string) {
-  if (!isValidMonth(month)) throw new Error(`"${month}" is not a valid month (expected YYYY-MM).`);
-  const submitted = await prisma.standardSheetSnapshot.findFirst({ where: { month }, select: { id: true } });
-  if (submitted) throw new Error(`${month} is submitted and frozen — reopen it first.`);
-  const historical = await prisma.categoryPool.findFirst({ where: { month, source: "power_bi_history" }, select: { id: true } });
-  if (historical) throw new Error(`${month}'s pools came from Power BI's historical archive — editing them here would break the balance chain to later months.`);
+  const blocked = await poolRefreshBlockedBy(month);
+  if (blocked === "submitted") throw new Error(`${month} is submitted and frozen — reopen it first.`);
+  if (blocked === "historical") {
+    throw new Error(
+      `${month}'s pools came from Power BI's historical archive — editing them here would break the balance chain to later months.`,
+    );
+  }
 }
 
 function globalRates(setting: { engrRate: unknown; shopRate: unknown; partsMarkup: unknown } | null) {

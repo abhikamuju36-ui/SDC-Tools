@@ -52,6 +52,7 @@ export const SYNC_SOURCES = [
   { source: "hours_actual", label: "Actual hours (Paylocity export)", monthScoped: false },
   { source: "etc_hours_worked", label: "ETC hours worked", monthScoped: true },
   { source: "parts_cost", label: "Parts cost (TotalETO)", monthScoped: true },
+  { source: "standard_pools", label: "Standard Fees pools (Power BI)", monthScoped: true },
   // Same wording as the dashboard's long-standing "Jobs from TotalETO" button,
   // which triggers this exact sync. Two names for one feed is precisely the
   // confusion this list exists to prevent.
@@ -85,8 +86,10 @@ export async function runAllSyncs(trigger: SyncTrigger): Promise<SyncRunResult> 
   // Imported lazily, inside the function: this module is loaded from
   // instrumentation.ts, which also runs under the Edge runtime, where the Node
   // built-ins these pull in (mssql, msal's native cache, fs) cannot load at all.
-  const { syncActualHours, syncHoursWorked, syncPartsCost, recordSyncSuccess, recordSyncFailure } = await import("@/lib/sync-powerbi");
+  const { syncActualHours, syncHoursWorked, syncPartsCost, recordSyncSuccess, recordSyncFailure, recordSyncNote } = await import("@/lib/sync-powerbi");
   const { fetchJobHoursRowsWithIssues } = await import("@/lib/sharepoint-hours");
+  const { syncCategoryPoolsFromPowerBi } = await import("@/lib/sync-powerbi");
+  const { poolRefreshBlockedBy } = await import("@/lib/standard-pool-eligibility");
   const { syncFromTotalEto } = await import("@/lib/sync-totaleto");
   const { syncSchedulerTeam } = await import("@/lib/sync-scheduler-team");
   const { prisma } = await import("@/lib/prisma");
@@ -117,12 +120,20 @@ export async function runAllSyncs(trigger: SyncTrigger): Promise<SyncRunResult> 
     source: string,
     label: string,
     stamp: boolean,
-    run: () => Promise<string | null>,
+    // A string means it ran; null means there was nothing to do; { skip } means
+    // it COULD not run for a stated reason — which is recorded on the freshness
+    // row so the reason reaches the screen instead of only the log.
+    run: () => Promise<string | null | { skip: string }>,
   ): Promise<void> {
     try {
       const detail = await run();
       if (detail === null) {
         steps.push({ source, label, status: "skipped", detail: "nothing to do" });
+        return;
+      }
+      if (typeof detail === "object") {
+        await recordSyncNote(source, detail.skip);
+        steps.push({ source, label, status: "skipped", detail: detail.skip });
         return;
       }
       if (stamp) await recordSyncSuccess(source, new Date());
@@ -168,6 +179,41 @@ export async function runAllSyncs(trigger: SyncTrigger): Promise<SyncRunResult> 
     if (!month) return null;
     const r = await syncPartsCost(month);
     return `${r.rowsUpserted} upserted`;
+  });
+
+  // The Standard Fees pool ledger — the four PM/Warranty/MFG blocks on the ETC
+  // page. Was Refresh-button-only, which is why the panel kept offering last
+  // month's figures "as an estimate" until somebody noticed and clicked: the
+  // driver measures (New Hours Added, Hours Worked) are live in Power BI the
+  // whole time.
+  //
+  // This one goes through Power BI's dataset via runDax, unlike everything else
+  // here. That is only viable because runDax prefers APP-ONLY auth (verified
+  // against the dataset 2026-07-29); the delegated DPAPI cache it falls back to
+  // cannot be decrypted in Windows session 0, so if the app-only path ever
+  // regresses this step will fail on the schedule and say so on the dashboard
+  // rather than quietly working only when a human clicks.
+  //
+  // The manual decisions — Hours being pulled this month, and Rate — are
+  // preserved by syncCategoryPoolsFromPowerBi for any row that already exists;
+  // only the driver and derived figures are rewritten. A new month's row gets
+  // the sheet's own documented defaults.
+  await step("standard_pools", labelFor("standard_pools"), true, async () => {
+    if (!month) return null;
+    // Same rule the Refresh button applies, from one definition — a submitted
+    // sheet is frozen, and an archived month's pools anchor every later month's
+    // starting balance.
+    const blocked = await poolRefreshBlockedBy(month);
+    if (blocked) return null;
+    const r = await syncCategoryPoolsFromPowerBi(month);
+    // Upstream has no ETC period for this month yet — the pool drivers simply do
+    // not exist to pull. Reported as a stated skip, never as a green success:
+    // this step wrote nothing, and saying "ok" would put a healthy tick beside a
+    // panel that is still showing last month's figures.
+    if (!r.periodFound) {
+      return { skip: `Power BI has no ETC period for ${month} yet — the pool figures are not published upstream.` };
+    }
+    return `${r.poolsUpserted} pools upserted`;
   });
 
   // The TotalETO job mirror (customer, estimate/actual hour totals). Was

@@ -490,7 +490,15 @@ function monthToEtcName(month: string): string {
 //   Month, and Rate carries forward from the prior month (170/140 failing that).
 // Derived fields mirror the sheet: Available = Prev + Added,
 // New ETC = Available - Pulled, Standard Fee = New ETC x Rate.
-export async function syncCategoryPoolsFromPowerBi(month: string): Promise<{ poolsUpserted: number }> {
+// `periodFound` is false when Power BI has no ETC period for this month at all,
+// which is NOT the same as "nothing changed" and must not be reported as a
+// successful refresh. Verified 2026-07-31: upstream's latest published period is
+// May 2026, so a July refresh matched zero rows, wrote nothing, and returned
+// without complaint — which is exactly why the panel kept telling people to
+// click a Refresh button that could not possibly help.
+export async function syncCategoryPoolsFromPowerBi(
+  month: string,
+): Promise<{ poolsUpserted: number; periodFound: boolean }> {
   const etcName = monthToEtcName(month);
   const dax = `
     EVALUATE
@@ -504,6 +512,9 @@ export async function syncCategoryPoolsFromPowerBi(month: string): Promise<{ poo
     )
   `;
   const rows = (await runDax(dax)) as CategoryPoolRow[];
+  // No period upstream -> nothing to map. Returning early keeps the "wrote
+  // nothing" case distinguishable from "wrote nothing because nothing moved".
+  if (rows.length === 0) return { poolsUpserted: 0, periodFound: false };
 
   const priorPools = await prisma.categoryPool.findMany({ where: { month: previousMonth(month) } });
   const priorByCategory = new Map(priorPools.map((p) => [p.category, p]));
@@ -570,7 +581,7 @@ export async function syncCategoryPoolsFromPowerBi(month: string): Promise<{ poo
     poolsUpserted++;
   }
 
-  return { poolsUpserted };
+  return { poolsUpserted, periodFound: true };
 }
 
 // How current the underlying Paylocity feed itself is (distinct from when the
@@ -644,6 +655,22 @@ async function recordImportIssues(issues: HoursImportIssue[]): Promise<void> {
 // failed pull has no date to put there. If the row doesn't exist yet the feed
 // has simply never succeeded, and there's no stale figure to warn about.
 // Best-effort — a logging failure must never mask the original sync error.
+// Records that a source is BLOCKED on something upstream rather than broken.
+// The distinction is the point: a red "failed" for data the source has simply
+// not published yet trains people to ignore red, while a green "ok" for a step
+// that wrote nothing is the silent staleness this whole file exists to prevent.
+// Readers key off the "Failed:" prefix, so this deliberately does not use it.
+export async function recordSyncNote(source: string, note: string): Promise<void> {
+  try {
+    await prisma.powerBiFreshness.updateMany({
+      where: { source },
+      data: { status: `Waiting: ${note.slice(0, 300)}`, checkedAt: new Date() },
+    });
+  } catch (err) {
+    console.error(`[sync] could not record ${source} note: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 export async function recordSyncFailure(err: unknown, source = "hours_actual"): Promise<void> {
   const message = err instanceof Error ? err.message : String(err);
   try {

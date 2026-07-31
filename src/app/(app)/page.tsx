@@ -105,9 +105,13 @@ export default async function Home() {
       ...f,
       checkedAt: row?.checkedAt ?? null,
       refreshedThrough: row?.refreshedThrough ?? null,
-      // status is null when healthy; a string means the last attempt failed and
-      // this feed is aging. Never hidden — that was the whole lesson of DEVLOG §12.
-      failure: row?.status ?? null,
+      // status is null when healthy. "Failed: …" means the last attempt broke and
+      // this feed is aging; anything else is a stated WAIT — the source is fine but
+      // upstream has not published the data yet (see recordSyncNote). Both are
+      // shown, in different colours: a red tick for data nobody has published
+      // teaches people to ignore red.
+      failure: row?.status?.startsWith("Failed:") ? row.status : null,
+      waiting: row?.status && !row.status.startsWith("Failed:") ? row.status : null,
       everRan: Boolean(row),
     };
   });
@@ -258,7 +262,7 @@ export default async function Home() {
                 <div className="flex items-center gap-2.5">
                   <span
                     className={`h-1.75 w-1.75 shrink-0 rounded-full ${
-                      f.failure ? "bg-sdc-red" : f.everRan ? "bg-sdc-green" : "bg-sdc-gray-400"
+                      f.failure ? "bg-sdc-red" : f.waiting ? "bg-sdc-yellow" : f.everRan ? "bg-sdc-green" : "bg-sdc-gray-400"
                     }`}
                   />
                   <p className="truncate text-sm font-semibold text-sdc-navy">{f.label}</p>
@@ -272,6 +276,7 @@ export default async function Home() {
                   )}
                 </div>
                 {f.failure && <p className="mt-1 pl-4.5 text-xs break-words text-sdc-red-text">{f.failure}</p>}
+                {f.waiting && <p className="mt-1 pl-4.5 text-xs break-words text-sdc-yellow-text">{f.waiting}</p>}
               </div>
               <span className="shrink-0 text-right text-xs text-sdc-gray-400">
                 {f.everRan ? `Checked ${timeAgo(f.checkedAt!)}` : "Never run"}
