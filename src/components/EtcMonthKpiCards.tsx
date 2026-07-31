@@ -80,6 +80,13 @@ export function EtcMonthKpiCards({
         `The card comes from the ETC grid's Hours Worked; these rows are the Paylocity punches behind it, and the two were last synced at different times.`
       : undefined;
 
+  // Clicking a card's Detail link a second time CLOSES its panel — it's a
+  // disclosure, and a control that opens something should put it away again
+  // rather than leaving the only exit at the panel's far corner. Clicking a
+  // DIFFERENT card still switches scope instead of closing, which is what
+  // someone comparing Engineering against Shop is actually asking for.
+  const toggleDrill = (scope: DrillScope) => setDrill((current) => (current === scope ? null : scope));
+
   return (
     <div className="mb-4">
       <div className="grid grid-cols-2 gap-3 lg:grid-cols-5">
@@ -89,7 +96,8 @@ export function EtcMonthKpiCards({
           diff={kpis.engineering.diff}
           people={kpis.engineering.people}
           hasPunchData={kpis.hasPunchData}
-          onDrill={() => setDrill("Engineering")}
+          drillOpen={drill === "Engineering"}
+          onDrill={() => toggleDrill("Engineering")}
         />
         <GroupCard
           label="Shop hours"
@@ -97,7 +105,8 @@ export function EtcMonthKpiCards({
           diff={kpis.shop.diff}
           people={kpis.shop.people}
           hasPunchData={kpis.hasPunchData}
-          onDrill={() => setDrill("Shop")}
+          drillOpen={drill === "Shop"}
+          onDrill={() => toggleDrill("Shop")}
         />
         <Card label="Parts spent" value={usd(kpis.parts.spent)}>
           <Variance
@@ -115,7 +124,8 @@ export function EtcMonthKpiCards({
                 `${kpis.engineering.people} engineering · ${kpis.shop.people} shop (distinct overall)`
               : "No punch-level hours stored for this month yet"
           }
-          onDrill={kpis.hasPunchData ? () => setDrill("All") : undefined}
+          drillOpen={drill === "All"}
+          onDrill={kpis.hasPunchData ? () => toggleDrill("All") : undefined}
         />
         <Card
           label="Total hours worked"
@@ -145,12 +155,16 @@ function Card({
   hint,
   children,
   onDrill,
+  drillOpen = false,
 }: {
   label: string;
   value: string;
   hint?: string;
   children?: React.ReactNode;
   onDrill?: () => void;
+  // Whether THIS card's panel is the one currently open, so the link can say so
+  // instead of reading "Detail" while the detail is already on screen.
+  drillOpen?: boolean;
 }) {
   return (
     <div className="rounded-xl border border-sdc-border bg-white p-3 shadow-sm">
@@ -160,9 +174,13 @@ function Card({
           <button
             type="button"
             onClick={onDrill}
-            className="shrink-0 text-[10px] font-medium text-sdc-blue underline decoration-dotted underline-offset-2 hover:text-sdc-blue-dark"
+            aria-expanded={drillOpen}
+            title={drillOpen ? "Hide the punch detail" : "Show every booked punch behind this figure"}
+            className={`shrink-0 text-[10px] font-medium underline decoration-dotted underline-offset-2 ${
+              drillOpen ? "text-sdc-navy" : "text-sdc-blue hover:text-sdc-blue-dark"
+            }`}
           >
-            Detail
+            {drillOpen ? "Hide" : "Detail"}
           </button>
         )}
       </div>
@@ -180,6 +198,7 @@ function GroupCard({
   people,
   hasPunchData,
   onDrill,
+  drillOpen,
 }: {
   label: string;
   worked: number;
@@ -187,6 +206,7 @@ function GroupCard({
   people: number;
   hasPunchData: boolean;
   onDrill: () => void;
+  drillOpen?: boolean;
 }) {
   return (
     <Card
@@ -194,6 +214,7 @@ function GroupCard({
       value={fmtHours(worked)}
       hint={hasPunchData ? `${people} ${people === 1 ? "person" : "people"} booked time` : undefined}
       onDrill={hasPunchData ? onDrill : undefined}
+      drillOpen={drillOpen}
     >
       <Variance value={diff} format={fmtHours} title="Hours Left − New ETC" />
     </Card>
