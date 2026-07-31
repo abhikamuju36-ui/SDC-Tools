@@ -478,7 +478,7 @@ export default async function MonthlyEtcPage({
   // projects a month contains.
   const { where: monthJobWhere, monthIsLocked } = await getEtcMonthJobWhere(month);
 
-  const [jobs, session, lastPowerBiSync, hoursActualFreshness] = await Promise.all([
+  const [jobs, session, lastPowerBiSync, hoursActualFreshness, etcHoursFreshness, importIssues] = await Promise.all([
     prisma.job.findMany({
       where: monthJobWhere,
       include: { etcEntries: { where: { month } }, executionRate: true },
@@ -486,6 +486,14 @@ export default async function MonthlyEtcPage({
     auth(),
     prisma.jobMonthlyActualHours.findFirst({ orderBy: { syncedAt: "desc" }, select: { syncedAt: true } }),
     prisma.powerBiFreshness.findUnique({ where: { source: "hours_actual" }, select: { refreshedThrough: true, status: true, checkedAt: true } }),
+    // The ETC grid's own hours sync, tracked separately: syncActualHours can
+    // succeed (leaving "hours_actual" looking healthy) while this one fails,
+    // which is exactly how the grid went stale behind a reassuring header.
+    prisma.powerBiFreshness.findUnique({ where: { source: "etc_hours_worked" }, select: { status: true, checkedAt: true } }),
+    // Time the importer could not attribute to any job — booked against
+    // "Not Defined" and similar. Absent from every figure on this page, so it
+    // is stated rather than left as an unexplained shortfall.
+    prisma.hoursImportIssue.findMany({ where: { month }, orderBy: { hours: "desc" } }),
   ]);
   const role = (session?.user as { role?: string } | undefined)?.role;
 
@@ -798,6 +806,39 @@ export default async function MonthlyEtcPage({
           <strong>Hours data may be stale.</strong> The last sync from Paylocity/SharePoint failed
           {hoursActualFreshness.checkedAt ? ` (${hoursActualFreshness.checkedAt.toISOString().slice(0, 16).replace("T", " ")})` : ""}
           , so Hours Worked below may not reflect recent time entries. {hoursActualFreshness.status.replace(/^Failed:\s*/, "")}
+        </p>
+      )}
+
+      {/* The grid's OWN hours sync, reported separately. The feed above can be
+          perfectly healthy while this step fails, and then every Hours Worked
+          cell is stale behind a header that says the data is current — which is
+          what happened through 2026-07-30. Only shown when the feed itself is
+          fine, so a single outage does not stack two banners saying the same
+          thing. */}
+      {etcHoursFreshness?.status?.startsWith("Failed") && !hoursActualFreshness?.status?.startsWith("Failed") && (
+        <p className="mb-4 rounded-lg border border-sdc-red-border bg-sdc-red-bg px-3 py-2 text-xs text-sdc-red-text">
+          <strong>Hours Worked below may be out of date.</strong> The hours feed is healthy, but writing it into this
+          month&apos;s ETC rows last failed
+          {etcHoursFreshness.checkedAt ? ` (${etcHoursFreshness.checkedAt.toISOString().slice(0, 16).replace("T", " ")})` : ""}
+          . {etcHoursFreshness.status.replace(/^Failed:\s*/, "")}
+        </p>
+      )}
+
+      {/* Time booked without a valid job number. It cannot appear anywhere on
+          this page — there is no job to put it against — so the shortfall is
+          stated rather than left for someone to notice as a gap between these
+          totals and payroll. */}
+      {importIssues.length > 0 && (
+        <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+          <strong>
+            {wholeNum(importIssues.reduce((s, i) => s + Number(i.hours), 0))} hours this month were booked without a
+            valid job number
+          </strong>{" "}
+          and are not counted in any figure below:{" "}
+          {importIssues
+            .map((i) => `"${i.label}" — ${wholeNum(Number(i.hours))}h across ${i.rows} entries`)
+            .join("; ")}
+          . These need correcting in Paylocity before the month is submitted.
         </p>
       )}
 

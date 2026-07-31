@@ -58,6 +58,11 @@ export async function register() {
       console.log(`[auto-sync] Parts cost (${latest.month}): ${parts.rowsUpserted} upserted`);
     } catch (err) {
       console.error("[auto-sync] ETC current-month sync failed:", err);
+      // Recorded against its OWN source, not "hours_actual": syncActualHours
+      // above may well have succeeded and stamped that one healthy, and the
+      // whole point of a separate record is that this failure is not hidden
+      // behind that success.
+      await recordHoursSyncFailure(err, "etc_hours_worked");
     }
   };
 

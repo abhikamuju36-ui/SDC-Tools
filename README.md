@@ -70,12 +70,21 @@ npm test           # node:test unit tests for the ETC / Standard Fees math
 - The ETC header shows how fresh the hours feed is ("Hours Refreshed Thru", the
   latest work date in the export) alongside when the app last pulled it.
 
-> **Known gap:** a failed sync is currently only visible in the logs —
-> `recordHoursSyncFailure()` is not landing in the database, and
-> `syncHoursWorked()` has no freshness tracking at all. Two multi-day silent
-> stale-hours outages happened in July because of this. Don't read a confident
-> "Last synced" as proof the data is current; `scripts/_recon_kpi_vs_truth.ts`
-> checks it against a fresh pull of the source.
+Two multi-day silent stale-hours outages happened in July, so failures are now
+surfaced rather than logged and forgotten. The ETC page shows a red banner when
+either the feed (`hours_actual`) or the step that writes the grid's own numbers
+(`etc_hours_worked`) last failed — they are tracked separately because the first
+can succeed while the second throws, which is exactly how the grid went stale
+behind a header that said everything was fine.
+
+An amber banner reports time booked without a valid job number (`"Not Defined"`
+and similar). That time cannot appear in any figure on the page — there is no
+job to put it against — so it is stated rather than left as an unexplained gap
+between the app's totals and payroll.
+
+> To check the data against its source rather than trusting the header, run
+> `scripts/_recon_kpi_vs_truth.ts` (stored vs a fresh pull) or
+> `scripts/_recon_july_2026.ts` (the app's transforms vs Power BI's measures).
 
 The committed `Job Hours Report - *.Report` / `.SemanticModel` folders are the
 Power BI source of truth this app replicates; the `.SemanticModel` TMDL holds

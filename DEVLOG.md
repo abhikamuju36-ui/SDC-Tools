@@ -608,26 +608,46 @@ into the job id, producing rows that matched no `Job` and disappeared with no
 trace. Non-numeric job values are now counted and skipped explicitly, with a
 warning naming each one.
 
-First run of the fixed importer, across the export's full 7-month window:
+The first run of the fixed importer counted **every** rejected row and reported
+~2,251h across the 7-month window. That figure was wrong — or rather, it
+answered the wrong question. It included time on sections the ETC grid does not
+track at all (PM 10-111, Manufacturing 10-413, the Warranty phase), which is
+absent from the grid whether or not its job number is valid. Counting it as
+"lost to a bad job number" overstated what fixing the job number would recover.
+
+Now scoped to rows that would OTHERWISE have been imported:
 
 ```
-"Not Defined"  2167.40h across 810 rows
-"2026 SERVICE"   51.30h across  21 rows
-"2025 SERVICE"   31.00h across  10 rows
-"2023_SER"        1.73h across   1 row
+2026-07 alone : "Not Defined"  170.77h across 56 entries
+all 7 months  : 535.30h across 7 month/label combinations
 ```
 
-~2,251 hours booked with no valid job number. The three `SERVICE` variants look
+That 170.77h for July reconciles exactly with the independent gap analysis run
+earlier the same day, which found 170.77h attributable to `NaN` job ids across
+10-211/10-312/10-313/10-411 — two different measurements agreeing to the
+hundredth.
+
+The `SERVICE` variants (`"2026 SERVICE"`, `"2025 SERVICE"`, `"2023_SER"`) look
 like job *names* typed where a number belongs — job 10001 is literally named
 "2025 Service" — so those may be recoverable by mapping, unlike "Not Defined".
 This is an upstream Paylocity data-entry problem, not a code bug; the code's
 only fault was hiding it.
 
+### Both remaining gaps closed
+`syncHoursWorked` now keeps its own freshness record under source
+`etc_hours_worked`, separate from `hours_actual`. The separation is the point:
+`syncActualHours` can succeed and stamp the feed healthy while this step throws,
+leaving every Hours Worked cell stale behind a header that says the data is
+current — which is exactly what happened through 2026-07-30. It deliberately
+does NOT stamp on the locked-month early return, since doing nothing because a
+month is frozen is correct behaviour rather than a fresh sync, and claiming
+currency there would be a lie by omission.
+
+Rejected rows are persisted to `HoursImportIssue` and surfaced on the Monthly
+ETC page as an amber banner naming each label for the displayed month. Replaced
+wholesale each sync, so a label corrected upstream disappears here too.
+
 ### Still open
-- **`syncHoursWorked()` has no freshness tracking at all**, unlike
-  `syncActualHours()`.
-- **~2,251 unattributed hours** (above) are reported in the log but still
-  invisible in the UI, and nobody has been asked to chase them.
 - **Nothing watches the OneDrive copy's age** beyond a console warning.
 - **Pre-2026-01 hours cannot be regenerated.** `JobHoursDetail` starts at
   2026-01 because the export is a rolling window; the 1,148 older

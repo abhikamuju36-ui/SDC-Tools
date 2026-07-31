@@ -4,7 +4,14 @@ import { runDax } from "@/lib/powerbi-client";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
 import { calcHoursLeft, round2, isMonthLocked } from "@/lib/etc";
 import { getPartsCostSpentByJob } from "@/lib/sync-totaleto";
-import { fetchJobHoursRows, hoursByJobSection, latestWorkDate, type JobHoursRow } from "@/lib/sharepoint-hours";
+import {
+  fetchJobHoursRows,
+  fetchJobHoursRowsWithIssues,
+  hoursByJobSection,
+  latestWorkDate,
+  type HoursImportIssue,
+  type JobHoursRow,
+} from "@/lib/sharepoint-hours";
 
 // Actual hours worked per job per month, upserted into JobMonthlyActualHours
 // (the job-level rollup the dashboard / job detail use). Now summed directly
@@ -16,7 +23,8 @@ export async function syncActualHours(): Promise<{
   rowsSkippedOverridden: number;
   detailRowsWritten: number;
 }> {
-  const rows = await fetchJobHoursRows();
+  const { rows, issues } = await fetchJobHoursRowsWithIssues();
+  await recordImportIssues(issues);
   // Sum every tracked section to a per-job, per-month total.
   const byJobMonth = new Map<string, number>(); // `${jobId}::${YYYY-MM}` -> hours
   for (const r of rows) {
@@ -159,7 +167,8 @@ export async function syncHoursWorked(month: string): Promise<{ rowsUpdated: num
   }
 
   const [year, monthNum] = month.split("-").map(Number);
-  const spentByKey = hoursByJobSection(await fetchJobHoursRows(), year, monthNum);
+  const allRows = await fetchJobHoursRows();
+  const spentByKey = hoursByJobSection(allRows, year, monthNum);
 
   // Resolve every job once, up front (one query), instead of the same
   // job.findUnique repeated per section row. The per-row EtcEntry reads below
@@ -303,6 +312,19 @@ export async function syncHoursWorked(month: string): Promise<{ rowsUpdated: num
       rowsZeroed++;
     }
   }
+
+  // Its own freshness record, separate from "hours_actual".
+  //
+  // Those two syncs read the same file but write different things, and they
+  // fail independently: syncActualHours can succeed (stamping hours_actual as
+  // healthy) while this one throws, leaving the ETC grid stale behind a header
+  // that says everything is fine. That gap is precisely how the numbers aged
+  // unnoticed, so the grid's own hours get their own record.
+  //
+  // Deliberately NOT recorded on the locked-month early return above: doing
+  // nothing because a month is frozen is correct behaviour, not a fresh sync,
+  // and stamping it would report currency this function never established.
+  await recordSyncSuccess("etc_hours_worked", latestWorkDate(allRows));
 
   return { rowsUpdated, rowsSkipped, rowsZeroed };
 }
@@ -554,6 +576,42 @@ async function syncHoursRefreshedThrough(rows: JobHoursRow[]): Promise<void> {
   });
 }
 
+// Marks a sync source healthy. `status: null` clears any recorded failure —
+// this run just proved the path works again.
+async function recordSyncSuccess(source: string, refreshedThrough: Date | null): Promise<void> {
+  if (!refreshedThrough) return; // refreshedThrough is required; nothing to claim
+  try {
+    await prisma.powerBiFreshness.upsert({
+      where: { source },
+      update: { refreshedThrough, checkedAt: new Date(), status: null },
+      create: { source, refreshedThrough },
+    });
+  } catch (err) {
+    console.error(`[sync] could not record ${source} freshness: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
+// Persists what the importer had to reject, so unattributable time is visible
+// rather than merely absent. Replace-all rather than upsert: the export is the
+// authority on its own problems, so a label corrected upstream must disappear
+// here too, which an upsert-only pass would never do.
+//
+// Best-effort. This is a diagnostic, and it must never be the reason an
+// otherwise-good hours sync fails — but it says so when it cannot write, since
+// a silent catch on exactly this kind of path is what hid the varchar(191) bug.
+async function recordImportIssues(issues: HoursImportIssue[]): Promise<void> {
+  try {
+    await prisma.$transaction([
+      prisma.hoursImportIssue.deleteMany({}),
+      prisma.hoursImportIssue.createMany({
+        data: issues.map((i) => ({ month: i.month, label: i.label, rows: i.rows, hours: round2(i.hours) })),
+      }),
+    ]);
+  } catch (err) {
+    console.error(`[sync] could not record hours-import issues: ${err instanceof Error ? err.message : String(err)}`);
+  }
+}
+
 // Records that an hours sync FAILED, so the staleness is visible in the app
 // instead of only in a console log nobody reads. Without this, a broken feed
 // leaves the last good "Hours Refreshed Thru" date sitting in the ETC header
@@ -564,11 +622,11 @@ async function syncHoursRefreshedThrough(rows: JobHoursRow[]): Promise<void> {
 // failed pull has no date to put there. If the row doesn't exist yet the feed
 // has simply never succeeded, and there's no stale figure to warn about.
 // Best-effort — a logging failure must never mask the original sync error.
-export async function recordHoursSyncFailure(err: unknown): Promise<void> {
+export async function recordHoursSyncFailure(err: unknown, source = "hours_actual"): Promise<void> {
   const message = err instanceof Error ? err.message : String(err);
   try {
     await prisma.powerBiFreshness.updateMany({
-      where: { source: "hours_actual" },
+      where: { source },
       data: { status: `Failed: ${message.slice(0, 300)}`, checkedAt: new Date() },
     });
   } catch (writeErr) {

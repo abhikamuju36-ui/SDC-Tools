@@ -237,6 +237,31 @@ model PowerBiFreshness {
   status           String?  @db.Text
 }
 
+// Hours the importer had to REJECT, kept so they are visible instead of merely
+// absent. Rows whose "Jobs" cell is not a job number ("Not Defined",
+// "2025 SERVICE") cannot be attributed to anything, so they never reach
+// EtcEntry — and before this existed they vanished with no trace at any layer
+// (~2,251h across the export when first measured, 2026-07-31).
+//
+// Only rows that WOULD otherwise have counted are stored: time on an untracked
+// section is missing from the grid regardless of its job, so recording it here
+// would overstate what a valid job number could have recovered.
+//
+// Replaced wholesale per sync — the export is the authority on what is wrong
+// with it, and a label that has since been corrected upstream must disappear
+// here too.
+model HoursImportIssue {
+  id       Int      @id @default(autoincrement())
+  month    String // "2026-07"
+  label    String // the raw cell value, e.g. "Not Defined"
+  rows     Int
+  hours    Decimal  @db.Decimal(10, 2)
+  syncedAt DateTime @default(now())
+
+  @@unique([month, label])
+  @@index([month])
+}
+
 // Per-job, per-section-code hours across three snapshots, confirmed from the
 // "Estimated Hours" tab: Quoted (original bid), Actual Hours Historical
 // (cumulative actuals as of a cutoff date), and Estimate to Complete.

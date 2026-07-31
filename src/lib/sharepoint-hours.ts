@@ -259,23 +259,33 @@ async function downloadWorkbookViaGraph(): Promise<Buffer> {
   return Buffer.from(await dl.arrayBuffer());
 }
 
-// Reads and transforms the hours file into tracked per-row records. Prefers the
-// locally synced copy when configured (no auth, works in session 0), otherwise
-// downloads via Graph. Callers filter/aggregate by month in memory.
-export async function fetchJobHoursRows(): Promise<JobHoursRow[]> {
+// Time booked against something that is not a job number — "Not Defined",
+// "2025 SERVICE", stray text. `Number("Not Defined")` is NaN, and the importer
+// used to stringify that straight into the job id, producing rows keyed "NaN"
+// that matched no Job and vanished with no trace at any layer. Counted per
+// month so it can be shown next to the month it belongs to.
+//
+// Only rows that would OTHERWISE have been imported are counted. Time on an
+// untracked section (PM, Manufacturing, Warranty) is absent from the ETC grid
+// whether or not its job is valid, so counting it here would overstate what a
+// valid job number would actually have recovered.
+export type HoursImportIssue = {
+  month: string; // "2026-07"
+  label: string; // the raw cell value, e.g. "Not Defined"
+  rows: number;
+  hours: number;
+};
+
+// Reads and transforms the hours file into tracked per-row records, alongside
+// the rows it had to reject. Prefers the locally synced copy when configured
+// (no auth, works in session 0), otherwise downloads via Graph.
+export async function fetchJobHoursRowsWithIssues(): Promise<{ rows: JobHoursRow[]; issues: HoursImportIssue[] }> {
   const buffer = (await readLocalWorkbook()) ?? (await downloadWorkbookViaGraph());
   const wb = XLSX.read(buffer, { type: "buffer" });
   const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
 
   const out: JobHoursRow[] = [];
-  // Time booked against something that isn't a job number. Tracked rather than
-  // dropped on the floor: `Number("Not Defined")` is NaN, and the old code
-  // stringified that straight into the job id, producing rows keyed "NaN" that
-  // matched no Job and vanished with no trace anywhere. Measured 2026-07-31:
-  // ~159 hours in July alone, about 7% of Engineering's month. That is a
-  // real-world data-entry problem someone should chase, not something the
-  // importer should hide.
-  const unattributed = new Map<string, { rows: number; hours: number }>();
+  const unattributed = new Map<string, HoursImportIssue>(); // `${month}::${label}`
   const push = (jobId: string, section: string, date: Date, hours: number, employeeId: string) => {
     if (!ETC_TRACKED_CODES.has(section)) return;
     out.push({ jobId, section, year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, date, hours, employeeId });
@@ -290,19 +300,25 @@ export async function fetchJobHoursRows(): Promise<JobHoursRow[]> {
     const rawJob = r["Jobs"];
     if (rawJob == null || String(rawJob).trim() === "") continue;
     const hours = Number(r["Total Hours Worked"]) || 0;
+    const section = `${machineSec}-${fn}`;
 
-    // Must be a real job number. Anything else ("Not Defined", stray text) is
-    // counted and skipped — never coerced into a fake id.
+    // Must be a real job number. Anything else is counted and skipped — never
+    // coerced into a fake id.
     const jobText = String(rawJob).trim();
     const jobNum = Number(jobText);
     if (!Number.isFinite(jobNum)) {
-      const seen = unattributed.get(jobText) ?? { rows: 0, hours: 0 };
-      unattributed.set(jobText, { rows: seen.rows + 1, hours: seen.hours + hours });
+      // 10-311 is not itself tracked but splits into two codes that are.
+      const wouldHaveCounted = section === "10-311" || ETC_TRACKED_CODES.has(section);
+      if (wouldHaveCounted) {
+        const month = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+        const key = `${month}::${jobText}`;
+        const seen = unattributed.get(key) ?? { month, label: jobText, rows: 0, hours: 0 };
+        unattributed.set(key, { ...seen, rows: seen.rows + 1, hours: seen.hours + hours });
+      }
       continue;
     }
     const jobId = String(jobNum); // normalize leading zeros to match app job keys
     const employeeId = String(r["Employee Id"] ?? "").trim();
-    const section = `${machineSec}-${fn}`;
     if (section === "10-311") {
       // Split into design (312, 30%) and software (313, 70%), per PBI. Both
       // halves keep the employee, so the Hours Detail drill shows one punch as
@@ -313,18 +329,21 @@ export async function fetchJobHoursRows(): Promise<JobHoursRow[]> {
       push(jobId, section, date, hours, employeeId);
     }
   }
-  if (unattributed.size > 0) {
-    const summary = [...unattributed.entries()]
-      .sort((a, b) => b[1].hours - a[1].hours)
-      .map(([job, s]) => `"${job}" ${s.hours.toFixed(2)}h across ${s.rows} row(s)`)
-      .join("; ");
+
+  const issues = [...unattributed.values()].sort((a, b) => b.hours - a.hours);
+  if (issues.length > 0) {
+    const total = issues.reduce((s, i) => s + i.hours, 0);
     console.warn(
-      `[sharepoint-hours] ${out.length} rows imported, but time was booked to non-job values and is NOT counted anywhere: ${summary}. ` +
-        "Someone booked hours without a valid job number — worth chasing upstream in Paylocity."
+      `[sharepoint-hours] ${out.length} rows imported; ${total.toFixed(2)}h booked to non-job values and NOT counted anywhere ` +
+        `(${issues.length} month/label combinations). Worth chasing upstream in Paylocity.`
     );
   }
+  return { rows: out, issues };
+}
 
-  return out;
+// Rows only — the common case, and what the reconciliation scripts want.
+export async function fetchJobHoursRows(): Promise<JobHoursRow[]> {
+  return (await fetchJobHoursRowsWithIssues()).rows;
 }
 
 // Hours worked in a given calendar month, keyed "jobId::section". This is
