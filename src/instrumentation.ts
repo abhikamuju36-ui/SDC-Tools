@@ -46,7 +46,13 @@ export async function register() {
       if (isMonthLocked(entries)) return;
 
       const result = await syncHoursWorked(latest.month);
-      console.log(`[auto-sync] ETC hours worked (${latest.month}): ${result.rowsUpdated} updated, ${result.rowsSkipped} skipped`);
+      console.log(
+        `[auto-sync] ETC hours worked (${latest.month}): ${result.rowsUpdated} updated, ${result.rowsSkipped} skipped` +
+          // Called out separately rather than folded into "updated": a row being
+          // zeroed means the source dropped hours it previously reported, which
+          // is worth noticing rather than burying in a total.
+          (result.rowsZeroed > 0 ? `, ${result.rowsZeroed} zeroed (no longer in the export)` : "")
+      );
 
       const parts = await syncPartsCost(latest.month);
       console.log(`[auto-sync] Parts cost (${latest.month}): ${parts.rowsUpserted} upserted`);

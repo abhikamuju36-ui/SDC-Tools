@@ -554,6 +554,38 @@ Kept on purpose: `ProjectRelease`, `saved_views`, `StandardSheetSetting` are
 empty but have live code behind them — shipped features nobody has exercised
 yet, not dead weight.
 
+### Phantom hours — found in the post-deploy audit, fixed same day
+With the sync healthy again, stored hours were compared row-by-row against a
+live pull. Three rows disagreed, two of them substantively:
+
+```
+1104::10-211   stored=8.00  live=0.00   Andi 1 & Andi 2 Replacement Line
+1145::10-412   stored=1.68  live=0.00   Primary Packaging Load Automation
+1161::10-312   stored=0.23  live=0.22   (10-311 split rounding)
+```
+
+`syncHoursWorked` looped only over keys **present in the export**, so a
+(job, section) whose hours moved away upstream — a booking reassigned to
+another job, or deleted — was never revisited and kept its last synced value
+indefinitely. The rule "Hours Worked always reflects the source" was only ever
+enforced in the direction of hours *appearing*.
+
+Small in absolute terms (9.68h against ~4,700), but one-directional: the error
+can only inflate, and it compounds every month it goes uncorrected.
+
+Fixed with a second pass that zeroes pending rows absent from the export.
+**Guarded on `spentByKey.size > 0`** — that map is empty when the rolling
+window has moved past the month or the fetch returned nothing usable, and
+zeroing on that basis would wipe the month wholesale. Absence of the month from
+the export is not evidence nobody worked; it is evidence the export cannot
+answer the question. Submitted rows (`needsReview: false`) and `PARTS_COST`
+(dollars, owned by `syncPartsCost`) are both excluded.
+
+Dry-run before applying showed exactly the 2 expected rows, 1.2% of pending —
+a large percentage there would have meant the export was wrong, not the
+database. After applying, stored vs live agrees to 0.01/−0.02, which is the
+10-311 split's rounding floor.
+
 ### Still open
 - **`recordHoursSyncFailure()` does not write.** Four logged failures on
   2026-07-31, yet `hours_actual` still read `status=null,

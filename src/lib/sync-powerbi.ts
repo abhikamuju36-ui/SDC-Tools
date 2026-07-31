@@ -146,7 +146,7 @@ async function syncJobHoursDetail(
 // charged to a section that was never quoted, so startMonth didn't seed it),
 // the entry is CREATED rather than the hours silently dropped. Prior ETC for
 // these comes from the previous month's entry if one exists, else 0.
-export async function syncHoursWorked(month: string): Promise<{ rowsUpdated: number; rowsSkipped: number }> {
+export async function syncHoursWorked(month: string): Promise<{ rowsUpdated: number; rowsSkipped: number; rowsZeroed: number }> {
   // Re-checked here, not just trusted from the caller's earlier check — this
   // sync does one DB round-trip per row, so it can run long enough for a
   // manager to Submit and Lock this exact month mid-sync. A locked month is
@@ -155,7 +155,7 @@ export async function syncHoursWorked(month: string): Promise<{ rowsUpdated: num
   const monthEntriesAtStart = await prisma.etcEntry.findMany({ where: { month }, select: { needsReview: true } });
   const monthStartedAtStart = monthEntriesAtStart.length > 0;
   if (monthStartedAtStart && isMonthLocked(monthEntriesAtStart)) {
-    return { rowsUpdated: 0, rowsSkipped: 0 };
+    return { rowsUpdated: 0, rowsSkipped: 0, rowsZeroed: 0 };
   }
 
   const [year, monthNum] = month.split("-").map(Number);
@@ -257,7 +257,54 @@ export async function syncHoursWorked(month: string): Promise<{ rowsUpdated: num
     rowsUpdated++;
   }
 
-  return { rowsUpdated, rowsSkipped };
+  // Rows the export no longer accounts for.
+  //
+  // The loop above only visits keys PRESENT in the export, so a (job, section)
+  // whose hours moved away upstream — a booking reassigned to another job, or
+  // deleted — is never revisited and keeps its last synced value forever.
+  // Measured live 2026-07-31: job 1104 held 8.00h and job 1145 1.68h that the
+  // export had already dropped. Small individually, but the error is
+  // one-directional (it can only inflate) and compounds every month.
+  //
+  // "Hours Worked always reflects the source, it is never independently typed
+  // in" is the rule this restores. The main loop only ever enforced it in the
+  // direction of hours appearing, never hours going away.
+  //
+  // GUARDED on the export actually covering this month. `spentByKey` is empty
+  // when the rolling window has moved past `month`, or when the fetch returned
+  // nothing usable — and zeroing every row on that basis would wipe the month's
+  // hours wholesale. Absence of the month from the export is not evidence that
+  // nobody worked; it is evidence the export cannot answer the question.
+  let rowsZeroed = 0;
+  if (spentByKey.size > 0) {
+    const candidates = await prisma.etcEntry.findMany({
+      where: {
+        month,
+        needsReview: true, // never touch a submitted row, same rule as above
+        hoursWorked: { not: 0 },
+      },
+      select: { id: true, section: true, priorEtc: true, job: { select: { jobId: true } } },
+    });
+
+    for (const entry of candidates) {
+      // Parts Cost is dollars from TotalETO and owned by syncPartsCost; the
+      // hours export knows nothing about it and must never zero it.
+      if (entry.section === PARTS_COST_SECTION) continue;
+      if (!ETC_TRACKED_CODES.has(entry.section)) continue;
+      if (spentByKey.has(`${entry.job.jobId}::${entry.section}`)) continue; // still in the export
+
+      const priorEtc = Number(entry.priorEtc);
+      await prisma.etcEntry.update({
+        where: { id: entry.id },
+        // newEtc deliberately untouched, exactly as in the update above — it is
+        // manager-entered, and a source correction must not silently rewrite it.
+        data: { hoursWorked: 0, hoursLeftCalc: round2(calcHoursLeft(priorEtc, 0)) },
+      });
+      rowsZeroed++;
+    }
+  }
+
+  return { rowsUpdated, rowsSkipped, rowsZeroed };
 }
 
 // "Parts Cost" — a real block in the sheet (Prior ETC / Money Spent Month /
