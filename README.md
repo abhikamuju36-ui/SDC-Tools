@@ -26,7 +26,7 @@ npm start          # production server on port 3010
 
 `npm start` runs the same server dev uses, minus hot-reload — faster, lower
 memory, and it surfaces prod-only type/route errors at build time. The
-10-minute Power BI auto-sync (`src/instrumentation.ts`) runs under `npm start`
+6-hourly auto-sync (`src/instrumentation.ts`) runs under `npm start`
 exactly as in dev.
 
 **Run it as a durable service** (so it survives logout/reboot) rather than a
@@ -54,11 +54,28 @@ npm test           # node:test unit tests for the ETC / Standard Fees math
 
 ## Data sources & freshness
 
-- **Hours worked, quoted hours, ETC history, Standard Fees** — pulled from the
-  Power BI semantic model (Fabric warehouse + SharePoint) every 10 minutes.
-- **Jobs / costing** — synced from TotalETO directly (`src/lib/sync-totaleto.ts`).
-- The ETC header shows a red banner if Power BI's own upstream dataset refresh
-  is failing, so stale-upstream data never goes unnoticed.
+- **Hours worked** — read from the Paylocity export `Current_Job_Hours.xlsx`
+  every 6 hours (`src/lib/sharepoint-hours.ts`). Preferred source is the
+  OneDrive-synced copy on local disk (`JOB_HOURS_LOCAL_PATH`); Microsoft Graph
+  is the fallback. Reading a file needs no token, which is what lets the sync
+  work from a service in Windows session 0 — see §12 of `DEVLOG.md`.
+  **The OneDrive folder must stay pinned "Always keep on this device"**, or it
+  reverts to a placeholder that only hydrates in an interactive session.
+- **Parts costs / jobs / costing** — synced from TotalETO directly
+  (`src/lib/sync-totaleto.ts`).
+- **Quoted hours** — owned by this app (the Projects tab), no longer pulled.
+- **ETC history / category pools** — on-demand backfills only, via Power BI DAX
+  (`src/lib/sync-etc-history.ts`) and the Fabric warehouse. Power BI is not in
+  the live path for any figure the ETC grid shows.
+- The ETC header shows how fresh the hours feed is ("Hours Refreshed Thru", the
+  latest work date in the export) alongside when the app last pulled it.
+
+> **Known gap:** a failed sync is currently only visible in the logs —
+> `recordHoursSyncFailure()` is not landing in the database, and
+> `syncHoursWorked()` has no freshness tracking at all. Two multi-day silent
+> stale-hours outages happened in July because of this. Don't read a confident
+> "Last synced" as proof the data is current; `scripts/_recon_kpi_vs_truth.ts`
+> checks it against a fresh pull of the source.
 
 The committed `Job Hours Report - *.Report` / `.SemanticModel` folders are the
 Power BI source of truth this app replicates; the `.SemanticModel` TMDL holds

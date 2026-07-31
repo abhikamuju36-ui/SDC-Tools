@@ -1,15 +1,31 @@
 # App-only Graph auth for the hours sync — setup runbook
 
-> **STATUS 2026-07-30 — the sync is DOWN and this is the fix.**
+> **STATUS 2026-07-31 — NO LONGER URGENT. The sync is back up by another route.**
+> `fetchJobHoursRows()` now reads the OneDrive-synced copy of the export from
+> local disk (`JOB_HOURS_LOCAL_PATH`) and only falls back to Graph. Reading a
+> file needs no token, so the sync works from session 0 **without** the consent
+> below. Verified zero-delta against the Graph download (2026-07 Engineering
+> 2368.85 / Shop 2526.38). See §12 of `DEVLOG.md`.
+>
+> **Do this anyway when an admin is available.** The OneDrive route trades an
+> auth failure for silent staleness: it depends on the sync client running in
+> `akamuju`'s interactive session, so a logoff quietly ages the file — the same
+> failure class it fixed. It also depends on the folder staying pinned "Always
+> keep on this device"; unpinned it is a placeholder a service cannot hydrate.
+> App-only auth has neither dependency, which is why it remains the real fix.
+>
+> **The blocker is unchanged and is one click: admin consent, Step 1.**
+> `Sites.Selected` is already added to the registration and still shows
+> "Not granted for Steven Douglas Corp".
+>
+> <details><summary>Prior status (2026-07-30), kept for the failure signature</summary>
+>
 > Last successful sync: **2026-07-29 19:56:28**. Failing every 10 minutes since;
 > 258 `Cannot decrypt … Error code: 3` entries across the PM2 error logs. A
 > user-triggered Refresh on Monthly ETC now surfaces it as "Submission rejected"
 > (digest `100648713`, `etc-actions.ts:447` → `sync-powerbi.ts:18` →
 > `sharepoint-hours.ts:113`) instead of silently ageing the numbers.
->
-> **The blocker is unchanged and is one click: admin consent, Step 1.**
-> `Sites.Selected` is already added to the registration and still shows
-> "Not granted for Steven Douglas Corp".
+> </details>
 >
 > For the Power BI / Fabric side (secret expiry, fallback plan, warehouse option),
 > see [POWERBI-CONTINUITY.md](POWERBI-CONTINUITY.md).

@@ -60,9 +60,16 @@ SSO, chosen deliberately so it can be swapped without touching the rest of the
 app (`User.id` is what everything else keys off).
 
 ### Why this design survives future changes
-- `Job.source` and `ActualHours.source` / `EstimatedHours` fields are tagged
-  (`'manual'`, `'migration'`, `'totaleto_sync'`, `'power_bi'`) so ingestion
-  method can change without touching UI or calculation logic.
+- `Job.source` / `EstimatedHours` / `JobMonthlyActualHours.source` /
+  `JobHoursDetail.source` fields are tagged (`'manual'`, `'migration'`,
+  `'totaleto_sync'`, `'power_bi'`, `'sharepoint'`) so ingestion method can
+  change without touching UI or calculation logic.
+  **Caveat found 2026-07-31:** `syncActualHours` sets `source` on INSERT only,
+  never on UPDATE, so a row first written by Power BI and since overwritten by
+  the SharePoint pull still reads `power_bi`. The column records the *original*
+  writer, not what maintains it — `JobMonthlyActualHours` shows 1,148
+  `power_bi` against 5 `sharepoint` for that reason alone. Do not answer
+  lineage questions from it without reading the sync code first.
 - Prisma migrations are tracked in git-equivalent files — every schema change
   is reversible and versioned, unlike hand-edited Excel formulas.
 - The ETC calculation (`src/lib/etc.ts`) is a pure function, decoupled from
@@ -80,7 +87,7 @@ app (`User.id` is what everything else keys off).
 | `Job` | Core job record | Initial scaffold |
 | `EstimatedHours` | Per-job, per-section hours | Initial scaffold, **redesigned** later |
 | `EtcEntry` | Monthly manager-submitted ETC (replaces "Managers Fill Out") | Initial scaffold |
-| `ActualHours` | Per-employee/job/month worked hours (source-tagged) | Initial scaffold |
+| `ActualHours` | Per-employee/job/month worked hours (source-tagged) | Initial scaffold — **dropped 2026-07-31**, superseded by `JobHoursDetail` (finer grain) + `JobMonthlyActualHours` (rollup); never held a row |
 | `Job.customer`, `Job.type` | Confirmed from archive tabs (`ETC 2025-03/05/06`) — needed to show Completed-status jobs, which only exist in this data | After discovering jobs list showed 0 completed projects |
 | `EstimatedHours` redesign | Changed from single `hours` field to three: `quotedHours`, `actualHistoricalHours`, `estimateToCompleteHours` — confirmed real structure from the "Estimated Hours" tab | When migrating that tab |
 | `JobTask` | Per-employee task assignments (`taskName` + hours, keyed by `slot` 1-11) — free-text data, not fixed section codes | Same migration |
@@ -94,7 +101,7 @@ app (`User.id` is what everything else keys off).
 | `AllowedUser` | Hard access-control allowlist (Dan + Lisa only), with `passwordHash` |
 | `Job` | Mirrors jobId/jobName/status (kept independent from App 1's DB) |
 | `ExecutionRate` | Per-job ENGR/Shop/Parts rates — confirmed **not** a global constant; the sheet shows per-job override capability (orange-highlighted exceptions) |
-| `FeeAllotment` | Per-job, per-category hour allotments — designed but the real sheet data didn't cleanly map here (see below) |
+| `FeeAllotment` | Per-job, per-category hour allotments — designed but the real sheet data didn't cleanly map here (see below). **Dropped 2026-07-31**, never held a row |
 | `CategoryPool` | Company-wide monthly hour pools per category (Engineering PM/Warranty, Shop Manufacturing/Warranty) — the *actual* structure found in "Standard Fees By Department", added after `FeeAllotment` was found not to match reality |
 | `MonthlySnapshot` | Replaces the "Submit All ETC and Standard Fees" script chain — one atomic DB transaction |
 
@@ -280,9 +287,12 @@ Fixed by:
   choice, to keep control/visibility while trusting the new live sources.
 - **FeeAllotment vs CategoryPool** — initially assumed fee data was per-job
   (`FeeAllotment`); the real sheet data turned out to be company-wide monthly
-  pools (`CategoryPool`). Both models were kept: `CategoryPool` is populated
-  and correct; `FeeAllotment` remains in the schema for a hypothetical future
-  per-job breakdown but has no real data behind it yet.
+  pools (`CategoryPool`). Both models were kept for a while, `FeeAllotment`
+  against a hypothetical future per-job breakdown.
+  **Reversed 2026-07-31:** it was dropped. Fourteen months on it had never held
+  a row and nothing referenced it, so it was carrying no option value — only the
+  suggestion to a future reader that per-job allotments are a supported concept
+  here. The `FeeCategory` enum stays, since `CategoryPool` uses it.
 - **Cost Actual Historical not synced live** — no verified Power BI measure
   exists for the whole-job figure; left as the frozen, confirmed-correct
   migration value rather than reconstructed and potentially wrong.
@@ -445,3 +455,129 @@ password-gated Standard view. Committed as `27fb135`, `60a304d`, `64f5bc3`.
   Refresh→edit→Submit→Reopen flow still needs a real user pass before trust.
 - `StandardSheetSnapshot` still carries per-row `engrRate/shopRate/partsMarkup`
   columns; they now just hold the global value for every row.
+
+---
+
+## 12. Hours sync taken off Microsoft Graph; dead schema removed (2026-07-31)
+
+### The symptom, and why it was misread at first
+A manager reported the Monthly ETC KPI card and its own drill-through
+disagreeing: the Engineering card read 2,087 while the punch table beneath it
+totalled 2,079. The two read different tables — the card sums
+`EtcEntry.hoursWorked`, the drill sums `JobHoursDetail` — so an 8-hour gap
+looked like a two-table consistency bug.
+
+It wasn't. Pulling the source fresh and comparing both against it showed the
+real picture:
+
+| 2026-07 | Engineering | Shop |
+|---|---|---|
+| Source of truth (fresh pull) | 2368.85 | 2526.38 |
+| `EtcEntry.hoursWorked` (the card) | 2086.54 (−282.31) | 2396.28 (−130.10) |
+| `JobHoursDetail` (the drill) | 2082.02 (−286.83) | 2402.62 (−123.76) |
+
+Both were stale by ~280h and ~125h. The 8-hour disagreement everyone was
+looking at was noise next to a 280-hour error neither number revealed. Lesson
+recorded because it nearly sent the fix in the wrong direction: **when two
+figures disagree, check both against the source before assuming one is right.**
+
+### Root cause: the same session-0 wall, again
+Every sync had been failing since 2026-07-30 08:50 EDT with the DPAPI
+token-cache error from §"GRAPH-APP-ONLY-SETUP" — the identical failure that
+silently killed 2026-07-24..29. The delegated token cache is DPAPI-encrypted
+`CurrentUser` and cannot be decrypted by a PM2 process in Windows session 0.
+
+Re-running `sdc-powerbi-mcp.exe login` does **not** fix it. Proven, not assumed:
+the recon scripts queried both Graph and Power BI successfully from an
+interactive shell using that very cache, while PM2 kept failing. The credential
+was always fine; the consumer was in the wrong session.
+
+Everything user-session-bound fails identically here, which is worth stating
+once so it stops being re-litigated: the DPAPI cache, a WebDAV-mapped drive
+(invisible to session 0), and unpinned OneDrive placeholders (they hydrate only
+via the client in an interactive session). Only app-only auth or a genuinely
+materialised local file works.
+
+### The fix
+The SharePoint library is synced to disk by OneDrive, so the same export exists
+as an ordinary file. `fetchJobHoursRows()` now prefers `JOB_HOURS_LOCAL_PATH`
+and falls back to Graph when it is unset or unreadable. Reading a file needs no
+token, so it works in session 0 — **and needs no Sites.Selected admin consent**,
+which had been the blocker.
+
+Verified through the app's own code path: 12,821 rows in ~950ms, 2026-07
+Engineering 2368.85 / Shop 2526.38 — zero delta against the Graph download it
+replaces.
+
+**The folder must stay pinned "Always keep on this device."** Unpinned it is a
+Files-On-Demand placeholder (`OFFLINE + RECALL_ON_DATA_ACCESS`) and a service
+cannot hydrate it. Check with
+`[int](Get-Item -LiteralPath $p -Force).Attributes -band 0x80000`.
+
+This is a stopgap that removes the *urgency* of the app-only grant, not a
+replacement for it. It trades an auth failure for silent staleness: if the
+account logs off, OneDrive stops syncing and the file quietly ages — the same
+failure class it fixes. `readLocalWorkbook()` warns past 24h, but console-only
+warnings are exactly what failed twice already (see "still open" below).
+
+### Also verified while in there
+`scripts/_recon_july_2026.ts` had never actually been runnable from the CLI — it
+died on a missing `dotenv/config` before reaching any comparison. Fixed. It now
+confirms the off-Power-BI transforms still reproduce Power BI exactly for
+2026-07: hours **141/141** job/section rows, parts **49/49** app-tracked jobs.
+
+### Auto-sync cadence: 10 minutes -> 6 hours
+The export refreshes on a daily-ish rhythm, so a 10-minute poll re-downloaded
+and re-parsed a ~14k-row workbook ~144×/day for the same data. Note the trade:
+a failed sync now waits 6 hours to retry rather than 10 minutes, and there is
+**no retry policy** — the interval is happy-path spacing only.
+
+### Dead schema removed
+Each verified empty AND unreferenced immediately before the migration:
+
+- `ActualHours` — superseded by `JobHoursDetail` (adds `workDate`) and
+  `JobMonthlyActualHours`. Its FK to `Employee` was actively wrong for this
+  data: punches are keyed by raw Paylocity id *because* some ids have no roster
+  row (leavers — 2 of 69 on 2026-07-30), and a hard FK would reject exactly
+  those rows.
+- `FeeAllotment` — see §8.
+- `StandardFeeSnapshot` — a month-level total that is a SUM over
+  `StandardSheetSnapshot` (93 live rows).
+- `powerbi-refresh.ts` — zero importers since live data moved off Power BI.
+- The `PowerBiFreshness` row `source = 'dataset_refresh'`, written by that
+  module and read by nothing. It sat on
+  "Failed: ModelRefreshFailed_CredentialsNotSpecified" since 2026-07-19 and
+  read as a live incident; it was only the last trace of a removed module. The
+  ETC header only ever reads the `hours_actual` row.
+
+Kept on purpose: `ProjectRelease`, `saved_views`, `StandardSheetSetting` are
+empty but have live code behind them — shipped features nobody has exercised
+yet, not dead weight.
+
+### Still open
+- **`recordHoursSyncFailure()` does not write.** Four logged failures on
+  2026-07-31, yet `hours_actual` still read `status=null,
+  checkedAt=2026-07-30 12:50`. The call is reached (its log lines print) and the
+  built bundle contains it. Unexplained — and it is the exact mechanism meant to
+  prevent the silent staleness above.
+- **`syncHoursWorked()` has no freshness tracking at all**, unlike
+  `syncActualHours()`.
+- **Nothing watches the OneDrive copy's age** beyond a console warning.
+- **Pre-2026-01 hours cannot be regenerated.** `JobHoursDetail` starts at
+  2026-01 because the export is a rolling window; the 1,148 older
+  `JobMonthlyActualHours` rows came from Power BI, which is no longer pulled.
+  That history exists only as previously-imported rows — worth backing up.
+- **EtcEntry has no 2025-07 or 2025-08.** Months run 2025-06, then jump to
+  2025-09. Unknown whether they never existed or were lost.
+- **Jobs have no live source** — all 234 are `migration` (228) or `manual` (6).
+- App-only Graph (`GRAPH_*` + Sites.Selected) remains the durable fix.
+
+### Added
+- `scripts/etl_job_hours.py` — standalone Excel -> MySQL loader (app-only Graph
+  or `--file`, with `--month` / `--dry-run`). Transform mirrors
+  `sharepoint-hours.ts` rule for rule and independently reproduces the same
+  totals. Writes `JobHoursDetail` **only** — the grid and KPI figures come from
+  `EtcEntry.hoursWorked` via `syncHoursWorked()`, so it alone would fix the
+  drill and leave the headline numbers frozen.
+- `scripts/_recon_kpi_vs_truth.ts` — compares both tables behind the KPI cards
+  against a freshly fetched source. This is what produced the table above.
