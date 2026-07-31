@@ -24,7 +24,6 @@ model User {
 
   etcEntries EtcEntry[]
   executionRateEdits     ExecutionRate[]
-  standardFeeSnapshots   StandardFeeSnapshot[]
   standardSheetSnapshots StandardSheetSnapshot[]
   auditLogs              AuditLog[]
 }
@@ -77,7 +76,6 @@ model Employee {
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
-  actualHours ActualHours[]
 }
 
 // Source of jobs: manual entry for now (Phase 1).
@@ -119,12 +117,10 @@ model Job {
 
   etcEntries          EtcEntry[]
   estimatedHours      EstimatedHours[]
-  actualHours         ActualHours[]
   tasks               JobTask[]
   monthlyActualHours  JobMonthlyActualHours[]
   hoursDetail         JobHoursDetail[]
   executionRate       ExecutionRate?
-  feeAllotments       FeeAllotment[]
   standardSheetSnapshots StandardSheetSnapshot[]
   projectRelease      ProjectRelease?
 }
@@ -293,22 +289,6 @@ model EtcEntry {
   @@unique([jobId, section, month])
 }
 
-// Worked hours per employee/job/month. Source stubbed as manual for now;
-// swap to 'paylocity_report' or 'paylocity_api' later without touching downstream logic.
-model ActualHours {
-  id         Int      @id @default(autoincrement())
-  employeeId Int
-  employee   Employee @relation(fields: [employeeId], references: [id])
-  jobId      Int
-  job        Job      @relation(fields: [jobId], references: [id])
-  section    String
-  month      String
-  hours      Decimal  @db.Decimal(10, 2)
-  source     String   @default("manual_entry") // 'manual_entry' | 'paylocity_report' | 'paylocity_api'
-  importedAt DateTime @default(now())
-
-  @@unique([employeeId, jobId, section, month])
-}
 
 // --- Standard Sheet (ported from the sdc-standard-fees app into a
 // password-gated tab here) ---------------------------------------------
@@ -386,19 +366,6 @@ enum FeeCategory {
   SHOP_WARRANTY
 }
 
-// Standard fee hour allotments per job, per category.
-model FeeAllotment {
-  id        Int         @id @default(autoincrement())
-  jobId     Int
-  job       Job         @relation(fields: [jobId], references: [id])
-  category  FeeCategory
-  hours     Decimal     @db.Decimal(10, 2)
-  month     String // "2026-07" — month the allotment was added/sold
-  source    String      @default("manual") // 'manual' | 'planner_sync'
-  createdAt DateTime    @default(now())
-
-  @@unique([jobId, category, month])
-}
 
 // Company-wide monthly hour pool per category, confirmed from the "Standard Fees By
 // Department" section of Standard Fees.xlsx — not per-job, a single rolling pool per category.
@@ -420,18 +387,6 @@ model CategoryPool {
   @@unique([category, month])
 }
 
-// Monthly snapshot, replaces the "Submit All ETC and Standard Fees" script chain.
-// Written as a single DB transaction instead of fragile Excel macros.
-model StandardFeeSnapshot {
-  id            Int      @id @default(autoincrement())
-  month         String   @unique // "2026-07"
-  submittedById Int?
-  submittedBy   User?    @relation(fields: [submittedById], references: [id])
-  submittedAt   DateTime @default(now())
-  totalEngr     Decimal  @db.Decimal(12, 2)
-  totalShop     Decimal  @db.Decimal(12, 2)
-  totalParts    Decimal  @db.Decimal(12, 2)
-}
 
 // Saved Projects-grid views ("Views ▾"), ported from the Scheduler's shared
 // column-views feature. A view is a snapshot of the grid's URL state (which
