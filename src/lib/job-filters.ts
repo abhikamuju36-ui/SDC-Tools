@@ -5,6 +5,28 @@ export const VALID_JOB_TYPES = ["Custom", "Duplicate", "Hybrid", "Service"] as c
 
 export const validJobTypeFilter = { type: { in: [...VALID_JOB_TYPES] } };
 
+// The job lifecycle, in order. Declared here rather than derived from whatever
+// distinct values happen to be in the database, which is how it used to work:
+// the Status dropdown listed only statuses already in use, so a new one could
+// never be picked in the first place.
+//
+// "HeadStart" — we intend to start, but there is no PO yet. Deliberately its own
+// state rather than an Active job with a flag: it changes what the job means to
+// every reader (no PO, so no billing, and a missing Start Date is expected
+// rather than a data error).
+export const JOB_STATUSES = ["Active", "HeadStart", "Complete"] as const;
+export type JobStatus = (typeof JOB_STATUSES)[number];
+
+// What the Projects grid shows when nobody has chosen a Status filter. HeadStart
+// is included on purpose: a manager who sets a job to HeadStart and watches the
+// row vanish from the default view would reasonably conclude the app lost it.
+export const DEFAULT_VISIBLE_STATUSES: JobStatus[] = ["Active", "HeadStart"];
+
+// A HeadStart job has no PO, so no hours can be booked against it and it has no
+// ETC to plan — it stays out of the Monthly ETC month below (status: "Active"
+// only). That also leaves the ENG/SHOP totals the team signed off untouched.
+// If HeadStart work does start getting booked, this is the line to revisit.
+
 // The one job universe the Monthly ETC month operates on — the grid, seeding,
 // pruning, and submission must all use this same filter, or entries get seeded
 // for jobs the grid never renders and the month can never be submitted.

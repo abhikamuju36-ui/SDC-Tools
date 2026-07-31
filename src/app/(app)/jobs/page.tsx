@@ -8,6 +8,7 @@ import { card, BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/ui/classnam
 const STATUS_FILTERS = [
   { key: "all", label: "All", status: undefined },
   { key: "active", label: "Active", status: "Active" },
+  { key: "headstart", label: "HeadStart", status: "HeadStart" },
   { key: "completed", label: "Completed", status: "Complete" },
 ];
 
@@ -134,10 +135,18 @@ export default async function JobsPage({
               <span className="text-sdc-gray-600">{job.type ?? "—"}</span>
               <span
                 className={`flex items-center justify-center gap-1.5 text-[10px] font-semibold ${
-                  job.status === "Complete" ? "text-sdc-green-text" : "text-sdc-blue"
+                  job.status === "Complete"
+                    ? "text-sdc-green-text"
+                    : job.status === "HeadStart"
+                      ? "text-sdc-yellow-text"
+                      : "text-sdc-blue"
                 }`}
               >
-                <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${job.status === "Complete" ? "bg-sdc-green" : "bg-sdc-blue"}`} />
+                <span
+                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                    job.status === "Complete" ? "bg-sdc-green" : job.status === "HeadStart" ? "bg-sdc-yellow" : "bg-sdc-blue"
+                  }`}
+                />
                 {job.status}
               </span>
             </Link>

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { redirect } from "next/navigation";
-import { VALID_JOB_TYPES } from "@/lib/job-filters";
+import { VALID_JOB_TYPES, JOB_STATUSES } from "@/lib/job-filters";
 import { SECTIONS, PHASE_GROUPS } from "@/lib/sections";
 import { PageTitle } from "@/components/ui/Typography";
 import { card, INPUT, LABEL, BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/ui/classnames";
@@ -97,8 +97,11 @@ export default function NewProjectPage() {
             <label className={LABEL}>Status</label>
             <input name="status" list="status-options" defaultValue="Active" className={`mt-1 w-full ${INPUT}`} />
             <datalist id="status-options">
-              <option value="Active" />
-              <option value="Complete" />
+              {/* From JOB_STATUSES so this form can't offer a different set than
+                  the Projects grid does. */}
+              {JOB_STATUSES.map((st) => (
+                <option key={st} value={st} />
+              ))}
             </datalist>
           </div>
           <div className="flex items-end pb-2">

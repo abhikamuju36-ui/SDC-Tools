@@ -3,7 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
-import { VALID_JOB_TYPES, isSdcCustomer } from "@/lib/job-filters";
+import { VALID_JOB_TYPES, JOB_STATUSES, isSdcCustomer } from "@/lib/job-filters";
 
 const HOURS_PREFIX = "quoted__";
 const FIELD_PREFIX = "jobField__";
@@ -12,7 +12,7 @@ const NEW_ROW_HOURS_PREFIX = "newRowHours__";
 
 // Job-level text/date fields that don't need special parsing/validation
 // beyond "trim, empty string means null".
-const PLAIN_FIELDS = ["jobName", "customer", "status"] as const;
+const PLAIN_FIELDS = ["jobName", "customer"] as const;
 const DATE_FIELDS = ["startDate", "completeDate"] as const;
 const MONEY_FIELDS = ["costQuoted", "costActualHistorical"] as const;
 type PlainField = (typeof PLAIN_FIELDS)[number];
@@ -216,6 +216,18 @@ async function saveJobFields(formData: FormData): Promise<number> {
       }
     }
 
+    // Status is validated against the lifecycle, not saved as free text. It used
+    // to be a PLAIN_FIELD — trim and store — so a mistyped "Headstart" would
+    // become a real fourth status, appear in every dropdown, and quietly fall
+    // outside the Active/HeadStart/Complete filters.
+    if (fields.has("status")) {
+      const raw = fields.get("status")!.trim();
+      if (!JOB_STATUSES.includes(raw as (typeof JOB_STATUSES)[number])) {
+        throw new Error(`Invalid Status "${raw}" for job ${jobId} — must be one of ${JOB_STATUSES.join(", ")}.`);
+      }
+      if (raw !== current.status) data.status = raw;
+    }
+
     if (fields.has("type")) {
       const raw = fields.get("type")!.trim();
       if (!VALID_JOB_TYPES.includes(raw as (typeof VALID_JOB_TYPES)[number])) {
@@ -370,6 +382,9 @@ async function saveNewRows(formData: FormData): Promise<number> {
     const billable = isSdcCustomer(customer) ? false : billableRaw === "Billable";
 
     const status = (fields.get("status") ?? "Active").trim() || "Active";
+    if (!JOB_STATUSES.includes(status as (typeof JOB_STATUSES)[number])) {
+      throw new Error(`Invalid Status "${status}" for new project "${jobId}" — must be one of ${JOB_STATUSES.join(", ")}.`);
+    }
     const startDate = parseDate((fields.get("startDate") ?? "").trim());
     const completeDate = parseDate((fields.get("completeDate") ?? "").trim());
     const costQuoted = parseMoney((fields.get("costQuoted") ?? "").trim(), "Cost Quoted", `new project "${jobId}"`);

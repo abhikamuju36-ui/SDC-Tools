@@ -1,7 +1,7 @@
 import { Fragment } from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
-import { validJobTypeFilter, VALID_JOB_TYPES, compareJobIds, isSdcCustomer } from "@/lib/job-filters";
+import { validJobTypeFilter, VALID_JOB_TYPES, JOB_STATUSES, DEFAULT_VISIBLE_STATUSES, compareJobIds, isSdcCustomer } from "@/lib/job-filters";
 import { SECTIONS, PHASE_GROUPS } from "@/lib/sections";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
@@ -140,11 +140,17 @@ function groupRuns(sections: { code: string; group: string }[]) {
 // Weight and colour are returned separately rather than as one class string:
 // combining `font-bold` with the Job Id column's own `font-semibold` would leave
 // two competing utilities whose winner depends on stylesheet order, not on intent.
-function scheduleTone(job: { startDate: Date | null; completeDate: Date | null }): {
+function scheduleTone(job: { startDate: Date | null; completeDate: Date | null; status: string | null }): {
   weight: string;
   color: string;
   title?: string;
 } {
+  // A HeadStart job has no PO yet, so having no Start Date is the normal state
+  // for it — flagging that red would be crying wolf on the one status where the
+  // gap is expected.
+  if (job.status === "HeadStart") {
+    return { weight: "", color: "", title: "HeadStart — intended, no PO yet" };
+  }
   if (!job.startDate) {
     return { weight: "font-bold", color: "text-sdc-red-text", title: "No Start Date set for this project" };
   }
@@ -247,10 +253,15 @@ export default async function QuotedPage({
     distinct: ["status"],
     select: { status: true },
   });
-  const allStatuses = distinctStatuses
-    .map((j) => j.status)
-    .filter((s): s is string => Boolean(s))
-    .sort((a, b) => a.localeCompare(b));
+  // The canonical lifecycle first, then any legacy value still stored on a job so
+  // nothing already in the data becomes unselectable. Ordered by JOB_STATUSES
+  // rather than alphabetically — Active, HeadStart, Complete is the order the work
+  // actually moves through, and it reads as a lifecycle instead of a word list.
+  const storedStatuses = distinctStatuses.map((j) => j.status).filter((s): s is string => Boolean(s));
+  const allStatuses = [
+    ...JOB_STATUSES,
+    ...storedStatuses.filter((s) => !JOB_STATUSES.includes(s as (typeof JOB_STATUSES)[number])).sort((a, b) => a.localeCompare(b)),
+  ];
 
   // Same "undefined = everything, explicit (even empty) = user's picks" rule as `cols`.
   // decodeParamList, not split(",") — the writers escape commas inside each value
@@ -261,7 +272,9 @@ export default async function QuotedPage({
   // work — the day-to-day view. The filter chips still list every option, so a
   // user can widen to Complete/Non-Billable any time.
   const selectedStatuses =
-    statuses === undefined ? (allStatuses.includes("Active") ? ["Active"] : allStatuses) : decodeParamList(statuses);
+    statuses === undefined
+      ? DEFAULT_VISIBLE_STATUSES.filter((s) => allStatuses.includes(s))
+      : decodeParamList(statuses);
   const selectedBillables = billables === undefined ? ["Billable"] : decodeParamList(billables);
   const showBillable = selectedBillables.includes("Billable");
   const showNonBillable = selectedBillables.includes("Non-Billable");
@@ -763,7 +776,12 @@ export default async function QuotedPage({
                     <td
                       style={{ width: "var(--status-col-width, 100px)", minWidth: "var(--status-col-width, 100px)", maxWidth: "var(--status-col-width, 100px)" }}
                       className={`overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px] font-medium ${
-                        job.status === "Complete" ? "text-sdc-green-text" : "text-sdc-blue-dark"
+                        job.status === "Complete"
+                          ? "text-sdc-green-text"
+                          : job.status === "HeadStart"
+                            ? // Amber: intent to start, nothing authorised yet.
+                              "text-sdc-yellow-text"
+                            : "text-sdc-blue-dark"
                       }`}
                     >
                       <select
