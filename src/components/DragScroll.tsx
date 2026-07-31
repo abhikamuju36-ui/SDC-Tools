@@ -6,13 +6,44 @@ import { useRef, type ReactNode } from "react";
 // scroll, like the Scheduler). Renders the scroll container itself, so callers
 // just swap their `<div className="… overflow-auto">` for `<DragScroll className=…>`.
 //
-// A drag that STARTS on interactive cell content (an input, select, link, button,
-// etc.) is left alone so editing/clicking still works — panning only kicks in on
-// the "dead" areas of the grid (number cells, headers, gridlines). After a real
-// drag, the trailing click is swallowed so it can't trigger a row click or sort.
+// ── Why this is more than "ignore interactive elements" ──────────────────────
+// It used to bail on any mousedown inside an input/select/link/button, so panning
+// only worked on the "dead" parts of a grid. On the Projects grid there are almost
+// none: every cell holds an input or a dropdown — job name, customer, type,
+// billable, status, both dates, thirteen section-hour cells, two money cells — so
+// dragging did nothing almost everywhere, which is exactly how it was reported.
+//
+// The rule now distinguishes two kinds of interactive content:
+//
+//   NEVER pan from these — the mousedown IS the interaction, and suppressing it
+//   would break them: a <select> must open its dropdown, a date input opens its
+//   picker (DateCell calls showPicker on mousedown), links/buttons/summaries act.
+//
+//   PAN from a text or number input that is NOT currently focused, and restore the
+//   click if the pointer never moved. So the first press on a cell pans, and once
+//   you are actually editing that cell, dragging inside it selects text as usual.
+//   Focus is suppressed during the press and re-applied on release only when it
+//   was a click rather than a drag — otherwise panning would leave a caret blinking
+//   in whatever cell you happened to grab, and would drag-select its text.
+const NEVER_PAN = [
+  "select",
+  "button",
+  "a",
+  "summary",
+  "label",
+  "[contenteditable]",
+  "[role='button']",
+  "input[type='date']",
+  "input[type='checkbox']",
+  "input[type='radio']",
+].join(",");
+
 export function DragScroll({ className, children }: { className?: string; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const moved = useRef(false);
+  // The input whose focus we suppressed, to hand back if this turns out to be a
+  // click and not a pan.
+  const pendingFocus = useRef<HTMLElement | null>(null);
 
   const scrollable = (el: HTMLElement) => el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight;
 
@@ -26,9 +57,23 @@ export function DragScroll({ className, children }: { className?: string; childr
   function onMouseDown(e: React.MouseEvent) {
     if (e.button !== 0) return; // left button only
     const target = e.target as HTMLElement;
-    if (target.closest("input,select,textarea,button,a,[contenteditable],summary,label,[role='button']")) return;
+    if (target.closest(NEVER_PAN)) return;
+
     const el = ref.current;
     if (!el || !scrollable(el)) return;
+
+    // A text/number input that already has focus is being edited — leave the
+    // press alone so selecting inside it still works.
+    const textish = target.closest("input,textarea") as HTMLElement | null;
+    if (textish && document.activeElement === textish) return;
+
+    pendingFocus.current = null;
+    if (textish) {
+      // Suppress the focus and the drag-select that would otherwise come with
+      // this press; handed back on release if nothing moved.
+      e.preventDefault();
+      pendingFocus.current = textish;
+    }
 
     const startX = e.clientX;
     const startY = e.clientY;
@@ -46,6 +91,9 @@ export function DragScroll({ className, children }: { className?: string; childr
     };
     const onUp = () => {
       el.style.cursor = "";
+      // Not a drag after all: give the cell the focus its click would have.
+      if (!moved.current && pendingFocus.current) pendingFocus.current.focus();
+      pendingFocus.current = null;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
