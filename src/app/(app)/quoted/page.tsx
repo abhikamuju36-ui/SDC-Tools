@@ -118,6 +118,42 @@ function groupRuns(sections: { code: string; group: string }[]) {
   return runs;
 }
 
+// Schedule state, called out on the two identity columns (Job Id and Job Name)
+// so a scan down the frozen columns shows which projects need a date fixed and
+// which are simply still running:
+//
+//   RED   — no Start Date at all. The date columns can be scrolled off or hidden
+//           entirely (Sections ▾), so a missing start would otherwise be
+//           invisible on most people's view of this grid.
+//   GREEN — started and not finished: work in flight, which is the normal state
+//           for most rows here and is NOT a problem to fix.
+//
+// A missing start wins over a missing end, because it's the one that needs
+// action.
+//
+// Only RED is bolded. Green covers 36 of the 50 rows on the default view (and no
+// job in the database currently has both dates), so bolding it too made bold the
+// norm and cost it all its meaning — weight now marks the rows that need fixing,
+// and colour alone says "running". Both states also carry a title, because colour
+// carries no meaning at all for a colour-blind reader.
+//
+// Weight and colour are returned separately rather than as one class string:
+// combining `font-bold` with the Job Id column's own `font-semibold` would leave
+// two competing utilities whose winner depends on stylesheet order, not on intent.
+function scheduleTone(job: { startDate: Date | null; completeDate: Date | null }): {
+  weight: string;
+  color: string;
+  title?: string;
+} {
+  if (!job.startDate) {
+    return { weight: "font-bold", color: "text-sdc-red-text", title: "No Start Date set for this project" };
+  }
+  if (!job.completeDate) {
+    return { weight: "", color: "text-sdc-green-text", title: "In progress — started, with no Complete Date yet" };
+  }
+  return { weight: "", color: "" };
+}
+
 // <input type="date"> wants "" or "YYYY-MM-DD" — never "—" (formatDate's
 // display placeholder), which the browser would reject as an invalid date.
 function dateInputValue(d: Date | null): string {
@@ -609,6 +645,7 @@ export default async function QuotedPage({
               // work at a glance — this is driven by Customer, not the stored
               // billable flag, so it's correct even before the next save.
               const isSdc = isSdcCustomer(job.customer);
+              const tone = scheduleTone(job);
               const zebra = isSdc ? "bg-[#caedfb]" : i % 2 === 1 ? "bg-sdc-gray-50/60" : "";
               const zebraSticky = isSdc ? "bg-[#caedfb]" : i % 2 === 1 ? "bg-sdc-gray-50" : "bg-white";
               return (
@@ -627,7 +664,11 @@ export default async function QuotedPage({
                     title={`Open ${job.jobId} in Job Hour Details — right-click for more`}
                     className={`frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden truncate px-2 py-1.5 text-center font-mono text-[10px] ${zebraSticky}`}
                   >
-                    <Link href={`/job-hours?jobs=${encodeURIComponent(job.jobId)}`} className="font-semibold text-sdc-blue-dark hover:underline">
+                    <Link
+                      href={`/job-hours?jobs=${encodeURIComponent(job.jobId)}`}
+                      title={tone.title}
+                      className={`hover:underline ${tone.weight || "font-semibold"} ${tone.color || "text-sdc-blue-dark"}`}
+                    >
                       {job.jobId}
                     </Link>
                   </JobCellMenu>
@@ -651,7 +692,8 @@ export default async function QuotedPage({
                           defaultValue={job.jobName}
                           data-baseline={job.jobName}
                           aria-label={`Job Name, ${job.jobName}`}
-                          className="w-full min-w-0 flex-1 text-left"
+                          title={tone.title}
+                          className={`w-full min-w-0 flex-1 text-left ${tone.weight} ${tone.color}`}
                         />
                       </div>
                     </JobCellMenu>
