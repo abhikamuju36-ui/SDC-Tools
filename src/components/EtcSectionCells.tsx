@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { calcHoursLeft, suggestNewEtc, round2 } from "@/lib/etc";
 import { markEtcDirty } from "@/lib/etc-dirty-tracker";
+import { hours as formatHours } from "@/components/ui/format";
 
 const HOURS_WORKED_BG = "bg-[#C7DAF7]";
 const HOURS_LEFT_BG = "bg-[#F1F6FD]";
@@ -17,8 +18,15 @@ function diffBg(diff: number) {
   if (Math.abs(diff) < 0.005) return "bg-white";
   return diff < 0 ? "bg-[#EEADAC]" : "bg-[#9FCE62]";
 }
+// Whole hours with thousands separators, via the shared formatter — these cells
+// sit in the same rows as the ones rendered by etc/page.tsx, so the two must
+// format identically or one grid row would print "1,769" beside "1769".
+//
+// Display only. The hidden hoursWorked field submits String(worked) and the New
+// ETC input holds its own raw text, both deliberately unformatted: a comma here
+// would reach submitMonth's Number() parse as NaN.
 function wholeNum(n: number): string {
-  return Math.round(n).toString();
+  return formatHours(n);
 }
 
 // Live client-side counterpart to a section's 4 derived cells (Hours Worked,

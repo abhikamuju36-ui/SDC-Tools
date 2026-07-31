@@ -33,6 +33,7 @@ import { isEtcEditUnlocked, hadEtcEditWrongPassword, lockEtcEdit } from "@/lib/e
 import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/execution-etc";
 import { PageTitle } from "@/components/ui/Typography";
 import { StatusBadge } from "@/components/ui/StatusBadge";
+import { hours as formatHours } from "@/components/ui/format";
 import { MonthYearSelect } from "@/components/MonthYearSelect";
 import { JobCellMenu } from "@/components/JobCellMenu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
@@ -204,10 +205,18 @@ function diffBg(diff: number) {
   return diff < 0 ? "bg-[#EEADAC]" : "bg-[#9FCE62]";
 }
 
-// Hours/cost display on this page is whole numbers — no decimals, rounded
-// rather than truncated. Use this for any value added here later too.
+// Hours display on this page is whole numbers with thousands separators — no
+// decimals, rounded rather than truncated. Delegates to the shared formatter so
+// this grid can't drift from the KPI cards above it, the Projects grid or the
+// charts: a four-figure hour total was printing as "21993" here while the card
+// directly above it read "2,198", which is the same number type formatted two
+// ways on one screen. Use this for any value added here later too.
+//
+// Display-only, and it must stay that way — every form field on this page carries
+// its raw value (String(worked), the New ETC input's own text state), because a
+// comma would break the Number() parse in submitMonth.
 function wholeNum(n: number): string {
-  return Math.round(n).toString();
+  return formatHours(n);
 }
 
 // Header cells have no row value, so "New ETC"/"Diff" fall back to a neutral
