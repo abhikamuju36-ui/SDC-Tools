@@ -1,4 +1,4 @@
-const SYNC_INTERVAL_MS = 10 * 60 * 1000;
+const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 
 // Runs once when the Next.js server process starts. Guarded against
 // re-registering on hot reload / multiple invocations in dev.
