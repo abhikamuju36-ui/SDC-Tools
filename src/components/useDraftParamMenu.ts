@@ -44,11 +44,14 @@ export function useDraftParamsMenu<K extends string>({
   const [pending, startTransition] = useTransition();
   const [draft, setDraft] = useState<Record<K, string[]>>(() => ({ ...committed }));
 
+  // Comparison key only, never a URL. JSON-encoded rather than comma-joined so a
+  // value that itself contains a comma (customer names do) can't make two
+  // different selections compare equal and leave `dirty` false — a menu visit
+  // that then silently discarded the user's change.
   const norm = (v: Record<K, string[]>) =>
-    (Object.keys(v) as K[])
-      .sort()
-      .map((k) => `${k}=${[...v[k]].sort().join(",")}`)
-      .join("&");
+    JSON.stringify(
+      (Object.keys(v) as K[]).sort().map((k) => [k, [...v[k]].sort()]),
+    );
   const dirty = norm(committed) !== norm(draft);
 
   // Replace one param's values in the draft.

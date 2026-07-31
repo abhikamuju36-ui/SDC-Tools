@@ -7,6 +7,7 @@ import {
   writeShowActuals,
   subscribeShowActuals,
   isShowingAll,
+  encodeParamList,
   QUOTED_VIEW_PARAMS,
 } from "@/lib/quoted-display-prefs";
 
@@ -70,11 +71,13 @@ export function ProjectsShowAllSwitch({
       for (const p of QUOTED_VIEW_PARAMS) qs.delete(p);
       writeShowActuals(false);
     } else {
-      qs.set("customers", allCustomers.join(","));
-      qs.set("types", allTypes.join(","));
-      qs.set("statuses", allStatuses.join(","));
-      qs.set("billables", allBillables.join(","));
-      qs.set("cols", allSectionCodes.join(","));
+      // encodeParamList, not join(",") — customer names contain commas, and a
+      // raw join made "Show all" hide those jobs and leave the switch reading OFF.
+      qs.set("customers", encodeParamList(allCustomers));
+      qs.set("types", encodeParamList(allTypes));
+      qs.set("statuses", encodeParamList(allStatuses));
+      qs.set("billables", encodeParamList(allBillables));
+      qs.set("cols", encodeParamList(allSectionCodes));
       qs.delete("hide"); // nothing hidden
       writeShowActuals(true);
     }

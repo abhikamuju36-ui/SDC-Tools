@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_BTN_NEUTRAL, INPUT } from "@/components/ui/classnames";
 import { useDraftParamsMenu } from "@/components/useDraftParamMenu";
+import { encodeParamList } from "@/lib/quoted-display-prefs";
 import { MenuStatus, MenuApplyHint, MenuGroup, MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
 
 // "Filters ▾" — the Projects grid's four row filters (Customer, Type, Status,
@@ -29,7 +30,9 @@ export type FilterSpec = {
 
 export function ProjectsFilterMenu({ filters }: { filters: FilterSpec[] }) {
   // Remount on any change to the committed values, which resets the draft.
-  const key = filters.map((f) => `${f.key}:${f.selected.join("")}`).join("|");
+  // JSON, not join — concatenating values makes ["a","bc"] and ["ab","c"] the
+  // same key, so the draft would fail to reset on some real filter changes.
+  const key = JSON.stringify(filters.map((f) => [f.key, f.selected]));
   return <FilterMenuBody key={key} filters={filters} />;
 }
 
@@ -41,7 +44,10 @@ function FilterMenuBody({ filters }: { filters: FilterSpec[] }) {
     // chosen yet, use the page default" (Active + Billable), which is NOT the
     // same as the user having cleared it.
     buildParams: (d, qs) => {
-      for (const f of filters) qs.set(f.key, (d[f.key] ?? []).join(","));
+      // encodeParamList, not join(",") — see quoted-display-prefs: comma-bearing
+      // customer names ("FIRST SOLAR, INC.") split back into fragments that match
+      // no job, so ticking one used to empty the grid.
+      for (const f of filters) qs.set(f.key, encodeParamList(d[f.key] ?? []));
     },
   });
 

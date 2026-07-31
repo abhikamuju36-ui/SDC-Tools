@@ -1,6 +1,12 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { isShowingAll, QUOTED_VIEW_PARAMS, type ShowAllOptions } from "../src/lib/quoted-display-prefs";
+import {
+  isShowingAll,
+  encodeParamList,
+  decodeParamList,
+  QUOTED_VIEW_PARAMS,
+  type ShowAllOptions,
+} from "../src/lib/quoted-display-prefs";
 
 const ALL: ShowAllOptions = {
   customers: ["Acme", "First Solar"],
@@ -12,12 +18,59 @@ const ALL: ShowAllOptions = {
 
 const everything = () =>
   new URLSearchParams({
-    customers: ALL.customers.join(","),
-    types: ALL.types.join(","),
-    statuses: ALL.statuses.join(","),
-    billables: ALL.billables.join(","),
-    cols: ALL.cols.join(","),
+    customers: encodeParamList(ALL.customers),
+    types: encodeParamList(ALL.types),
+    statuses: encodeParamList(ALL.statuses),
+    billables: encodeParamList(ALL.billables),
+    cols: encodeParamList(ALL.cols),
   });
+
+// ── The comma-in-a-value bug (2026-07-31) ────────────────────────────────────
+// 16 of 88 real customer names contain a comma. With a raw join/split, clicking
+// "Show all" wrote a list the page shredded back into fragments matching no job:
+// those rows vanished, and isShowingAll couldn't find the intact name it had
+// just written, so the switch snapped back to OFF.
+const COMMA_NAMES = ["FIRST SOLAR, INC.", "Alcon Research, LTD", "Tarkett USA, Inc.", "Acme"];
+
+test("encode/decode round-trips values containing commas", () => {
+  assert.deepEqual(decodeParamList(encodeParamList(COMMA_NAMES)), COMMA_NAMES);
+});
+
+test("a raw split is what broke it — the escape keeps the count right", () => {
+  assert.equal(encodeParamList(COMMA_NAMES).split(",").length, 4);
+  assert.equal(COMMA_NAMES.join(",").split(",").length, 7); // the old behaviour
+});
+
+test("encode/decode survives a literal percent, including a fake escape", () => {
+  const tricky = ["50%", "odd%2Cname", "%25", "plain"];
+  assert.deepEqual(decodeParamList(encodeParamList(tricky)), tricky);
+});
+
+test("the encoded list survives a trip through a query string", () => {
+  const qs = new URLSearchParams({ customers: encodeParamList(COMMA_NAMES) });
+  const parsed = new URLSearchParams(qs.toString());
+  assert.deepEqual(decodeParamList(parsed.get("customers")), COMMA_NAMES);
+});
+
+test("isShowingAll sees comma-bearing customers it wrote itself", () => {
+  const all: ShowAllOptions = { ...ALL, customers: COMMA_NAMES };
+  const p = new URLSearchParams({
+    customers: encodeParamList(COMMA_NAMES),
+    types: encodeParamList(all.types),
+    statuses: encodeParamList(all.statuses),
+    billables: encodeParamList(all.billables),
+    cols: encodeParamList(all.cols),
+  });
+  assert.equal(isShowingAll(p, all, true), true);
+  // And the old encoding must NOT read as all — this is the regression itself.
+  p.set("customers", COMMA_NAMES.join(","));
+  assert.equal(isShowingAll(p, all, true), false);
+});
+
+test("decodeParamList: absent and empty both mean no values", () => {
+  assert.deepEqual(decodeParamList(null), []);
+  assert.deepEqual(decodeParamList(""), []);
+});
 
 test("isShowingAll: every param covered + actuals on", () => {
   assert.equal(isShowingAll(everything(), ALL, true), true);

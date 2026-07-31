@@ -2,6 +2,7 @@
 
 import { TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_BTN_NEUTRAL } from "@/components/ui/classnames";
 import { useDraftParamsMenu } from "@/components/useDraftParamMenu";
+import { encodeParamList } from "@/lib/quoted-display-prefs";
 import { MenuStatus, MenuApplyHint, MenuGroup, MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
 
 // "Sections ▾" — which columns the grid shows: the four phase pickers plus the
@@ -56,13 +57,13 @@ function SectionsMenuBody({
     buildParams: (d, qs) => {
       // `cols` is always set, even empty: absent means "first visit, use the
       // default section set", not "the user hid everything".
-      qs.set("cols", (d.cols ?? []).join(","));
+      qs.set("cols", encodeParamList(d.cols ?? []));
       // `hide` is deleted when empty so a default URL stays clean and shareable.
       const hide = d.hide ?? [];
       if (hide.length === 0) qs.delete("hide");
       // Ordered by the column list rather than click order, so the same visible
       // set always produces the same URL.
-      else qs.set("hide", infoColumns.filter((c) => hide.includes(c.key)).map((c) => c.key).join(","));
+      else qs.set("hide", encodeParamList(infoColumns.filter((c) => hide.includes(c.key)).map((c) => c.key)));
     },
   });
 
