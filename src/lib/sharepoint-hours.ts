@@ -1,5 +1,6 @@
 import { ConfidentialClientApplication, PublicClientApplication } from "@azure/msal-node";
 import { DataProtectionScope, PersistenceCreator, PersistenceCachePlugin } from "@azure/msal-node-extensions";
+import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import * as XLSX from "xlsx";
@@ -201,9 +202,51 @@ export function latestWorkDate(rows: JobHoursRow[]): Date | null {
   return max;
 }
 
-// Downloads and transforms the hours file into tracked per-row records. One
-// network fetch; callers filter/aggregate by month in memory.
-export async function fetchJobHoursRows(): Promise<JobHoursRow[]> {
+// ── Workbook source ──────────────────────────────────────────────────────────
+// The same export is also synced to local disk by OneDrive (the SharePoint
+// library added to Explorer). Reading that copy needs NO Graph token at all,
+// which is the whole point: the delegated DPAPI cache above cannot be decrypted
+// from a PM2/service process in Windows session 0, and that is what silently
+// froze hours 2026-07-24..29 and again on 07-30.
+//
+// Verified 2026-07-31: the synced copy reproduces the Graph download exactly
+// — Engineering 2368.85 / Shop 2526.38 for 2026-07, zero delta.
+//
+// The folder MUST be pinned "Always keep on this device". An unpinned
+// Files-On-Demand placeholder is only a stub that hydrates via the OneDrive
+// client running in an interactive session, so a service would fail to read it
+// for exactly the same session-bound reason as the token cache.
+const LOCAL_PATH = process.env.JOB_HOURS_LOCAL_PATH;
+
+// A synced file whose sync has stopped ages silently — the same failure mode
+// this path exists to cure. Past this age the copy is still USED (stale data
+// beats no data, and Graph may be unavailable) but the staleness is reported.
+const LOCAL_STALE_AFTER_MS = 24 * 60 * 60 * 1000;
+
+async function readLocalWorkbook(): Promise<Buffer | null> {
+  if (!LOCAL_PATH) return null;
+  try {
+    const stat = await fs.stat(LOCAL_PATH);
+    const ageHours = (Date.now() - stat.mtimeMs) / 3_600_000;
+    if (ageHours > LOCAL_STALE_AFTER_MS / 3_600_000) {
+      console.warn(
+        `[sharepoint-hours] the local copy at ${LOCAL_PATH} is ${Math.round(ageHours)}h old — ` +
+          "OneDrive may have stopped syncing (is the user still signed in?). Using it anyway."
+      );
+    }
+    return await fs.readFile(LOCAL_PATH);
+  } catch (err) {
+    // Never fatal: fall through to Graph. A missing/unreadable local copy must
+    // not take the sync down when the network path still works.
+    console.warn(
+      `[sharepoint-hours] could not read the local copy at ${LOCAL_PATH} ` +
+        `(${err instanceof Error ? err.message : String(err)}); falling back to Microsoft Graph.`
+    );
+    return null;
+  }
+}
+
+async function downloadWorkbookViaGraph(): Promise<Buffer> {
   const token = await getGraphToken();
   const H = { Authorization: `Bearer ${token}` };
 
@@ -213,7 +256,15 @@ export async function fetchJobHoursRows(): Promise<JobHoursRow[]> {
 
   const dl = await fetch(`https://graph.microsoft.com/v1.0/sites/${siteId}/drive/root:/${encodeURI(FILE_PATH)}:/content`, { headers: H });
   if (!dl.ok) throw new Error(`Graph file download failed (HTTP ${dl.status}): ${(await dl.text()).slice(0, 200)}`);
-  const wb = XLSX.read(Buffer.from(await dl.arrayBuffer()), { type: "buffer" });
+  return Buffer.from(await dl.arrayBuffer());
+}
+
+// Reads and transforms the hours file into tracked per-row records. Prefers the
+// locally synced copy when configured (no auth, works in session 0), otherwise
+// downloads via Graph. Callers filter/aggregate by month in memory.
+export async function fetchJobHoursRows(): Promise<JobHoursRow[]> {
+  const buffer = (await readLocalWorkbook()) ?? (await downloadWorkbookViaGraph());
+  const wb = XLSX.read(buffer, { type: "buffer" });
   const raw = XLSX.utils.sheet_to_json<Record<string, unknown>>(wb.Sheets[wb.SheetNames[0]], { defval: null });
 
   const out: JobHoursRow[] = [];
