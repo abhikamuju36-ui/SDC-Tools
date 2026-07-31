@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useTransition } from "react";
+import { useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { usd, hours as fmtHours } from "@/components/ui/format";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 import { ETC_SECTIONS } from "@/lib/sections";
@@ -8,6 +8,7 @@ import type { EtcMonthKpis } from "@/lib/etc-month-kpis";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
 import type { UnattributedDetail } from "@/lib/unattributed-hours";
 import { loadUnattributedDetail } from "@/lib/unattributed-actions";
+import { readKpiStripOpen, writeKpiStripOpen, subscribeKpiStrip } from "@/lib/kpi-strip-pref";
 
 // Section code -> billing group, so the drill can be narrowed to the card that
 // opened it. Same mapping the grid's column bands and the KPI totals use, from
@@ -47,6 +48,11 @@ export function EtcMonthKpiCards({
   importIssues: { label: string; rows: number; hours: number }[];
 }) {
   const [drill, setDrill] = useState<DrillScope | null>(null); // null = closed
+  // Whether the summary strip is showing. Read through useSyncExternalStore for the
+  // same reason as the other client prefs: reading localStorage during render
+  // hydrates differently from the server.
+  const stripOpen = useSyncExternalStore(subscribeKpiStrip, readKpiStripOpen, () => true);
+  const setStripOpen = writeKpiStripOpen;
   // The unattributed drill is fetched on click, not with the page: it re-parses
   // the hours export, which nobody should pay for unless they open it.
   const [unattributed, setUnattributed] = useState<UnattributedDetail | null>(null);
@@ -126,7 +132,21 @@ export function EtcMonthKpiCards({
 
   return (
     <div className="mb-4">
-      <div className="grid grid-cols-2 gap-3 lg:grid-cols-3 xl:grid-cols-6">
+      {/* Collapsible, and remembered. Six boxes three lines tall pushed the grid —
+          the thing people came for — below the fold on a laptop. Compact by
+          default now, and hideable outright for anyone who never wants them. */}
+      <div className="mb-1.5 flex items-center justify-end">
+        <button
+          type="button"
+          onClick={() => setStripOpen(!stripOpen)}
+          aria-expanded={stripOpen}
+          className="text-[10px] font-medium text-sdc-gray-500 underline decoration-dotted underline-offset-2 hover:text-sdc-navy"
+        >
+          {stripOpen ? "Hide summary" : "Show summary"}
+        </button>
+      </div>
+      {stripOpen && (
+      <div className="grid grid-cols-2 gap-2 lg:grid-cols-3 xl:grid-cols-6">
         <GroupCard
           label="Engineering hours"
           worked={kpis.engineering.worked}
@@ -193,6 +213,7 @@ export function EtcMonthKpiCards({
           onDrill={unattributedTotal > 0 ? toggleUnattributed : undefined}
         />
       </div>
+      )}
 
       {drill === "Unattributed" ? (
         loadingUnattributed || (!unattributed && !unattributedError) ? (
@@ -261,12 +282,16 @@ function Card({
 }) {
   return (
     <div
-      className={`rounded-xl border p-3 shadow-sm ${
+      // px-2.5 py-1.5 rather than p-3, and the hint moved into the title: three
+      // stacked lines per card was most of the height, and the third line was the
+      // least-read of them.
+      className={`rounded-lg border px-2.5 py-1.5 shadow-sm ${
         tone === "warn" ? "border-sdc-yellow bg-sdc-yellow-bg/50" : "border-sdc-border bg-white"
       }`}
+      title={hint}
     >
       <div className="flex items-baseline justify-between gap-2">
-        <p className="text-[11px] font-semibold uppercase tracking-wide text-sdc-gray-500">{label}</p>
+        <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-sdc-gray-500">{label}</p>
         {onDrill && (
           <button
             type="button"
@@ -281,9 +306,12 @@ function Card({
           </button>
         )}
       </div>
-      <p className="font-heading text-xl font-bold tabular-nums text-sdc-navy">{value}</p>
-      {children}
-      {hint && <p className="mt-0.5 text-[10px] leading-tight text-sdc-gray-400">{hint}</p>}
+      <div className="flex items-baseline justify-between gap-2">
+        <p className="font-heading text-[17px] leading-tight font-bold tabular-nums text-sdc-navy">{value}</p>
+        {/* Variance sits BESIDE the number rather than under it — same information,
+            one line instead of two. */}
+        {children}
+      </div>
     </div>
   );
 }
@@ -345,8 +373,11 @@ function Variance({
 }) {
   if (decidedCells === 0) {
     return (
-      <p className="text-[11px] font-semibold text-sdc-gray-400" title="No New ETC confirmed for this month yet">
-        No New ETC set yet
+      <p
+        className="shrink-0 text-[11px] font-semibold whitespace-nowrap text-sdc-gray-400"
+        title="No New ETC confirmed for this month yet, so there is nothing to compare against Hours Left"
+      >
+        None set yet
       </p>
     );
   }
@@ -360,7 +391,9 @@ function Variance({
   }
   return (
     <p
-      className={`text-[11px] font-semibold tabular-nums ${rounded > 0 ? "text-sdc-green-text" : "text-sdc-red-text"}`}
+      className={`shrink-0 text-[11px] font-semibold whitespace-nowrap tabular-nums ${
+        rounded > 0 ? "text-sdc-green-text" : "text-sdc-red-text"
+      }`}
       title={title}
     >
       {rounded > 0 ? "▲" : "▼"} {format(Math.abs(value))} {rounded > 0 ? "under" : "over"}

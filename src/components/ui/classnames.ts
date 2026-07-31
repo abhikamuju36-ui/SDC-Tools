@@ -59,13 +59,15 @@ export const TABLE_HEADER_ROW =
 // not estimated, because the fallback font is ~20% narrower and measuring in it
 // is how this column got sized too small the first time. Add the cells' px-1
 // either side and the column must be at least 60.2px for that word to fit on one
-// line; 61 gives it a pixel of slack.
+// line. 64, not 61: a single pixel of slack is not slack — sub-pixel rounding and
+// Windows font hinting move text by more than that, and being one pixel short
+// means a clipped word rather than a tidy one.
 //
 // It was 46px, which left 38px of content and made "HOURS WORKED MONTH" render
 // as "HOUR S WOR KED MONT H" — the header was being broken mid-word to fit. If
 // these labels ever change, re-measure the longest WORD (not the phrase) and
 // resize; never solve it by letting words break.
-export const ETC_COL_W = "w-[61px] min-w-[61px]";
+export const ETC_COL_W = "w-[64px] min-w-[64px]";
 
 export const TABLE_ROW_HOVER = "transition-colors hover:bg-sdc-blue-light/40";
 

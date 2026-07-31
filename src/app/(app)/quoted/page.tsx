@@ -76,7 +76,14 @@ const ZOOM_CONTROLS = "[&_td]:py-[var(--quoted-row-py,6px)] [&_.qc]:px-[var(--qu
 // Deliberately rem, not px: table text is 0.68rem and scales with the sidebar
 // "Text size" control, so a px width would start breaking words again the
 // moment anyone raised it — the same rem-vs-px trap the frozen columns hit.
-const DATA_COL = "calc(4.7rem + 2 * var(--quoted-col-px, 4px))";
+// max(4.7rem, 72px), not a bare 4.7rem: the column scales with the sidebar's Text
+// size control (root 12–20px) while the header LABEL is a fixed 10px, so the two
+// shrink at different rates. At Text size 12 the column offered 56.4px of content
+// while "SOFTWARE" needs 63.7px (measured in Montserrat in the running app) — the
+// word no longer breaks, so it would simply be clipped. The px floor is that
+// longest word plus room to breathe; above ~14px root the rem value wins and
+// nothing changes.
+const DATA_COL = "calc(max(4.7rem, 72px) + 2 * var(--quoted-col-px, 4px))";
 const DATA_COL_STYLE = { width: DATA_COL, minWidth: DATA_COL, maxWidth: DATA_COL } as const;
 
 // The two money columns (Cost Quoted / Cost Actual). Right-aligned, unlike the
