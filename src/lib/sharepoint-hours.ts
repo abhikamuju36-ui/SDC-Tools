@@ -4,7 +4,7 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import * as XLSX from "xlsx";
-import { ETC_TRACKED_CODES } from "@/lib/sections";
+import { ETC_TRACKED_CODES, HOURS_IMPORT_CODES } from "@/lib/sections";
 
 // Reads the Paylocity "Current_Job_Hours.xlsx" hours export directly from the
 // SDC-PowerBIIntegration SharePoint site (Microsoft Graph, read-only), so the
@@ -292,6 +292,47 @@ export type UnattributedRow = {
 // Reads and transforms the hours file into tracked per-row records, alongside
 // the rows it had to reject. Prefers the locally synced copy when configured
 // (no auth, works in session 0), otherwise downloads via Graph.
+// Punch codes that the ETC grid has no column for, mapped onto the column they
+// belong to. Derived from Power BI's OWN bucketing, probed measure by measure
+// against every code in the July export (2026-07-31) rather than assumed:
+//
+//   [Engineering Hours]   counts functions 211, 311, 312, 313, 515-518
+//   [Shop Hours]          counts functions 411, 412
+//   [Manufacturing Hours] counts function  414
+//   [PM Hours]            counts function  111
+//
+// Power BI buckets by FUNCTION regardless of phase; this app has a fixed column
+// per MachineSec-Function pair. So an engineering punch in the Testing phase
+// (40-311) matched no column and silently vanished — 795h in July alone, on top
+// of 834h of manufacturing time booked to 10-414 while the app's Mfg column is
+// coded 10-413, a code that appears nowhere in the punch data at all.
+//
+// Verified against the report job by job: for 1101 in July, Power BI shows
+// Engineering 91 = the app's 73.62 + 40-311 (12.50) + 70-311 (5.00, warranty),
+// and Manufacturing 18 = 10-414 (17.90).
+//
+// Warranty (70-*) is deliberately NOT aliased. Power BI folds it into
+// Engineering/Shop, but the ETC grid's totals are a fixed formula over 9
+// engineering and 4 shop codes that excludes the Warranty phase entirely —
+// confirmed with the team 2026-07-31. Aliasing it in would silently change a
+// total whose definition they had just signed off.
+const SECTION_ALIASES: Record<string, string> = {
+  // Manufacturing: the punch data uses 414, the app's column is 413.
+  "10-414": "10-413",
+  // Engineering functions inside a phase whose engineering column is the -211
+  // one. (10-311 is NOT here: it keeps its documented 30/70 split into
+  // 10-312/10-313, which exist as their own columns.)
+  "40-311": "40-211",
+  "40-312": "40-211",
+  "40-313": "40-211",
+  "50-311": "50-211",
+  "50-312": "50-211",
+  "50-313": "50-211",
+  // Shop functions likewise, onto the phase's -411 column.
+  "40-412": "40-411",
+  "50-412": "50-411",
+};
+
 export async function fetchJobHoursRowsWithIssues(): Promise<{
   rows: JobHoursRow[];
   issues: HoursImportIssue[];
@@ -304,8 +345,18 @@ export async function fetchJobHoursRowsWithIssues(): Promise<{
   const out: JobHoursRow[] = [];
   const unattributed = new Map<string, HoursImportIssue>(); // `${month}::${label}`
   const unattributedRows: UnattributedRow[] = [];
+  // Hours on a real job that still reach no column after aliasing — warranty (out
+  // by the confirmed ENG/SHOP formula), phases the app doesn't model (80/90), and
+  // odd MachineSec values (1/5/12). Counted rather than silently dropped: ~990h in
+  // July, which is the kind of number that should be stated out loud even when
+  // excluding it is the correct behaviour. Function 417 is left out of this count
+  // — Power BI drops it too, so it is not a gap between the two systems.
+  const droppedByCode = new Map<string, number>();
   const push = (jobId: string, section: string, date: Date, hours: number, employeeId: string) => {
-    if (!ETC_TRACKED_CODES.has(section)) return;
+    if (!HOURS_IMPORT_CODES.has(section)) {
+      droppedByCode.set(section, (droppedByCode.get(section) ?? 0) + hours);
+      return;
+    }
     out.push({ jobId, section, year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, date, hours, employeeId });
   };
   for (const r of raw) {
@@ -318,7 +369,8 @@ export async function fetchJobHoursRowsWithIssues(): Promise<{
     const rawJob = r["Jobs"];
     if (rawJob == null || String(rawJob).trim() === "") continue;
     const hours = Number(r["Total Hours Worked"]) || 0;
-    const section = `${machineSec}-${fn}`;
+    const rawSection = `${machineSec}-${fn}`;
+    const section = SECTION_ALIASES[rawSection] ?? rawSection;
 
     // Must be a real job number. Anything else is counted and skipped — never
     // coerced into a fake id.
@@ -354,6 +406,19 @@ export async function fetchJobHoursRowsWithIssues(): Promise<{
     } else {
       push(jobId, section, date, hours, employeeId);
     }
+  }
+
+  if (droppedByCode.size > 0) {
+    const total = [...droppedByCode.values()].reduce((a, b) => a + b, 0);
+    const top = [...droppedByCode.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 8)
+      .map(([c, h]) => `${c} ${h.toFixed(2)}h`)
+      .join(", ");
+    console.warn(
+      `[sharepoint-hours] ${total.toFixed(2)}h on ${droppedByCode.size} code(s) with no ETC column — NOT counted in any figure ` +
+        `(largest: ${top}). Warranty (70-*) is excluded by design; the rest are phases/sections the app does not model.`,
+    );
   }
 
   const issues = [...unattributed.values()].sort((a, b) => b.hours - a.hours);

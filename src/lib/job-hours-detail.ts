@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { SECTIONS } from "@/lib/sections";
+import { SECTIONS, ETC_TRACKED_CODES } from "@/lib/sections";
 
 // "Hours Detail" — the punch-level rows behind a job's Actual hours, recreating
 // the Power BI report's drillthrough page: one line per employee per day per
@@ -109,7 +109,13 @@ export async function getEtcMonthHoursDetail(month: string, jobPks: number[]): P
 
   const [detail, employees] = await Promise.all([
     prisma.jobHoursDetail.findMany({
-      where: { month, jobId: { in: jobPks } },
+      // Scoped to the codes the ETC grid actually shows. The importer now also
+      // keeps Manufacturing punches (see HOURS_IMPORT_CODES), which belong in a
+      // job's real hours but NOT here: this drill sits under the Monthly ETC
+      // cards, and a footer total that included a column the grid doesn't have
+      // would make the card and its own detail disagree — the exact failure
+      // DEVLOG §12 was written about.
+      where: { month, jobId: { in: jobPks }, section: { in: [...ETC_TRACKED_CODES] } },
       select: {
         section: true,
         workDate: true,

@@ -57,6 +57,19 @@ export const ETC_SECTIONS: { code: string; name: string; phase: string; billingG
 
 export const ETC_TRACKED_CODES = new Set(ETC_SECTIONS.map((s) => s.code));
 
+// Codes whose PUNCHES the app imports — a wider set than the ETC grid displays.
+//
+// The two were the same set until 2026-07-31, which meant manufacturing time
+// (function 414, ~834h in July) was not merely absent from the ETC grid, where it
+// belongs by design, but discarded at the door: it reached no job's actual hours,
+// no punch drill, nothing. A section being off the ETC sheet is a statement about
+// that sheet, not about whether the hours happened.
+//
+// Kept OUT of ETC_TRACKED_CODES on purpose, so the Monthly ETC grid, its totals
+// and its KPI cards are untouched — those are the fixed 9-code / 4-code formulas
+// the team confirmed.
+export const HOURS_IMPORT_CODES = new Set([...ETC_TRACKED_CODES, "10-413"]);
+
 // "Parts Cost" is a real block in the real sheet — same 5-column shape
 // (Prior ETC / Money Spent Month / Money Left / New ETC / Diff) as every
 // department, just in dollars instead of hours, and with no Engineering/Shop
