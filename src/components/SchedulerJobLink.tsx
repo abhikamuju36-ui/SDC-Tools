@@ -15,18 +15,22 @@ export function SchedulerJobLink({
   baseUrl,
   available,
   className,
+  ssoEmail,
 }: {
   jobId: string;
   jobName?: string;
   baseUrl: string;
   available: boolean;
   className?: string;
+  // Passed through to the link so arriving at the Scheduler doesn't hit a login
+  // modal — see scheduler-sso.ts. Omitted: the link behaves exactly as before.
+  ssoEmail?: string | null;
 }) {
   if (!available) return null;
   const label = `Open ${jobName ?? jobId} project schedule in the Scheduler`;
   return (
     <a
-      href={schedulerScheduleUrl(baseUrl, jobId)}
+      href={schedulerScheduleUrl(baseUrl, jobId, ssoEmail)}
       target="_blank"
       rel="noopener noreferrer"
       title={label}

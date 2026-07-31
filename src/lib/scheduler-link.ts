@@ -1,5 +1,7 @@
 import "server-only";
 import { fetchSchedulerProjectJobNumbers } from "./scheduler-db";
+import { withSchedulerSso } from "./scheduler-sso";
+import { auth } from "./auth";
 
 // Browser-reachable base URL of the SDC Scheduler app. The link is clicked in
 // the user's browser, so it must use the LAN hostname (users reach ETC at
@@ -14,15 +16,27 @@ export function getSchedulerBaseUrl(): string {
 // The Scheduler SPA reads ?job=<etcJobId>&view=schedule on boot, resolves the
 // project whose projects.job_number matches, opens it, and switches to the
 // schedule view (see SDC_Scheduler public/app.js init()).
-export function schedulerScheduleUrl(baseUrl: string, jobId: string): string {
-  return `${baseUrl}/?job=${encodeURIComponent(jobId)}&view=schedule`;
+// `ssoEmail` — when given, the link carries a 60-second signed assertion of who
+// is signed in to ETC, so the Scheduler starts its own session instead of
+// stopping at a login modal. A fresh token per link, deliberately: the assertion
+// carries a single-use nonce, so one shared token would let the FIRST icon
+// clicked work and the next one fall back to the modal. Minting is an HMAC over
+// ~60 bytes — cheap enough to do per row.
+export function schedulerScheduleUrl(baseUrl: string, jobId: string, ssoEmail?: string | null): string {
+  return withSchedulerSso(`${baseUrl}/?job=${encodeURIComponent(jobId)}&view=schedule`, ssoEmail);
 }
 
 // One lookup per page render: the base URL plus the set of ETC job numbers that
 // actually have a Scheduler project, so grids show the "open in Scheduler" icon
 // only where it leads somewhere. Fail-soft — an unconfigured/unreachable
 // Scheduler DB yields an empty set (no icons), never an error.
-export async function getSchedulerLinkContext(): Promise<{ baseUrl: string; jobNumbers: Set<string> }> {
-  const jobNumbers = await fetchSchedulerProjectJobNumbers();
-  return { baseUrl: getSchedulerBaseUrl(), jobNumbers };
+export async function getSchedulerLinkContext(): Promise<{
+  baseUrl: string;
+  jobNumbers: Set<string>;
+  // Who to assert to the Scheduler on every link this page renders. Read here so
+  // the four call sites don't each have to remember to fetch the session.
+  ssoEmail: string | null;
+}> {
+  const [jobNumbers, session] = await Promise.all([fetchSchedulerProjectJobNumbers(), auth()]);
+  return { baseUrl: getSchedulerBaseUrl(), jobNumbers, ssoEmail: session?.user?.email ?? null };
 }

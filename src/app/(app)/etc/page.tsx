@@ -526,7 +526,7 @@ export default async function MonthlyEtcPage({
 
   // "Open in Scheduler" icon target + which of these jobs actually have a
   // Scheduler project (fail-soft empty set when its DB isn't configured).
-  const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers } = await getSchedulerLinkContext();
+  const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers, ssoEmail: schedulerSsoEmail } = await getSchedulerLinkContext();
 
   // Standard Sheet columns, shown inline only once the password gate is
   // unlocked (same cookie the /standard-sheet tab uses). Numbers mirror that
@@ -1124,7 +1124,7 @@ export default async function MonthlyEtcPage({
                       <JobCellMenu
                         jobId={job.jobId}
                         jobName={job.jobName}
-                        schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId) : null}
+                        schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null}
                         title={`${job.jobId} — right-click for options`}
                         className={`sticky left-10 z-10 w-20 min-w-20 overflow-hidden px-3 py-1 text-left align-middle font-mono text-[10px] leading-none whitespace-nowrap text-sdc-gray-400 ${showJobName ? "" : "border-r-8 border-[#808080]"} ${zebraSticky}`}
                       >
@@ -1134,7 +1134,7 @@ export default async function MonthlyEtcPage({
                         <JobCellMenu
                           jobId={job.jobId}
                           jobName={job.jobName}
-                          schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId) : null}
+                          schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null}
                           style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
                           className={`sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] px-3 py-1 text-left align-middle text-[10px] font-medium leading-none whitespace-nowrap text-sdc-navy ${zebraSticky}`}
                         >

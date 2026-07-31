@@ -1,6 +1,7 @@
 import { auth, signOut } from "@/lib/auth";
 import AppShell from "@/components/AppShell";
 import { getSchedulerBaseUrl } from "@/lib/scheduler-link";
+import { withSchedulerSso } from "@/lib/scheduler-sso";
 
 export default async function AppGroupLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
@@ -20,7 +21,11 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
       userEmail={session?.user?.email}
       role={role}
       signOutAction={handleSignOut}
-      schedulerProjectsUrl={`${getSchedulerBaseUrl()}/?view=projects`}
+      // Carries a 60-second signed assertion of who is signed in here, so the
+      // Scheduler can start its own session instead of showing a login modal to
+      // someone the app already authenticated. No secret configured, or no
+      // session: the link is unchanged and the Scheduler asks as it does today.
+      schedulerProjectsUrl={withSchedulerSso(`${getSchedulerBaseUrl()}/?view=projects`, session?.user?.email)}
     >
       {children}
     </AppShell>

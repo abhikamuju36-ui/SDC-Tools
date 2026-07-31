@@ -332,7 +332,7 @@ export default async function QuotedPage({
   // Which of these jobs have a schedule in the SDC Scheduler (+ its base URL),
   // so each row can show an "open in Scheduler" icon only where it leads
   // somewhere. Fail-soft: empty set when the Scheduler DB isn't configured.
-  const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers } = await getSchedulerLinkContext();
+  const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers, ssoEmail: schedulerSsoEmail } = await getSchedulerLinkContext();
 
   const visibleSectionsByPhase = new Map(
     PHASE_GROUPS.map((g) => [g.phase, SECTIONS.filter((s) => s.phase === g.phase && visibleSet.has(s.code))])
@@ -673,7 +673,7 @@ export default async function QuotedPage({
                   <JobCellMenu
                     jobId={job.jobId}
                     jobName={job.jobName}
-                    schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId) : null}
+                    schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null}
                     title={`Open ${job.jobId} in Job Hour Details — right-click for more`}
                     className={`frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden truncate px-2 py-1.5 text-center font-mono text-[10px] ${zebraSticky}`}
                   >
@@ -693,7 +693,7 @@ export default async function QuotedPage({
                       jobId={job.jobId}
                       jobName={job.jobName}
                       schedulerUrl={
-                        schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId) : null
+                        schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null
                       }
                       style={{ width: "var(--job-col-width, 280px)", minWidth: "var(--job-col-width, 280px)" }}
                       className={`frozen-col frozen-col-last sticky left-[7rem] z-10 overflow-hidden border-l border-r border-sdc-border px-2 py-1.5 text-left align-middle text-[10px] font-medium whitespace-nowrap text-sdc-navy ${zebraSticky}`}

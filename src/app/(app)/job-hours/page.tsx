@@ -53,7 +53,7 @@ export default async function JobHoursPage({
 
   // "Open in Scheduler" icon target + which jobs have a Scheduler project
   // (fail-soft empty set when its DB isn't configured).
-  const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers } = await getSchedulerLinkContext();
+  const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers, ssoEmail: schedulerSsoEmail } = await getSchedulerLinkContext();
 
   // Parts lines — live from TotalETO — aggregated across every selected job.
   // Feeds the Procurement Parts List (joined to the BOM by part number).
@@ -148,6 +148,7 @@ export default async function JobHoursPage({
                     jobName={data.job.jobName}
                     baseUrl={schedulerBaseUrl}
                     available={schedulerJobNumbers.has(data.job.jobId)}
+                    ssoEmail={schedulerSsoEmail}
                     className="shrink-0 text-sdc-gray-400 hover:text-sdc-blue"
                   />
                 </p>
