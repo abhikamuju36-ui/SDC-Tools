@@ -11,6 +11,50 @@ export function suggestNewEtc(priorEtc: number, hoursWorked: number): number {
   return Math.max(calcHoursLeft(priorEtc, hoursWorked), 0);
 }
 
+// Has a manager actually decided this cell's New ETC? Submitted (needsReview
+// false) or typed-and-saved (a draft) both count; anything else is still the
+// machine's suggestion standing in for an answer nobody has given.
+export function isNewEtcDecided(entry: { needsReview: boolean; newEtcDraft: unknown }): boolean {
+  return !entry.needsReview || entry.newEtcDraft != null;
+}
+
+// What a row's New ETC currently amounts to: the submitted value, else the saved
+// draft, else the suggestion. Shared so the grid, its totals and the KPI cards
+// cannot each answer this differently.
+export function effectiveNewEtc(entry: {
+  needsReview: boolean;
+  newEtc: unknown;
+  newEtcDraft: unknown;
+  priorEtc: unknown;
+  hoursWorked: unknown;
+}): number {
+  if (!entry.needsReview) return Number(entry.newEtc);
+  if (entry.newEtcDraft != null) return Number(entry.newEtcDraft);
+  return suggestNewEtc(Number(entry.priorEtc), Number(entry.hoursWorked));
+}
+
+// Diff — "how far is the manager's New ETC from the hours actually remaining?" —
+// and NULL when there is no decision to compare.
+//
+// It used to compare the SUGGESTION for undecided cells, which quietly turned
+// every overspent-but-untouched cell into an overage: suggestNewEtc clamps at 0
+// (a plan cannot be negative) while Hours Left stays negative, so the clamped gap
+// surfaced as "over" on a cell nobody had opened. Measured on 2026-07-31, that was
+// −1,065 of Engineering's −1,071 and −325 of Shop's −310: essentially the whole
+// figure, invented, with exactly ONE of 241 Engineering cells actually decided.
+//
+// A number nobody entered must not be reported as their overrun.
+export function newEtcDiff(entry: {
+  needsReview: boolean;
+  newEtc: unknown;
+  newEtcDraft: unknown;
+  priorEtc: unknown;
+  hoursWorked: unknown;
+}): number | null {
+  if (!isNewEtcDecided(entry)) return null;
+  return calcHoursLeft(Number(entry.priorEtc), Number(entry.hoursWorked)) - effectiveNewEtc(entry);
+}
+
 export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }

@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { ETC_SECTIONS, PARTS_COST_SECTION } from "@/lib/sections";
-import { suggestNewEtc, calcHoursLeft, round2 } from "@/lib/etc";
+import { calcHoursLeft, round2, effectiveNewEtc, newEtcDiff } from "@/lib/etc";
 
 // KPI cards for the top of the Monthly ETC page: hours worked and variance for
 // Engineering and Shop, parts money spent, and how many people booked time in
@@ -25,14 +25,18 @@ export type GroupKpi = {
   worked: number;
   hoursLeft: number;
   newEtc: number;
-  diff: number; // hoursLeft − newEtc, the grid's Diff column
+  // Sum of the per-cell variances for cells a manager has DECIDED — see
+  // newEtcDiff. Undecided cells contribute nothing rather than their suggestion.
+  diff: number;
+  // How many cells that sum came from. 0 means the variance is not a verdict yet.
+  decidedCells: number;
   people: number; // distinct employees who booked time in this group this month
 };
 
 export type EtcMonthKpis = {
   engineering: GroupKpi;
   shop: GroupKpi;
-  parts: { prior: number; spent: number; moneyLeft: number; newEtc: number; diff: number };
+  parts: { prior: number; spent: number; moneyLeft: number; newEtc: number; diff: number; decidedCells: number };
   // Distinct people across both groups — NOT engineering.people + shop.people,
   // since anyone who booked to both would otherwise be counted twice.
   peopleTotal: number;
@@ -52,14 +56,6 @@ type EntryLike = {
   needsReview: boolean;
 };
 
-// Same rule as the grid's local effectiveNewEtc and execution-etc's: the
-// confirmed value once submitted, else the manager's autosaved draft, else the
-// system suggestion.
-function effectiveNewEtc(e: EntryLike): number {
-  if (!e.needsReview) return Number(e.newEtc);
-  if (e.newEtcDraft != null) return Number(e.newEtcDraft);
-  return suggestNewEtc(Number(e.priorEtc), Number(e.hoursWorked));
-}
 
 export async function getEtcMonthKpis(
   month: string,
@@ -67,9 +63,14 @@ export async function getEtcMonthKpis(
   // the cards move with the grid rather than describing a different set.
   jobs: { id: number; etcEntries: EntryLike[] }[],
 ): Promise<EtcMonthKpis> {
-  const eng = { prior: 0, worked: 0, newEtc: 0 };
-  const shop = { prior: 0, worked: 0, newEtc: 0 };
-  const parts = { prior: 0, spent: 0, newEtc: 0 };
+  // `diff` and `decided` accumulate ONLY cells a manager has actually decided —
+  // see newEtcDiff. Summing per cell rather than deriving the variance from the
+  // group totals is the whole point: the group figures include suggestions for
+  // undecided cells, and comparing those against Hours Left reported an overrun
+  // nobody had entered.
+  const eng = { prior: 0, worked: 0, newEtc: 0, diff: 0, decided: 0 };
+  const shop = { prior: 0, worked: 0, newEtc: 0, diff: 0, decided: 0 };
+  const parts = { prior: 0, spent: 0, newEtc: 0, diff: 0, decided: 0 };
 
   for (const job of jobs) {
     for (const entry of job.etcEntries) {
@@ -77,6 +78,8 @@ export async function getEtcMonthKpis(
         parts.prior += Number(entry.priorEtc);
         parts.spent += Number(entry.hoursWorked);
         parts.newEtc += effectiveNewEtc(entry);
+        const pd = newEtcDiff(entry);
+        if (pd !== null) { parts.diff += pd; parts.decided++; }
         continue;
       }
       const group = SECTION_GROUP.get(entry.section);
@@ -85,6 +88,8 @@ export async function getEtcMonthKpis(
       bucket.prior += Number(entry.priorEtc);
       bucket.worked += Number(entry.hoursWorked);
       bucket.newEtc += effectiveNewEtc(entry);
+      const d = newEtcDiff(entry);
+      if (d !== null) { bucket.diff += d; bucket.decided++; }
     }
   }
 
@@ -109,14 +114,20 @@ export async function getEtcMonthKpis(
     else if (group === "Shop") shopPeople.add(p.employeeId);
   }
 
-  const finish = (b: { prior: number; worked: number; newEtc: number }, people: number): GroupKpi => {
+  const finish = (
+    b: { prior: number; worked: number; newEtc: number; diff: number; decided: number },
+    people: number,
+  ): GroupKpi => {
     const hoursLeft = calcHoursLeft(b.prior, b.worked);
     return {
       prior: round2(b.prior),
       worked: round2(b.worked),
       hoursLeft: round2(hoursLeft),
       newEtc: round2(b.newEtc),
-      diff: round2(hoursLeft - b.newEtc),
+      diff: round2(b.diff),
+      // Null when this group has no decided cell at all — the card then says so
+      // instead of printing "on plan", which would read as a verdict.
+      decidedCells: b.decided,
       people,
     };
   };
@@ -130,7 +141,8 @@ export async function getEtcMonthKpis(
       spent: round2(parts.spent),
       moneyLeft: round2(partsLeft),
       newEtc: round2(parts.newEtc),
-      diff: round2(partsLeft - parts.newEtc),
+      diff: round2(parts.diff),
+      decidedCells: parts.decided,
     },
     peopleTotal: allPeople.size,
     hasPunchData: punches.length > 0,

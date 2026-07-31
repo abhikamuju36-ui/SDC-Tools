@@ -131,6 +131,7 @@ export function EtcMonthKpiCards({
           label="Engineering hours"
           worked={kpis.engineering.worked}
           diff={kpis.engineering.diff}
+          decidedCells={kpis.engineering.decidedCells}
           people={kpis.engineering.people}
           hasPunchData={kpis.hasPunchData}
           drillOpen={drill === "Engineering"}
@@ -140,6 +141,7 @@ export function EtcMonthKpiCards({
           label="Shop hours"
           worked={kpis.shop.worked}
           diff={kpis.shop.diff}
+          decidedCells={kpis.shop.decidedCells}
           people={kpis.shop.people}
           hasPunchData={kpis.hasPunchData}
           drillOpen={drill === "Shop"}
@@ -148,6 +150,7 @@ export function EtcMonthKpiCards({
         <Card label="Parts spent" value={usd(kpis.parts.spent)}>
           <Variance
             value={kpis.parts.diff}
+            decidedCells={kpis.parts.decidedCells}
             format={usd}
             title={`Money Left (${usd(kpis.parts.moneyLeft)}) − New ETC (${usd(kpis.parts.newEtc)})`}
           />
@@ -293,6 +296,7 @@ function GroupCard({
   hasPunchData,
   onDrill,
   drillOpen,
+  decidedCells,
 }: {
   label: string;
   worked: number;
@@ -301,6 +305,7 @@ function GroupCard({
   hasPunchData: boolean;
   onDrill: () => void;
   drillOpen?: boolean;
+  decidedCells: number;
 }) {
   return (
     <Card
@@ -310,14 +315,41 @@ function GroupCard({
       onDrill={hasPunchData ? onDrill : undefined}
       drillOpen={drillOpen}
     >
-      <Variance value={diff} format={fmtHours} title="Hours Left − New ETC" />
+      <Variance
+        value={diff}
+        decidedCells={decidedCells}
+        format={fmtHours}
+        title="Sum of (Hours Left − New ETC) over the cells a manager has confirmed"
+      />
     </Card>
   );
 }
 
 // The grid's Diff, in words. Positive = New ETC is under what's left (good),
 // negative = over. Zero says "on plan" rather than "0", which reads as missing.
-function Variance({ value, format, title }: { value: number; format: (n: number) => string; title: string }) {
+function Variance({
+  value,
+  format,
+  title,
+  decidedCells,
+}: {
+  value: number;
+  format: (n: number) => string;
+  title: string;
+  // How many cells the variance was computed from. Zero means nobody has
+  // confirmed a New ETC yet, which is NOT the same as being on plan — printing
+  // "On plan" there is a verdict on work nobody has assessed. This is the whole
+  // reason the card used to claim hundreds of hours over: it compared the
+  // machine's suggestion for every untouched cell against Hours Left.
+  decidedCells?: number;
+}) {
+  if (decidedCells === 0) {
+    return (
+      <p className="text-[11px] font-semibold text-sdc-gray-400" title="No New ETC confirmed for this month yet">
+        No New ETC set yet
+      </p>
+    );
+  }
   const rounded = Math.round(value);
   if (rounded === 0) {
     return (

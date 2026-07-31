@@ -102,6 +102,12 @@ export function EtcSectionCells({
   const newEtcNum = Number(newEtcText);
   const effective = newEtcText.trim() === "" || !Number.isFinite(newEtcNum) ? suggested : newEtcNum;
   const diff = hoursLeft - effective;
+  // Diff is only a real comparison once a manager has committed a number. With
+  // the cell blank, `effective` is the suggestion — and since suggestNewEtc clamps
+  // at 0 while Hours Left can be negative, an overspent cell nobody had touched
+  // showed an overrun it had not earned. Matches newEtcDiff() server-side, so the
+  // cell, the row total and the KPI card all count the same things.
+  const diffDecided = initialDraft != null || initialConfirmed != null || newEtcTouched;
 
   function handleNewEtcChange(e: React.ChangeEvent<HTMLInputElement>) {
     setNewEtcTouched(true);
@@ -155,10 +161,14 @@ export function EtcSectionCells({
         />
       </td>
       <td
-        className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
-        title={`${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(effective)})`}
+        className={`border-l border-sdc-border ${ETC_COL_W} ${diffDecided ? diffBg(diff) : "bg-white"} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+        title={
+          diffDecided
+            ? `${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(effective)})`
+            : `No New ETC entered yet. Hours Left is ${round2(hoursLeft)}; the suggestion is ${round2(suggested)}.`
+        }
       >
-        {wholeNum(diff)}
+        {diffDecided ? wholeNum(diff) : "—"}
       </td>
     </>
   );

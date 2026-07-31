@@ -12,6 +12,9 @@ import {
   hasPublishedHistory,
   groupStandardFeesRows,
   isSafeForLiveEtcSync,
+  isNewEtcDecided,
+  effectiveNewEtc,
+  newEtcDiff,
 } from "../src/lib/etc";
 
 test("calcHoursLeft: prior minus worked, may go negative", () => {
@@ -140,4 +143,45 @@ test("isSafeForLiveEtcSync: any older month is unsafe, even the one right before
 
 test("isSafeForLiveEtcSync: a month further in the future than 'next' is unsafe too", () => {
   assert.equal(isSafeForLiveEtcSync("2026-08", "2026-06"), false);
+});
+
+// ── Diff must never judge a cell nobody decided (2026-07-31) ────────────────
+// The Monthly ETC totals compared the SUGGESTION against Hours Left for every
+// unfilled cell. suggestNewEtc clamps at 0 because a plan cannot be negative,
+// while Hours Left stays negative when a section is overspent — so the clamped
+// gap surfaced as an overrun on cells nobody had opened. Measured on the live
+// month: −1,065 of Engineering's −1,071 was invented this way, off exactly ONE
+// decided cell in 241.
+
+test("newEtcDiff: an undecided cell has no variance at all", () => {
+  // Overspent and untouched — the case that produced the phantom overrun.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 20, hoursWorked: 50 }), null);
+});
+
+test("newEtcDiff: a saved draft is a decision, and is compared", () => {
+  // Prior 100, worked 40 -> 60 left; the manager says 80, so 20 over.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: 80, newEtc: 0, priorEtc: 100, hoursWorked: 40 }), -20);
+});
+
+test("newEtcDiff: a submitted cell is compared against its confirmed value", () => {
+  assert.equal(newEtcDiff({ needsReview: false, newEtcDraft: null, newEtc: 50, priorEtc: 100, hoursWorked: 40 }), 10);
+});
+
+test("newEtcDiff: a decided cell that matches what's left is on plan", () => {
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: 60, newEtc: 0, priorEtc: 100, hoursWorked: 40 }), 0);
+});
+
+test("effectiveNewEtc: forecast still uses the suggestion when undecided", () => {
+  // The Total New ETC column is a forecast of what submitting now would write,
+  // so it DOES include the suggestion — only the variance excludes it.
+  assert.equal(effectiveNewEtc({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 100, hoursWorked: 40 }), 60);
+  assert.equal(effectiveNewEtc({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 20, hoursWorked: 50 }), 0);
+  assert.equal(effectiveNewEtc({ needsReview: true, newEtcDraft: 15, newEtc: 0, priorEtc: 20, hoursWorked: 5 }), 15);
+  assert.equal(effectiveNewEtc({ needsReview: false, newEtcDraft: 15, newEtc: 7, priorEtc: 20, hoursWorked: 5 }), 7);
+});
+
+test("isNewEtcDecided: draft or submitted, nothing else", () => {
+  assert.equal(isNewEtcDecided({ needsReview: true, newEtcDraft: null }), false);
+  assert.equal(isNewEtcDecided({ needsReview: true, newEtcDraft: 0 }), true); // an explicit zero IS a decision
+  assert.equal(isNewEtcDecided({ needsReview: false, newEtcDraft: null }), true);
 });
