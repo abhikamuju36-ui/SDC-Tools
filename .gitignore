@@ -60,3 +60,6 @@ next-env.d.ts
 
 # Local Power BI gateway installer (not app code)
 on prem gateway/
+
+# Python (scripts/etl_job_hours.py)
+__pycache__/

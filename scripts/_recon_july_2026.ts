@@ -5,6 +5,7 @@
 // Reuses the app's real helpers so this checks the exact code path the grid uses.
 //
 // Run: npx tsx scripts/_recon_july_2026.ts
+import "dotenv/config";
 import { runDax } from "../src/lib/powerbi-client";
 import { prisma } from "../src/lib/prisma";
 import { ETC_TRACKED_CODES } from "../src/lib/sections";
