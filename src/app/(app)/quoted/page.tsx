@@ -23,7 +23,15 @@ import { JobCellMenu } from "@/components/JobCellMenu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
 import { saveQuotedHours } from "@/lib/quoted-actions";
 import { QuotedSaveForm } from "@/components/QuotedSaveForm";
-import { decodeParamList } from "@/lib/quoted-display-prefs";
+import { decodeParamList, isActualsOn } from "@/lib/quoted-display-prefs";
+import { loadActualHoursBySection } from "@/lib/actual-hours";
+import {
+  ProjectsEditModeProvider,
+  ProjectsEditModeToggle,
+  ProjectsEditFieldset,
+  WhenEditing,
+} from "@/components/ProjectsEditMode";
+import { getProjectsEditState } from "@/lib/projects-edit-mode";
 
 // Header banding, matching the real "Estimated Hours" tab's column colors
 // exactly (extracted from its theme + explicit fills) — phase row, then a
@@ -90,6 +98,8 @@ const DATA_COL_STYLE = { width: DATA_COL, minWidth: DATA_COL, maxWidth: DATA_COL
 // rest of the grid: these are the only figures here with a variable digit count,
 // and a right edge is what lets "$8,600" and "$1,406,923" be compared at a
 // glance. tabular-nums keeps the digits in columns while editing.
+const EMPTY_ACTUALS: ReadonlyMap<string, number> = new Map();
+
 const MONEY_INPUT = "w-full min-w-0 border-none bg-transparent text-right tabular-nums outline-none";
 
 // Group sub-bands: lighter SDC brand tints, each distinct, all drawn from the
@@ -217,9 +227,22 @@ export default async function QuotedPage({
     billables?: string;
     hide?: string;
     view?: string;
+    actuals?: string;
   }>;
 }) {
-  const { cols, sort, dir, customers, types, statuses, billables, hide } = await searchParams;
+  const sp = await searchParams;
+  const { cols, sort, dir, customers, types, statuses, billables, hide } = sp;
+  // Actual hours in the cells. A view param rather than a client-side flag, so
+  // the markup below is already right on arrival — see quoted-display-prefs.ts.
+  const showActuals = isActualsOn({ get: (k) => sp[k as keyof typeof sp] ?? null });
+
+  // Read-only unless the signed-in user has explicitly switched Edit Mode on
+  // (projects-edit-mode.ts). The cookie's value only SEEDS the switch — from
+  // there it's client state, so flipping it doesn't re-run this whole page. And
+  // it only shapes the UI either way: every write re-checks the cookie
+  // server-side in saveQuotedHours, since a form post doesn't care what the
+  // markup said.
+  const { editing: initialEditing, mayEdit } = await getProjectsEditState();
   // Saved/published grid views ("Views ▾") — loaded for everyone; the team
   // default + shared list come from the DB, personal views live in the browser.
   const { default: teamDefault, shared: sharedViews } = await listSharedViews();
@@ -313,14 +336,13 @@ export default async function QuotedPage({
       status: { in: selectedStatuses },
       ...billableWhere,
     },
-    // etcEntries (unfiltered by month) is how "actual hours" gets built below:
-    // a closed/historical job's real total lives entirely in
-    // estimatedHours.actualHistoricalHours (an Excel-migration snapshot, never
-    // touched again once EtcEntry rows exist for it — see sync-powerbi.ts),
-    // while an actively ETC-tracked job's total is the sum of every month's
-    // hoursWorked instead. The two never overlap for the same job, so adding
-    // them is always safe.
-    include: { estimatedHours: true, etcEntries: { select: { section: true, hoursWorked: true } } },
+    // estimatedHours carries the quoted figures this grid edits. Actual hours
+    // are NOT built from the job's etcEntries any more — that join used to ride
+    // along here, and it understated every closed month, because
+    // EtcEntry.hoursWorked is frozen when a month closes while people keep
+    // booking late time against it. actual-hours.ts owns that rule now, for this
+    // grid and the Job Hour Details dashboard alike.
+    include: { estimatedHours: true },
     orderBy: { [sortKey]: sortDir },
   });
   if (sortKey === "jobId") {
@@ -335,6 +357,10 @@ export default async function QuotedPage({
   // stable, so this only reorders across the SDC / non-SDC boundary and leaves
   // each group's existing order untouched.
   jobs.sort((a, b) => Number(isSdcCustomer(a.customer)) - Number(isSdcCustomer(b.customer)));
+
+  // Actual hours for every job on screen, in one pass rather than a join per
+  // row. Keyed by internal job id.
+  const actualHours = await loadActualHoursBySection(jobs.map((j) => j.id));
 
   // Which of these jobs have a schedule in the SDC Scheduler (+ its base URL),
   // so each row can show an "open in Scheduler" icon only where it leads
@@ -367,12 +393,18 @@ export default async function QuotedPage({
     // action returned — counts on success, the message on failure. The grid below
     // stays a server component, passed through as children.
     <QuotedSaveForm action={saveQuotedHours} className="w-full px-8 py-10 md:px-13 md:py-11">
+      {/* Wraps the toolbar AND the grid: the switch, the Add/Save buttons and
+          the fieldset that locks the cells all read the same client state, so
+          they can never show three different opinions about the mode. */}
+      <ProjectsEditModeProvider initialEditing={initialEditing} mayEdit={mayEdit}>
       <div className="mb-1 flex items-end justify-between gap-4">
         <PageTitle>Projects</PageTitle>
-        <div className="flex items-center gap-2.5">
-          <AddProjectButton className={BUTTON_PRIMARY} />
-          <SaveQuotedHoursButton />
-        </div>
+        <WhenEditing>
+          <div className="flex items-center gap-2.5">
+            <AddProjectButton className={BUTTON_PRIMARY} />
+            <SaveQuotedHoursButton />
+          </div>
+        </WhenEditing>
       </div>
       <p className="mb-2 text-sm text-sdc-gray-600">
         {jobs.length} jobs — quoted hours by section, quoted vs. actual cost. Click a phase to choose which section columns to show.
@@ -394,6 +426,9 @@ export default async function QuotedPage({
           count the individual buttons used to show, so nothing became invisible.
           Filters and Sections apply on close; Display is instant (client-only). */}
       <div className="mb-5 flex flex-wrap gap-2.5">
+        {/* First in the row: whether the grid is live is the one thing a user
+            shouldn't have to discover by typing into it. */}
+        <ProjectsEditModeToggle />
         <ProjectsFilterMenu
           filters={[
             { key: "customers", label: "Customer", options: allCustomers, selected: selectedCustomers, searchable: true },
@@ -424,13 +459,19 @@ export default async function QuotedPage({
         />
       </div>
 
+      <ProjectsEditFieldset>
       <DragScroll className="max-h-[calc(100vh-170px)] min-w-[480px] overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm select-none styled-scrollbar">
         {/* quiet-controls: hide the per-row dropdown chevrons (Type/Billable/
             Status) and date calendar icons until the cell is hovered/focused —
             see globals.css. Scoped to this table so other grids (Employees)
             keep their always-visible affordances. Also covers the NewProjectRows
             rows, which render into this same tbody. */}
-        <table className={`quiet-controls w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
+        {/* hide-actuals: server-rendered from the `actuals` view param, so the
+            grid arrives in the right state instead of painting the "/ actual"
+            halves and hiding them a frame later (see globals.css). It also
+            widens the quoted input back out — with the suffix gone, there's a
+            whole cell for it. */}
+        <table className={`quiet-controls w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS} ${showActuals ? "" : "hide-actuals"}`}>
           <thead className="sticky top-0 z-20 bg-sdc-gray-100">
             <tr className={TABLE_HEADER_ROW}>
               <th rowSpan={3} className="frozen-col sticky left-0 z-10 w-8 min-w-8 bg-sdc-gray-100 px-1 py-2 text-center align-bottom">
@@ -637,11 +678,13 @@ export default async function QuotedPage({
             </tr>
           </thead>
           <tbody>
+            <WhenEditing>
             <NewProjectRows
               hidden={[...hiddenCols]}
               phaseGroups={PHASE_GROUPS.map((g) => ({ phase: g.phase, sections: visibleSectionsByPhase.get(g.phase) ?? [] }))}
               allStatuses={allStatuses}
             />
+            </WhenEditing>
             {jobs.length === 0 && (
               <tr>
                 {/* 2 always-on (# + Job Id) + visible toggle columns + phase cols + 2 cost cols */}
@@ -652,14 +695,9 @@ export default async function QuotedPage({
             )}
             {jobs.map((job, i) => {
               const hoursBySection = new Map(job.estimatedHours.map((eh) => [eh.section, eh.quotedHours]));
-              // Actual hours to date, per section: Excel-migration snapshot
-              // (closed jobs) + everything since accumulated via ETC tracking
-              // (active jobs) — see the query comment above for why these
-              // two never double-count.
-              const actualBySection = new Map(job.estimatedHours.map((eh) => [eh.section, Number(eh.actualHistoricalHours)]));
-              for (const e of job.etcEntries) {
-                actualBySection.set(e.section, (actualBySection.get(e.section) ?? 0) + Number(e.hoursWorked));
-              }
+              // Actual hours to date, per section — one shared definition, see
+              // actual-hours.ts. Empty map for a job with no hours at all.
+              const actualBySection = actualHours.get(job.id) ?? EMPTY_ACTUALS;
               // SDC's own internal projects are always non-billable and get a
               // permanent light-blue highlight so they stand out from customer
               // work at a glance — this is driven by Customer, not the stored
@@ -936,6 +974,8 @@ export default async function QuotedPage({
           </tbody>
         </table>
       </DragScroll>
+      </ProjectsEditFieldset>
+      </ProjectsEditModeProvider>
     </QuotedSaveForm>
   );
 }

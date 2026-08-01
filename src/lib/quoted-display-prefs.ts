@@ -1,25 +1,29 @@
-// Client-side display prefs for the Projects grid that live in localStorage
-// rather than the URL — currently just the "actual hours in cells" flag.
+// Display prefs for the Projects grid.
 //
-// Extracted so the Display menu and the Show-all switch can't drift: both need to
-// read it, write it, and be told when the other one changed it. A localStorage
-// write doesn't notify the tab that made it, hence the explicit event.
-export const ACTUALS_KEY = "quoted-show-actuals";
-export const ACTUALS_EVENT = "quoted-show-actuals-change";
+// "Actual hours in cells" used to live in localStorage, mirrored onto a <body>
+// class by an effect in ProjectsDisplayMenu, while everything else about the
+// view lived in the URL. That split is what made the Show-all switch unreliable:
+// one click had to write localStorage AND push a new URL, so the server
+// re-rendered the grid from the URL while the actuals half of the same click
+// depended on a body class that a sibling component happened to set in an effect
+// afterwards. The two could land in either order, and the markup the server sent
+// never reflected the toggle at all — every load and every navigation painted
+// the suffix first and hid it a frame later.
+//
+// It's now just another view param, so a single navigation carries the whole
+// state and the server renders it directly: one source of truth, no effect, no
+// flash, and a link you paste to someone shows them the same thing you see.
+// Absent = off, which is the page's default.
+export const ACTUALS_PARAM = "actuals";
 
-export function readShowActuals(): boolean {
-  return window.localStorage.getItem(ACTUALS_KEY) === "1";
-}
-
-export function writeShowActuals(next: boolean): void {
-  window.localStorage.setItem(ACTUALS_KEY, next ? "1" : "0");
-  window.dispatchEvent(new Event(ACTUALS_EVENT));
+export function isActualsOn(params: { get(name: string): string | null }): boolean {
+  return params.get(ACTUALS_PARAM) === "1";
 }
 
 // The view params the Projects grid's "Show all / Reset" switch owns. Listed
 // once so flipping to Reset can't miss one — a leftover param would leave the
 // grid half-reset, which is the failure nobody would report as a bug.
-export const QUOTED_VIEW_PARAMS = ["customers", "types", "statuses", "billables", "cols", "hide"] as const;
+export const QUOTED_VIEW_PARAMS = ["customers", "types", "statuses", "billables", "cols", "hide", ACTUALS_PARAM] as const;
 
 // ── Multi-value params are comma-joined, and 16 of 88 customer names contain a
 // comma ("FIRST SOLAR, INC.", "Alcon Research, LTD", "Tarkett USA, Inc.") ────
@@ -65,12 +69,8 @@ export type ShowAllOptions = {
 // cases are exactly what a refactor would get wrong.
 // Takes anything with a `get`, so it accepts both a plain URLSearchParams (tests)
 // and Next's ReadonlyURLSearchParams (the component) without a cast.
-export function isShowingAll(
-  params: { get(name: string): string | null },
-  all: ShowAllOptions,
-  actualsOn: boolean,
-): boolean {
-  if (!actualsOn) return false;
+export function isShowingAll(params: { get(name: string): string | null }, all: ShowAllOptions): boolean {
+  if (!isActualsOn(params)) return false;
   if (params.get("hide")) return false; // any hidden info column -> not all
   const covers = (param: keyof ShowAllOptions) => {
     const raw = params.get(param);
@@ -79,15 +79,4 @@ export function isShowingAll(
     return all[param].every((v) => have.has(v));
   };
   return covers("customers") && covers("types") && covers("statuses") && covers("billables") && covers("cols");
-}
-
-// For useSyncExternalStore. Also listens for `storage`, which covers the same
-// page open in a second tab.
-export function subscribeShowActuals(onChange: () => void): () => void {
-  window.addEventListener(ACTUALS_EVENT, onChange);
-  window.addEventListener("storage", onChange);
-  return () => {
-    window.removeEventListener(ACTUALS_EVENT, onChange);
-    window.removeEventListener("storage", onChange);
-  };
 }

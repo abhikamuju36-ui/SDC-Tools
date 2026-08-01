@@ -23,9 +23,9 @@ import {
 const MY_VIEWS_KEY = "quoted-my-views";
 const GRID_ROW_KEY = "quoted-grid-row-py";
 const GRID_COL_KEY = "quoted-grid-col-px";
-const ACTUALS_KEY = "quoted-show-actuals";
-// The exact set of /quoted query params a view captures (columns + filters).
-const VIEW_PARAMS = ["cols", "hide", "sort", "dir", "customers", "types", "statuses", "billables"] as const;
+// The exact set of /quoted query params a view captures (columns + filters +
+// the Actuals toggle, which used to be a localStorage flag restored separately).
+const VIEW_PARAMS = ["cols", "hide", "sort", "dir", "customers", "types", "statuses", "billables", "actuals"] as const;
 
 type MyViews = Record<string, ViewConfig>;
 
@@ -56,22 +56,26 @@ function snapshotView(): ViewConfig {
     rowRaw !== null || colRaw !== null
       ? { ...(rowRaw !== null ? { rowPy: Number(rowRaw) } : {}), ...(colRaw !== null ? { colPx: Number(colRaw) } : {}) }
       : null;
-  const actualsRaw = window.localStorage.getItem(ACTUALS_KEY);
-  const actuals = actualsRaw === null ? undefined : actualsRaw === "1";
-  return { params, grid, actuals };
+  // `actuals` rides along in params now. The ViewConfig field is kept only so
+  // views saved before that change still restore their Actuals setting — see
+  // applyView.
+  return { params, grid };
 }
 
-// Apply a view: restore the client prefs into localStorage, then hard-navigate
+// Apply a view: restore the density prefs into localStorage, then hard-navigate
 // to /quoted with the saved params so ProjectsDisplayMenu re-initialises from
-// localStorage on mount (it restores density there, and reads the actuals flag
-// straight from storage). The two separate controls this used to name were
-// folded into that one menu when the toolbar was bucketed.
+// localStorage on mount (it restores density there).
 function applyView(name: string, config: ViewConfig) {
   if (config.grid?.rowPy != null) window.localStorage.setItem(GRID_ROW_KEY, String(config.grid.rowPy));
   if (config.grid?.colPx != null) window.localStorage.setItem(GRID_COL_KEY, String(config.grid.colPx));
-  if (config.actuals !== undefined) window.localStorage.setItem(ACTUALS_KEY, config.actuals ? "1" : "0");
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(config.params)) sp.set(k, v);
+  // Views saved before Actuals moved into the URL carry it as a config field
+  // instead. Honour it, but never let it override a params value the same view
+  // already has — a re-saved view carries both, and params is the current truth.
+  if (config.actuals !== undefined && !sp.has("actuals")) {
+    if (config.actuals) sp.set("actuals", "1");
+  }
   sp.set("view", name); // label only — the page ignores it for data
   window.location.assign(`/quoted?${sp.toString()}`);
 }

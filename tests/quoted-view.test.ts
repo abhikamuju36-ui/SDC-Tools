@@ -2,6 +2,8 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
   isShowingAll,
+  isActualsOn,
+  ACTUALS_PARAM,
   encodeParamList,
   decodeParamList,
   QUOTED_VIEW_PARAMS,
@@ -23,6 +25,7 @@ const everything = () =>
     statuses: encodeParamList(ALL.statuses),
     billables: encodeParamList(ALL.billables),
     cols: encodeParamList(ALL.cols),
+    actuals: "1",
   });
 
 // ── The comma-in-a-value bug (2026-07-31) ────────────────────────────────────
@@ -60,11 +63,12 @@ test("isShowingAll sees comma-bearing customers it wrote itself", () => {
     statuses: encodeParamList(all.statuses),
     billables: encodeParamList(all.billables),
     cols: encodeParamList(all.cols),
+    actuals: "1",
   });
-  assert.equal(isShowingAll(p, all, true), true);
+  assert.equal(isShowingAll(p, all), true);
   // And the old encoding must NOT read as all — this is the regression itself.
   p.set("customers", COMMA_NAMES.join(","));
-  assert.equal(isShowingAll(p, all, true), false);
+  assert.equal(isShowingAll(p, all), false);
 });
 
 test("decodeParamList: absent and empty both mean no values", () => {
@@ -73,11 +77,30 @@ test("decodeParamList: absent and empty both mean no values", () => {
 });
 
 test("isShowingAll: every param covered + actuals on", () => {
-  assert.equal(isShowingAll(everything(), ALL, true), true);
+  assert.equal(isShowingAll(everything(), ALL), true);
 });
 
 test("isShowingAll: actuals off is not 'all'", () => {
-  assert.equal(isShowingAll(everything(), ALL, false), false);
+  const p = everything();
+  p.delete(ACTUALS_PARAM);
+  assert.equal(isShowingAll(p, ALL), false);
+});
+
+// Actuals moved out of localStorage and into the URL (2026-08-01) so one
+// navigation carries the whole view — the split is what made the Show-all
+// switch and the Display menu able to disagree about it.
+test("isActualsOn: only an explicit 1 is on", () => {
+  assert.equal(isActualsOn(new URLSearchParams("actuals=1")), true);
+  assert.equal(isActualsOn(new URLSearchParams("actuals=0")), false);
+  assert.equal(isActualsOn(new URLSearchParams("")), false);
+});
+
+test("Reset clears actuals too — it's in QUOTED_VIEW_PARAMS", () => {
+  assert.ok((QUOTED_VIEW_PARAMS as readonly string[]).includes(ACTUALS_PARAM));
+  const p = everything();
+  for (const k of QUOTED_VIEW_PARAMS) p.delete(k);
+  assert.equal(isActualsOn(p), false);
+  assert.equal(isShowingAll(p, ALL), false);
 });
 
 test("isShowingAll: an ABSENT param is the narrower default, not 'all'", () => {
@@ -85,33 +108,33 @@ test("isShowingAll: an ABSENT param is the narrower default, not 'all'", () => {
   // so it must NOT read as everything-visible.
   const p = everything();
   p.delete("statuses");
-  assert.equal(isShowingAll(p, ALL, true), false);
+  assert.equal(isShowingAll(p, ALL), false);
 });
 
 test("isShowingAll: an absent `hide` DOES mean nothing hidden", () => {
   const p = everything();
   assert.equal(p.get("hide"), null);
-  assert.equal(isShowingAll(p, ALL, true), true);
+  assert.equal(isShowingAll(p, ALL), true);
   p.set("hide", "customer");
-  assert.equal(isShowingAll(p, ALL, true), false);
+  assert.equal(isShowingAll(p, ALL), false);
 });
 
 test("isShowingAll: a missing value inside a param is not 'all'", () => {
   const p = everything();
   p.set("statuses", "Active"); // Complete dropped
-  assert.equal(isShowingAll(p, ALL, true), false);
+  assert.equal(isShowingAll(p, ALL), false);
 });
 
 test("isShowingAll: param order doesn't matter", () => {
   const p = everything();
   p.set("billables", "Non-Billable,Billable");
-  assert.equal(isShowingAll(p, ALL, true), true);
+  assert.equal(isShowingAll(p, ALL), true);
 });
 
 test("QUOTED_VIEW_PARAMS covers every param the switch sets", () => {
   // Reset deletes this list; if the switch ever sets a param that isn't in it,
   // Reset would leave the grid half-reset.
-  for (const p of ["customers", "types", "statuses", "billables", "cols", "hide"]) {
+  for (const p of ["customers", "types", "statuses", "billables", "cols", "hide", "actuals"]) {
     assert.ok((QUOTED_VIEW_PARAMS as readonly string[]).includes(p), `${p} missing from QUOTED_VIEW_PARAMS`);
   }
 });

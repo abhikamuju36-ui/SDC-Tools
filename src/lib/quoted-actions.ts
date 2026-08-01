@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
 import { VALID_JOB_TYPES, JOB_STATUSES, isSdcCustomer } from "@/lib/job-filters";
+import { assertProjectsEditable } from "@/lib/projects-edit-mode";
 
 const HOURS_PREFIX = "quoted__";
 const FIELD_PREFIX = "jobField__";
@@ -39,6 +40,13 @@ export type SaveQuotedResult =
 // by QuotedSaveForm, which needs the result to show the confirmation banner.
 export async function saveQuotedHours(_prev: SaveQuotedResult | null, formData: FormData): Promise<SaveQuotedResult> {
   try {
+    // BEFORE anything is read out of the form, let alone written: the grid is
+    // read-only unless a signed-in user turned Edit Mode on. Disabling the
+    // inputs is what a user sees; this is what actually holds, since a form post
+    // is just an HTTP request and doesn't care what the markup said. Throws, so
+    // it lands in the catch below and comes back as a normal "not saved"
+    // message rather than an unhandled error.
+    await assertProjectsEditable();
     // Sequential, new-rows FIRST: saveNewRows carries the batch's validation
     // (blank Job Id / bad Type reject the whole submission), so it must run
     // before any other write lands. Running the three concurrently meant a

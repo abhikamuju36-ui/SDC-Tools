@@ -1,17 +1,18 @@
 "use client";
 
-import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useRef, useTransition } from "react";
+import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { TOOLBAR_BTN, TOOLBAR_BTN_NEUTRAL } from "@/components/ui/classnames";
 import { GridZoomBody } from "@/components/GridZoomControls";
-import { readShowActuals, writeShowActuals, subscribeShowActuals } from "@/lib/quoted-display-prefs";
+import { ACTUALS_PARAM, isActualsOn } from "@/lib/quoted-display-prefs";
 
 // "Display ▾" — how the grid looks rather than what's in it: the Actuals toggle
 // and the two density steppers, replacing two more toolbar buttons.
 //
-// No draft/apply here, unlike Filters and Sections: every control in this menu
-// is purely client-side (a body class and two CSS custom properties), so it takes
-// effect instantly with no navigation. That's also why the menu deliberately
-// stays open while you use it — you want to see each nudge land.
+// No draft/apply here, unlike Filters and Sections: each control takes effect on
+// the click, so the menu deliberately stays open while you use it — you want to
+// see each nudge land. The two density steppers are pure CSS custom properties;
+// Actuals is a view param and re-renders the grid (see quoted-display-prefs.ts).
 //
 // Actuals lives here rather than in Filters because it changes what a cell
 // *shows*, not which rows exist.
@@ -22,23 +23,29 @@ const COL_KEY = "quoted-grid-col-px";
 
 export function ProjectsDisplayMenu() {
   const detailsRef = useRef<HTMLDetailsElement>(null);
-  // Read through useSyncExternalStore rather than useState + useEffect: no state
-  // to sync, one fewer render per mount, no react-hooks/set-state-in-effect, and
-  // it picks up a change made by the Show-all switch or another tab.
-  const showActuals = useSyncExternalStore(
-    subscribeShowActuals,
-    readShowActuals,
-    () => false, // server snapshot: hidden until the client says otherwise
-  );
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+  const [, startTransition] = useTransition();
 
-  // Mirror the value onto the body class the grid CSS keys off. An effect with
-  // no setState in it, so it stays lint-clean; runs on mount and on every change,
-  // including one made in another tab.
-  useEffect(() => {
-    document.body.classList.toggle("hide-actuals", !showActuals);
-  }, [showActuals]);
+  // Actuals is a view param now, not a localStorage flag mirrored onto a body
+  // class by an effect here — see quoted-display-prefs.ts for why. The checkbox
+  // therefore reads straight off the URL and stays in step with the Show-all
+  // switch by construction: there's only one value, and both controls write it.
+  const showActuals = isActualsOn(searchParams);
 
-  const toggleActuals = useCallback(() => writeShowActuals(!readShowActuals()), []);
+  // replace, not push: this is a display preference, and stacking a history
+  // entry per click would make Back walk the checkbox instead of leaving the
+  // page. The Show-all switch pushes, deliberately — that one changes the data.
+  const toggleActuals = useCallback(() => {
+    const qs = new URLSearchParams(searchParams.toString());
+    if (showActuals) qs.delete(ACTUALS_PARAM);
+    else qs.set(ACTUALS_PARAM, "1");
+    const q = qs.toString();
+    startTransition(() => {
+      router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
+    });
+  }, [showActuals, searchParams, pathname, router]);
 
   // Restore the saved density. This used to live in GridZoomControls, which the
   // Projects toolbar no longer renders — without moving it here, a chosen row

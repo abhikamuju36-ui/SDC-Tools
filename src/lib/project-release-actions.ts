@@ -2,6 +2,7 @@
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
+import { assertProjectsEditable } from "@/lib/projects-edit-mode";
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { logAudit } from "@/lib/audit";
@@ -96,6 +97,10 @@ export async function deleteProjectRelease(jobId: number) {
 // with that number already exists, we attach the release to it instead of
 // creating a duplicate. Redirects to the job on success.
 export async function createJobFromRelease(formData: FormData) {
+  // Reached from the Projects toolbar's "+ Add Project → From Release",
+  // which only renders in Edit Mode — but the action is exposed regardless,
+  // so it enforces the same gate itself rather than trusting that.
+  await assertProjectsEditable();
   const parsed = await parseUpload(formData);
   if (!parsed.jobNumber) {
     throw new Error("Couldn't find an SDC Project Number in that release — open the job and upload it there instead.");

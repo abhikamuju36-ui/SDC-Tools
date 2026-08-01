@@ -1,9 +1,19 @@
 "use client";
 
-import { useRouter, useSearchParams } from "next/navigation";
+import Link from "next/link";
+import { useSearchParams } from "next/navigation";
 
 // Clicking toggles asc/desc if already sorting by this key, otherwise
 // switches to this key ascending. Preserves other params (e.g. `cols`).
+//
+// A LINK, not a button, even though it only changes the query string. These
+// headers sit inside the Projects grid's <form>, which Edit Mode locks with a
+// <fieldset disabled> — that cascades to every form control inside it, so as a
+// button this would have stopped sorting the moment the grid went read-only,
+// which is precisely when people are reading and most want to re-sort. An
+// anchor isn't a form control and is untouched by it. Middle-click and
+// open-in-new-tab start working too, which they should have all along for
+// something that is, after all, just a different URL.
 export function SortButton({
   sortKey,
   label,
@@ -15,22 +25,22 @@ export function SortButton({
   currentSort: string;
   currentDir: "asc" | "desc";
 }) {
-  const router = useRouter();
   const searchParams = useSearchParams();
   const active = currentSort === sortKey;
 
-  function handleClick() {
-    const nextDir = active && currentDir === "asc" ? "desc" : "asc";
-    const qs = new URLSearchParams(searchParams.toString());
-    qs.set("sort", sortKey);
-    qs.set("dir", nextDir);
-    router.push(`/quoted?${qs.toString()}`, { scroll: false });
-  }
+  const nextDir = active && currentDir === "asc" ? "desc" : "asc";
+  const qs = new URLSearchParams(searchParams.toString());
+  qs.set("sort", sortKey);
+  qs.set("dir", nextDir);
+  // Two of these labels carry a literal newline ("Start\nDate") so they wrap in
+  // a narrow column — flatten it for the accessible name.
+  const flatLabel = label.replace(/\s+/g, " ");
 
   return (
-    <button
-      type="button"
-      onClick={handleClick}
+    <Link
+      href={`/quoted?${qs.toString()}`}
+      scroll={false}
+      aria-label={`Sort by ${flatLabel}, ${nextDir}ending`}
       className={`inline-flex items-center gap-1 whitespace-pre-line text-center leading-tight hover:text-sdc-navy ${active ? "text-sdc-navy" : ""}`}
     >
       {label}
@@ -47,6 +57,6 @@ export function SortButton({
       >
         <path d="M4 9 L8 5 L12 9" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
-    </button>
+    </Link>
   );
 }

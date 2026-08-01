@@ -265,6 +265,22 @@ td.quoted-actual-cell > .actual-suffix {
   vertical-align: middle;
   margin-left: 0.15rem;
 }
+/* Actuals off. The class sits on the <table>, set server-side from the
+ * `actuals` view param (quoted/page.tsx), so the grid arrives in the right
+ * state — it used to be a <body> class applied by an effect after hydration,
+ * which painted the "/ actual" halves on every load and hid them a frame later,
+ * and could disagree with a navigation the Show-all switch had just made.
+ *
+ * Hiding the suffix isn't enough on its own: the quoted <input> is pinned to
+ * 1.9rem so it can SHARE the cell with that suffix, and leaving it there left a
+ * cramped little box adrift in a 4.7rem column. With the suffix gone the input
+ * takes the cell back. */
+.hide-actuals .actual-suffix {
+  display: none;
+}
+.hide-actuals td.quoted-actual-cell > input[type="number"] {
+  width: 100% !important;
+}
 
 /* Date grid cells (DateCell.tsx): when empty, hide the native "mm/dd/yyyy"
  * segment text so the column reads as clean icon-only cells instead of a
@@ -351,6 +367,19 @@ td:hover > input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
  * the icon, matching the focus behavior that already existed. */
 .quiet-controls td:hover > input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
   opacity: 1;
+}
+
+/* Row-follow highlight: the line under the pointer tints as you move, with no
+ * click needed. Clicking to pin a row (RowSelect, below) still works and still
+ * survives scrolling — but reading across a wide grid shouldn't cost a click
+ * you then have to undo, which is what it did before this.
+ *
+ * Same inset-box-shadow mechanism as the pinned state so it composes over a
+ * cell's own background rather than replacing it, at roughly a third of the
+ * strength so a pinned row still reads as the stronger of the two. Excluded on
+ * the pinned row itself, which would otherwise stack both. */
+tbody tr:hover:not(.row-selected) > td {
+  box-shadow: inset 0 0 0 9999px rgba(21, 116, 196, 0.05);
 }
 
 /* Excel-style row selection: clicking a row's "#" cell (RowSelect.tsx)
@@ -468,5 +497,20 @@ summary {
   background-color: rgba(21, 116, 196, 0.35);
 }
 
-/* Projects grid: hide the "/actual" hours suffix when the "Actuals: Off" toggle is set (ShowActualsToggle). */
-body.hide-actuals .actual-suffix { display: none; }
+/* Projects read-only mode. The grid sits inside a <fieldset disabled> (see
+ * ProjectsEditMode.tsx), which is what stops ~1,100 cells accepting input with
+ * one attribute and no re-render.
+ *
+ * The whole point of this page is READING those figures, so undo the browser's
+ * disabled treatment entirely: Chrome/Safari fade disabled control text with
+ * -webkit-text-fill-color regardless of any author `color`, which would grey out
+ * every number in the grid. currentColor hands it back to the Tailwind classes
+ * on each cell, so the over/under and status coloring survives read-only intact.
+ * Sort headers are links, not buttons, precisely so they stay live in here. */
+.quiet-controls input:disabled,
+.quiet-controls select:disabled,
+.quiet-controls textarea:disabled {
+  cursor: default;
+  opacity: 1;
+  -webkit-text-fill-color: currentColor;
+}

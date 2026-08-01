@@ -1,15 +1,8 @@
 "use client";
 
-import { useSyncExternalStore, useTransition } from "react";
+import { useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
-import {
-  readShowActuals,
-  writeShowActuals,
-  subscribeShowActuals,
-  isShowingAll,
-  encodeParamList,
-  QUOTED_VIEW_PARAMS,
-} from "@/lib/quoted-display-prefs";
+import { isShowingAll, encodeParamList, ACTUALS_PARAM, QUOTED_VIEW_PARAMS } from "@/lib/quoted-display-prefs";
 
 // "Show all" ⇄ "Reset" — one switch that flips the whole grid between the
 // day-to-day view and everything-visible, instead of making someone walk three
@@ -49,12 +42,11 @@ export function ProjectsShowAllSwitch({
   const searchParams = useSearchParams();
   const [pending, startTransition] = useTransition();
 
-  const actualsOn = useSyncExternalStore(subscribeShowActuals, readShowActuals, () => false);
-
-  // Whether everything is showing is derived from the URL + the actuals flag,
-  // never held as state — so the switch stays truthful when someone changes a
-  // filter by hand or applies a saved view. isShowingAll is in the lib, pure and
-  // unit-tested, because its absent-param asymmetry is easy to break.
+  // Whether everything is showing is derived from the URL alone — actuals
+  // included, now that it's a view param — and never held as state, so the
+  // switch stays truthful when someone changes a filter by hand or applies a
+  // saved view. isShowingAll is in the lib, pure and unit-tested, because its
+  // absent-param asymmetry is easy to break.
   const all = {
     customers: allCustomers,
     types: allTypes,
@@ -62,14 +54,15 @@ export function ProjectsShowAllSwitch({
     billables: allBillables,
     cols: allSectionCodes,
   };
-  const showingAll = isShowingAll(searchParams, all, actualsOn);
+  const showingAll = isShowingAll(searchParams, all);
 
   function flip() {
     const qs = new URLSearchParams(searchParams.toString());
     if (showingAll) {
-      // Reset: drop every view param so the page's own defaults apply again.
+      // Reset: drop every view param so the page's own defaults apply again —
+      // `actuals` among them, so hiding the actual hours is part of the same
+      // single navigation rather than a separate write that has to keep up.
       for (const p of QUOTED_VIEW_PARAMS) qs.delete(p);
-      writeShowActuals(false);
     } else {
       // encodeParamList, not join(",") — customer names contain commas, and a
       // raw join made "Show all" hide those jobs and leave the switch reading OFF.
@@ -79,7 +72,7 @@ export function ProjectsShowAllSwitch({
       qs.set("billables", encodeParamList(allBillables));
       qs.set("cols", encodeParamList(allSectionCodes));
       qs.delete("hide"); // nothing hidden
-      writeShowActuals(true);
+      qs.set(ACTUALS_PARAM, "1"); // actual hours in the cells
     }
     const q = qs.toString();
     startTransition(() => {
