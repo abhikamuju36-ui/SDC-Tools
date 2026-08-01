@@ -70,6 +70,9 @@ export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hours
   // it dropping out of the template) closes the panel rather than leaving it
   // showing a section that's no longer on the chart.
   const drillRow = drillCode ? (hierRows.find((r) => r.code === drillCode) ?? null) : null;
+  // Every section, not just the visible ones: the punch table below is
+  // unfiltered, so the figure it's compared against has to be too.
+  const jobActualTotal = data.sections.reduce((sum, s) => sum + s.actual, 0);
 
   const togglePhase = (p: string) =>
     setActivePhases((prev) => {
@@ -150,7 +153,24 @@ export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hours
               {/* The punch-level table, preselected to the section just clicked
                   — the report's drillthrough page, one level further down than
                   the monthly summary above it. */}
-              <HoursDetailPanel detail={hoursDetail} initialSection={drillRow.code} onClose={() => setDrillCode(null)} />
+              <HoursDetailPanel
+                detail={hoursDetail}
+                initialSection={drillRow.code}
+                // The Actual bar above covers the job's whole life; this table
+                // only holds punches from the window the Paylocity export
+                // reaches back to. On an older job the two legitimately differ,
+                // and saying so beats leaving someone to find the gap and
+                // conclude the page is broken — which is how this whole thread
+                // started.
+                // Whole-job figures on both sides: this table lists every
+                // section, not just the one drilled into.
+                note={
+                  jobActualTotal - hoursDetail.total > 1
+                    ? `Actual for this job is ${Math.round(jobActualTotal).toLocaleString()}h; the punch records below reach back only as far as the payroll export, so they total ${Math.round(hoursDetail.total).toLocaleString()}h. Earlier hours are carried as period totals.`
+                    : undefined
+                }
+                onClose={() => setDrillCode(null)}
+              />
             </>
           )}
         </div>

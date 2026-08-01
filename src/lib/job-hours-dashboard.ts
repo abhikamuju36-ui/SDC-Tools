@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { SECTIONS, PHASE_GROUPS, PARTS_COST_SECTION } from "@/lib/sections";
 import { suggestNewEtc } from "@/lib/etc";
 import { validJobTypeFilter } from "@/lib/job-filters";
+import { loadActualHoursBySection, loadMonthlyWorkedBySection } from "@/lib/actual-hours";
 
 // Data layer for the "Job Hour Details" dashboard — a web recreation of the
 // Power BI "Job Hours Report — Management Level" drillthrough page. Sources every
@@ -104,12 +105,20 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
   });
   const jobIds = jobs.map((j) => j.id);
 
-  const [estimated, entries, activeJobs, freshness, latestEntry] = await Promise.all([
-    prisma.estimatedHours.findMany({ where: { jobId: { in: jobIds } }, select: { section: true, quotedHours: true, actualHistoricalHours: true } }),
+  const [estimated, entries, actualBySection, monthlyBySection, activeJobs, freshness, latestEntry] = await Promise.all([
+    // Quoted only — actuals come from actual-hours.ts below.
+    prisma.estimatedHours.findMany({ where: { jobId: { in: jobIds } }, select: { section: true, quotedHours: true } }),
     prisma.etcEntry.findMany({
       where: { jobId: { in: jobIds } },
       select: { section: true, month: true, hoursWorked: true, newEtc: true, newEtcDraft: true, priorEtc: true, needsReview: true },
     }),
+    // Actuals and their monthly timeline come from actual-hours.ts, not from
+    // `entries` above: EtcEntry.hoursWorked is frozen once a month closes, so
+    // reading it here understated every closed month by the late punches booked
+    // since (6,954h across Jan–Jul 2026). `entries` is still what drives ETC,
+    // which must keep using the frozen figure.
+    loadActualHoursBySection(jobIds),
+    loadMonthlyWorkedBySection(jobIds),
     prisma.job.count({ where: { status: "Active", ...validJobTypeFilter } }),
     prisma.powerBiFreshness.findUnique({ where: { source: "hours_actual" }, select: { refreshedThrough: true } }).catch(() => null),
     prisma.etcEntry.findFirst({ where: { jobId: { in: jobIds } }, orderBy: { month: "desc" }, select: { month: true } }),
@@ -134,18 +143,12 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
   const quotedBy = new Map<string, number>();
   for (const e of estimated) quotedBy.set(e.section, (quotedBy.get(e.section) ?? 0) + Number(e.quotedHours));
 
-  // Cumulative actual per section. A closed/historical job's real total lives in
-  // EstimatedHours.actualHistoricalHours (the Excel-migration snapshot); an
-  // actively ETC-tracked job's total is the sum of every month's hoursWorked.
-  // The two never overlap for the same job, so adding is safe (same rule the
-  // Projects grid uses).
+  // Cumulative actual per section, summed across the selected jobs. The rule
+  // (migration snapshot + frozen ETC history + live punches) lives in
+  // actual-hours.ts so this page and the Projects grid can't disagree.
   const actualBy = new Map<string, number>();
-  for (const e of estimated) {
-    if (e.actualHistoricalHours != null) actualBy.set(e.section, (actualBy.get(e.section) ?? 0) + Number(e.actualHistoricalHours));
-  }
-  for (const e of entries) {
-    if (e.section === PARTS_COST_SECTION) continue;
-    actualBy.set(e.section, (actualBy.get(e.section) ?? 0) + Number(e.hoursWorked));
+  for (const sections of actualBySection.values()) {
+    for (const [section, hours] of sections) actualBy.set(section, (actualBy.get(section) ?? 0) + hours);
   }
 
   // ETC per section — effective New ETC for the latest month only.
@@ -167,30 +170,6 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
     etc: etcBy.get(s.code) ?? 0,
     actual: actualBy.get(s.code) ?? 0,
   }));
-
-  // Per-section monthly worked hours. Summed across the selected jobs, so an
-  // aggregate view reads as one timeline rather than interleaved per-job rows.
-  // Zero-hour months are dropped — a month where nobody touched the section is
-  // noise in a drill-down, not information.
-  const monthlyBySection: Record<string, { month: string; worked: number }[]> = {};
-  {
-    // section -> month -> hours. Nested rather than a composite string key, so
-    // no separator has to be chosen that a section code or month can't contain.
-    const bySection = new Map<string, Map<string, number>>();
-    for (const e of entries) {
-      if (e.section === PARTS_COST_SECTION) continue;
-      const worked = Number(e.hoursWorked);
-      if (!worked) continue;
-      let months = bySection.get(e.section);
-      if (!months) bySection.set(e.section, (months = new Map()));
-      months.set(e.month, (months.get(e.month) ?? 0) + worked);
-    }
-    for (const [section, months] of bySection) {
-      monthlyBySection[section] = [...months].map(([month, worked]) => ({ month, worked }));
-    }
-    // YYYY-MM sorts correctly as a string, so no date parsing needed.
-    for (const list of Object.values(monthlyBySection)) list.sort((a, b) => a.month.localeCompare(b.month));
-  }
 
   // Billing-group rollups (Engineering / Shop).
   const bgMap = new Map<string, { quoted: number; etc: number; actual: number }>();
