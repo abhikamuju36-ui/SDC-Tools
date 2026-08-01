@@ -4,6 +4,7 @@ import { runDax } from "@/lib/powerbi-client";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
 import { calcHoursLeft, round2, isMonthLocked } from "@/lib/etc";
 import { getPartsCostSpentByJob } from "@/lib/sync-totaleto";
+import { resolveEtcPeriodName } from "@/lib/etc-period";
 import {
   fetchJobHoursRows,
   fetchJobHoursRowsWithIssues,
@@ -11,12 +12,13 @@ import {
   latestWorkDate,
   type HoursImportIssue,
   type JobHoursRow,
+  type PoolHoursByMonth,
 } from "@/lib/sharepoint-hours";
 
 // One parse of the Paylocity export, shared by the two syncs that read it.
 // Exported so a caller running both (auto-sync's pass, the ETC Refresh Data
 // button) can fetch once and hand the same object to each.
-export type HoursExport = { rows: JobHoursRow[]; issues: HoursImportIssue[] };
+export type HoursExport = { rows: JobHoursRow[]; issues: HoursImportIssue[]; poolHours: PoolHoursByMonth };
 
 // Actual hours worked per job per month, upserted into JobMonthlyActualHours
 // (the job-level rollup the dashboard / job detail use). Now summed directly
@@ -454,25 +456,20 @@ function previousMonth(month: string): string {
   const d = new Date(y, m - 2, 1);
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
 }
-const MONTH_NUM_TO_NAME = [
-  "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec",
-] as const;
-
-// "2026-07" -> "Jul 2026", matching 'Estimated to Complete Period'[ETC Name]'s
-// format exactly (see sync-etc-history.ts's etcNameToMonth, the inverse).
-function monthToEtcName(month: string): string {
-  const [year, monthNum] = month.split("-").map(Number);
-  return `${MONTH_NUM_TO_NAME[monthNum - 1]} ${year}`;
-}
-
+// NOTE: this function is no longer on any automatic path. The 6-hour pass and
+// the panel's Refresh button both compute the pools from app data now — see
+// standard-pool-local.ts. It is kept for comparison against upstream and for
+// any future backfill, and it is the reason etc-period.ts exists.
+//
 // Refreshes the company-wide "Standard Fees By Department" category pools,
-// scoped to the requested month's ETC period. Filter by [ETC Name], NEVER
-// [ETC Begin Date] — confirmed live (see sync-etc-history.ts's own verified
-// mapping, and re-confirmed directly against Power BI during a 2026-07-16
-// audit: "May 2026"'s Begin Date is 2026-06-01, a full month later).
-// [ETC Begin Date] = DATE(year, month, 1) silently pulls the PREVIOUS
-// month's HoursQuoted/HoursActual and stores them mislabeled as the current
-// month — this filter used to do exactly that; fixed to match by name.
+// scoped to the requested month's ETC period. Which period THAT is now comes
+// from etc-period.ts, resolved by [ETC Begin Date].
+//
+// The rule here used to be "filter by [ETC Name], NEVER [ETC Begin Date]",
+// on the basis of a 2026-07-16 audit. Upstream has moved since: measured
+// against the punch export on 2026-07-31, each period's figures line up with
+// its Begin Date month, and name-as-month was wrong in all 24 department-months
+// tested. Resolving by Begin Date is also stable if the labelling moves again.
 //
 // Excel-free data flow (the workbook's Export-tab write-back loop is retired):
 // - "Previous Month Pulled Hours" (misleading name) = OUR OWN prior month's
@@ -499,7 +496,11 @@ function monthToEtcName(month: string): string {
 export async function syncCategoryPoolsFromPowerBi(
   month: string,
 ): Promise<{ poolsUpserted: number; periodFound: boolean }> {
-  const etcName = monthToEtcName(month);
+  // Resolved from the period's Begin Date, not its name — see etc-period.ts.
+  // Filtering on monthToEtcName(month) now selects the period BEFORE the one
+  // wanted, so this pulled the wrong month's drivers.
+  const etcName = await resolveEtcPeriodName(month);
+  if (!etcName) return { poolsUpserted: 0, periodFound: false };
   const dax = `
     EVALUATE
     SUMMARIZECOLUMNS(

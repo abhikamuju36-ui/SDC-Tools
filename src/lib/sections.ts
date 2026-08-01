@@ -70,6 +70,58 @@ export const ETC_TRACKED_CODES = new Set(ETC_SECTIONS.map((s) => s.code));
 // the team confirmed.
 export const HOURS_IMPORT_CODES = new Set([...ETC_TRACKED_CODES, "10-413"]);
 
+// ── The four company-wide Standard Fees pools ──────────────────────────────
+//
+// The pools are not a separate universe from the sections above: they ARE the
+// four sections ETC_EXCLUDED_CODES leaves off the Monthly ETC grid. PM,
+// Manufacturing and both Warranty phases are planned company-wide in one pot
+// rather than job by job, which is exactly why the grid has no column for them.
+export type PoolCategory = "ENGINEERING_PM" | "ENGINEERING_WARRANTY" | "SHOP_MANUFACTURING" | "SHOP_WARRANTY";
+
+export const POOL_CATEGORIES: PoolCategory[] = [
+  "ENGINEERING_PM",
+  "ENGINEERING_WARRANTY",
+  "SHOP_MANUFACTURING",
+  "SHOP_WARRANTY",
+];
+
+// The quoted-hours section each pool draws its "New Hours Added" from.
+export const POOL_QUOTED_SECTION: Record<PoolCategory, string> = {
+  ENGINEERING_PM: "10-111",
+  ENGINEERING_WARRANTY: "70-211",
+  SHOP_MANUFACTURING: "10-413",
+  SHOP_WARRANTY: "70-411",
+};
+
+// Which pool a raw punch belongs to, by MachineSec (phase) + Function.
+//
+// Deliberately keyed off the RAW punch codes rather than the aliased section,
+// because the aliases above exist to feed the ETC grid's fixed columns and drop
+// warranty entirely ("Warranty (70-*) is deliberately NOT aliased"). The pools
+// need the opposite: warranty is the whole point of two of them.
+//
+// The buckets follow Power BI's own measure definitions as recorded above
+// SECTION_ALIASES in sharepoint-hours.ts — [PM Hours] counts function 111,
+// [Manufacturing Hours] counts 414, [Engineering Hours] counts 211/311/312/313
+// and [Shop Hours] counts 411/412 — with the last two restricted to the
+// Warranty phase, since that is the only phase the pools cover.
+export function poolCategoryForPunch(machineSec: string, fn: string): PoolCategory | null {
+  // Phase 10 only, for the two Design & Build pools. Counting function 414 in
+  // every phase ran ~40h/month above the archived Manufacturing figure (measured
+  // 2026-07-31 across 2026-02..2026-05), and matches the app's existing alias,
+  // which maps "10-414" -> "10-413" and no other phase's 414.
+  if (machineSec === "10") {
+    if (fn === "111") return "ENGINEERING_PM";
+    // The punch data books manufacturing to 414; 413 is the app's own column code.
+    if (fn === "413" || fn === "414") return "SHOP_MANUFACTURING";
+  }
+  if (machineSec === "70") {
+    if (fn === "211" || fn === "311" || fn === "312" || fn === "313") return "ENGINEERING_WARRANTY";
+    if (fn === "411" || fn === "412") return "SHOP_WARRANTY";
+  }
+  return null;
+}
+
 // "Parts Cost" is a real block in the real sheet — same 5-column shape
 // (Prior ETC / Money Spent Month / Money Left / New ETC / Diff) as every
 // department, just in dollars instead of hours, and with no Engineering/Shop

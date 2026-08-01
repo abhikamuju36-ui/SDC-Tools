@@ -4,7 +4,18 @@ import fs from "fs/promises";
 import path from "path";
 import os from "os";
 import * as XLSX from "xlsx";
-import { ETC_TRACKED_CODES, HOURS_IMPORT_CODES } from "@/lib/sections";
+import { ETC_TRACKED_CODES, HOURS_IMPORT_CODES, poolCategoryForPunch } from "@/lib/sections";
+
+// Company-wide hours worked per Standard Fees pool, keyed `${YYYY-MM}::${category}`.
+//
+// Collected during the same parse as the job rows, but deliberately NOT routed
+// through them. Three of the four pool sections (PM 111, and both Warranty
+// phases) are outside HOURS_IMPORT_CODES, and widening that set would fold them
+// into JobMonthlyActualHours — silently moving every job-level actual-hours
+// figure on the dashboard, the Projects over/under colouring and the job detail.
+// The pools are company-wide and need no per-job attribution, so they get their
+// own tally instead of a change to what "actual hours for a job" means.
+export type PoolHoursByMonth = Map<string, number>;
 
 // Reads the Paylocity "Current_Job_Hours.xlsx" hours export directly from the
 // SDC-PowerBIIntegration SharePoint site (Microsoft Graph, read-only), so the
@@ -337,6 +348,7 @@ export async function fetchJobHoursRowsWithIssues(): Promise<{
   rows: JobHoursRow[];
   issues: HoursImportIssue[];
   unattributed: UnattributedRow[];
+  poolHours: PoolHoursByMonth;
 }> {
   const buffer = (await readLocalWorkbook()) ?? (await downloadWorkbookViaGraph());
   const wb = XLSX.read(buffer, { type: "buffer" });
@@ -345,16 +357,30 @@ export async function fetchJobHoursRowsWithIssues(): Promise<{
   const out: JobHoursRow[] = [];
   const unattributed = new Map<string, HoursImportIssue>(); // `${month}::${label}`
   const unattributedRows: UnattributedRow[] = [];
-  // Hours on a real job that still reach no column after aliasing — warranty (out
-  // by the confirmed ENG/SHOP formula), phases the app doesn't model (80/90), and
-  // odd MachineSec values (1/5/12). Counted rather than silently dropped: ~990h in
-  // July, which is the kind of number that should be stated out loud even when
-  // excluding it is the correct behaviour. Function 417 is left out of this count
-  // — Power BI drops it too, so it is not a gap between the two systems.
+  // Company-wide hours for the four Standard Fees pools — see PoolHoursByMonth.
+  const poolHours: PoolHoursByMonth = new Map();
+  // Hours on a real job that reach no ETC grid column after aliasing. Split two
+  // ways, because lumping them together overstated the gap badly:
+  //
+  //   pooledByCode — no grid column, but DOES reach a figure: the four Standard
+  //     Fees pools. Warranty and PM live here (~2,800h), and until the pools
+  //     were computed locally they genuinely went nowhere, which is how they
+  //     ended up in a warning that says "NOT counted in any figure".
+  //
+  //   droppedByCode — reaches nothing at all: phases the app doesn't model
+  //     (80/90), shop functions with no column (10-400), odd MachineSec values.
+  //     Stated out loud rather than silently dropped, because excluding hours
+  //     correctly and losing them look identical from the outside.
+  //
+  // Function 417 is in neither count — Power BI drops it too, so it is not a
+  // gap between the two systems.
   const droppedByCode = new Map<string, number>();
+  const pooledByCode = new Map<string, number>();
   const push = (jobId: string, section: string, date: Date, hours: number, employeeId: string) => {
     if (!HOURS_IMPORT_CODES.has(section)) {
-      droppedByCode.set(section, (droppedByCode.get(section) ?? 0) + hours);
+      const [ms, fn] = section.split("-");
+      const bucket = poolCategoryForPunch(ms, fn) ? pooledByCode : droppedByCode;
+      bucket.set(section, (bucket.get(section) ?? 0) + hours);
       return;
     }
     out.push({ jobId, section, year: date.getUTCFullYear(), month: date.getUTCMonth() + 1, date, hours, employeeId });
@@ -397,6 +423,17 @@ export async function fetchJobHoursRowsWithIssues(): Promise<{
     }
     const jobId = String(jobNum); // normalize leading zeros to match app job keys
     const employeeId = String(r["Employee Id"] ?? "").trim();
+
+    // Pool tally, from the RAW phase/function rather than the aliased section:
+    // the aliases fold warranty away, and two of the four pools are warranty.
+    // Counted here, after the real-job-number check, so the pools use the same
+    // notion of a genuine punch as every other figure.
+    const poolCategory = poolCategoryForPunch(machineSec, fn);
+    if (poolCategory) {
+      const poolMonth = `${date.getUTCFullYear()}-${String(date.getUTCMonth() + 1).padStart(2, "0")}`;
+      const poolKey = `${poolMonth}::${poolCategory}`;
+      poolHours.set(poolKey, (poolHours.get(poolKey) ?? 0) + hours);
+    }
     if (section === "10-311") {
       // Split into design (312, 30%) and software (313, 70%), per PBI. Both
       // halves keep the employee, so the Hours Detail drill shows one punch as
@@ -408,16 +445,22 @@ export async function fetchJobHoursRowsWithIssues(): Promise<{
     }
   }
 
+  const summarise = (m: Map<string, number>) =>
+    [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8).map(([c, h]) => `${c} ${h.toFixed(2)}h`).join(", ");
+
+  if (pooledByCode.size > 0) {
+    const total = [...pooledByCode.values()].reduce((a, b) => a + b, 0);
+    console.info(
+      `[sharepoint-hours] ${total.toFixed(2)}h on ${pooledByCode.size} code(s) with no ETC grid column, counted in the ` +
+        `Standard Fees pools (largest: ${summarise(pooledByCode)}).`,
+    );
+  }
+
   if (droppedByCode.size > 0) {
     const total = [...droppedByCode.values()].reduce((a, b) => a + b, 0);
-    const top = [...droppedByCode.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
-      .map(([c, h]) => `${c} ${h.toFixed(2)}h`)
-      .join(", ");
     console.warn(
-      `[sharepoint-hours] ${total.toFixed(2)}h on ${droppedByCode.size} code(s) with no ETC column — NOT counted in any figure ` +
-        `(largest: ${top}). Warranty (70-*) is excluded by design; the rest are phases/sections the app does not model.`,
+      `[sharepoint-hours] ${total.toFixed(2)}h on ${droppedByCode.size} code(s) reach NO figure anywhere ` +
+        `(largest: ${summarise(droppedByCode)}). Phases 80/90 and sections the app does not model.`,
     );
   }
 
@@ -429,7 +472,7 @@ export async function fetchJobHoursRowsWithIssues(): Promise<{
         `(${issues.length} month/label combinations). Worth chasing upstream in Paylocity.`
     );
   }
-  return { rows: out, issues, unattributed: unattributedRows };
+  return { rows: out, issues, unattributed: unattributedRows, poolHours };
 }
 
 // Rows only — the common case, and what the reconciliation scripts want.

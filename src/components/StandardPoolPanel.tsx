@@ -130,7 +130,8 @@ export function StandardPoolPanel({
           <span className="rounded bg-sdc-navy px-2 py-0.5 text-[10px] font-semibold text-white">Locked</span>
         ) : (
           <form action={refreshPoolsAction}>
-            <button type="submit" className="rounded border border-sdc-border bg-white px-2 py-0.5 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light" title="Pull this month's category pools from Power BI.">
+            <button type="submit" className="rounded border border-sdc-border bg-white px-2 py-0.5 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light" title="Recompute this month's category pools now. Your pulled-hours and rate edits are kept.">
+
               Refresh
             </button>
           </form>
@@ -141,19 +142,19 @@ export function StandardPoolPanel({
         <>
           {carriedFrom && !isSubmitted && (
             <p className="border-b border-sdc-border bg-sdc-yellow-bg/60 px-3 py-2 text-[11px] text-sdc-gray-600">
-              No pool data pulled for {month} yet — showing {carriedFrom}&apos;s figures as an estimate.{" "}
-              {/* Telling someone to click Refresh is worse than saying nothing when
-                  Refresh cannot help: upstream publishes these figures roughly two
-                  months behind, so for the in-progress month there is nothing to
-                  pull and the button reports success having written nothing
-                  (verified 2026-07-31 — latest published period was May 2026).
-                  When the sync has recorded WHY, say that instead. */}
-              {upstreamNote ?? `Refresh pulls ${month} once Power BI publishes it; the sync also retries every 6 hours.`}
+              No pool figures computed for {month} yet — showing {carriedFrom}&apos;s as an estimate.{" "}
+              {/* Refresh is worth offering again now that the drivers are computed
+                  from the app's own data. It used to be the opposite: the figures
+                  came from a Power BI ETC period published roughly two months
+                  behind, so for the in-progress month Refresh could only report
+                  success having written nothing. When the sync has recorded a
+                  reason of its own, that wins over this generic line. */}
+              {upstreamNote ?? `Refresh computes ${month} now; the 6-hour sync does the same on its own.`}
             </p>
           )}
 
           {rows.length === 0 ? (
-            <p className="px-3 py-4 text-xs text-sdc-gray-400">No department pool data available. Click Refresh to pull from Power BI.</p>
+            <p className="px-3 py-4 text-xs text-sdc-gray-400">No department pool data available. Click Refresh to compute this month.</p>
           ) : (
             <form action={savePoolsAction}>
               <div className="max-h-[calc(100vh-330px)] overflow-auto styled-scrollbar">

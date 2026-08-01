@@ -3,6 +3,7 @@ import { runDax } from "@/lib/powerbi-client";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
 import { calcHoursLeft, suggestNewEtc, round2, hasPublishedHistory, groupStandardFeesRows } from "@/lib/etc";
 import { queryWarehouse } from "@/lib/fabric-warehouse";
+import { fetchEtcPeriods } from "@/lib/etc-period";
 
 // Refreshes historical ETC months from Power BI's "ETC Historical *" measure
 // family — the same numbers the Job Hours Report's "ETC Historical Hours"
@@ -19,10 +20,15 @@ import { queryWarehouse } from "@/lib/fabric-warehouse";
 // periods (its backing calculated column errors out), which is why history
 // goes through these measures instead of syncHoursWorkedFromPowerBi.
 //
-// Period mapping (verified by chaining against live-synced local data):
-// 'Estimated to Complete Period'[ETC Name] "May 2026" IS app month
-// "2026-05". The period's Begin Date is one month later (May's ETC gets
-// filled out in early June) — always map by ETC Name, never by Begin Date.
+// Period mapping: see etc-period.ts, which owns it for both PBI-facing syncs.
+//
+// This used to map by [ETC Name] ("May 2026" IS app month "2026-05"), on the
+// grounds that Begin Date runs a month later. Re-measured against the punch
+// export on 2026-07-31, that is no longer true upstream: every period's figures
+// now line up with its BEGIN DATE month, and name-as-month was wrong in all 24
+// department-months tested. The app's stored history is unaffected — it is
+// correctly labelled and the upstream name moved under it — but a backfill run
+// with the old mapping would write each period's data into the wrong month.
 //
 // Ownership rule — which system's numbers win for a month:
 // - A month is APP-OWNED (never overwritten here) when any of its entries
@@ -60,15 +66,9 @@ export async function syncEtcHistoryFromPowerBi(): Promise<{
   poolMonthsOwnedWithPbiHistoryNow: string[];
   poolEntriesReconciled: number;
 }> {
-  const periods = (await runDax(`EVALUATE 'Estimated to Complete Period'`)) as {
-    "Estimated to Complete Period[ETC Name]": string;
-  }[];
-  const candidates = periods
-    .map((p) => {
-      const name = p["Estimated to Complete Period[ETC Name]"];
-      return { name, month: etcNameToMonth(name) };
-    })
-    .sort((a, b) => a.month.localeCompare(b.month));
+  // Resolved by the period's Begin Date, not its name — see etc-period.ts. The
+  // name-based mapping this used to do is now off by a month upstream.
+  const candidates = (await fetchEtcPeriods()).map((p) => ({ name: p.name, month: p.month }));
 
   // App-owned months, per the ownership rule above.
   const ownedRows = await prisma.etcEntry.findMany({
@@ -453,15 +453,6 @@ async function syncCategoryPoolHistory(
   return { poolMonthsRefreshed, poolRowsWritten, poolMonthsOwnedWithPbiHistoryNow, poolEntriesReconciled };
 }
 
-const MONTH_NAME_TO_NUM: Record<string, string> = {
-  Jan: "01", Feb: "02", Mar: "03", Apr: "04", May: "05", Jun: "06",
-  Jul: "07", Aug: "08", Sep: "09", Oct: "10", Nov: "11", Dec: "12",
-};
-
-// "Aug 2025" -> "2025-08"
-function etcNameToMonth(name: string): string {
-  const [mon, year] = name.split(" ");
-  const mm = MONTH_NAME_TO_NUM[mon];
-  if (!mm) throw new Error(`Unrecognized ETC period name: "${name}"`);
-  return `${year}-${mm}`;
-}
+// (The name -> month helper that used to live here moved to etc-period.ts,
+// where it is now a fallback for periods with no Begin Date rather than the
+// primary mapping.)

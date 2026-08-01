@@ -52,7 +52,7 @@ export const SYNC_SOURCES = [
   { source: "hours_actual", label: "Actual hours (Paylocity export)", monthScoped: false },
   { source: "etc_hours_worked", label: "ETC hours worked", monthScoped: true },
   { source: "parts_cost", label: "Parts cost (TotalETO)", monthScoped: true },
-  { source: "standard_pools", label: "Standard Fees pools (Power BI)", monthScoped: true },
+  { source: "standard_pools", label: "Standard Fees pools", monthScoped: true },
   // Same wording as the dashboard's long-standing "Jobs from TotalETO" button,
   // which triggers this exact sync. Two names for one feed is precisely the
   // confusion this list exists to prevent.
@@ -88,7 +88,7 @@ export async function runAllSyncs(trigger: SyncTrigger): Promise<SyncRunResult> 
   // built-ins these pull in (mssql, msal's native cache, fs) cannot load at all.
   const { syncActualHours, syncHoursWorked, syncPartsCost, recordSyncSuccess, recordSyncFailure, recordSyncNote } = await import("@/lib/sync-powerbi");
   const { fetchJobHoursRowsWithIssues } = await import("@/lib/sharepoint-hours");
-  const { syncCategoryPoolsFromPowerBi } = await import("@/lib/sync-powerbi");
+  const { computeCategoryPoolsLocally } = await import("@/lib/standard-pool-local");
   const { poolRefreshBlockedBy } = await import("@/lib/standard-pool-eligibility");
   const { syncFromTotalEto } = await import("@/lib/sync-totaleto");
   const { syncSchedulerTeam } = await import("@/lib/sync-scheduler-team");
@@ -182,22 +182,27 @@ export async function runAllSyncs(trigger: SyncTrigger): Promise<SyncRunResult> 
   });
 
   // The Standard Fees pool ledger — the four PM/Warranty/MFG blocks on the ETC
-  // page. Was Refresh-button-only, which is why the panel kept offering last
-  // month's figures "as an estimate" until somebody noticed and clicked: the
-  // driver measures (New Hours Added, Hours Worked) are live in Power BI the
-  // whole time.
+  // page. Computed from the app's own data (standard-pool-local.ts), not Power
+  // BI.
   //
-  // This one goes through Power BI's dataset via runDax, unlike everything else
-  // here. That is only viable because runDax prefers APP-ONLY auth (verified
-  // against the dataset 2026-07-29); the delegated DPAPI cache it falls back to
-  // cannot be decrypted in Windows session 0, so if the app-only path ever
-  // regresses this step will fail on the schedule and say so on the dashboard
-  // rather than quietly working only when a human clicks.
+  // It used to call syncCategoryPoolsFromPowerBi, and for the month people are
+  // actually working in that could never succeed: upstream publishes ETC
+  // periods roughly two months behind, so this step found no period, correctly
+  // wrote nothing, and said so — every six hours, indefinitely. The panel spent
+  // the whole month showing the previous month's figures "as an estimate", and
+  // because no row existed for the month, the manual pulled-hours cell had
+  // nowhere to save to and was read-only.
+  //
+  // All three drivers now come from feeds already refreshed by this same pass:
+  // the prior month's closing balance (local), quoted hours for jobs starting
+  // this month, and punches from the Paylocity export. The quoted-hours
+  // definition was verified exact against Power BI's own measure across 32
+  // cells before being trusted — see standard-pool-local.ts.
   //
   // The manual decisions — Hours being pulled this month, and Rate — are
-  // preserved by syncCategoryPoolsFromPowerBi for any row that already exists;
-  // only the driver and derived figures are rewritten. A new month's row gets
-  // the sheet's own documented defaults.
+  // preserved for any row that already exists; only the drivers and the figures
+  // derived from them are rewritten. A new month's row gets the sheet's own
+  // documented defaults.
   await step("standard_pools", labelFor("standard_pools"), true, async () => {
     if (!month) return null;
     // Same rule the Refresh button applies, from one definition — a submitted
@@ -205,15 +210,16 @@ export async function runAllSyncs(trigger: SyncTrigger): Promise<SyncRunResult> 
     // starting balance.
     const blocked = await poolRefreshBlockedBy(month);
     if (blocked) return null;
-    const r = await syncCategoryPoolsFromPowerBi(month);
-    // Upstream has no ETC period for this month yet — the pool drivers simply do
-    // not exist to pull. Reported as a stated skip, never as a green success:
-    // this step wrote nothing, and saying "ok" would put a healthy tick beside a
-    // panel that is still showing last month's figures.
-    if (!r.periodFound) {
-      return { skip: `Power BI has no ETC period for ${month} yet — the pool figures are not published upstream.` };
+    // Reuses this pass's single parse of the export rather than re-reading a
+    // ~12,600-row workbook.
+    const r = await computeCategoryPoolsLocally(month, (await hoursExport()).poolHours);
+    // Written either way — Hours Worked is simply 0 — but a month with no
+    // punches yet is stated rather than reported as a clean success, the same
+    // way the old Power-BI-had-no-period case was.
+    if (r.noPunchData) {
+      return { skip: `${r.poolsUpserted} pools computed for ${month}, but no punches in the pool sections yet — Hours Worked is 0.` };
     }
-    return `${r.poolsUpserted} pools upserted`;
+    return `${r.poolsUpserted} pools computed locally`;
   });
 
   // The TotalETO job mirror (customer, estimate/actual hour totals). Was

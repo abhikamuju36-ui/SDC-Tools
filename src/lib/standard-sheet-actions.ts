@@ -8,7 +8,7 @@ import { assertStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
 import { getEtcMonthJobWhere } from "@/lib/etc-month-jobs";
 import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/execution-etc";
 import { round2 } from "@/lib/etc";
-import { syncCategoryPoolsFromPowerBi } from "@/lib/sync-powerbi";
+import { computeCategoryPoolsLocally } from "@/lib/standard-pool-local";
 import { poolRefreshBlockedBy } from "@/lib/standard-pool-eligibility";
 import {
   calcTotalEtcDollars,
@@ -73,13 +73,21 @@ function globalRates(setting: { engrRate: unknown; shopRate: unknown; partsMarku
   };
 }
 
-// Pull the month's category-pool driver measures from Power BI (the app's
-// version of the sheet's GETPIVOTDATA refresh).
+// Recompute the month's category-pool drivers (the app's version of the
+// sheet's GETPIVOTDATA refresh). Local now, not Power BI — see
+// standard-pool-local.ts for why and for the verification behind it. The 6-hour
+// pass runs the identical computation, so this button is a "don't wait" rather
+// than the only way to get current figures.
 export async function refreshPools(month: string) {
   await assertStandardSheetUnlocked();
   await assertMonthNotSubmitted(month);
-  await syncCategoryPoolsFromPowerBi(month);
-  await logAudit({ action: "standardSheet.refreshPools", entityType: "CategoryPool", entityId: month, summary: `Refreshed category pools from Power BI for ${month}` });
+  const r = await computeCategoryPoolsLocally(month);
+  await logAudit({
+    action: "standardSheet.refreshPools",
+    entityType: "CategoryPool",
+    entityId: month,
+    summary: `Recomputed ${r.poolsUpserted} category pools for ${month}`,
+  });
   revalidatePath("/etc");
 }
 
