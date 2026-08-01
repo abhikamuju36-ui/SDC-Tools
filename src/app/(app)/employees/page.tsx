@@ -14,18 +14,19 @@ const DASH = "—";
 
 // Replaces the "Employees" tab of Project Planner Data Control.xlsx.
 // Soft-delete only: deactivating keeps every historical hour intact.
+//
+// Read-only view — see EmployeesTable. The roster's fields all have upstream
+// owners (Scheduler for discipline, Paylocity for name/department/supervisor),
+// so it is maintained through the toolbar's sync and import buttons rather than
+// by typing into cells.
 export default async function EmployeesPage() {
   const employees = await prisma.employee.findMany({
     orderBy: [{ discipline: "asc" }, { name: "asc" }],
   });
 
-  // id → name across the WHOLE roster so a supervisor who's inactive still
-  // resolves; active employees drive the supervisor dropdown.
+  // id → name across the WHOLE roster, so a supervisor who has since been
+  // deactivated still resolves to a name instead of showing as a dash.
   const nameById = new Map(employees.map((e) => [e.id, e.name]));
-  const supervisors = employees
-    .filter((e) => e.active)
-    .map((e) => ({ id: e.id, name: e.name }))
-    .sort((a, b) => a.name.localeCompare(b.name));
 
   const rows: EmployeeRow[] = employees.map((e) => ({
     id: e.id,
@@ -44,7 +45,7 @@ export default async function EmployeesPage() {
         <div>
           <PageTitle className="mb-1">Employees</PageTitle>
           <p className="text-sm text-sdc-gray-600">
-            Replaces the Project Planner workbook&apos;s Employees tab. Deactivated employees keep all historical hours. Rows are grouped by department; edits save as soon as you leave the cell.
+            Replaces the Project Planner workbook&apos;s Employees tab. One card per team, in the order the work moves through them. Deactivated employees keep all historical hours. The roster is read-only here — it&apos;s maintained through the sync and import buttons.
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -55,7 +56,7 @@ export default async function EmployeesPage() {
       </div>
 
       <div className="mt-5">
-        <EmployeesGrid rows={rows} disciplines={DISCIPLINES} supervisors={supervisors} />
+        <EmployeesGrid rows={rows} disciplines={DISCIPLINES} />
       </div>
     </div>
   );

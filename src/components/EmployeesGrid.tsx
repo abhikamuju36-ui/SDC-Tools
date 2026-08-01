@@ -12,14 +12,15 @@ import { EmployeesTable, DASH, type EmployeeRow } from "@/components/EmployeesTa
 const SELECT =
   "h-8 rounded-lg border border-sdc-border bg-white px-2 text-xs text-sdc-navy outline-none focus:border-sdc-blue";
 
+// `disciplines` drives the toolbar filter only. The table itself is read-only,
+// so it no longer needs the discipline or supervisor option lists that used to
+// populate its in-cell dropdowns.
 export function EmployeesGrid({
   rows,
   disciplines,
-  supervisors,
 }: {
   rows: EmployeeRow[];
   disciplines: string[];
-  supervisors: { id: number; name: string }[];
 }) {
   const [q, setQ] = useState("");
   const [showInactive, setShowInactive] = useState(false);
@@ -114,7 +115,7 @@ export function EmployeesGrid({
           </button>
         )}
       </div>
-      <EmployeesTable rows={visible} disciplines={disciplines} supervisors={supervisors} />
+      <EmployeesTable rows={visible} />
     </>
   );
 }
