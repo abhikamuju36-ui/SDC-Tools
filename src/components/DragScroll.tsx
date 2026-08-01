@@ -19,12 +19,15 @@ import { useRef, type ReactNode } from "react";
 //   would break them: a <select> must open its dropdown, a date input opens its
 //   picker (DateCell calls showPicker on mousedown), links/buttons/summaries act.
 //
-//   PAN from a text or number input that is NOT currently focused, and restore the
-//   click if the pointer never moved. So the first press on a cell pans, and once
-//   you are actually editing that cell, dragging inside it selects text as usual.
-//   Focus is suppressed during the press and re-applied on release only when it
-//   was a click rather than a drag — otherwise panning would leave a caret blinking
-//   in whatever cell you happened to grab, and would drag-select its text.
+//   PAN from a text or number input that is NOT currently focused. So the first
+//   press on a cell pans, and once you are actually editing that cell, dragging
+//   inside it selects text as usual.
+//
+// A single click no longer opens a cell for editing — DOUBLE-click does, as in a
+// spreadsheet. Every cell on these grids is an input, so "grab the page to drag
+// it" and "click into a field" were the same gesture, and any drag that fell
+// short of the 3px threshold dropped a caret into live data. Requiring the
+// second click separates panning from editing outright.
 const NEVER_PAN = [
   "select",
   "button",
@@ -91,8 +94,12 @@ export function DragScroll({ className, children }: { className?: string; childr
     };
     const onUp = () => {
       el.style.cursor = "";
-      // Not a drag after all: give the cell the focus its click would have.
-      if (!moved.current && pendingFocus.current) pendingFocus.current.focus();
+      // Deliberately does NOT hand focus back on a plain click any more. A
+      // single click on a grid full of inputs is how people grab the page to
+      // pan it, and landing in an editable cell every time they missed the drag
+      // threshold produced exactly the accidental edits this was reported for.
+      // Double-click opens the cell instead (see onDoubleClick) — the same
+      // gesture a spreadsheet uses to go from selecting to editing.
       pendingFocus.current = null;
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
@@ -111,8 +118,26 @@ export function DragScroll({ className, children }: { className?: string; childr
     }
   }
 
+  // Double-click to edit. Focus is suppressed on the way in (onMouseDown), so
+  // this is what actually opens a cell — select-all included, matching the
+  // focus behaviour ExcelCellFocus gives a cell reached by keyboard.
+  function onDoubleClick(e: React.MouseEvent) {
+    const target = e.target as HTMLElement;
+    const textish = target.closest("input,textarea") as HTMLInputElement | HTMLTextAreaElement | null;
+    if (!textish || textish.disabled || textish.readOnly) return;
+    textish.focus();
+    if (textish instanceof HTMLInputElement && textish.type !== "date") textish.select();
+  }
+
   return (
-    <div ref={ref} className={className} onMouseEnter={onMouseEnter} onMouseDown={onMouseDown} onClickCapture={onClickCapture}>
+    <div
+      ref={ref}
+      className={className}
+      onMouseEnter={onMouseEnter}
+      onMouseDown={onMouseDown}
+      onClickCapture={onClickCapture}
+      onDoubleClick={onDoubleClick}
+    >
       {children}
     </div>
   );

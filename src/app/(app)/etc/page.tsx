@@ -1313,15 +1313,41 @@ export default async function MonthlyEtcPage({
                                       ? String(round2(suggestedCost))
                                       : ""
                               }
-                              needsAttention={!decidedCost}
-                              placeholder={!monthComplete || spent === 0 || draftCost != null ? undefined : currency(suggestedCost)}
+                              // Deliberately NOT `!decidedCost`: that counts a
+                              // saved draft as decided forever, so clearing a
+                              // drafted cell would leave it neutral. The cell
+                              // judges presence from its own value.
+                              attentionWhenBlank={spent !== 0 && !isHistoricalMonth && partsCostEntry.submittedAt == null}
+                              // NO placeholder hint, matching the per-section
+                              // hours cells (see EtcSectionCells). It used to
+                              // show the suggestion — and the placeholder is
+                              // styled bold in the same grey as a real value, so
+                              // a cell nobody had touched was indistinguishable
+                              // from a decided one. Every Parts Cost row with
+                              // money spent this month looked filled in when in
+                              // fact none of them were. Money spent means the
+                              // new figure is a manager's judgment call, so the
+                              // cell now reads as genuinely blank until one is
+                              // typed; the suggestion stays on the tooltip.
+                              hint={
+                                spent === 0 || draftCost != null
+                                  ? undefined
+                                  : `Nothing decided yet. Money Left is ${currencyExact(moneyLeft)} — carrying that forward would give ${currencyExact(suggestedCost)}.`
+                              }
                               locked={locked}
                             />
                             <td
-                              className={`border-l border-sdc-border ${diffBg(diffCost)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
-                              title={`${currencyExact(diffCost)} = Money Left (${currencyExact(moneyLeft)}) − New ETC (${currencyExact(effectiveNewEtcCost)})`}
+                              className={`border-l border-sdc-border ${decidedCost ? diffBg(diffCost) : ""} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                              title={
+                                decidedCost
+                                  ? `${currencyExact(diffCost)} = Money Left (${currencyExact(moneyLeft)}) − New ETC (${currencyExact(effectiveNewEtcCost)})`
+                                  : "No New ETC decided yet, so there is no variance to report."
+                              }
                             >
-                              {currency(diffCost)}
+                              {/* "—" not $0, the same rule the section-hours DIFF
+                                  follows: with nothing decided there is no
+                                  variance, and printing $0 reads as "on plan". */}
+                              {decidedCost ? currency(diffCost) : "—"}
                             </td>
                           </Fragment>
                         );

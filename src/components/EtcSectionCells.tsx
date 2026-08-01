@@ -89,7 +89,6 @@ export function EtcSectionCells({
           ? String(round2(priorEtc))
           : "",
   );
-  const [newEtcTouched, setNewEtcTouched] = useState(false);
 
   const hoursLeft = calcHoursLeft(priorEtc, worked);
   const suggested = suggestNewEtc(priorEtc, worked);
@@ -97,8 +96,14 @@ export function EtcSectionCells({
   // logged hours this month (worked > 0) and no value has been decided yet.
   // With no hours worked, New ETC just carries the prior forward — no decision
   // needed — so it stays neutral even while the month is still in progress.
-  const decided =
-    worked === 0 || initialDraft != null || initialConfirmed != null || newEtcTouched;
+  // "Decided" is a property of what the cell CONTAINS, not of whether it was
+  // ever typed in. It used to latch on a `newEtcTouched` flag that never
+  // cleared, so filling a cell and then emptying it again left it neutral —
+  // a section with hours worked and no New ETC, looking done. Reading the
+  // current value instead means the yellow comes straight back when the value
+  // goes, which is the state the manager is actually in.
+  const hasNewEtcValue = newEtcText.trim() !== "";
+  const decided = worked === 0 || hasNewEtcValue;
   const newEtcNum = Number(newEtcText);
   const effective = newEtcText.trim() === "" || !Number.isFinite(newEtcNum) ? suggested : newEtcNum;
   const diff = hoursLeft - effective;
@@ -107,10 +112,9 @@ export function EtcSectionCells({
   // at 0 while Hours Left can be negative, an overspent cell nobody had touched
   // showed an overrun it had not earned. Matches newEtcDiff() server-side, so the
   // cell, the row total and the KPI card all count the same things.
-  const diffDecided = initialDraft != null || initialConfirmed != null || newEtcTouched;
+  const diffDecided = hasNewEtcValue;
 
   function handleNewEtcChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setNewEtcTouched(true);
     setNewEtcText(e.target.value);
     // Nothing persists from typing alone — the toolbar's Save button batch-
     // saves every currently-typed value across the grid at once. This just

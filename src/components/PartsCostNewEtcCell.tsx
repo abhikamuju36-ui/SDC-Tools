@@ -19,6 +19,9 @@ function currency(n: number): string {
 //   * Live "needs attention" background — yellow only when money was actually
 //     spent this month and no value is decided yet; clears the instant the
 //     manager types (touched), exactly like the section-hours cells.
+//   * NO placeholder. Also like the section-hours cells: money spent means the
+//     next figure is a manager's call, and the cell must read as blank until
+//     one is made.
 //   * markEtcDirty() on change so the beforeunload "unsaved changes" guard
 //     covers Parts Cost too.
 // Currency masking (plain digits while focused, "$X,XXX" once blurred) is kept
@@ -28,26 +31,31 @@ export function PartsCostNewEtcCell({
   name,
   jobName,
   initialValue,
-  // Whether this cell would be yellow before the manager touches it: money was
-  // spent this month and no value is decided (no draft, not submitted/historical).
-  needsAttention,
-  placeholder,
+  attentionWhenBlank,
+  hint,
   locked,
 }: {
   name: string;
   jobName: string;
   initialValue: string;
-  needsAttention: boolean;
-  placeholder?: string;
+  // True when a blank cell here means "someone still has to decide this": money
+  // was spent this month, and the month is neither submitted nor historical.
+  // Whether a value is PRESENT is judged from the input itself, so clearing a
+  // cell brings the yellow straight back.
+  attentionWhenBlank: boolean;
+  // Tooltip only — deliberately NOT a placeholder. A placeholder here renders
+  // bold in the same grey as a real value, so an untouched cell read as a
+  // decided one; see the call site in etc/page.tsx.
+  hint?: string;
   locked?: boolean;
 }) {
   const [value, setValue] = useState(initialValue);
-  const [touched, setTouched] = useState(false);
   const [focused, setFocused] = useState(false);
 
-  // Once the manager has weighed in (typed), the cell is decided — matches
-  // EtcSectionCells, where newEtcTouched sticks for the rest of the session.
-  const decided = !needsAttention || touched;
+  // Decided = this cell holds a value RIGHT NOW. Not "was typed in at some
+  // point": a latching touched-flag left an emptied cell looking settled when
+  // it no longer was. Same rule as EtcSectionCells.
+  const decided = !attentionWhenBlank || value.trim() !== "";
   const displayValue = focused ? value : value.trim() === "" ? "" : currency(Number(value));
 
   return (
@@ -60,14 +68,13 @@ export function PartsCostNewEtcCell({
         onFocus={() => setFocused(true)}
         onChange={(e) => {
           setValue(e.target.value.replace(/[^0-9.]/g, ""));
-          setTouched(true);
           // Nothing persists from typing alone — the toolbar's gated Save
           // button batch-saves the whole grid. This just flags unsaved work
           // for the beforeunload guard.
           markEtcDirty();
         }}
         onBlur={() => setFocused(false)}
-        placeholder={placeholder}
+        title={hint}
         disabled={locked}
         aria-label={`New ETC cost override, ${jobName}, Parts Cost`}
         className="w-16 [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-[10px] font-bold leading-none text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"
