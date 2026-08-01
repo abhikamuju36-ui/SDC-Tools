@@ -621,7 +621,15 @@ function TabChip({ active, onClick, label, count }: { active: boolean; onClick: 
 // Assembly · Desc · Priced · Rcvd/Total · Material $ · Readiness
 // The ASSEMBLY rows still carry no header — each cell is labelled in place or
 // self-evident. The part list nested inside them does have one (see PartsDetailTable).
-const ASM_GRID = "minmax(220px,1.5fr) minmax(150px,1.4fr) 92px 72px 108px 150px";
+//
+// The part-number column is sized to its CONTENT (max-content), not given a
+// share of the free space. As a 1.5fr column it grew with the window, so on a
+// wide screen the number sat at the far left and its description started a
+// third of the way across the page — you had to track a line of whitespace to
+// see which name belonged to which number. Content-sizing pulls the description
+// up against the number it describes and hands the slack to the description
+// instead, where a long assembly name can use it.
+const ASM_GRID = "minmax(200px,max-content) minmax(260px,3fr) 92px 72px 108px 150px";
 
 function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClick: (p: DrillablePart) => void; onOpenPo: (supplier: string | null, poNumber: string | null) => void }) {
   const now = useMemo(() => Date.now(), []);
@@ -672,18 +680,36 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
         <div className="min-w-[846px]">
           {bom.roots.map((section) => (
             <div key={section.key}>
-              {/* Light section header with material-$ subtotal on the right */}
-              <div className="flex items-center justify-between gap-2 border-y border-sdc-border-soft bg-sdc-gray-100 px-4 py-2">
-                <span className="text-[13px] font-bold text-sdc-navy">{sectionLabelFor(section)}</span>
-                <span className="whitespace-nowrap text-xs font-bold text-sdc-gray-600 tabular-nums">
+              {/* Section header. It used to be a light grey band that read as
+                  just another row — on a 128-assembly tree you scrolled past a
+                  section boundary without noticing and lost track of where you
+                  were. Three things fix that, and they work together:
+                    • STICKY. The section you're inside stays pinned at the top
+                      of the scroll container, so the answer to "which section is
+                      this?" is always on screen instead of somewhere above.
+                    • Heavy rules above and below, and navy uppercase text, so
+                      the break is unmissable when you scroll past it.
+                    • The section's contents are indented beneath it (below), so
+                      the title overhangs everything it contains on the left edge
+                      — the outline reads as a hierarchy rather than a flat list.
+                  z-[2] matches the sticky footer; the parts tables inside carry
+                  no sticky header of their own, so nothing competes. */}
+              <div className="sticky top-0 z-[2] flex items-center justify-between gap-2 border-y-2 border-sdc-navy bg-sdc-blue-light px-4 py-2 shadow-sm">
+                <span className="text-[13px] font-bold uppercase tracking-wide text-sdc-navy">{sectionLabelFor(section)}</span>
+                <span className="whitespace-nowrap text-xs font-bold tabular-nums text-sdc-navy">
                   {usd(section.totalCost)}
                 </span>
               </div>
 
-              {section.children.map((asm) => (
-                <AssemblyRow key={asm.key} node={asm} depth={0} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />
-              ))}
-              {section.parts.length > 0 && <PartsDetailTable parts={section.parts} depth={0} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />}
+              {/* Indented, with a rule running the height of the section: the
+                  left edge tells you at a glance whether you're still inside the
+                  same one. */}
+              <div className="ml-3 border-l-2 border-sdc-blue-100">
+                {section.children.map((asm) => (
+                  <AssemblyRow key={asm.key} node={asm} depth={0} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />
+                ))}
+                {section.parts.length > 0 && <PartsDetailTable parts={section.parts} depth={0} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />}
+              </div>
             </div>
           ))}
 
@@ -803,16 +829,26 @@ function PartsDetailTable({
             the app uses for a header — the first pass was muted grey on no fill
             and read as another data row rather than a header. Still thin: 9px,
             uppercase, one line of padding. */}
-        <table className="w-full min-w-[760px] border-collapse text-left">
+        {/* Twelve columns now, by request: the buy-list detail people were
+            going to Total ETO for — supplier, when the PO went out, what date
+            was promised, whether it has since slipped, and when it landed.
+            Wider than the pane, so this table scrolls horizontally on its own
+            (the wrapper above) rather than forcing the whole tree to. */}
+        <table className="w-full min-w-[1320px] border-collapse text-left">
           <thead>
             <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wide text-white [&>th]:px-2 [&>th]:py-1 [&>th]:font-bold">
               <th className="w-10 text-right">Qty</th>
               <th>Part #</th>
               <th>Description</th>
               <th>Manufacturer</th>
-              <th>PO</th>
-              <th className="text-right">Unit $</th>
-              <th className="text-right">Total $</th>
+              <th>Supplier</th>
+              <th>PO #</th>
+              <th title="When the purchase order was raised">PO date</th>
+              <th title="Delivery date required when the PO was raised">Orig. due</th>
+              <th title="Current required date, shown only where it has moved off the original">Revised</th>
+              <th title="Date the part was last received">Received</th>
+              <th className="text-right">Cost per</th>
+              <th className="text-right">Total cost</th>
             </tr>
           </thead>
           <tbody>
@@ -838,6 +874,9 @@ function PartsDetailTable({
                   <td className="px-2 py-1.5 text-[11px] font-semibold text-sdc-gray-600" title={p.manufacturer}>
                     <span className="line-clamp-1">{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>
                   </td>
+                  <td className="px-2 py-1.5 text-[11px] text-sdc-gray-600" title={p.supplier ?? ""}>
+                    <span className="line-clamp-1">{p.supplier || "—"}</span>
+                  </td>
                   <td className="px-2 py-1.5">
                     {p.poId ? (
                       <button
@@ -851,6 +890,17 @@ function PartsDetailTable({
                     ) : (
                       <span className="text-[10px] font-bold text-sdc-red-text">NO PO</span>
                     )}
+                  </td>
+                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.poDate)}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.originalDate)}</td>
+                  {/* A revision is news — a date that moved is the reason a part
+                      is late — so it's called out rather than printed like the
+                      rest. Blank where nothing moved (see job-bom.ts). */}
+                  <td className={`px-2 py-1.5 whitespace-nowrap font-mono text-[10px] ${p.revisedDate ? "font-bold text-sdc-red-text" : "text-sdc-gray-400"}`}>
+                    {p.revisedDate ? fmtDate(p.revisedDate) : "—"}
+                  </td>
+                  <td className={`px-2 py-1.5 whitespace-nowrap font-mono text-[10px] ${p.receivedDate ? "font-semibold text-sdc-green-text" : "text-sdc-gray-400"}`}>
+                    {p.receivedDate ? fmtDate(p.receivedDate) : "—"}
                   </td>
                   <td className="px-2 py-1.5 text-right font-mono text-[11px] font-semibold text-sdc-gray-600" title={`Required ${fmtDate(p.requiredDate)} · Expected ${fmtDate(p.expectedDate)}`}>{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
                   <td className="px-2 py-1.5 text-right font-mono text-[11px] font-bold text-sdc-navy">{p.unitPrice > 0 ? usd(p.unitPrice * p.qty) : "—"}</td>

@@ -36,7 +36,16 @@ export type BomPart = {
   receivedQty: number;
   unitPrice: number;
   requiredDate: string | null; // eps.RequiredDate — when the part is needed
-  expectedDate: string | null; // PO dueDate (DateRequired || PurchaseDateRequired)
+  expectedDate: string | null; // current due date (DateRequired || PurchaseDateRequired)
+  // The two halves of `expectedDate`, carried separately so the parts table can
+  // show a slipped date next to the one originally promised. Total ETO has no
+  // explicit "revised" field: the PO HEADER's PurchaseDateRequired is the date
+  // set when the order was raised, and the LINE's DateRequired is what that line
+  // is currently due. When the line date has moved off the header date, that
+  // movement is the revision.
+  originalDate: string | null; // poh.PurchaseDateRequired — as ordered
+  revisedDate: string | null; // pod.DateRequired, only when it differs
+  poDate: string | null; // poh.PurchaseDate — when the PO was raised
   receivedDate: string | null; // LastReceivedDate
   status: "received" | "ordered" | "noPO";
   hold: boolean; // eps.ItemHold — flagged on hold in Total ETO
@@ -245,7 +254,14 @@ type PoRow = {
   LastReceivedDate: Date | null;
 };
 
-type PoLine = { poId: string | null; supplier: string | null; dueDate: string | null };
+type PoLine = {
+  poId: string | null;
+  supplier: string | null;
+  dueDate: string | null;
+  orderedDate: string | null;
+  originalDate: string | null;
+  revisedDate: string | null;
+};
 
 // ---------- Helpers ----------
 
@@ -262,10 +278,17 @@ const clean = (s: string | null | undefined): string => (s ?? "").replace(/\s+/g
 function buildPoIndex(rows: PoRow[]): Map<number, PoLine[]> {
   const idx = new Map<number, PoLine[]>();
   for (const r of rows) {
+    const originalDate = iso(r.PurchaseDateRequired);
+    const lineDate = iso(r.DateRequired);
     const line: PoLine = {
       poId: r.PurchaseOrderID != null ? String(r.PurchaseOrderID) : null,
       supplier: r.Supplier ?? null,
-      dueDate: iso(r.DateRequired ?? r.PurchaseDateRequired),
+      dueDate: lineDate ?? originalDate,
+      orderedDate: iso(r.PurchaseDate),
+      originalDate,
+      // Only a revision if it actually moved. Repeating the same date in both
+      // columns would make every line look rescheduled.
+      revisedDate: lineDate && lineDate !== originalDate ? lineDate : null,
     };
     const arr = idx.get(r.ItemID);
     if (arr) arr.push(line);
@@ -397,6 +420,9 @@ function makePart(r: BomRow, poIndex: Map<number, PoLine[]>): BomPart {
     unitPrice: Number(r.UnitPrice) || 0,
     requiredDate: iso(r.RequiredDate),
     expectedDate: line?.dueDate ?? null,
+    originalDate: line?.originalDate ?? null,
+    revisedDate: line?.revisedDate ?? null,
+    poDate: line?.orderedDate ?? null,
     receivedDate: iso(r.LastReceivedDate),
     status: receivedQty >= qty ? "received" : poQty > 0 ? "ordered" : "noPO",
     hold: !!r.ItemHold,

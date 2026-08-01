@@ -4,20 +4,24 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { INPUT } from "@/components/ui/classnames";
 
-// Searchable SINGLE-job picker for the Job Hour Details slicer. Writes
-// ?jobs=<jobId>.
+// Searchable MULTI-job picker for the Job Hour Details slicer. Writes
+// ?jobs=<jobId,jobId,…>, which the page has always aggregated.
 //
-// Was a multi-select (checkboxes + removable chips + "Clear all") mirroring the
-// Power BI job slicer. Two reasons it's one job now, by request: the page reads
-// as a single-job report, and "remove the selected job" could never work — the
-// server falls back to its data-richest default job whenever ?jobs= is absent
-// (see defaultDashboardJobId), so clearing the last chip immediately re-selected
-// 1142 and looked broken. With exactly one selection there's nothing to remove:
-// picking a job replaces the one before it.
+// This was a multi-select once before and got cut back to one job, because
+// "remove the selected job" could never work: the server falls back to its
+// data-richest default whenever ?jobs= is absent (defaultDashboardJobId), so
+// clearing the last chip instantly re-selected job 1142 and read as a broken
+// control.
 //
-// The page still accepts a comma-separated ?jobs=a,b and aggregates it, so
-// existing multi-job deep links keep working — this control just doesn't
-// create them.
+// Multi-select is back, with that root cause fixed rather than worked around —
+// clearing now writes an EMPTY `?jobs=`, which is present-but-empty and so means
+// "deliberately nothing" instead of "no choice made yet". The page checks for
+// that and shows its empty state rather than helpfully re-picking a job the user
+// just removed. See the `explicitlyEmpty` note in job-hours/page.tsx.
+//
+// Picking does NOT close the menu, unlike the single-job version: the whole
+// point is choosing several, and a menu that shut after each one would make
+// selecting four jobs a four-times-reopen chore. Outside click or Esc closes it.
 type JobOpt = { id: number; jobId: string; jobName: string; status: string | null };
 
 // Status groups, in the order they appear in the list. Active leads because
@@ -38,7 +42,7 @@ function groupRank(name: string): [number, string] {
   return [1, name.toLowerCase()];
 }
 
-export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string | null }) {
+export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string[] }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -49,8 +53,15 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
     function onClick(e: MouseEvent) {
       if (detailsRef.current?.open && !detailsRef.current.contains(e.target as Node)) detailsRef.current.open = false;
     }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && detailsRef.current?.open) detailsRef.current.open = false;
+    }
     document.addEventListener("click", onClick);
-    return () => document.removeEventListener("click", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
   }, []);
 
   // Remember the last selection so the page stops snapping back to the server's
@@ -100,7 +111,10 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
   // default (below), so a brand-new status group behaves sensibly without ever
   // having been clicked.
   const [overrides, setOverrides] = useState<Record<string, boolean>>({});
-  const selectedStatus = selected ? jobs.find((j) => j.jobId === selected)?.status : null;
+  const selectedSet = useMemo(() => new Set(selected), [selected]);
+  // The group holding the FIRST selection — enough to make at least one ✓
+  // visible on open without expanding half the list.
+  const selectedStatus = selected.length ? jobs.find((j) => j.jobId === selected[0])?.status : null;
   function isOpen(name: string): boolean {
     if (name in overrides) return overrides[name];
     // While searching, open everything — a collapsed group would hide the match
@@ -113,21 +127,33 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
     return name === (selectedStatus?.trim() ? selectedStatus : BLANK_GROUP);
   }
 
-  function pick(jobId: string) {
+  // Writes the selection to the URL. An EMPTY list still writes `jobs=` rather
+  // than deleting the param — that difference is what stops the server helpfully
+  // re-selecting a default job the moment you remove the last one.
+  function apply(next: string[]) {
     const qs = new URLSearchParams(searchParams.toString());
-    qs.set("jobs", jobId);
+    qs.set("jobs", next.join(","));
     qs.delete("job"); // drop the legacy single-job param
-    // Persist the pick so the next landing restores it (see the mount effect).
-    try { window.localStorage.setItem(LAST_KEY, jobId); } catch { /* ignore */ }
-    // Close and reset the search so the next open starts from the full list
-    // rather than whatever was typed to find this job.
-    if (detailsRef.current) detailsRef.current.open = false;
-    setQuery("");
-    router.push(`${pathname}?${qs.toString()}`);
+    try { window.localStorage.setItem(LAST_KEY, next.join(",")); } catch { /* ignore */ }
+    router.push(`${pathname}?${qs.toString()}`, { scroll: false });
   }
 
-  const current = selected ? jobs.find((x) => x.jobId === selected) : undefined;
-  const summary = current ? `${current.jobId} — ${current.jobName}` : (selected ?? "Select a job…");
+  // Add or remove one job, keeping the order the list is shown in so the chips
+  // and the ?jobs= param don't reshuffle as you click.
+  function toggle(jobId: string) {
+    const next = selectedSet.has(jobId)
+      ? selected.filter((s) => s !== jobId)
+      : jobs.filter((j) => j.jobId === jobId || selectedSet.has(j.jobId)).map((j) => j.jobId);
+    apply(next);
+  }
+
+  const chips = selected.map((id) => jobs.find((j) => j.jobId === id)).filter((j): j is JobOpt => !!j);
+  const summary =
+    chips.length === 0
+      ? "Select jobs…"
+      : chips.length === 1
+        ? `${chips[0].jobId} — ${chips[0].jobName}`
+        : `${chips.length} jobs selected`;
 
   return (
     <details ref={detailsRef} className="group relative inline-block">
@@ -138,6 +164,37 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
         </svg>
       </summary>
       <div className="absolute right-0 top-full z-40 mt-2 w-80 rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
+        {/* Selected jobs live INSIDE the panel, not beside the closed control:
+            the page header lays this out in a tight flex row, and a growing row
+            of chips out there would shove the title around as you select. */}
+        {chips.length > 0 && (
+          <div className="mb-2 flex flex-wrap items-center gap-1 border-b border-sdc-border-soft pb-2">
+            {chips.map((j) => (
+              <span
+                key={j.id}
+                className="flex max-w-full items-center gap-1 rounded bg-sdc-blue-light px-1.5 py-0.5 text-xs text-sdc-blue-dark"
+                title={`${j.jobId} — ${j.jobName}`}
+              >
+                <span className="truncate font-mono">{j.jobId}</span>
+                <button
+                  type="button"
+                  onClick={() => toggle(j.jobId)}
+                  aria-label={`Remove job ${j.jobId}`}
+                  className="shrink-0 leading-none opacity-60 hover:opacity-100"
+                >
+                  ×
+                </button>
+              </span>
+            ))}
+            <button
+              type="button"
+              onClick={() => apply([])}
+              className="ml-auto shrink-0 text-xs font-medium text-sdc-blue hover:underline"
+            >
+              Clear all
+            </button>
+          </div>
+        )}
         <input
           type="search"
           value={query}
@@ -182,7 +239,7 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
                     // once the header has scrolled off.
                     <div className="ml-2 border-l border-sdc-border-soft pl-1">
                       {g.items.map((j) => {
-                        const isCurrent = j.jobId === selected;
+                        const isCurrent = selectedSet.has(j.jobId);
                         return (
                           // A real <button> per row, not a checkbox label: one
                           // click picks and closes, and the row is
@@ -190,8 +247,9 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
                           <button
                             key={j.id}
                             type="button"
-                            onClick={() => pick(j.jobId)}
-                            aria-current={isCurrent ? "true" : undefined}
+                            onClick={() => toggle(j.jobId)}
+                            role="menuitemcheckbox"
+                            aria-checked={isCurrent}
                             className={`flex w-full items-center gap-2 rounded px-1.5 py-1 text-left text-sm hover:bg-sdc-gray-100 ${
                               isCurrent ? "bg-sdc-blue-light font-medium text-sdc-blue-dark" : ""
                             }`}

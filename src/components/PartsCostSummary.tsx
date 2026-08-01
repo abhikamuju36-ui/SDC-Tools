@@ -27,9 +27,19 @@ export function PartsCostSummary({
   paid,
   estimated,
   budgetProjection,
+  jobCount = 1,
+  failedJobs = 0,
 }: {
   purchased: number;
   paid: number;
+  // How many jobs these totals cover. The money figures aggregate correctly
+  // across a multi-job selection (unlike the BOM below them), so the card
+  // follows the slicer — it just has to say how many jobs it's adding up.
+  jobCount?: number;
+  // Jobs whose TotalETO parts pull failed. Their lines are missing from the
+  // totals, so the card says so instead of presenting a short figure as if it
+  // were the whole picture — a silently-dropped job reads as "nothing bought".
+  failedJobs?: number;
   // The Cost Quoted figure from the Projects tab (Job.costQuoted), summed across
   // the selected jobs — per Dan, "Estimated" here is ALWAYS the quoted cost. It
   // was previously the parts New ETC, which read $0 for jobs with no parts ETC
@@ -66,8 +76,14 @@ export function PartsCostSummary({
   // sentence someone actually needs, where "87.2% of budget" makes the reader do
   // the subtraction. Sign convention matches the Projects grid — under budget is
   // green, over is red.
+  // Nothing bought and nothing projected. The variance maths is technically
+  // right — $0 against an $8,600 quote IS 100% under — but "100.0% under" in
+  // green announces a triumph on a job where the buying simply hasn't started,
+  // and that's the reading someone acts on. An absence of data isn't a saving.
+  const noPartsActivity = purchased === 0 && (budgetProjection?.total ?? 0) === 0;
+
   const variance =
-    estimate != null && budgetProjection != null
+    estimate != null && budgetProjection != null && !noPartsActivity
       ? {
           projection: budgetProjection.total,
           estimate,
@@ -94,8 +110,17 @@ export function PartsCostSummary({
       <div className="flex flex-col rounded-xl border border-sdc-border bg-white p-4 shadow-sm">
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <p className="font-heading text-lg font-bold tracking-tight text-sdc-navy">Parts Cost</p>
-          <p className="text-xs text-sdc-gray-500">Purchased, planned and invoiced dollars across the selected job(s).</p>
+          <p className="text-xs text-sdc-gray-500">
+            Purchased, planned and invoiced dollars
+            {jobCount > 1 ? ` summed across all ${jobCount} selected jobs.` : " for the selected job."}
+          </p>
         </div>
+        {failedJobs > 0 && (
+          <p className="mb-2 rounded border border-sdc-yellow bg-sdc-yellow-bg px-2 py-1 text-[11px] text-sdc-yellow-text">
+            {failedJobs} of {jobCount} jobs couldn&apos;t be reached in Total ETO, so their parts are missing from these totals. The
+            figures below are a floor, not the full picture.
+          </p>
+        )}
         <EChart
           height={150}
           option={partsCostBarOption([
@@ -132,6 +157,20 @@ export function PartsCostSummary({
         {/* Projection vs Estimated — the one figure that says whether this job
             lands over what it was sold for, while there's still time to act.
             mt-auto pins it to the card's bottom edge. */}
+        {/* No activity yet: say that, rather than dressing a standing start up
+            as a 100% saving. Only shown when there IS a quote to be measured
+            against — with no estimate on file there's nothing to report. */}
+        {variance == null && noPartsActivity && estimate != null && (
+          <div className="mt-auto border-t border-sdc-border pt-3">
+            <div className="flex items-baseline justify-between gap-2">
+              <p className="text-xs font-semibold text-sdc-gray-600">Projection vs Estimated</p>
+              <p className="font-heading text-sm font-bold text-sdc-gray-500">
+                No parts activity yet · {usd(estimate)} estimated
+              </p>
+            </div>
+          </div>
+        )}
+
         {variance != null && (
           <div className="mt-auto border-t border-sdc-border pt-3">
             <div className="flex items-baseline justify-between gap-2">

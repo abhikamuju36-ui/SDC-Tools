@@ -19,9 +19,10 @@ export type HoursDetailRow = {
   section: string; // Section-Function Code
   sectionName: string;
   hours: number;
-  // Only set when the detail spans more than one job (the Monthly ETC month
-  // view). Absent on the per-job drill, where a Job column would repeat the
-  // page heading on every row.
+  // Only set when the detail spans more than one job — the Monthly ETC month
+  // view, or a multi-job selection on the Job Hour Details slicer. Absent on a
+  // single-job drill, where a Job column would repeat the page heading on
+  // every row.
   job?: string;
 };
 
@@ -49,7 +50,7 @@ export async function getJobHoursDetail(jobPks: number[]): Promise<JobHoursDetai
   const [detail, employees] = await Promise.all([
     prisma.jobHoursDetail.findMany({
       where: { jobId: { in: jobPks } },
-      select: { section: true, workDate: true, employeeId: true, hours: true },
+      select: { section: true, workDate: true, employeeId: true, hours: true, job: { select: { jobId: true, jobName: true } } },
       // Newest first, like the report's page (its Date column sorts descending).
       orderBy: [{ workDate: "desc" }, { section: "asc" }],
       take: MAX_ROWS + 1, // one extra, purely to detect truncation
@@ -65,9 +66,17 @@ export async function getJobHoursDetail(jobPks: number[]): Promise<JobHoursDetai
   const truncated = detail.length > MAX_ROWS;
   const kept = truncated ? detail.slice(0, MAX_ROWS) : detail;
 
+  // The Job column appears only when the selection actually spans jobs. On a
+  // single-job drill it would repeat the page heading on every row; across a
+  // multi-job selection its absence leaves punches from several jobs stacked
+  // together with no way to tell them apart. The panel keys off this field
+  // being present, so deciding it here is the whole switch.
+  const showJob = jobPks.length > 1;
+
   const rows: HoursDetailRow[] = kept.map((d) => {
     const emp = byPaylocityId.get(d.employeeId);
     return {
+      ...(showJob ? { job: `${d.job.jobId} — ${d.job.jobName}` } : {}),
       date: d.workDate.toISOString().slice(0, 10),
       // Falling back to the raw id rather than "(undefined)" (which is what the
       // Power BI page shows): an id is actionable — someone can look it up —
