@@ -243,10 +243,42 @@ export default async function QuotedPage({
   // it only shapes the UI either way: every write re-checks the cookie
   // server-side in saveQuotedHours, since a form post doesn't care what the
   // markup said.
-  const { editing: initialEditing, mayEdit: signedIn } = await getProjectsEditState();
-  // The password gate (projects-gate.ts). It governs BOTH editing and whether
-  // the four restricted sections exist on this page at all.
-  const projectsUnlocked = await isProjectsUnlocked();
+  // ── Wave 1: everything that depends on nothing ─────────────────────────────
+  //
+  // These six were six SEPARATE awaits, run one after another, and one of them
+  // (getSchedulerLinkContext) reaches a DIFFERENT MySQL server over the
+  // network. That cost was invisible while nothing re-rendered this page on
+  // demand; it stopped being invisible when the Edit Mode switch started
+  // needing a server render to add or remove the restricted columns, and
+  // "updating columns…" sat there for seconds.
+  //
+  // Nothing below reads one of these before the batch resolves, so the only
+  // thing the sequence ever bought was the order they appear in the file.
+  const [
+    { editing: initialEditing, mayEdit: signedIn },
+    // The password gate (projects-gate.ts). It governs BOTH editing and whether
+    // the four restricted sections exist on this page at all.
+    projectsUnlocked,
+    // Saved/published grid views ("Views ▾") — loaded for everyone; the team
+    // default + shared list come from the DB, personal views live in the browser.
+    { default: teamDefault, shared: sharedViews },
+    distinctCustomers,
+    distinctStatuses,
+    // Which jobs have a schedule in the SDC Scheduler (+ its base URL), so each
+    // row can show an "open in Scheduler" icon only where it leads somewhere.
+    // Fail-soft: empty set when the Scheduler DB isn't configured. Independent
+    // of the job query, so it has no business waiting for it.
+    { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers, ssoEmail: schedulerSsoEmail },
+  ] = await Promise.all([
+    getProjectsEditState(),
+    isProjectsUnlocked(),
+    listSharedViews(),
+    // Real job types are a fixed, known set (job-filters.ts) — no query needed.
+    // Customers are open-ended, so pull the distinct list actually in use.
+    prisma.job.findMany({ where: validJobTypeFilter, distinct: ["customer"], select: { customer: true } }),
+    prisma.job.findMany({ where: validJobTypeFilter, distinct: ["status"], select: { status: true } }),
+    getSchedulerLinkContext(),
+  ]);
   // Being signed in is no longer sufficient to edit — the gate is the boundary.
   // assertProjectsEditable() re-checks the same thing on every write, so this
   // is only what the toolbar renders.
@@ -265,9 +297,6 @@ export default async function QuotedPage({
   // so a hand-typed ?cols=10-111 has nothing to turn on either.
   const sectionAllowed = (code: string) => editingNow || !RESTRICTED_SECTION_CODES.has(code);
   const visibleSections = SECTIONS.filter((s) => sectionAllowed(s.code));
-  // Saved/published grid views ("Views ▾") — loaded for everyone; the team
-  // default + shared list come from the DB, personal views live in the browser.
-  const { default: teamDefault, shared: sharedViews } = await listSharedViews();
   // Column show/hide — `hide` is a comma-separated list of hidden column
   // keys (absent = all shown). Drives the "Columns" dropdown.
   const hiddenCols = new Set(decodeParamList(hide ?? null));
@@ -292,23 +321,13 @@ export default async function QuotedPage({
   const sortDir = dir === "desc" ? "desc" : "asc";
 
   // Real job types are a fixed, known set (job-filters.ts) — no query needed.
-  // Customers are open-ended, so pull the distinct list actually in use.
+  // The two distinct-value queries ran here; they moved into wave 1 above.
   const allTypes: string[] = [...VALID_JOB_TYPES];
-  const distinctCustomers = await prisma.job.findMany({
-    where: validJobTypeFilter,
-    distinct: ["customer"],
-    select: { customer: true },
-  });
   const allCustomers = distinctCustomers
     .map((j) => j.customer)
     .filter((c): c is string => Boolean(c))
     .sort((a, b) => a.localeCompare(b));
 
-  const distinctStatuses = await prisma.job.findMany({
-    where: validJobTypeFilter,
-    distinct: ["status"],
-    select: { status: true },
-  });
   // The canonical lifecycle first, then any legacy value still stored on a job so
   // nothing already in the data becomes unselectable. Ordered by JOB_STATUSES
   // rather than alphabetically — Active, HeadStart, Complete is the order the work
@@ -386,12 +405,11 @@ export default async function QuotedPage({
 
   // Actual hours for every job on screen, in one pass rather than a join per
   // row. Keyed by internal job id.
+  // Wave 3. The only query that genuinely has to wait for `jobs`.
+  // getSchedulerLinkContext used to sit here too and did not — it is in wave 1
+  // now, off the critical path, which matters because it crosses to another
+  // MySQL server.
   const actualHours = await loadActualHoursBySection(jobs.map((j) => j.id));
-
-  // Which of these jobs have a schedule in the SDC Scheduler (+ its base URL),
-  // so each row can show an "open in Scheduler" icon only where it leads
-  // somewhere. Fail-soft: empty set when the Scheduler DB isn't configured.
-  const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers, ssoEmail: schedulerSsoEmail } = await getSchedulerLinkContext();
 
   const visibleSectionsByPhase = new Map(
     PHASE_GROUPS.map((g) => [g.phase, SECTIONS.filter((s) => s.phase === g.phase && visibleSet.has(s.code))])
