@@ -374,8 +374,13 @@ function NewProjects({
         </p>
       ) : (
         <>
+          {/* Says the order out loud: the table has no date column (five
+              columns already fill 320px), so sorted-by-start-date would
+              otherwise look like no order at all. The exact date is on each
+              row's tooltip. */}
           <p className="px-3 pt-2 text-[10px] leading-relaxed text-sdc-gray-400">
-            Jobs whose Start Date falls in {month}. Their quoted hours are what &quot;New Hours Added this Month&quot; is made of.
+            Jobs whose Start Date falls in {month}, earliest first. Their quoted hours are what &quot;New Hours Added this
+            Month&quot; is made of.
           </p>
           {!reconciles && (
             <p className="mx-3 mt-1.5 rounded border border-sdc-yellow bg-sdc-yellow-bg/60 px-2 py-1.5 text-[10px] leading-relaxed text-sdc-gray-600">

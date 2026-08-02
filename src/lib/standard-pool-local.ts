@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { round2, isValidMonth } from "@/lib/etc";
-import { VALID_JOB_TYPES } from "@/lib/job-filters";
+import { VALID_JOB_TYPES, compareJobIds } from "@/lib/job-filters";
 import { POOL_CATEGORIES, POOL_QUOTED_SECTION, type PoolCategory } from "@/lib/sections";
 import { fetchJobHoursRowsWithIssues, type PoolHoursByMonth } from "@/lib/sharepoint-hours";
 
@@ -141,8 +141,15 @@ export async function newProjectsEnteringMonth(month: string): Promise<NewPoolPr
       total,
     });
   }
-  // Biggest contributor first — the reason the pool moved is usually one job.
-  return out.sort((a, b) => b.total - a.total || a.jobId.localeCompare(b.jobId));
+  // Earliest Start Date first (2026-08-02, by request). It used to be biggest
+  // contributor first; chronological reads better against a month's intake,
+  // where the question is usually "what came in, and when".
+  //
+  // startDate is "YYYY-MM-DD", so a plain string compare IS the date order.
+  // compareJobIds breaks ties rather than localeCompare, because job numbers
+  // are numeric strings of different lengths — "979" sorts after "1104" as
+  // text — and within one month several jobs commonly share a start date.
+  return out.sort((a, b) => (a.startDate < b.startDate ? -1 : a.startDate > b.startDate ? 1 : compareJobIds(a.jobId, b.jobId)));
 }
 
 // New Hours Added, per pool, for `month` — the verified definition above.
