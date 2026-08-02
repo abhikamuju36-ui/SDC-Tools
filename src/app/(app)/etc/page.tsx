@@ -1527,7 +1527,6 @@ export default async function MonthlyEtcPage({
               rows={poolPanelRows}
               newProjects={poolNewProjects}
               isSubmitted={standardSheetSubmitted}
-              isAdmin={role === "ADMIN"}
               poolsEditable={!standardSheetSubmitted && !poolsCarriedFrom}
               savePoolsAction={savePools.bind(null, month)}
               refreshPoolsAction={refreshPools.bind(null, month)}

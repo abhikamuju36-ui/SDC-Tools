@@ -10,6 +10,7 @@ import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/executio
 import { round2 } from "@/lib/etc";
 import { computeCategoryPoolsLocally } from "@/lib/standard-pool-local";
 import { poolRefreshBlockedBy } from "@/lib/standard-pool-eligibility";
+import { matchesConfirmPassword } from "@/lib/confirm-password";
 import {
   calcTotalEtcDollars,
   calcPercentOfTotal,
@@ -275,11 +276,20 @@ export async function submitStandardSheetMonth(month: string) {
   revalidatePath("/etc");
 }
 
-export async function reopenStandardSheetMonth(month: string) {
-  // Admin-only — the action itself must not trust the UI hiding the button.
-  const session = await auth();
-  const role = (session?.user as { role?: string } | undefined)?.role;
-  if (role !== "ADMIN") throw new Error("Only admins can reopen a submitted month.");
+// Unfreezes a submitted Standard Sheet month by dropping its snapshot rows,
+// which is what lets its pools be refreshed and the sheet re-submitted.
+//
+// Password-gated rather than admin-only (changed 2026-08-02, matching
+// reopenMonth in etc-actions.ts). The person who needs to correct a closed
+// month is the manager who filled it in, and requiring an ADMIN account meant
+// the button was invisible to them and corrections simply didn't happen — June
+// 2026's 36 stranded hours sat there for that reason. Entered every time, no
+// session cookie: unfreezing signed-off figures should cost a keystroke each
+// time, unlike Save.
+export async function reopenStandardSheetMonth(month: string, formData?: FormData) {
+  if (!matchesConfirmPassword(String(formData?.get("reopenPassword") ?? ""))) {
+    throw new Error("Incorrect password — the Standard Sheet month was not reopened.");
+  }
   await prisma.standardSheetSnapshot.deleteMany({ where: { month } });
   await logAudit({ action: "standardSheet.reopenMonth", entityType: "StandardSheetSnapshot", entityId: month, summary: `Reopened Standard Sheet month ${month}` });
   revalidatePath("/etc");

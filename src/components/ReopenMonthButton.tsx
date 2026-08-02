@@ -19,10 +19,18 @@ export function ReopenMonthButton({
   action,
   month,
   className,
+  label = "Reopen for editing",
+  hint,
+  // The Standard Fees panel is 320px wide and this button sits at its left
+  // edge, so a w-72 popover anchored left would hang off the card.
+  align = "left",
 }: {
   action: (formData: FormData) => Promise<void>;
   month: string;
   className?: string;
+  label?: string;
+  hint?: string;
+  align?: "left" | "right";
 }) {
   const [open, setOpen] = useState(false);
   const [password, setPassword] = useState("");
@@ -66,17 +74,17 @@ export function ReopenMonthButton({
           setOpen((v) => !v);
         }}
       >
-        Reopen for editing
+        {label}
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border border-sdc-border bg-white p-3 shadow-lg">
+        <div className={`absolute top-full z-30 mt-1 w-72 rounded-lg border border-sdc-border bg-white p-3 shadow-lg ${align === "right" ? "right-0" : "left-0"}`}>
           <p className="mb-1 text-xs font-semibold text-sdc-navy">Enter password to reopen {month}</p>
           {/* Says what reopening actually costs. The carry-forward is the part
               people don't expect, and it's the reason this isn't reversible by
               just locking the month again. */}
           <p className="mb-2 text-[11px] leading-relaxed text-sdc-gray-500">
-            This unfreezes every entry in the month. Re-submitting it afterwards carries the corrected New ETC forward into the
-            next month&apos;s Prior ETC.
+            {hint ??
+              "This unfreezes every entry in the month. Re-submitting it afterwards carries the corrected New ETC forward into the next month's Prior ETC."}
           </p>
           <form ref={formRef} action={action}>
             <input type="hidden" name="reopenPassword" value={password} />

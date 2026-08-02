@@ -17,6 +17,7 @@
 
 import { useState } from "react";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/ui/classnames";
+import { ReopenMonthButton } from "@/components/ReopenMonthButton";
 import { useStandardPoolCell, useStandardPoolTotals, useStandardPoolDirty } from "@/components/EtcStandardColumns";
 
 export type PoolPanelRow = {
@@ -103,7 +104,6 @@ export function StandardPoolPanel({
   rows,
   newProjects,
   isSubmitted,
-  isAdmin,
   poolsEditable,
   savePoolsAction,
   refreshPoolsAction,
@@ -120,12 +120,13 @@ export function StandardPoolPanel({
   // The jobs behind this month's "New Hours Added" — see NewProjects below.
   newProjects: NewProjectRow[];
   isSubmitted: boolean;
-  isAdmin: boolean;
+  // No isAdmin any more — Reopen is password-gated, not role-gated. See the
+  // footer.
   poolsEditable: boolean;
   savePoolsAction: (formData: FormData) => Promise<void>;
   refreshPoolsAction: () => Promise<void>;
   submitMonthAction: () => Promise<void>;
-  reopenMonthAction: () => Promise<void>;
+  reopenMonthAction: (formData: FormData) => Promise<void>;
 }) {
   const groups = [...new Set(rows.map((r) => r.group))];
   const [open, setOpen] = useState(true);
@@ -230,12 +231,21 @@ export function StandardPoolPanel({
           <div className="flex flex-col gap-2 border-t border-sdc-border bg-sdc-gray-50 px-3 py-3">
             {isSubmitted ? (
               <>
-                <p className="text-[11px] text-sdc-gray-500">This month is submitted and frozen.</p>
-                {isAdmin && (
-                  <form action={reopenMonthAction}>
-                    <button type="submit" className={`${BUTTON_SECONDARY} w-full !py-1.5 !text-xs`}>Reopen Month</button>
-                  </form>
-                )}
+                <p className="text-[11px] text-sdc-gray-600">
+                  This month&apos;s Standard Sheet is submitted and frozen. Reopen it to refresh the pools or re-submit.
+                </p>
+                {/* Password-gated, not admin-only (2026-08-02). The button used
+                    to render only for role === "ADMIN", so the manager who owns
+                    the sheet couldn't see it — which is why June 2026's pools
+                    sat 36h out of date until it was corrected by hand. */}
+                <ReopenMonthButton
+                  action={reopenMonthAction}
+                  month={month}
+                  label="Reopen Month"
+                  align="right"
+                  hint="Unfreezes this month's Standard Sheet so its pools can be refreshed and the sheet re-submitted. Per-job Standard Fees are recalculated when you submit again."
+                  className={`${BUTTON_SECONDARY} w-full !py-1.5 !text-xs`}
+                />
               </>
             ) : (
               <form action={submitMonthAction}>
