@@ -15,6 +15,7 @@ import {
   isNewEtcDecided,
   effectiveNewEtc,
   newEtcDiff,
+  latestPriorEtcByKey,
 } from "../src/lib/etc";
 
 test("calcHoursLeft: prior minus worked, may go negative", () => {
@@ -184,4 +185,67 @@ test("isNewEtcDecided: draft or submitted, nothing else", () => {
   assert.equal(isNewEtcDecided({ needsReview: true, newEtcDraft: null }), false);
   assert.equal(isNewEtcDecided({ needsReview: true, newEtcDraft: 0 }), true); // an explicit zero IS a decision
   assert.equal(isNewEtcDecided({ needsReview: false, newEtcDraft: null }), true);
+});
+
+// ── Prior ETC carry-forward source ──────────────────────────────────────────
+//
+// Found 2026-08-02 on job 1104: seeding read only prevMonth(month) and fell
+// back to QUOTED hours when it found nothing, so a job that skipped a single
+// period came back at its full original quote instead of the balance it had
+// been worked down to — 1420h where it should have been 0. 49 entries across
+// 21 jobs were wrong. These pin the rule so it cannot regress quietly, which
+// is the only way it would come back: nothing errors, the numbers just inflate.
+test("carry-forward uses the latest prior month, not the month before", () => {
+  const rows = [
+    { jobId: 5, section: "10-211", month: "2026-04", newEtc: 8 },
+    { jobId: 5, section: "10-211", month: "2026-05", newEtc: 0 },
+    // no 2026-06 row at all — the job dropped out of the active filter
+  ];
+  const m = latestPriorEtcByKey(rows);
+  assert.equal(m.get("5-10-211"), 0, "must resume from May's 0, not fall through to quoted");
+});
+
+test("carry-forward is per job AND section, not per job", () => {
+  const rows = [
+    { jobId: 5, section: "10-211", month: "2026-05", newEtc: 0 },
+    { jobId: 5, section: "10-312", month: "2026-03", newEtc: 235 },
+    { jobId: 9, section: "10-211", month: "2026-05", newEtc: 77 },
+  ];
+  const m = latestPriorEtcByKey(rows);
+  assert.equal(m.get("5-10-211"), 0);
+  assert.equal(m.get("5-10-312"), 235); // its own latest month, not the job's
+  assert.equal(m.get("9-10-211"), 77);
+});
+
+test("carry-forward month order does not depend on the query's row order", () => {
+  // The rule picks the highest month string; it must not depend on the DB
+  // handing rows back sorted, which nothing guarantees.
+  const ascending = [
+    { jobId: 5, section: "10-211", month: "2026-01", newEtc: 40 },
+    { jobId: 5, section: "10-211", month: "2026-05", newEtc: 0 },
+  ];
+  const descending = [...ascending].reverse();
+  assert.equal(latestPriorEtcByKey(ascending).get("5-10-211"), 0);
+  assert.equal(latestPriorEtcByKey(descending).get("5-10-211"), 0);
+});
+
+test("carry-forward compares months correctly across a year boundary", () => {
+  const rows = [
+    { jobId: 5, section: "10-211", month: "2025-09", newEtc: 12 },
+    { jobId: 5, section: "10-211", month: "2026-01", newEtc: 3 },
+  ];
+  assert.equal(latestPriorEtcByKey(rows).get("5-10-211"), 3);
+});
+
+test("no ETC history at all yields nothing, so the caller falls back to quoted", () => {
+  // The one case where quoted hours ARE right: a genuinely new job.
+  assert.equal(latestPriorEtcByKey([]).get("5-10-211"), undefined);
+});
+
+test("a carried balance of 0 is a real value, not 'missing'", () => {
+  // The whole bug in one assertion: 0 must survive as 0. A truthiness check
+  // anywhere in this path sends it back to quoted hours.
+  const m = latestPriorEtcByKey([{ jobId: 5, section: "10-211", month: "2026-05", newEtc: 0 }]);
+  assert.ok(m.has("5-10-211"));
+  assert.equal(m.get("5-10-211"), 0);
 });

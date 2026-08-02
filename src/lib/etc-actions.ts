@@ -3,7 +3,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { calcHoursLeft, suggestNewEtc, isMonthLocked, round2, prevMonth, nextMonth, isValidMonth, isSafeForLiveEtcSync } from "@/lib/etc";
+import { calcHoursLeft, suggestNewEtc, isMonthLocked, round2, nextMonth, isValidMonth, isSafeForLiveEtcSync, latestPriorEtcByKey } from "@/lib/etc";
 import { etcActiveJobFilter } from "@/lib/job-filters";
 import { syncActualHours, syncHoursWorked, syncPartsCost } from "@/lib/sync-powerbi";
 import { fetchJobHoursRowsWithIssues } from "@/lib/sharepoint-hours";
@@ -112,10 +112,17 @@ async function seedMonth(month: string) {
       // (every active job × tracked section, up to the 20s timeout) for
       // that window to matter.
       const [priorEntries, existingEntries] = await Promise.all([
-        tx.etcEntry.findMany({ where: { month: prevMonth(month), jobId: { in: jobIds } } }),
+        // EVERY earlier month, not just prevMonth — a job that skipped a period
+        // must resume from where its ETC actually left off, never from quoted.
+        // See latestPriorEtcByKey for the balance-reset this fixed (job 1104,
+        // 2026-08-02). Four narrow columns, so the extra rows are cheap.
+        tx.etcEntry.findMany({
+          where: { month: { lt: month }, jobId: { in: jobIds } },
+          select: { jobId: true, section: true, month: true, newEtc: true },
+        }),
         tx.etcEntry.findMany({ where: { month, jobId: { in: jobIds } } }),
       ]);
-      const priorByKey = new Map(priorEntries.map((e) => [`${e.jobId}-${e.section}`, e]));
+      const priorByKey = latestPriorEtcByKey(priorEntries);
       const existingByKey = new Map(existingEntries.map((e) => [`${e.jobId}-${e.section}`, e]));
 
       // Collected, then written in two shapes: one createMany for the rows that
@@ -147,14 +154,19 @@ async function seedMonth(month: string) {
           const existing = existingByKey.get(key);
           if (existing && !existing.needsReview) continue; // already submitted — don't touch confirmed history
 
-          const priorEntry = priorByKey.get(key);
-          // No prior-month entry -> QUOTED hours, not estimate-to-complete:
+          const carried = priorByKey.get(key);
+          // NO ETC history at all -> QUOTED hours, not estimate-to-complete:
           // the report's own [ETC Historical Hours Prior Month] measure
           // (SemanticModel TMDL, verified 2026-07-17) uses [Hours Quoted] for
           // a job whose Start Date falls in the prior period. The two are
           // usually equal for a brand-new job, but ETC can drift from quoted
           // before the job's first ETC month — quoted is the report's rule.
-          const priorEtc = priorEntry ? Number(priorEntry.newEtc) : Number(eh.quotedHours);
+          //
+          // "No history at all" is the operative phrase, and it used to read
+          // "no row in the immediately preceding month" — which reset a
+          // worked-down balance back to full quote every time a job skipped a
+          // period. See latestPriorEtcByKey.
+          const priorEtc = carried !== undefined ? carried : Number(eh.quotedHours);
           const hoursWorked = existing ? Number(existing.hoursWorked) : 0;
 
           // newEtc is deliberately NOT written for an existing row — it's a
@@ -513,19 +525,21 @@ async function cascadePriorEtcForward(fromMonth: string): Promise<{
       break;
     }
 
+    // Same rule as seeding: the carry-forward source is the latest month with
+    // an entry, not strictly the month before. A job that skipped a period must
+    // not have its balance reset here either.
     const priorEntries = await prisma.etcEntry.findMany({
-      where: { month: prev },
-      select: { jobId: true, section: true, newEtc: true },
+      where: { month: { lte: prev } },
+      select: { jobId: true, section: true, month: true, newEtc: true },
     });
-    const priorByKey = new Map(priorEntries.map((e) => [`${e.jobId}-${e.section}`, Number(e.newEtc)]));
+    const priorByKey = latestPriorEtcByKey(priorEntries);
 
     const writes: { id: number; priorEtc: number; hoursLeftCalc: number }[] = [];
     for (const entry of entries) {
       if (!entry.needsReview) continue; // confirmed history — never revised here
       const priorEtc = priorByKey.get(`${entry.jobId}-${entry.section}`);
-      // No matching row upstream means this job/section didn't exist in the
-      // corrected month. Its Prior ETC came from quoted hours instead (see
-      // seedMonth) and has nothing to do with what just changed.
+      // No ETC history at all upstream: this job/section starts from quoted
+      // hours (see seedMonth) and has nothing to do with what just changed.
       if (priorEtc === undefined) continue;
 
       const rounded = round2(priorEtc);

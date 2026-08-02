@@ -77,6 +77,45 @@ export function isValidMonth(month: string): boolean {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
 }
 
+// The Prior ETC carry-forward source for every job/section: the New ETC of the
+// LATEST month before `month` that has an entry for it — not necessarily the
+// month immediately before.
+//
+// Why this is not just prevMonth (found 2026-08-02, job 1104):
+//
+// Seeding used to read prevMonth(month) alone, and fall back to the job's
+// QUOTED hours when it found nothing. That fallback is right for a job with no
+// ETC history at all — the report's own rule (verified 2026-07-17) is that a
+// job entering its first ETC period starts from quoted. It is badly wrong for a
+// job that merely SKIPPED a month, which happens whenever a job drops out of
+// etcActiveJobFilter for one period and comes back: seedMonth doesn't seed it,
+// pruneStaleEntries removes any unsubmitted row, and the month has no entry.
+//
+// The result was a silent balance RESET. 1104's ME Gen had been worked down
+// 40 -> 9 -> 8 -> 40 -> 0 across five months, had no June row, and reappeared
+// in July at 1420 — its full original quote. Across the grid that was 49
+// entries on 21 jobs, and it inflates every figure downstream of Prior ETC:
+// Hours Left, the suggested New ETC, and the dollars on the Standard sheet.
+//
+// Pure and separate from the query so the rule can be tested; callers pass
+// whatever prior rows they've already fetched.
+export function latestPriorEtcByKey<T extends { jobId: number; section: string; month: string; newEtc: unknown }>(
+  priorEntries: T[],
+): Map<string, number> {
+  // Keyed jobId-section; the winner is the highest month string, which sorts
+  // correctly because months are zero-padded YYYY-MM.
+  const bestMonth = new Map<string, string>();
+  const out = new Map<string, number>();
+  for (const e of priorEntries) {
+    const key = `${e.jobId}-${e.section}`;
+    const seen = bestMonth.get(key);
+    if (seen !== undefined && seen >= e.month) continue;
+    bestMonth.set(key, e.month);
+    out.set(key, Number(e.newEtc));
+  }
+  return out;
+}
+
 // Weekday (Mon–Fri) count for a "YYYY-MM" month — the same rule as the
 // report's [ETC Historical Working Days] measure (COUNTROWS of 'Date' where
 // Is Weekend = FALSE for the work month). No holiday calendar on either
