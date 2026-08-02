@@ -691,14 +691,15 @@ export default async function MonthlyEtcPage({
 
   // Grand totals footer, matching the real sheet's row 63 — accumulated as
   // each job row below computes its own values, then rendered once after.
-  // `diff`/`decided` on every accumulator, for the same reason as the per-job
-  // totals: a variance is only meaningful over cells a manager actually decided.
+  // No `decided` counter any more: newEtcDiff is live for every cell, so every
+  // cell contributes to the variance and there is no longer such a thing as a
+  // total with "nothing decided" in it.
   const sectionGrandTotals = new Map(
-    ETC_SECTIONS.map((s) => [s.code, { prior: 0, worked: 0, newEtc: 0, diff: 0, decided: 0 }]),
+    ETC_SECTIONS.map((s) => [s.code, { prior: 0, worked: 0, newEtc: 0, diff: 0 }]),
   );
   const groupGrandTotals = {
-    Engineering: { prior: 0, worked: 0, newEtc: 0, diff: 0, decided: 0 },
-    Shop: { prior: 0, worked: 0, newEtc: 0, diff: 0, decided: 0 },
+    Engineering: { prior: 0, worked: 0, newEtc: 0, diff: 0 },
+    Shop: { prior: 0, worked: 0, newEtc: 0, diff: 0 },
   };
   const partsCostGrandTotal = { prior: 0, worked: 0, newEtc: 0 };
 
@@ -1118,16 +1119,17 @@ export default async function MonthlyEtcPage({
                   // formulas (SUM of the Engineering blocks' Prior/Worked/New ETC,
                   // separately for Shop) — not a manager-entered value.
                   //
-                  // Diff is summed PER CELL and only over cells a manager has
-                  // decided (see newEtcDiff), not derived from the group totals.
-                  // Deriving it counted the suggestion standing in for every
-                  // unfilled cell, and since that suggestion clamps at 0 while
-                  // Hours Left can be negative, an overspent cell nobody had
-                  // touched surfaced as an overrun. `decided` carries the count so
-                  // the cell can say "no decisions yet" instead of "on plan".
+                  // Diff is summed PER CELL, over EVERY cell — not derived from
+                  // the group totals, and no longer restricted to cells a
+                  // manager has decided. newEtcDiff is live for every cell now
+                  // (2026-08-02), so this has to sum the same set the column
+                  // displays or the group total wouldn't equal the cells above
+                  // it. Per-cell rather than (totalPrior - totalWorked -
+                  // totalNewEtc) because the suggestion clamps at 0 per cell,
+                  // and that clamp can't be reproduced from the sums.
                   const totals = {
-                    Engineering: { prior: 0, worked: 0, newEtc: 0, diff: 0, decided: 0 },
-                    Shop: { prior: 0, worked: 0, newEtc: 0, diff: 0, decided: 0 },
+                    Engineering: { prior: 0, worked: 0, newEtc: 0, diff: 0 },
+                    Shop: { prior: 0, worked: 0, newEtc: 0, diff: 0 },
                   };
                   for (const s of ETC_SECTIONS) {
                     const entry = entryByCode.get(s.code);
@@ -1136,8 +1138,7 @@ export default async function MonthlyEtcPage({
                     t.prior += Number(entry.priorEtc);
                     t.worked += Number(entry.hoursWorked);
                     t.newEtc += effectiveNewEtc(entry);
-                    const d = newEtcDiff(entry);
-                    if (d !== null) { t.diff += d; t.decided++; }
+                    t.diff += newEtcDiff(entry);
                   }
 
                   // No row-level hover:bg on the <tr> below — the hover wash is
@@ -1203,8 +1204,7 @@ export default async function MonthlyEtcPage({
                         sectionTotal.prior += prior;
                         sectionTotal.worked += worked;
                         sectionTotal.newEtc += effective;
-                        const sd = newEtcDiff(entry);
-                        if (sd !== null) { sectionTotal.diff += sd; sectionTotal.decided++; }
+                        sectionTotal.diff += newEtcDiff(entry);
 
                         return (
                           <Fragment key={s.code}>
@@ -1226,12 +1226,10 @@ export default async function MonthlyEtcPage({
                       {visibleGroups.map((group, gi) => {
                         const hoursLeft = totals[group].prior - totals[group].worked;
                         const diff = totals[group].diff;
-                        const anyDecided = totals[group].decided > 0;
                         groupGrandTotals[group].prior += totals[group].prior;
                         groupGrandTotals[group].worked += totals[group].worked;
                         groupGrandTotals[group].newEtc += totals[group].newEtc;
                         groupGrandTotals[group].diff += totals[group].diff;
-                        groupGrandTotals[group].decided += totals[group].decided;
                         return (
                           <Fragment key={group}>
                             <td className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={String(round2(totals[group].prior))}>
@@ -1250,18 +1248,12 @@ export default async function MonthlyEtcPage({
                               {monthComplete ? wholeNum(totals[group].newEtc) : "—"}
                             </td>
                             <td
-                              className={`border-l border-sdc-border ${ETC_COL_W} ${anyDecided ? diffBg(diff) : "bg-white"} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
-                              title={
-                                anyDecided
-                                  ? `${round2(diff)} = the sum of (Hours Left − New ETC) over the ${totals[group].decided} ${
-                                      group === "Engineering" ? "Engineering" : "Shop"
-                                    } cell${totals[group].decided === 1 ? "" : "s"} a manager has confirmed`
-                                  : "No New ETC confirmed for this job yet — nothing to compare against Hours Left"
-                              }
+                              className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                              title={`${round2(diff)} = the sum of (Hours Left − New ETC) across this job's ${
+                                group === "Engineering" ? "Engineering" : "Shop"
+                              } cells. A cell with no New ETC typed yet compares against the suggestion, so it reads 0 unless that section is already overspent.`}
                             >
-                              {/* "—" not 0: with nothing decided there is no variance,
-                                  and printing 0 would read as "on plan". */}
-                              {anyDecided ? wholeNum(diff) : "—"}
+                              {wholeNum(diff)}
                             </td>
                           </Fragment>
                         );
@@ -1427,7 +1419,6 @@ export default async function MonthlyEtcPage({
                       const t = sectionGrandTotals.get(s.code)!;
                       const hoursLeft = t.prior - t.worked;
                       const diff = t.diff;
-                      const anyDecided = t.decided > 0;
                       return (
                         <Fragment key={s.code}>
                           <td className={`${edgeFor(s.code, sIdx)} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
@@ -1440,14 +1431,10 @@ export default async function MonthlyEtcPage({
                           </td>
                           <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
                           <td
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${anyDecided ? diffBg(diff) : "bg-white"} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
-                            title={
-                              anyDecided
-                                ? `${round2(diff)} = the sum of (Hours Left − New ETC) over the ${t.decided} confirmed cell${t.decided === 1 ? "" : "s"}`
-                                : "Nothing confirmed in this column yet — no variance to report"
-                            }
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            title={`${round2(diff)} = the sum of (Hours Left − New ETC) down this column. Cells with no New ETC typed compare against the suggestion, so they read 0 unless already overspent.`}
                           >
-                            {anyDecided ? wholeNum(diff) : "—"}
+                            {wholeNum(diff)}
                           </td>
                         </Fragment>
                       );
@@ -1456,7 +1443,6 @@ export default async function MonthlyEtcPage({
                       const t = groupGrandTotals[group];
                       const hoursLeft = t.prior - t.worked;
                       const diff = t.diff;
-                      const anyDecided = t.decided > 0;
                       return (
                         <Fragment key={group}>
                           <td className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
@@ -1469,14 +1455,10 @@ export default async function MonthlyEtcPage({
                           </td>
                           <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-blue-dark`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
                           <td
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${anyDecided ? diffBg(diff) : "bg-white"} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
-                            title={
-                              anyDecided
-                                ? `${round2(diff)} = the sum of (Hours Left − New ETC) over the ${t.decided} confirmed cell${t.decided === 1 ? "" : "s"}`
-                                : "Nothing confirmed in this column yet — no variance to report"
-                            }
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            title={`${round2(diff)} = the sum of (Hours Left − New ETC) down this column. A cell with no New ETC typed compares against the suggestion, so it reads 0 unless that section is already overspent.`}
                           >
-                            {anyDecided ? wholeNum(diff) : "—"}
+                            {wholeNum(diff)}
                           </td>
                         </Fragment>
                       );

@@ -110,13 +110,19 @@ export function EtcSectionCells({
   const decided = worked === 0 || hasNewEtcValue;
   const newEtcNum = Number(newEtcText);
   const effective = newEtcText.trim() === "" || !Number.isFinite(newEtcNum) ? suggested : newEtcNum;
+  // Live for every cell, typed or not (2026-08-02, by request). It used to
+  // render "—" until a manager typed a New ETC, which meant the column was
+  // blank across most of the grid for most of the month and hid the one thing
+  // it exists to show: a section that has already burned past its Prior ETC.
+  //
+  // With the cell blank, `effective` is the suggestion — so the number reads 0
+  // while there are hours left, and turns into the overrun only once Hours Left
+  // goes negative (suggestNewEtc clamps at 0, Hours Left doesn't). An untouched
+  // cell is therefore quiet unless it's genuinely overspent.
+  //
+  // Matches newEtcDiff() server-side, so this cell, the row totals and the KPI
+  // cards all still count the same set.
   const diff = hoursLeft - effective;
-  // Diff is only a real comparison once a manager has committed a number. With
-  // the cell blank, `effective` is the suggestion — and since suggestNewEtc clamps
-  // at 0 while Hours Left can be negative, an overspent cell nobody had touched
-  // showed an overrun it had not earned. Matches newEtcDiff() server-side, so the
-  // cell, the row total and the KPI card all count the same things.
-  const diffDecided = hasNewEtcValue;
 
   const fieldName = `newEtcOverride__${entryId}`;
 
@@ -189,14 +195,17 @@ export function EtcSectionCells({
         />
       </td>
       <td
-        className={`border-l border-sdc-border ${ETC_COL_W} ${diffDecided ? diffBg(diff) : "bg-white"} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+        className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+        // The tooltip still distinguishes the two cases even though the number
+        // no longer does — whether that New ETC is a manager's figure or the
+        // suggestion standing in for one is worth being able to check.
         title={
-          diffDecided
+          hasNewEtcValue
             ? `${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(effective)})`
-            : `No New ETC entered yet. Hours Left is ${round2(hoursLeft)}; the suggestion is ${round2(suggested)}.`
+            : `${round2(diff)} = Hours Left (${round2(hoursLeft)}) − the suggested New ETC (${round2(suggested)}). No New ETC typed here yet.`
         }
       >
-        {diffDecided ? wholeNum(diff) : "—"}
+        {wholeNum(diff)}
       </td>
     </>
   );

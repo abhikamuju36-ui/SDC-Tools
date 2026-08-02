@@ -146,17 +146,50 @@ test("isSafeForLiveEtcSync: a month further in the future than 'next' is unsafe 
   assert.equal(isSafeForLiveEtcSync("2026-08", "2026-06"), false);
 });
 
-// ── Diff must never judge a cell nobody decided (2026-07-31) ────────────────
-// The Monthly ETC totals compared the SUGGESTION against Hours Left for every
-// unfilled cell. suggestNewEtc clamps at 0 because a plan cannot be negative,
-// while Hours Left stays negative when a section is overspent — so the clamped
-// gap surfaced as an overrun on cells nobody had opened. Measured on the live
-// month: −1,065 of Engineering's −1,071 was invented this way, off exactly ONE
-// decided cell in 241.
+// ── Diff is LIVE on every cell (2026-08-02) ─────────────────────────────────
+//
+// This reverses the 2026-07-31 rule, which returned null for any cell a manager
+// hadn't typed into. That rule was added because the totals showed a large
+// overrun off almost no decided cells, and it was read as phantom. Requested
+// back by the user: the Diff column was blank across most of the grid for most
+// of the month, which hid the one thing it exists to show.
+//
+// The mechanism is unchanged and worth restating, because it is what makes the
+// live number safe to read. An untouched cell compares against the SUGGESTION:
+//   • worked 0                  -> suggestion is Prior, Hours Left is Prior  -> 0
+//   • worked, hours still left  -> suggestion IS Hours Left                  -> 0
+//   • worked PAST Prior ETC     -> suggestion clamps at 0, Hours Left is
+//                                  negative                                  -> the overrun
+// So an untouched cell is silent unless the section is genuinely overspent.
+// Those hours are booked whether or not anyone has typed a New ETC.
 
-test("newEtcDiff: an undecided cell has no variance at all", () => {
-  // Overspent and untouched — the case that produced the phantom overrun.
-  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 20, hoursWorked: 50 }), null);
+test("newEtcDiff: an untouched cell with hours left reads 0, not a variance", () => {
+  // Prior 100, worked 40 -> 60 left, and the suggestion is also 60.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 100, hoursWorked: 40 }), 0);
+});
+
+test("newEtcDiff: an untouched cell with NO hours worked reads 0", () => {
+  // The carry-forward case: suggestion is Prior, so nothing has moved.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 100, hoursWorked: 0 }), 0);
+});
+
+test("newEtcDiff: an untouched but OVERSPENT cell reports the overrun", () => {
+  // Prior 20, worked 50 -> 30 hours past the estimate. The suggestion clamps at
+  // 0 (a plan can't be negative) while Hours Left is -30, so the gap IS the
+  // overrun. This is the case the old rule suppressed, and the case the column
+  // most needs to surface.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 20, hoursWorked: 50 }), -30);
+});
+
+test("newEtcDiff: never returns null", () => {
+  // The column and every total now render it unconditionally, so a null here
+  // would print as NaN rather than as a dash.
+  const cases = [
+    { needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 0, hoursWorked: 0 },
+    { needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 20, hoursWorked: 50 },
+    { needsReview: false, newEtcDraft: null, newEtc: 5, priorEtc: 20, hoursWorked: 5 },
+  ];
+  for (const c of cases) assert.equal(typeof newEtcDiff(c), "number");
 });
 
 test("newEtcDiff: a saved draft is a decision, and is compared", () => {

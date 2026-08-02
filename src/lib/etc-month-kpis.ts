@@ -25,18 +25,17 @@ export type GroupKpi = {
   worked: number;
   hoursLeft: number;
   newEtc: number;
-  // Sum of the per-cell variances for cells a manager has DECIDED — see
-  // newEtcDiff. Undecided cells contribute nothing rather than their suggestion.
+  // Sum of the per-cell variances across EVERY cell — newEtcDiff is live for
+  // all of them now, so an untouched cell contributes 0 unless its section is
+  // already overspent, in which case it contributes the overrun.
   diff: number;
-  // How many cells that sum came from. 0 means the variance is not a verdict yet.
-  decidedCells: number;
   people: number; // distinct employees who booked time in this group this month
 };
 
 export type EtcMonthKpis = {
   engineering: GroupKpi;
   shop: GroupKpi;
-  parts: { prior: number; spent: number; moneyLeft: number; newEtc: number; diff: number; decidedCells: number };
+  parts: { prior: number; spent: number; moneyLeft: number; newEtc: number; diff: number };
   // Distinct people across both groups — NOT engineering.people + shop.people,
   // since anyone who booked to both would otherwise be counted twice.
   peopleTotal: number;
@@ -63,14 +62,12 @@ export async function getEtcMonthKpis(
   // the cards move with the grid rather than describing a different set.
   jobs: { id: number; etcEntries: EntryLike[] }[],
 ): Promise<EtcMonthKpis> {
-  // `diff` and `decided` accumulate ONLY cells a manager has actually decided —
-  // see newEtcDiff. Summing per cell rather than deriving the variance from the
-  // group totals is the whole point: the group figures include suggestions for
-  // undecided cells, and comparing those against Hours Left reported an overrun
-  // nobody had entered.
-  const eng = { prior: 0, worked: 0, newEtc: 0, diff: 0, decided: 0 };
-  const shop = { prior: 0, worked: 0, newEtc: 0, diff: 0, decided: 0 };
-  const parts = { prior: 0, spent: 0, newEtc: 0, diff: 0, decided: 0 };
+  // Summed PER CELL, not derived from the group totals: the suggestion that
+  // stands in for an untouched cell clamps at 0 per cell, and that clamp cannot
+  // be reproduced from the sums. Every cell counts now — see newEtcDiff.
+  const eng = { prior: 0, worked: 0, newEtc: 0, diff: 0 };
+  const shop = { prior: 0, worked: 0, newEtc: 0, diff: 0 };
+  const parts = { prior: 0, spent: 0, newEtc: 0, diff: 0 };
 
   for (const job of jobs) {
     for (const entry of job.etcEntries) {
@@ -78,8 +75,7 @@ export async function getEtcMonthKpis(
         parts.prior += Number(entry.priorEtc);
         parts.spent += Number(entry.hoursWorked);
         parts.newEtc += effectiveNewEtc(entry);
-        const pd = newEtcDiff(entry);
-        if (pd !== null) { parts.diff += pd; parts.decided++; }
+        parts.diff += newEtcDiff(entry);
         continue;
       }
       const group = SECTION_GROUP.get(entry.section);
@@ -88,8 +84,7 @@ export async function getEtcMonthKpis(
       bucket.prior += Number(entry.priorEtc);
       bucket.worked += Number(entry.hoursWorked);
       bucket.newEtc += effectiveNewEtc(entry);
-      const d = newEtcDiff(entry);
-      if (d !== null) { bucket.diff += d; bucket.decided++; }
+      bucket.diff += newEtcDiff(entry);
     }
   }
 
@@ -115,7 +110,7 @@ export async function getEtcMonthKpis(
   }
 
   const finish = (
-    b: { prior: number; worked: number; newEtc: number; diff: number; decided: number },
+    b: { prior: number; worked: number; newEtc: number; diff: number },
     people: number,
   ): GroupKpi => {
     const hoursLeft = calcHoursLeft(b.prior, b.worked);
@@ -125,9 +120,6 @@ export async function getEtcMonthKpis(
       hoursLeft: round2(hoursLeft),
       newEtc: round2(b.newEtc),
       diff: round2(b.diff),
-      // Null when this group has no decided cell at all — the card then says so
-      // instead of printing "on plan", which would read as a verdict.
-      decidedCells: b.decided,
       people,
     };
   };
@@ -142,7 +134,6 @@ export async function getEtcMonthKpis(
       moneyLeft: round2(partsLeft),
       newEtc: round2(parts.newEtc),
       diff: round2(parts.diff),
-      decidedCells: parts.decided,
     },
     peopleTotal: allPeople.size,
     hasPunchData: punches.length > 0,

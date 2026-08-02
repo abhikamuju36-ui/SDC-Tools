@@ -50,8 +50,26 @@ export function newEtcDiff(entry: {
   newEtcDraft: unknown;
   priorEtc: unknown;
   hoursWorked: unknown;
-}): number | null {
-  if (!isNewEtcDecided(entry)) return null;
+}): number {
+  // ALWAYS a number now (2026-08-02, by request). It used to return null for an
+  // undecided cell, so the Diff column read "—" on every row nobody had typed
+  // into — which is most of the grid for most of the month, and hid the one
+  // thing the column exists to show: a section that has already burned past its
+  // Prior ETC.
+  //
+  // Undecided cells compare against the SUGGESTION (effectiveNewEtc), which
+  // makes the column read the way you'd expect:
+  //   • hours worked 0            -> suggestion is Prior, so Diff is 0
+  //   • worked, still hours left  -> suggestion is Hours Left, so Diff is 0
+  //   • worked PAST Prior ETC     -> suggestion clamps at 0 while Hours Left is
+  //                                  negative, so Diff is the overrun
+  // In other words an untouched cell shows 0 unless it is genuinely overspent,
+  // which is exactly when someone should be looking at it.
+  //
+  // The old comment here called that overrun "not earned" and suppressed it.
+  // That reasoning was backwards: the hours are booked whether or not a manager
+  // has typed a number, and hiding the overrun until they do means it surfaces
+  // last, not first.
   return calcHoursLeft(Number(entry.priorEtc), Number(entry.hoursWorked)) - effectiveNewEtc(entry);
 }
 
