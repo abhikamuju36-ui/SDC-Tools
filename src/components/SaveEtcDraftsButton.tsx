@@ -2,7 +2,7 @@
 
 import { useEffect, useRef, useState, useTransition } from "react";
 import { saveAllNewEtcDrafts } from "@/lib/etc-actions";
-import { isEtcDirty, clearEtcDirty } from "@/lib/etc-dirty-tracker";
+import { isEtcDirty, rebaselineEtcFields } from "@/lib/etc-dirty-tracker";
 
 // Batch-saves every currently-typed New ETC override across the grid in one
 // click — nothing in EtcSectionCells autosaves on its own (see its comment),
@@ -73,7 +73,13 @@ export function SaveEtcDraftsButton({
     startTransition(async () => {
       const result = await saveAllNewEtcDrafts(month, fd);
       if (result.ok) {
-        clearEtcDirty();
+        // Re-baseline rather than just clearing a flag: the values that were
+        // just persisted become what "unchanged" means from here on. Clearing
+        // alone would leave each cell compared against what the PAGE loaded
+        // with, so typing a cell back to its pre-save value would read as
+        // clean when it's now a real unsaved edit. `fd` is exactly what was
+        // posted, so it is exactly the right new baseline.
+        rebaselineEtcFields(fd);
         setOpen(false);
         setPassword("");
       }

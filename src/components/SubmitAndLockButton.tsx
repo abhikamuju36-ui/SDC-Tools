@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { rebaselineEtcFields } from "@/lib/etc-dirty-tracker";
 
 // Submit and Lock freezes a month's ETC numbers, so it's gated behind a
 // password prompt as a deliberate "are you sure" step — not a security
@@ -44,6 +45,13 @@ export function SubmitAndLockButton({ formId, className }: { formId: string; cla
       form.appendChild(input);
     }
     input.value = password;
+    // Submitting persists every typed New ETC too (submitMonth reads the same
+    // `newEtcOverride__<id>` fields Save does), so the grid is no longer
+    // "unsaved" afterwards. Without this the unsaved-changes guards kept
+    // firing on a month that had just been locked — the inputs are disabled at
+    // that point, so there was no way to clear it short of a full reload.
+    // Snapshot before requestSubmit: the submission navigates.
+    rebaselineEtcFields(new FormData(form));
     form.requestSubmit();
     setOpen(false);
     setPassword("");

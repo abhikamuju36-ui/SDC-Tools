@@ -1,7 +1,7 @@
 "use client";
 
-import { useState } from "react";
-import { markEtcDirty } from "@/lib/etc-dirty-tracker";
+import { useEffect, useState } from "react";
+import { registerEtcField, forgetEtcField, updateEtcField } from "@/lib/etc-dirty-tracker";
 
 const NEUTRAL_BG = "bg-[#F2F2F2]";
 const ATTENTION_BG = "bg-[#FAFAC4]";
@@ -22,8 +22,9 @@ function currency(n: number): string {
 //   * NO placeholder. Also like the section-hours cells: money spent means the
 //     next figure is a manager's call, and the cell must read as blank until
 //     one is made.
-//   * markEtcDirty() on change so the beforeunload "unsaved changes" guard
-//     covers Parts Cost too.
+//   * Reports its value to the dirty tracker on change so the "unsaved
+//     changes" guards cover Parts Cost too — by value, so re-typing the
+//     original figure leaves the grid clean.
 // Currency masking (plain digits while focused, "$X,XXX" once blurred) is kept
 // from the old EtcDraftInput currency mode; the raw digits ride along in a
 // hidden input under `name`, so Save/Submit parse a clean number.
@@ -52,6 +53,17 @@ export function PartsCostNewEtcCell({
   const [value, setValue] = useState(initialValue);
   const [focused, setFocused] = useState(false);
 
+  // Baseline for the unsaved-changes guards, and the unmount cleanup that lets
+  // a month switch reset them. See EtcSectionCells for the full rationale —
+  // this cell posts into the same `newEtcOverride__<id>` namespace, so it has
+  // to participate the same way or Parts Cost edits would go unnoticed.
+  useEffect(() => {
+    registerEtcField(name, initialValue);
+    return () => forgetEtcField(name);
+    // initialValue is the mount-time baseline by design; see EtcSectionCells.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [name]);
+
   // Decided = this cell holds a value RIGHT NOW. Not "was typed in at some
   // point": a latching touched-flag left an emptied cell looking settled when
   // it no longer was. Same rule as EtcSectionCells.
@@ -67,11 +79,14 @@ export function PartsCostNewEtcCell({
         value={displayValue}
         onFocus={() => setFocused(true)}
         onChange={(e) => {
-          setValue(e.target.value.replace(/[^0-9.]/g, ""));
+          const next = e.target.value.replace(/[^0-9.]/g, "");
+          setValue(next);
           // Nothing persists from typing alone — the toolbar's gated Save
-          // button batch-saves the whole grid. This just flags unsaved work
-          // for the beforeunload guard.
-          markEtcDirty();
+          // button batch-saves the whole grid. This just reports the current
+          // value so the guards can compare it against what was loaded.
+          // `next`, not e.target.value: the stripped text is what the hidden
+          // input posts, so it's what the baseline has to be compared with.
+          updateEtcField(name, next);
         }}
         onBlur={() => setFocused(false)}
         title={hint}

@@ -1,8 +1,8 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { calcHoursLeft, suggestNewEtc, round2 } from "@/lib/etc";
-import { markEtcDirty } from "@/lib/etc-dirty-tracker";
+import { registerEtcField, forgetEtcField, updateEtcField } from "@/lib/etc-dirty-tracker";
 import { hours as formatHours } from "@/components/ui/format";
 import { ETC_COL_W } from "@/components/ui/classnames";
 
@@ -80,15 +80,19 @@ export function EtcSectionCells({
   // then keep flagging. Rounding is display-only.
   const worked = round2(initialWorked);
   const workedDisplay = wholeNum(initialWorked);
-  const [newEtcText, setNewEtcText] = useState(
+  // Hoisted out of the useState initializer because the unsaved-changes
+  // tracker needs the same value as its baseline — the cell is "dirty" only
+  // when what's in it differs from what it loaded with, so both have to read
+  // from one expression or they'd drift apart.
+  const initialText =
     initialDraft != null
       ? String(initialDraft)
       : initialConfirmed != null
         ? String(initialConfirmed)
         : monthComplete !== false && initialWorked === 0
           ? String(round2(priorEtc))
-          : "",
-  );
+          : "";
+  const [newEtcText, setNewEtcText] = useState(initialText);
 
   const hoursLeft = calcHoursLeft(priorEtc, worked);
   const suggested = suggestNewEtc(priorEtc, worked);
@@ -114,13 +118,33 @@ export function EtcSectionCells({
   // cell, the row total and the KPI card all count the same things.
   const diffDecided = hasNewEtcValue;
 
+  const fieldName = `newEtcOverride__${entryId}`;
+
+  // Register the value this cell LOADED with, so the unsaved-changes guards
+  // can tell an actual edit from a keystroke that was undone. Unregistering on
+  // unmount is what makes a month switch reset the guard: the grid form is
+  // keyed on the month, so every cell here is torn down and takes its entry
+  // in the tracker with it.
+  //
+  // Mount effect, not render: registering during render would be a side
+  // effect, and a change event can't fire before mount anyway. `newEtcText` is
+  // intentionally not a dependency — this captures the INITIAL value once, and
+  // re-running it on every keystroke would make the baseline chase the edits
+  // and nothing would ever read as dirty.
+  useEffect(() => {
+    registerEtcField(fieldName, initialText);
+    return () => forgetEtcField(fieldName);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [fieldName]);
+
   function handleNewEtcChange(e: React.ChangeEvent<HTMLInputElement>) {
     setNewEtcText(e.target.value);
     // Nothing persists from typing alone — the toolbar's Save button batch-
     // saves every currently-typed value across the grid at once. This just
-    // flags that there's something unsaved, for the Save button's
-    // beforeunload "unsaved changes" warning.
-    markEtcDirty();
+    // reports the current value so the "unsaved changes" guards know whether
+    // anything actually differs from what was loaded. Typing a value and then
+    // putting the cell back how it was leaves the grid clean.
+    updateEtcField(fieldName, e.target.value);
   }
 
   return (
@@ -156,7 +180,7 @@ export function EtcSectionCells({
           type="number"
           step="0.01"
           min="0"
-          name={`newEtcOverride__${entryId}`}
+          name={fieldName}
           value={newEtcText}
           onChange={handleNewEtcChange}
           disabled={locked}
