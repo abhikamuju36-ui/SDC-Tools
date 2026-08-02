@@ -23,7 +23,22 @@ export function isActualsOn(params: { get(name: string): string | null }): boole
 // The view params the Projects grid's "Show all / Reset" switch owns. Listed
 // once so flipping to Reset can't miss one — a leftover param would leave the
 // grid half-reset, which is the failure nobody would report as a bug.
-export const QUOTED_VIEW_PARAMS = ["customers", "types", "statuses", "billables", "cols", "hide", ACTUALS_PARAM] as const;
+// dateField/from/to are the "Dates ▾" range (ProjectsDateFilter) — listed here
+// so Reset clears them too. A date range left behind by a Reset is exactly the
+// "half-reset grid" this list exists to prevent, and the worst kind, because a
+// narrowed row count reads as missing data rather than as a filter.
+export const QUOTED_VIEW_PARAMS = [
+  "customers",
+  "types",
+  "statuses",
+  "billables",
+  "cols",
+  "hide",
+  "dateField",
+  "from",
+  "to",
+  ACTUALS_PARAM,
+] as const;
 
 // ── Multi-value params are comma-joined, and 16 of 88 customer names contain a
 // comma ("FIRST SOLAR, INC.", "Alcon Research, LTD", "Tarkett USA, Inc.") ────
@@ -72,6 +87,11 @@ export type ShowAllOptions = {
 export function isShowingAll(params: { get(name: string): string | null }, all: ShowAllOptions): boolean {
   if (!isActualsOn(params)) return false;
   if (params.get("hide")) return false; // any hidden info column -> not all
+  // A "Dates ▾" range hides rows, so the switch must not claim everything is
+  // showing while one is set. Unlike the list params below, ABSENT is the
+  // permissive state here — no range means no date filtering — so this tests
+  // for presence rather than for coverage.
+  if (params.get("from") || params.get("to")) return false;
   const covers = (param: keyof ShowAllOptions) => {
     const raw = params.get(param);
     if (raw === null) return false; // absent = the default, which is narrower

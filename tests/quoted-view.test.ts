@@ -138,3 +138,36 @@ test("QUOTED_VIEW_PARAMS covers every param the switch sets", () => {
     assert.ok((QUOTED_VIEW_PARAMS as readonly string[]).includes(p), `${p} missing from QUOTED_VIEW_PARAMS`);
   }
 });
+
+// "Dates ▾" (ProjectsDateFilter). Unlike every list param here, ABSENT is the
+// permissive state — no range means no date filtering — so the switch has to
+// test for presence, not coverage. Getting that backwards would leave "Show
+// all" reading ON while a range quietly hid rows, which is the exact failure
+// isShowingAll exists to prevent.
+test("isShowingAll: a date range means NOT everything is showing", () => {
+  const from = everything();
+  from.set("from", "2026-01-01");
+  assert.equal(isShowingAll(from, ALL), false);
+
+  const to = everything();
+  to.set("to", "2026-12-31");
+  assert.equal(isShowingAll(to, ALL), false);
+});
+
+test("isShowingAll: no date range at all is still 'showing all'", () => {
+  assert.equal(isShowingAll(everything(), ALL), true);
+});
+
+test("Reset clears the date range — the params are in QUOTED_VIEW_PARAMS", () => {
+  for (const k of ["dateField", "from", "to"]) {
+    assert.ok((QUOTED_VIEW_PARAMS as readonly string[]).includes(k), `${k} missing from QUOTED_VIEW_PARAMS`);
+  }
+  const p = everything();
+  p.set("dateField", "complete");
+  p.set("from", "2026-01-01");
+  p.set("to", "2026-06-30");
+  for (const k of QUOTED_VIEW_PARAMS) p.delete(k);
+  assert.equal(p.get("from"), null);
+  assert.equal(p.get("to"), null);
+  assert.equal(p.get("dateField"), null);
+});

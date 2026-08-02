@@ -11,6 +11,7 @@ import { TABLE_HEADER_ROW, TABLE_GRID, BUTTON_PRIMARY } from "@/components/ui/cl
 import { ProjectViewsMenu } from "@/components/ProjectViewsMenu";
 import { listSharedViews } from "@/lib/saved-views-actions";
 import { ProjectsFilterMenu } from "@/components/ProjectsFilterMenu";
+import { ProjectsDateFilter } from "@/components/ProjectsDateFilter";
 import { ProjectsSectionsMenu } from "@/components/ProjectsSectionsMenu";
 import { ProjectsDisplayMenu } from "@/components/ProjectsDisplayMenu";
 import { ProjectsShowAllSwitch } from "@/components/ProjectsShowAllSwitch";
@@ -229,6 +230,10 @@ export default async function QuotedPage({
     hide?: string;
     view?: string;
     actuals?: string;
+    // "Dates ▾" — which date column to filter on, and the range.
+    dateField?: string;
+    from?: string;
+    to?: string;
   }>;
 }) {
   const sp = await searchParams;
@@ -374,12 +379,37 @@ export default async function QuotedPage({
       ? {} // no filter -> all jobs, including customer = null
       : { customer: { in: selectedCustomers } };
 
+  // "Dates ▾" — a range on ONE date column (ProjectsDateFilter).
+  //
+  // Validated, not trusted: these arrive from the query string, and an
+  // unparseable value must not reach Prisma as an Invalid Date (which throws
+  // and takes the whole page down with it). A bad bound is dropped, so a
+  // mistyped URL narrows less rather than 500s.
+  const dateColumn = sp.dateField === "complete" ? "completeDate" : "startDate";
+  const parseBound = (v: string | undefined, endOfDay: boolean): Date | undefined => {
+    if (!v || !/^\d{4}-\d{2}-\d{2}$/.test(v)) return undefined;
+    const d = new Date(`${v}${endOfDay ? "T23:59:59.999" : "T00:00:00.000"}Z`);
+    return Number.isNaN(d.getTime()) ? undefined : d;
+  };
+  // `to` covers the whole day it names — a range ending 2026-07-22 that
+  // excluded jobs dated 2026-07-22 would be a trap.
+  const dateFrom = parseBound(sp.from, false);
+  const dateTo = parseBound(sp.to, true);
+  // A job with no date in the chosen column can't satisfy a range. Prisma's
+  // gte/lte already exclude NULL, so this needs no extra clause — the menu says
+  // so out loud instead.
+  const dateWhere =
+    dateFrom || dateTo
+      ? { [dateColumn]: { ...(dateFrom ? { gte: dateFrom } : {}), ...(dateTo ? { lte: dateTo } : {}) } }
+      : {};
+
   const jobs = await prisma.job.findMany({
     where: {
       type: { in: selectedTypes },
       ...customerWhere,
       status: { in: selectedStatuses },
       ...billableWhere,
+      ...dateWhere,
     },
     // estimatedHours carries the quoted figures this grid edits. Actual hours
     // are NOT built from the job's etcEntries any more — that join used to ride
@@ -483,6 +513,13 @@ export default async function QuotedPage({
             { key: "statuses", label: "Status", options: allStatuses, selected: selectedStatuses },
             { key: "billables", label: "Billable", options: BILLABLE_OPTIONS, selected: selectedBillables },
           ]}
+        />
+        {/* Next to Filters, since it narrows rows the same way — separate only
+            because a date range isn't a pick-from-a-list value. */}
+        <ProjectsDateFilter
+          field={sp.dateField === "complete" ? "complete" : "start"}
+          from={dateFrom ? sp.from! : ""}
+          to={dateTo ? sp.to! : ""}
         />
         <ProjectsSectionsMenu
           phases={PHASE_GROUPS.map((g) => ({
