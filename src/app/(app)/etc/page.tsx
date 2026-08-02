@@ -30,6 +30,7 @@ import { RunReportButton } from "@/components/RunReportButton";
 import { SubmitAndLockButton } from "@/components/SubmitAndLockButton";
 import { ReopenMonthButton } from "@/components/ReopenMonthButton";
 import { SaveEtcDraftsButton } from "@/components/SaveEtcDraftsButton";
+import { EtcAutosave } from "@/components/EtcAutosave";
 import { isStandardSheetUnlocked, hadWrongPassword, unlockStandardSheet, lockStandardSheet } from "@/lib/standard-sheet-gate";
 import { isEtcEditUnlocked, hadEtcEditWrongPassword, lockEtcEdit } from "@/lib/etc-edit-gate";
 import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/execution-etc";
@@ -740,6 +741,10 @@ export default async function MonthlyEtcPage({
         {!locked && (
           <SaveEtcDraftsButton formId="etc-month-form" month={month} unlocked={etcEditUnlocked} wrongPassword={etcEditWrongPassword} className={BUTTON_PRIMARY} />
         )}
+        {/* Autosaves New ETC cells ~1.5s after typing stops — but only once
+            Save has been clicked with the password this session, so autosave
+            can never be the thing that gets past the gate. */}
+        <EtcAutosave formId="etc-month-form" month={month} unlocked={etcEditUnlocked} locked={locked} />
         {!locked && etcEditUnlocked && (
           <form action={lockEtcEdit}>
             <button type="submit" className={BUTTON_SECONDARY} title="Relock Save for this session.">

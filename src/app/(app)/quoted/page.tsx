@@ -12,6 +12,7 @@ import { ProjectViewsMenu } from "@/components/ProjectViewsMenu";
 import { listSharedViews } from "@/lib/saved-views-actions";
 import { ProjectsFilterMenu } from "@/components/ProjectsFilterMenu";
 import { ProjectsDateFilter } from "@/components/ProjectsDateFilter";
+import { ProjectsAutosave } from "@/components/ProjectsAutosave";
 import { ProjectsSectionsMenu } from "@/components/ProjectsSectionsMenu";
 import { ProjectsDisplayMenu } from "@/components/ProjectsDisplayMenu";
 import { ProjectsShowAllSwitch } from "@/components/ProjectsShowAllSwitch";
@@ -475,6 +476,10 @@ export default async function QuotedPage({
         <PageTitle>Projects</PageTitle>
         <WhenEditing>
           <div className="flex items-center gap-2.5">
+            {/* Edits commit on their own ~1.5s after you stop typing; Save
+                stays for new rows (which autosave skips) and for anyone who
+                wants to force it. */}
+            <ProjectsAutosave />
             <AddProjectButton className={BUTTON_PRIMARY} />
             <SaveQuotedHoursButton />
           </div>
