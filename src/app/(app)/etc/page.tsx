@@ -196,6 +196,14 @@ function diffBg(diff: number) {
   if (Math.abs(diff) < 0.005) return "bg-white";
   return diff < 0 ? "bg-[#EEADAC]" : "bg-[#9FCE62]";
 }
+// The footer's counterpart. The Total row is dark now (see the
+// `tfoot tr.etc-total-row` rule in globals.css), which wins over any cell
+// background — so down there the variance has to read as TEXT instead. Same
+// epsilon as above so the two rows agree about what counts as zero.
+function diffTextOnDark(diff: number) {
+  if (Math.abs(diff) < 0.005) return "";
+  return diff < 0 ? "etc-total-diff-over" : "etc-total-diff-under";
+}
 
 // Hours display on this page is whole numbers with thousands separators — no
 // decimals, rounded rather than truncated. Delegates to the shared formatter so
@@ -1399,7 +1407,7 @@ export default async function MonthlyEtcPage({
                   totals stay on screen while scrolling a 59-job month. */}
               <tfoot className="sticky bottom-0 z-20">
                 {visibleJobs.length > 0 && (
-                  <tr className="border-t-2 border-sdc-navy bg-sdc-gray-100 font-medium">
+                  <tr className="etc-total-row border-t-2 border-sdc-navy font-medium">
                     {/* Mirror the body's THREE separate frozen cells (same widths
                         + sticky offsets) rather than one colSpan cell, so the
                         section totals after them line up exactly with the rows. */}
@@ -1431,7 +1439,7 @@ export default async function MonthlyEtcPage({
                           </td>
                           <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
                           <td
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffTextOnDark(diff)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
                             title={`${round2(diff)} = the sum of (Hours Left − New ETC) down this column. Cells with no New ETC typed compare against the suggestion, so they read 0 unless already overspent.`}
                           >
                             {wholeNum(diff)}
@@ -1455,7 +1463,7 @@ export default async function MonthlyEtcPage({
                           </td>
                           <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-blue-dark`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
                           <td
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffTextOnDark(diff)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
                             title={`${round2(diff)} = the sum of (Hours Left − New ETC) down this column. A cell with no New ETC typed compares against the suggestion, so it reads 0 unless that section is already overspent.`}
                           >
                             {wholeNum(diff)}
@@ -1482,7 +1490,7 @@ export default async function MonthlyEtcPage({
                           </td>
                           <td className={`border-l border-sdc-border ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`} title={currencyExact(t.newEtc)}>{monthComplete ? currency(t.newEtc) : "—"}</td>
                           <td
-                            className={`border-l border-sdc-border ${diffBg(diffCost)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            className={`border-l border-sdc-border ${diffTextOnDark(diffCost)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
                             title={`${currencyExact(diffCost)} = Money Left (${currencyExact(moneyLeft)}) − New ETC (${currencyExact(t.newEtc)})`}
                           >
                             {currency(diffCost)}

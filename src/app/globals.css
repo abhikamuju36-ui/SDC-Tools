@@ -421,6 +421,50 @@ tr.row-selected > td:first-child {
   font-weight: 700;
 }
 
+/* The Monthly ETC grid's Total row.
+ *
+ * It used to wear the SAME per-cell fills as the body — the mid-blue Prior ETC,
+ * the pale Hours Worked, the red/green Diff — so the one row that sums the
+ * whole grid looked like just another row, and at the bottom of a 58-row table
+ * that is where the eye lands last.
+ *
+ * Done here rather than by editing the cells: the footer renders roughly
+ * fifteen different cell variants (per section, per group, Parts Cost, the
+ * Standard columns), each with its own bg-* utility, and changing them one at a
+ * time is how one gets missed. `tfoot tr.etc-total-row > td` is a compound
+ * selector, so it outranks any single utility class without !important — the
+ * same mechanism the row-selected and hover rules above rely on.
+ *
+ * Deliberately NOT --sdc-navy: that is the phase banner's colour at the top of
+ * the same table, and reusing it would make the footer read as another header.
+ * This is a dark steel blue — clearly darker than the body, clearly its own
+ * thing. */
+tfoot tr.etc-total-row > td {
+  background-color: #1e3a5f;
+  color: #eaf1f8;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+/* Sticky footer cells sit above the scrolling body, so they need the fill to be
+ * fully opaque — a translucent one would show rows sliding underneath. */
+tfoot tr.etc-total-row > td.sticky {
+  background-color: #1e3a5f;
+}
+/* The Diff cells keep their meaning as TEXT, since the fill is now the row's.
+ * Applied by the cells themselves (diffTextOnDark in etc/page.tsx).
+ *
+ * Written as the full descendant chain, NOT a bare `.etc-total-diff-over`: the
+ * row rule above is `tfoot tr.etc-total-row > td` (0,2,2) and would otherwise
+ * out-specify a lone class (0,1,0) and paint these the same pale blue as every
+ * other footer cell — silently losing the red/green the row exists to show. */
+tfoot tr.etc-total-row > td.etc-total-diff-under {
+  color: #b6e08a; /* under Quoted — the body's #9FCE62, lifted to carry on dark */
+  font-weight: 700;
+}
+tfoot tr.etc-total-row > td.etc-total-diff-over {
+  color: #ffb0ac; /* over — the body's #EEADAC, likewise */
+  font-weight: 700;
+}
+
 /* Bounded table wrappers (data grids with sticky headers/columns) get their
  * own scrollbars now instead of the whole page scrolling. Unstyled, these
  * default to the OS's raw scrollbar — on Windows/Chromium that's a chunky
