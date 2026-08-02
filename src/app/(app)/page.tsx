@@ -1,5 +1,8 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
+import { getDataQuality, getPunchExplorer } from "@/lib/data-quality";
+import { DashboardTabs } from "@/components/DashboardTabs";
+import { DataQualityPanel } from "@/components/DataQualityPanel";
 import { revalidatePath } from "next/cache";
 import { syncFromTotalEto } from "@/lib/sync-totaleto";
 import { syncActualHours, syncQuotedFromPowerBi } from "@/lib/sync-powerbi";
@@ -64,7 +67,21 @@ function formatDataThrough(d: Date | null | undefined) {
   return d ? `data thru ${d.toISOString().slice(0, 10)}` : null;
 }
 
-export default async function Home() {
+export default async function Home({
+  searchParams,
+}: {
+  searchParams: Promise<{ tab?: string; dqFrom?: string; dqTo?: string; dqEmp?: string; dqFn?: string; dqMtd?: string }>;
+}) {
+  const sp = await searchParams;
+  // The Data Quality explorer classifies every punch in the window, so it runs
+  // only when that tab is actually open. The dashboard's landing view must not
+  // pay for it — which is also why the tab lives in the URL rather than in
+  // client state alone.
+  const onQualityTab = sp.tab === "quality";
+  const explorer = onQualityTab
+    ? await getPunchExplorer({ from: sp.dqFrom, to: sp.dqTo, employeeId: sp.dqEmp, functionId: sp.dqFn, monthToDate: sp.dqMtd === "1" })
+    : null;
+
   const [
     jobCount,
     activeCount,
@@ -75,6 +92,7 @@ export default async function Home() {
     lastPowerBiSync,
     lastQuotedSync,
     freshnessRows,
+    dataQuality,
   ] = await Promise.all([
     prisma.job.count({ where: validJobTypeFilter }),
     prisma.job.count({ where: { status: "Active", ...validJobTypeFilter } }),
@@ -85,6 +103,9 @@ export default async function Home() {
     prisma.jobMonthlyActualHours.findFirst({ orderBy: { syncedAt: "desc" }, select: { syncedAt: true } }),
     prisma.estimatedHours.findFirst({ orderBy: { updatedAt: "desc" }, select: { updatedAt: true } }),
     prisma.powerBiFreshness.findMany(),
+    // The Power BI report's Data Quality page, rebuilt locally — see
+    // lib/data-quality.ts for where each rule comes from.
+    getDataQuality(),
   ]);
 
   const stats = [
@@ -177,6 +198,16 @@ export default async function Home() {
         </p>
       </div>
 
+      <DashboardTabs
+        issueCount={
+          dataQuality.future.count +
+          dataQuality.afterCompletion.count +
+          dataQuality.undefinedEmployees.count +
+          dataQuality.nonJobHours.count
+        }
+        dataQuality={<DataQualityPanel dq={dataQuality} explorer={explorer} />}
+        overview={
+        <>
       <div className="mb-7 grid grid-cols-2 gap-4 md:grid-cols-4">
         {stats.map((s) => {
           const icon = statIcons[s.label];
@@ -354,6 +385,9 @@ export default async function Home() {
           ))}
         </div>
       </div>
+        </>
+        }
+      />
     </div>
   );
 }
