@@ -1,72 +1,66 @@
 "use client";
 
-import { createContext, useContext, useState, useTransition, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useRef, useState, useTransition, type ReactNode } from "react";
 import { useRouter } from "next/navigation";
 import { TOOLBAR_BTN, TOOLBAR_BTN_MUTED } from "@/components/ui/classnames";
 import { countChanged } from "@/lib/dirty-form";
 import { writeProjectsEditCookie } from "@/lib/projects-edit-cookie";
 
 // Edit Mode for the Projects grid — read-only until someone deliberately turns
-// it on. See projects-edit-mode.ts for the cookie and, more importantly, for the
+// it on, with the password asked for at the moment of turning it on. See
+// projects-edit-mode.ts for the cookies and, more importantly, for the
 // server-side guard that is the actual enforcement.
 //
-// ── Why the switch is CLIENT state, not the cookie ──────────────────────────
-// The first cut of this drove the whole grid off the server: the cookie decided
-// `canEdit`, the page rendered every cell readOnly or not, and the toggle called
-// a server action that revalidated /quoted. Correct, and unusable — one click
-// re-ran the entire page (every job with its estimated hours and ETC entries,
-// the shared views, the Scheduler lookup) before a single input unlocked. It
-// read as a dead button for as long as that took.
+// ── One control, not three ──────────────────────────────────────────────────
+// This briefly grew into a password box, an Unlock button and a separate Lock
+// button sitting beside the switch, which put a third state on the toolbar —
+// "unlocked but still read-only" — that nobody asked for and that leaked the
+// restricted columns for as long as it lasted. It is one switch again
+// (2026-08-02, by request): Read-only <-> Editing, password on the way in.
 //
-// So the switch flips client state instead, which is instant, and writes the
-// cookie in the background. Whether the controls accept input is a
-// <fieldset disabled> away, with nothing re-rendered.
+// There is no lingering unlocked state. Turning editing OFF clears the gate as
+// well, so turning it back on always asks again. That is the point of folding
+// them together — two cookies, but one thing a user can be in or out of.
 //
-// ── ...and why it now refreshes anyway ──────────────────────────────────────
-// That paragraph used to end "nothing about the grid's CONTENT depends on the
-// mode — the same rows, the same figures either way". That stopped being true
-// on 2026-08-02: the four restricted sections (PM, Manufacturing, and the two
-// Warranties) are only rendered while editing, and they are rendered by the
-// SERVER — hiding them client-side would leave the hours sitting in the HTML,
-// which is not hiding them at all.
+// ── What is instant and what is not ─────────────────────────────────────────
+// The switch flips CLIENT state, so the cells unlock or lock on the click. The
+// original design stopped there, on the stated grounds that "nothing about the
+// grid's CONTENT depends on the mode — the same rows, the same figures either
+// way", and deliberately avoided a server round trip because rendering /quoted
+// is nine sequential database queries (one of them to the Scheduler's MySQL).
 //
-// So toggle() now fires router.refresh() as well. The instant part is kept
-// where it matters: the cells unlock on the click, and the refresh only ever
-// delays a COLUMN appearing or disappearing.
-//
-// The cookie still matters — it's what saveQuotedHours checks — but the browser
-// writes it directly rather than through a server action. An action would have
-// undone the whole point: Next re-renders the current route after every server
-// action, so the click wouldn't settle until the entire page had re-rendered on
-// the server. See projects-edit-mode.ts for why writing it client-side gives
-// nothing away.
+// That is no longer true. The four restricted sections — PM, Manufacturing,
+// Warranty Engineering, Warranty Shop — exist only while editing, and only the
+// SERVER can add or remove them: hiding them in the browser would leave the
+// hours sitting in the HTML, which is not hiding them. So the switch also fires
+// router.refresh(), and the wait it costs only ever delays a COLUMN appearing
+// or disappearing — never the ability to type.
 
 type EditModeValue = {
   editing: boolean;
+  // False when nobody is signed in — the switch renders as a dead "Read-only"
+  // label rather than a control that can't work.
   mayEdit: boolean;
   pending: boolean;
-  toggle: () => void;
-  // The password gate. Held here rather than in ProjectsGateControl because
-  // mayEdit depends on it, and because keeping it in client state is what lets
-  // unlocking swap the toolbar without re-rendering the page.
-  unlocked: boolean;
-  onUnlocked: () => void;
-  lock: () => void;
+  // Called once the password has been accepted by the API.
+  enable: () => void;
+  // Returns false if the user backed out of the unsaved-changes prompt.
+  disable: () => Promise<boolean>;
 };
 
 const EditModeCtx = createContext<EditModeValue>({
   editing: false,
   mayEdit: false,
   pending: false,
-  toggle: () => {},
-  unlocked: false,
-  onUnlocked: () => {},
-  lock: () => {},
+  enable: () => {},
+  disable: async () => true,
 });
 
 export function useProjectsEditMode(): EditModeValue {
   return useContext(EditModeCtx);
 }
+
+const GATE_URL = "/api/projects/gate";
 
 export function ProjectsEditModeProvider({
   initialEditing,
@@ -74,92 +68,64 @@ export function ProjectsEditModeProvider({
   initiallyUnlocked,
   children,
 }: {
-  // The cookie's value at render time, so a reload keeps you where you were.
+  // The cookies' values at render time, so a reload keeps you where you were.
+  // Editing requires BOTH: the mode cookie and the gate.
   initialEditing: boolean;
-  // False when nobody is signed in.
   signedIn: boolean;
-  // The password gate's cookie at render time. Seeds client state from here on
-  // — see `unlocked` below.
   initiallyUnlocked: boolean;
   children: ReactNode;
 }) {
   const router = useRouter();
   const [pending, startTransition] = useTransition();
-  // Client state, seeded from the server. Unlocking flips it locally after the
-  // route handler has set the httpOnly cookie, so the toolbar swaps instantly
-  // instead of waiting on a full re-render of this page. It is safe to hold
-  // here because it grants nothing: every write re-checks the real cookie in
-  // assertProjectsEditable(), and the restricted COLUMNS are decided by the
-  // server from that cookie, not from this flag.
-  const [unlocked, setUnlocked] = useState(initiallyUnlocked);
-  const mayEdit = signedIn && unlocked;
   const [editing, setEditing] = useState(initialEditing && signedIn && initiallyUnlocked);
 
-  function toggle() {
-    if (!mayEdit) return;
-    const next = !editing;
-    if (!next) {
-      // Leaving Edit Mode disables every input; anything typed and not saved is
-      // still in the DOM, but the Save button is gone, so say so first rather
-      // than let an afternoon's edits become unreachable behind a switch
-      // labelled "Read-only". countChanged is the same dirty-check Save uses, so
-      // this number is exactly what a save would have written.
-      // Reached through one of the grid's own cells, NOT document.querySelector
-      // ("form") — the sidebar's sign-out form comes first in the DOM, so that
-      // would have dirty-checked the wrong form and always found nothing.
-      const form = document.querySelector<HTMLInputElement>("input[name^='quoted__']")?.form;
-      const changed = form ? countChanged(form) : 0;
-      if (changed > 0) {
-        const ok = window.confirm(
-          `${changed} unsaved change${changed === 1 ? "" : "s"} won't be saved if you leave Edit Mode.\n\nLeave anyway?`
-        );
-        if (!ok) return;
-      }
-    }
-    // Both instant, both local — the cells unlock on the click, which is the
-    // whole reason this is client state.
-    setEditing(next);
-    writeProjectsEditCookie(next);
-    // ...but the four restricted sections (PM, Mfg, the two Warranties) are
-    // rendered by the SERVER off this cookie, and only appear while editing.
-    // Hiding them in the browser wouldn't hide them — the hours would still be
-    // in the HTML — so the server has to render the other set, which means a
-    // refresh. Fired after the cookie is written, so the request carries it.
+  function enable() {
+    setEditing(true);
+    writeProjectsEditCookie(true);
+    // The restricted columns don't exist in the current markup — only a server
+    // render can add them.
+    startTransition(() => router.refresh());
+  }
+
+  async function disable(): Promise<boolean> {
+    // Leaving Edit Mode disables every input; anything typed and not saved is
+    // still in the DOM, but the Save button is gone, so say so first rather
+    // than let an afternoon's edits become unreachable behind a switch
+    // labelled "Read-only". countChanged is the same dirty-check Save uses, so
+    // this number is exactly what a save would have written.
     //
-    // This is the one thing the original design deliberately avoided, and the
-    // cost is real: the page re-renders every job with its hours. It is
-    // narrowed as far as it can be — the cells are already live by the time
-    // this lands, so the wait only ever delays a COLUMN appearing or
-    // disappearing, never the ability to type.
-    startTransition(() => {
-      router.refresh();
-    });
-  }
+    // Reached through one of the grid's own cells, NOT document.querySelector
+    // ("form") — the sidebar's sign-out form comes first in the DOM, so that
+    // would have dirty-checked the wrong form and always found nothing.
+    const form = document.querySelector<HTMLInputElement>("input[name^='quoted__']")?.form;
+    const changed = form ? countChanged(form) : 0;
+    if (changed > 0) {
+      const ok = window.confirm(
+        `${changed} unsaved change${changed === 1 ? "" : "s"} won't be saved if you leave Edit Mode.\n\nLeave anyway?`,
+      );
+      if (!ok) return false;
+    }
 
-  // Unlocking needs NO refresh: the restricted columns follow Edit Mode, which
-  // is still off at this point, so nothing the server rendered has changed
-  // except which toolbar controls belong on screen — and that is this state.
-  function onUnlocked() {
-    setUnlocked(true);
-  }
-
-  // Locking does need one, but only if the restricted columns are actually on
-  // screen — i.e. only if we were editing. Otherwise the markup is already
-  // correct and a refresh would be seconds spent rendering the same thing.
-  function lock() {
-    const wasEditing = editing;
-    setUnlocked(false);
     setEditing(false);
-    if (wasEditing) startTransition(() => router.refresh());
+    writeProjectsEditCookie(false);
+    // Relock the gate too, so the next Edit Mode asks for the password again.
+    // Failure is survivable — the mode cookie is already cleared, so the server
+    // won't render the restricted columns and won't accept a write either.
+    try {
+      await fetch(GATE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "lock" }),
+      });
+    } catch {
+      // Ignored on purpose — see above.
+    }
+    startTransition(() => router.refresh());
+    return true;
   }
 
   return (
-    // `editing && mayEdit`, not the raw state — belt and braces now that lock()
-    // clears both, but it also covers the signed-out case. Without it a locked
-    // page could keep live cells and a Save button that the server then
-    // refuses, since ProjectsGateControl swaps the TOGGLE out while
-    // WhenEditing and ProjectsEditFieldset read this context.
-    <EditModeCtx.Provider value={{ editing: editing && mayEdit, mayEdit, pending, toggle, unlocked, onUnlocked, lock }}>
+    <EditModeCtx.Provider value={{ editing: editing && signedIn, mayEdit: signedIn, pending, enable, disable }}>
       {children}
     </EditModeCtx.Provider>
   );
@@ -192,11 +158,40 @@ export function WhenEditing({ children }: { children: ReactNode }) {
   return <>{children}</>;
 }
 
-// The toolbar switch itself. First control in the row, and amber when on,
-// because "this grid is live" is the one piece of state on this page nobody
-// should have to discover by typing into it.
+// The toolbar switch — the ONLY gate control on this page. First in the row,
+// and amber when on, because "this grid is live" is the one piece of state here
+// nobody should have to discover by typing into it.
+//
+// Turning it on opens a password popover (the same shape as
+// SubmitAndLockButton and EtcRatesButton). The password is checked by
+// /api/projects/gate, never in the browser — a route handler rather than a
+// server action because an action re-renders this whole route just to answer,
+// and that took seconds. Turning it off needs no password.
 export function ProjectsEditModeToggle() {
-  const { editing, mayEdit, pending, toggle } = useProjectsEditMode();
+  const { editing, mayEdit, pending, enable, disable } = useProjectsEditMode();
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const [wrong, setWrong] = useState(false);
+  const [checking, setChecking] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    inputRef.current?.focus();
+    function onDown(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
 
   if (!mayEdit) {
     return (
@@ -207,31 +202,120 @@ export function ProjectsEditModeToggle() {
     );
   }
 
-  return (
-    <button
-      // type="button" is load-bearing: this sits inside the grid's <form>, and a
-      // default submit button here would fire a save on click.
-      type="button"
-      onClick={toggle}
-      aria-pressed={editing}
-      aria-busy={pending}
-      title={
-        editing
-          ? "Turn editing off — the grid goes back to read-only and the PM, Manufacturing and Warranty columns are hidden"
-          : "Turn editing on — cells become editable, Save appears, and the PM, Manufacturing and Warranty columns become available"
+  async function confirmPassword() {
+    if (password.length === 0 || checking) return;
+    setChecking(true);
+    try {
+      const res = await fetch(GATE_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "unlock", password }),
+      });
+      const result = (await res.json()) as { ok?: boolean };
+      if (!result.ok) {
+        setWrong(true);
+        return;
       }
-      className={`${TOOLBAR_BTN} ${
-        editing ? "border-sdc-yellow bg-sdc-yellow-bg text-sdc-navy" : "border-sdc-border bg-white text-sdc-gray-500 hover:bg-sdc-blue-light"
-      }`}
-    >
-      <span aria-hidden className={`relative h-3.5 w-6 shrink-0 rounded-full transition-colors ${editing ? "bg-sdc-yellow" : "bg-sdc-gray-100"}`}>
-        <span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white shadow transition-all ${editing ? "left-3" : "left-0.5"}`} />
-      </span>
-      {editing ? "Editing" : "Read-only"}
-      {/* The cells are already live/locked by now; this only says the column
-          set is still catching up, so the switch doesn't look stuck. */}
-      {pending && <span className="text-[10px] font-normal opacity-60">updating columns…</span>}
-    </button>
+      setOpen(false);
+      setPassword("");
+      setWrong(false);
+      enable();
+    } catch {
+      // A failed request is not a wrong password, and saying so would send
+      // someone hunting for a password that was fine.
+      window.alert("Couldn't reach the server. Check your connection and try again.");
+    } finally {
+      setChecking(false);
+    }
+  }
+
+  function onToggleClick() {
+    if (editing) {
+      void disable();
+      return;
+    }
+    setPassword("");
+    setWrong(false);
+    setOpen((v) => !v);
+  }
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        // type="button" is load-bearing: this sits inside the grid's <form>
+        // (QuotedSaveForm wraps the whole page), and a default submit button
+        // here would fire a save on click.
+        type="button"
+        onClick={onToggleClick}
+        aria-pressed={editing}
+        aria-busy={pending}
+        disabled={pending}
+        title={
+          editing
+            ? "Turn editing off — back to read-only, and the PM, Manufacturing and Warranty columns are hidden again"
+            : "Turn editing on — asks for the password, then unlocks the cells and shows the PM, Manufacturing and Warranty columns"
+        }
+        className={`${TOOLBAR_BTN} ${
+          editing ? "border-sdc-yellow bg-sdc-yellow-bg text-sdc-navy" : "border-sdc-border bg-white text-sdc-gray-600 hover:bg-sdc-blue-light"
+        } disabled:cursor-wait`}
+      >
+        <span aria-hidden className={`relative h-3.5 w-6 shrink-0 rounded-full transition-colors ${editing ? "bg-sdc-yellow" : "bg-sdc-gray-100"}`}>
+          <span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white shadow transition-all ${editing ? "left-3" : "left-0.5"}`} />
+        </span>
+        {editing ? "Editing" : "Read-only"}
+        {/* The cells are already live/locked by now; this only says the column
+            set is still catching up, so the switch doesn't look stuck. */}
+        {pending && <span className="text-[10px] font-normal opacity-60">updating columns…</span>}
+      </button>
+
+      {open && !editing && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border border-sdc-border bg-white p-3 shadow-lg">
+          <p className="mb-1 text-xs font-semibold text-sdc-navy">Enter password to edit</p>
+          <p className="mb-2 text-[11px] leading-relaxed text-sdc-gray-600">
+            Unlocks the cells and shows the PM, Manufacturing and Warranty (Engineering &amp; Shop) sections — in the grid and in
+            the Sections filter.
+          </p>
+          <input
+            ref={inputRef}
+            type="password"
+            value={password}
+            onChange={(e) => {
+              setPassword(e.target.value);
+              if (wrong) setWrong(false); // stop shouting as soon as they retype
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") {
+                // Enter in a text input submits the enclosing form — which here
+                // is the GRID's. Stop it before it saves.
+                e.preventDefault();
+                void confirmPassword();
+              }
+            }}
+            placeholder="Password"
+            aria-label="Projects edit password"
+            aria-invalid={wrong || undefined}
+            disabled={checking}
+            className={`w-full rounded-md border px-2 py-1.5 text-sm outline-none focus:border-sdc-blue disabled:opacity-60 ${
+              wrong ? "border-sdc-red" : "border-sdc-border"
+            }`}
+          />
+          {wrong && <p className="mt-2 text-xs font-medium text-sdc-red-text">Wrong password</p>}
+          <div className="mt-3 flex justify-end gap-2">
+            <button type="button" className="rounded-md px-3 py-1.5 text-sm text-sdc-gray-600 hover:bg-sdc-gray-100" onClick={() => setOpen(false)}>
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={() => void confirmPassword()}
+              disabled={password.length === 0 || checking}
+              className="rounded-md bg-sdc-blue px-3 py-1.5 text-sm font-semibold text-white hover:bg-sdc-blue-dark disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              {checking ? "Checking…" : "Start editing"}
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
   );
 }
 

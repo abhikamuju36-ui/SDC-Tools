@@ -4,7 +4,6 @@ import { prisma } from "@/lib/prisma";
 import { validJobTypeFilter, VALID_JOB_TYPES, JOB_STATUSES, DEFAULT_VISIBLE_STATUSES, compareJobIds, isSdcCustomer } from "@/lib/job-filters";
 import { SECTIONS, PHASE_GROUPS, RESTRICTED_SECTION_CODES } from "@/lib/sections";
 import { isProjectsUnlocked } from "@/lib/projects-gate";
-import { ProjectsGateControl } from "@/components/ProjectsGateControl";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
 import { PageTitle } from "@/components/ui/Typography";
@@ -29,9 +28,7 @@ import { decodeParamList, isActualsOn } from "@/lib/quoted-display-prefs";
 import { loadActualHoursBySection } from "@/lib/actual-hours";
 import {
   ProjectsEditModeProvider,
-  // ProjectsEditModeToggle is no longer rendered here — ProjectsGateControl
-  // owns it now, so the switch and the password box can't both claim the
-  // first slot in the toolbar.
+  ProjectsEditModeToggle,
   ProjectsEditFieldset,
   WhenEditing,
 } from "@/components/ProjectsEditMode";
@@ -457,7 +454,10 @@ export default async function QuotedPage({
       <div className="mb-5 flex flex-wrap gap-2.5">
         {/* First in the row: whether the grid is live is the one thing a user
             shouldn't have to discover by typing into it. */}
-        <ProjectsGateControl />
+        {/* One control for the whole thing: Read-only <-> Editing, password
+            asked for on the way in. It also governs whether the four
+            restricted sections exist — see `editingNow` above. */}
+        <ProjectsEditModeToggle />
         <ProjectsFilterMenu
           filters={[
             { key: "customers", label: "Customer", options: allCustomers, selected: selectedCustomers, searchable: true },
