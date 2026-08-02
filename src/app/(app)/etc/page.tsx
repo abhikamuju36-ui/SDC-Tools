@@ -711,7 +711,7 @@ export default async function MonthlyEtcPage({
       </p>
 
       {/* One toolbar: pick the month/year, Refresh Data pulls everything from
-          Power BI for it, then enter/confirm and Submit and Lock. */}
+          Power BI for it, then enter/confirm and Submit ETC. */}
       <div className="mb-3 flex flex-wrap items-center gap-3">
         <span className="text-xs font-medium text-sdc-gray-500">Report for:</span>
         <MonthYearSelect
@@ -767,10 +767,10 @@ export default async function MonthlyEtcPage({
             <button
               type="button"
               disabled
-              title="Clear the Columns and Billable filters first — a filtered view doesn't show every entry that Submit & Lock ETC would freeze."
+              title="Clear the Columns and Billable filters first — a filtered view doesn't show every entry that Submit ETC would freeze."
               className={`${BUTTON_SECONDARY} disabled:cursor-not-allowed disabled:opacity-50`}
             >
-              Submit & Lock ETC
+              Submit ETC
             </button>
           ))}
         {/* Password-gated rather than admin-only (changed 2026-08-02): the
@@ -879,7 +879,7 @@ export default async function MonthlyEtcPage({
           ? `"Refresh Data" starts ${month}: it seeds the job rows and pulls the latest hours (Paylocity) and parts costs (TotalETO), just like the sheet.`
           : locked
             ? `${month} is submitted and locked — these numbers are frozen exactly as submitted. Pick a month above to view any past submission, or "Reopen for editing" to correct this one (the corrected New ETC carries forward into the next month's Prior ETC when you re-submit).`
-            : `"Refresh Data" pulls the latest hours (Paylocity) and parts costs (TotalETO) for the selected month. Enter Hours Worked, confirm or override each New ETC (suggestion shown in yellow), then Submit & Lock ETC. That freezes the hours; the Standard Fees panel submits its Standard Sheet separately.`}
+            : `"Refresh Data" pulls the latest hours (Paylocity) and parts costs (TotalETO) for the selected month. Enter Hours Worked, confirm or override each New ETC (suggestion shown in yellow), then Submit ETC. That freezes the hours; the Standard Fees panel submits its Standard Sheet separately.`}
       </p>
 
       {/* KPI strip. Computed from the same rows the grid's grand-total row sums

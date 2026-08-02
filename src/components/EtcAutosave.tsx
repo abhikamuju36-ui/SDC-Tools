@@ -21,7 +21,7 @@ import { SaveStatusChip } from "@/components/SaveStatusChip";
 //
 // ── Drafts, not submissions ─────────────────────────────────────────────────
 // This writes newEtcDraft, exactly as the Save button does. It never submits or
-// locks a month: Submit and Lock stays a deliberate, separately-confirmed act.
+// locks a month: Submit ETC stays a deliberate, separately-confirmed act.
 export function EtcAutosave({ formId, month, unlocked, locked }: { formId: string; month: string; unlocked: boolean; locked: boolean }) {
   const formRef = useRef<HTMLFormElement | null>(null);
   // The toolbar sits OUTSIDE this form (the grid form opens further down the

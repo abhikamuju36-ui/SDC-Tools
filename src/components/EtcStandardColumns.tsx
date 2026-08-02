@@ -88,7 +88,7 @@ type Ctx = {
   getPoolTotals: () => PoolTotals;
   // True when a live pulled/rate cell differs from the saved (server-seeded)
   // value — i.e. there are pool edits the grid is showing but that "Save Pool
-  // Cells" hasn't persisted yet. Submit & Lock freezes from the SAVED values,
+  // Cells" hasn't persisted yet. Submit Standard Sheet freezes from the SAVED values,
   // so it must be blocked while this is true or the frozen fees won't match
   // what's on screen.
   isPoolDirty: () => boolean;
@@ -226,7 +226,7 @@ export function StandardRatesProvider({
       const rv = num(rate[p.category] ?? String(p.rate));
       // Compared against the ROUNDED baseline, not the raw stored value —
       // otherwise every month whose pulled hours still carry decimals would
-      // open already flagged "unsaved pool edits" and block Submit & Lock
+      // open already flagged "unsaved pool edits" and block Submit Standard Sheet
       // behind a Save nobody asked for.
       return pv !== pulledBaseline(p) || rv !== p.rate;
     });
@@ -242,7 +242,7 @@ export function StandardRatesProvider({
   return <StandardRatesCtx.Provider value={ctx}>{children}</StandardRatesCtx.Provider>;
 }
 
-// Consumed by the pool panel to disable Submit & Lock while there are unsaved
+// Consumed by the pool panel to disable Submit Standard Sheet while there are unsaved
 // pulled/rate edits (see isPoolDirty above).
 export function useStandardPoolDirty(): boolean {
   const ctx = useContext(StandardRatesCtx);

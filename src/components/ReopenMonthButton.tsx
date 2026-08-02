@@ -4,7 +4,7 @@ import { useEffect, useRef, useState } from "react";
 
 // Reopening a submitted month unfreezes numbers that are already history, so
 // it's gated behind a password prompt — the same "are you sure" gesture as
-// Submit and Lock, and the same phrase. The real check is server-side in
+// Submit ETC, and the same phrase. The real check is server-side in
 // reopenMonth; this only collects the answer.
 //
 // Deliberately NOT the session-cookie treatment that Save gets

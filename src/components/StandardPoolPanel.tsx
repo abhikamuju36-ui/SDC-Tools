@@ -130,7 +130,7 @@ export function StandardPoolPanel({
 }) {
   const groups = [...new Set(rows.map((r) => r.group))];
   const [open, setOpen] = useState(true);
-  // Unsaved pulled/rate edits: Submit & Lock freezes from the SAVED pool values,
+  // Unsaved pulled/rate edits: Submit Standard Sheet freezes from the SAVED pool values,
   // so it must be blocked until "Save Pool Cells" persists what's on screen —
   // otherwise the frozen fees silently differ from the live grid.
   const poolsDirty = useStandardPoolDirty();
@@ -255,7 +255,7 @@ export function StandardPoolPanel({
                   className={`${BUTTON_PRIMARY} w-full !py-2 !text-xs disabled:cursor-not-allowed disabled:opacity-50`}
                   title={poolsDirty ? "Save Pool Cells first — the freeze uses the saved pool values." : "Freeze this month's Standard Sheet."}
                 >
-                  Submit &amp; Lock Standard Sheet
+                  Submit Standard Sheet
                 </button>
                 {poolsDirty && (
                   <p className="mt-1 text-center text-[10px] font-medium text-sdc-yellow-text">
