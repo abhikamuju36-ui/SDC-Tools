@@ -9,6 +9,7 @@
 // screen. reset() re-renders the segment (retries the server fetch) with no
 // full reload; the sidebar stays because this renders inside the (app) layout.
 import { useEffect } from "react";
+import Link from "next/link";
 
 export default function AppError({
   error,
@@ -44,12 +45,15 @@ export default function AppError({
           >
             Try again
           </button>
-          <a
+          {/* Link, not <a>: a bare anchor here does a full document reload,
+              which throws away the router and every client-held preference on
+              the way out of an error the user may well be able to recover from. */}
+          <Link
             href="/"
             className="rounded-lg border border-sdc-border px-4 py-2 text-sm font-semibold text-sdc-navy hover:bg-sdc-blue-light"
           >
             Go to Dashboard
-          </a>
+          </Link>
         </div>
         {error.digest && <p className="mt-3 text-[11px] text-sdc-gray-400">Reference: {error.digest}</p>}
       </div>

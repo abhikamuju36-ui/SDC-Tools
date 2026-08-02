@@ -26,12 +26,26 @@ export default function RootLayout({
   return (
     <html lang="en" className={`${montserrat.variable} h-full antialiased`}>
       <body className="min-h-full flex flex-col">
-        {/* App-wide text size: restore the saved root font-size before paint so
-            there's no flash. Tailwind sizes are rem, so this scales the whole
-            UI proportionally. See AppTextSize. */}
+        {/* Restore every persisted display preference BEFORE first paint.
+            Tailwind sizes are rem, so the root font-size scales the whole UI
+            proportionally (see AppTextSize); the five grid vars drive row
+            height, column width and cell text on the Monthly ETC and Projects
+            grids (EtcViewMenu, ProjectsDisplayMenu / GridZoomControls).
+
+            The grid vars used to be applied in mount effects, which is one
+            frame too late: the grid painted at the default density and then
+            visibly jumped to the saved one on every page load. The root
+            font-size was already handled here — this just extends the same
+            treatment to the rest, since a preference restored after paint is
+            a preference the user watches being restored.
+
+            Inline and blocking on purpose: it has to run before the first
+            paint, which rules out an effect and rules out `defer`. Wrapped in
+            try/catch because localStorage throws outright in some privacy
+            modes, and a preference is never worth a blank page. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var s=localStorage.getItem('app-font-px');if(s){document.documentElement.style.fontSize=parseFloat(s)+'px';}}catch(e){}`,
+            __html: `try{var d=document.documentElement,s=localStorage.getItem('app-font-px');if(s)d.style.fontSize=parseFloat(s)+'px';var v=[['etc-grid-font-size','--etc-font-size'],['etc-grid-row-py','--etc-row-py'],['etc-grid-col-px','--etc-col-px'],['quoted-grid-row-py','--quoted-row-py'],['quoted-grid-col-px','--quoted-col-px']];for(var i=0;i<v.length;i++){var r=localStorage.getItem(v[i][0]);if(r!=null&&r!==''){var n=parseFloat(r);if(!isNaN(n))d.style.setProperty(v[i][1],n+'px');}}}catch(e){}`,
           }}
         />
         <SessionProvider>{children}</SessionProvider>
