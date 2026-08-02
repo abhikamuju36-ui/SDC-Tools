@@ -2,7 +2,9 @@ import { Fragment } from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { validJobTypeFilter, VALID_JOB_TYPES, JOB_STATUSES, DEFAULT_VISIBLE_STATUSES, compareJobIds, isSdcCustomer } from "@/lib/job-filters";
-import { SECTIONS, PHASE_GROUPS } from "@/lib/sections";
+import { SECTIONS, PHASE_GROUPS, RESTRICTED_SECTION_CODES } from "@/lib/sections";
+import { isProjectsUnlocked } from "@/lib/projects-gate";
+import { ProjectsGateControl } from "@/components/ProjectsGateControl";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
 import { PageTitle } from "@/components/ui/Typography";
@@ -27,7 +29,9 @@ import { decodeParamList, isActualsOn } from "@/lib/quoted-display-prefs";
 import { loadActualHoursBySection } from "@/lib/actual-hours";
 import {
   ProjectsEditModeProvider,
-  ProjectsEditModeToggle,
+  // ProjectsEditModeToggle is no longer rendered here — ProjectsGateControl
+  // owns it now, so the switch and the password box can't both claim the
+  // first slot in the toolbar.
   ProjectsEditFieldset,
   WhenEditing,
 } from "@/components/ProjectsEditMode";
@@ -242,7 +246,19 @@ export default async function QuotedPage({
   // it only shapes the UI either way: every write re-checks the cookie
   // server-side in saveQuotedHours, since a form post doesn't care what the
   // markup said.
-  const { editing: initialEditing, mayEdit } = await getProjectsEditState();
+  const { editing: initialEditing, mayEdit: signedIn } = await getProjectsEditState();
+  // The password gate (projects-gate.ts). It governs BOTH editing and whether
+  // the four restricted sections exist on this page at all.
+  const projectsUnlocked = await isProjectsUnlocked();
+  // Being signed in is no longer sufficient to edit — the gate is the boundary.
+  // assertProjectsEditable() re-checks the same thing on every write, so this
+  // is only what the toolbar renders.
+  const mayEdit = signedIn && projectsUnlocked;
+  // PM / Manufacturing / Warranty Engineering / Warranty Shop. Filtered out of
+  // the columns, the phase pickers and the "Show all" switch while locked, so a
+  // hand-typed ?cols=10-111 has nothing to turn on either.
+  const sectionAllowed = (code: string) => projectsUnlocked || !RESTRICTED_SECTION_CODES.has(code);
+  const visibleSections = SECTIONS.filter((s) => sectionAllowed(s.code));
   // Saved/published grid views ("Views ▾") — loaded for everyone; the team
   // default + shared list come from the DB, personal views live in the browser.
   const { default: teamDefault, shared: sharedViews } = await listSharedViews();
@@ -255,11 +271,15 @@ export default async function QuotedPage({
   // picked some via the phase pickers (which still list all sections).
   // Hidden by default: 10-111 (PM), 10-413 (Manufacturing), and the two
   // Warranty codes (70-211/70-411). A manager can re-enable any of them.
-  const DEFAULT_HIDDEN_CODES = new Set(["10-111", "10-413", "70-211", "70-411"]);
-  const visibleCodes =
+  // Same four codes as RESTRICTED_SECTION_CODES — while locked they're gone
+  // entirely (sectionAllowed, above); once unlocked they're merely off by
+  // default, and a manager can turn any of them on from the Sections picker.
+  const DEFAULT_HIDDEN_CODES = RESTRICTED_SECTION_CODES;
+  const visibleCodes = (
     cols === undefined
-      ? SECTIONS.filter((s) => !DEFAULT_HIDDEN_CODES.has(s.code)).map((s) => s.code)
-      : decodeParamList(cols);
+      ? visibleSections.filter((s) => !DEFAULT_HIDDEN_CODES.has(s.code)).map((s) => s.code)
+      : decodeParamList(cols)
+  ).filter(sectionAllowed); // a saved view or hand-typed ?cols= can't reopen them
   const visibleSet = new Set(visibleCodes);
 
   const sortKey: SortKey = SORT_KEYS.includes(sort as SortKey) ? (sort as SortKey) : "jobId";
@@ -428,7 +448,7 @@ export default async function QuotedPage({
       <div className="mb-5 flex flex-wrap gap-2.5">
         {/* First in the row: whether the grid is live is the one thing a user
             shouldn't have to discover by typing into it. */}
-        <ProjectsEditModeToggle />
+        <ProjectsGateControl unlocked={projectsUnlocked} />
         <ProjectsFilterMenu
           filters={[
             { key: "customers", label: "Customer", options: allCustomers, selected: selectedCustomers, searchable: true },
@@ -440,7 +460,10 @@ export default async function QuotedPage({
         <ProjectsSectionsMenu
           phases={PHASE_GROUPS.map((g) => ({
             phase: g.phase,
-            sections: SECTIONS.filter((s) => s.phase === g.phase).map((s) => ({ code: s.code, name: s.name })),
+            // visibleSections, not SECTIONS — the picker must not even list a
+            // restricted section while locked, or the gate is only hiding
+            // columns from people who don't open the menu.
+            sections: visibleSections.filter((s) => s.phase === g.phase).map((s) => ({ code: s.code, name: s.name })),
           }))}
           visibleCodes={visibleCodes}
           infoColumns={[...TOGGLE_COLUMNS]}
@@ -455,7 +478,8 @@ export default async function QuotedPage({
           allTypes={allTypes}
           allStatuses={allStatuses}
           allBillables={BILLABLE_OPTIONS}
-          allSectionCodes={SECTIONS.map((s) => s.code)}
+          // Locked, "Show all" must not be a one-click way past the gate.
+          allSectionCodes={visibleSections.map((s) => s.code)}
         />
       </div>
 
@@ -706,8 +730,13 @@ export default async function QuotedPage({
               const tone = scheduleTone(job);
               const zebra = isSdc ? "bg-[#caedfb]" : i % 2 === 1 ? "bg-sdc-gray-50/60" : "";
               const zebraSticky = isSdc ? "bg-[#caedfb]" : i % 2 === 1 ? "bg-sdc-gray-50" : "bg-white";
+              // Hover comes from `tbody tr:hover > td` in globals.css, not a row
+              // background — see the note on the ETC grid's <tr>. This grid has
+              // the same per-cell fills (the SDC-customer blue, the schedule
+              // tones), so a <tr> background painted behind them double-tinted
+              // the plain cells and missed the rest.
               return (
-                <tr key={job.id} className={`hover:bg-sdc-blue-light/40 ${zebra}`}>
+                <tr key={job.id} className={zebra}>
                   <td className={`frozen-col sticky left-0 z-10 w-8 min-w-8 overflow-hidden px-1 py-1.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}>
                     {i + 1}
                   </td>

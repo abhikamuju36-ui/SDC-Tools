@@ -3,6 +3,7 @@
 import { cookies } from "next/headers";
 import { auth } from "@/lib/auth";
 import { PROJECTS_EDIT_COOKIE as COOKIE_NAME } from "@/lib/projects-edit-cookie";
+import { isProjectsUnlocked } from "@/lib/projects-gate";
 
 // The Projects grid (/quoted) is a REPORT first and an editor second: most
 // visits are someone reading quoted-vs-actual hours, yet every cell in it used
@@ -62,6 +63,14 @@ export async function getProjectsEditState(): Promise<{ editing: boolean; mayEdi
 export async function assertProjectsEditable(): Promise<void> {
   const session = await auth();
   if (!session?.user) throw new Error("You need to be signed in to change anything here.");
+  // The password gate, checked BEFORE the mode cookie. Edit Mode is a mode
+  // switch and its cookie is browser-writable by design (see above); the gate
+  // is the actual boundary, and it is unforgeable — an HMAC keyed by the
+  // password. Checking it here means a crafted FormData can't write to this
+  // page just because the attacker set projects-edit-mode=1 themselves.
+  if (!(await isProjectsUnlocked())) {
+    throw new Error("Projects is locked — enter the password in the toolbar before editing.");
+  }
   const cookieStore = await cookies();
   if (cookieStore.get(COOKIE_NAME)?.value !== "1") {
     throw new Error("Projects is in read-only mode — turn on Edit Mode in the toolbar first.");

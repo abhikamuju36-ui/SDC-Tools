@@ -5,6 +5,7 @@ import {
   POOL_CATEGORIES,
   POOL_QUOTED_SECTION,
   ETC_TRACKED_CODES,
+  RESTRICTED_SECTION_CODES,
 } from "../src/lib/sections";
 
 // The four Standard Fees pools and the punch-bucketing behind their "Hours
@@ -70,4 +71,21 @@ test("every pool category has a quoted section, and vice versa", () => {
     [...POOL_CATEGORIES].sort(),
     Object.keys(POOL_QUOTED_SECTION).sort(),
   );
+});
+
+// The Projects grid hides these four behind its password gate (projects-gate.ts).
+// Pinned because the consequence of the set silently shrinking is a section
+// becoming visible to everyone with no error anywhere — the quiet kind of
+// failure, not the loud kind.
+test("the gated Projects sections are exactly the four pool sections", () => {
+  assert.deepEqual([...RESTRICTED_SECTION_CODES].sort(), ["10-111", "10-413", "70-211", "70-411"]);
+});
+
+test("the gated set stays derived from the pool sections, not hand-listed", () => {
+  // Same membership, checked from the other direction: if someone adds a fifth
+  // pool, the gate must pick it up without a second edit.
+  assert.equal(RESTRICTED_SECTION_CODES.size, Object.keys(POOL_QUOTED_SECTION).length);
+  for (const code of Object.values(POOL_QUOTED_SECTION)) {
+    assert.ok(RESTRICTED_SECTION_CODES.has(code), `${code} is a pool section but isn't gated`);
+  }
 });

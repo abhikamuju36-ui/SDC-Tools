@@ -93,6 +93,16 @@ export const POOL_QUOTED_SECTION: Record<PoolCategory, string> = {
   SHOP_WARRANTY: "70-411",
 };
 
+// The sections the Projects grid hides behind its password gate (see
+// projects-gate.ts): PM, Manufacturing, Warranty Engineering and Warranty
+// Shop. Locked, they appear neither as columns nor in the Sections picker.
+//
+// DERIVED from POOL_QUOTED_SECTION rather than listed again, because these are
+// the same four sections that drive the Standard Fees pools — that is precisely
+// why they're restricted, and a second hand-written list of the same codes is
+// one that eventually disagrees with the first.
+export const RESTRICTED_SECTION_CODES: ReadonlySet<string> = new Set(Object.values(POOL_QUOTED_SECTION));
+
 // Which pool a raw punch belongs to, by MachineSec (phase) + Function.
 //
 // Deliberately keyed off the RAW punch codes rather than the aliased section,
