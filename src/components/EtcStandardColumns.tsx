@@ -121,8 +121,18 @@ export function StandardRatesProvider({
 }) {
   // The two manual pool cells live here (seeded once from server data) so the
   // pool panel and the grid's job Standard Fees read the same live values.
+  //
+  // Hours being pulled is seeded ROUNDED (2026-08-02, by request): it is a
+  // manual decision, the panel renders every hours figure through whole(), and
+  // the cell was showing "669.02" while the New ETC Hours line beneath it
+  // already displayed the rounded result — so the decimals bought precision
+  // nobody could see and made the displayed hours disagree with the money.
+  // `pulledBaseline` is used for the seed AND for the dirty check below, so a
+  // month whose stored value still carries decimals doesn't load looking
+  // unsaved; the stored value catches up on the next Save or Refresh.
+  const pulledBaseline = (p: PoolRowInput) => Math.round(p.hoursPulled);
   const [pulled, setPulledState] = useState<Record<string, string>>(() =>
-    Object.fromEntries(poolRows.map((p) => [p.category, String(p.hoursPulled)]))
+    Object.fromEntries(poolRows.map((p) => [p.category, String(pulledBaseline(p))]))
   );
   const [rate, setRateState] = useState<Record<string, string>>(() =>
     Object.fromEntries(poolRows.map((p) => [p.category, String(p.rate)]))
@@ -134,7 +144,7 @@ export function StandardRatesProvider({
     const fee = (category: string) => {
       const p = poolRows.find((x) => x.category === category);
       if (!p) return 0;
-      const pulledVal = num(pulled[category] ?? String(p.hoursPulled));
+      const pulledVal = num(pulled[category] ?? String(pulledBaseline(p)));
       const rateVal = num(rate[category] ?? String(p.rate));
       return (p.hoursAvailable - pulledVal) * rateVal;
     };
@@ -197,7 +207,7 @@ export function StandardRatesProvider({
   function getPoolCell(category: string): LivePoolCell | undefined {
     const p = poolRows.find((x) => x.category === category);
     if (!p) return undefined;
-    const pulledStr = pulled[category] ?? String(p.hoursPulled);
+    const pulledStr = pulled[category] ?? String(pulledBaseline(p));
     const rateStr = rate[category] ?? String(p.rate);
     const newEtcHours = p.hoursAvailable - num(pulledStr);
     return {
@@ -212,9 +222,13 @@ export function StandardRatesProvider({
 
   const isPoolDirty = () =>
     poolRows.some((p) => {
-      const pv = num(pulled[p.category] ?? String(p.hoursPulled));
+      const pv = num(pulled[p.category] ?? String(pulledBaseline(p)));
       const rv = num(rate[p.category] ?? String(p.rate));
-      return pv !== p.hoursPulled || rv !== p.rate;
+      // Compared against the ROUNDED baseline, not the raw stored value —
+      // otherwise every month whose pulled hours still carry decimals would
+      // open already flagged "unsaved pool edits" and block Submit & Lock
+      // behind a Save nobody asked for.
+      return pv !== pulledBaseline(p) || rv !== p.rate;
     });
 
   const ctx: Ctx = {

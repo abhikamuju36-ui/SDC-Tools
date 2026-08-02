@@ -346,14 +346,26 @@ export async function submitMonth(month: string, formData: FormData) {
     { timeout: 20000 },
   );
 
+  // Push the freshly-locked New ETC values into the months that derive their
+  // Prior ETC from them. On the current month this is a no-op (nothing exists
+  // after it yet); on a reopened historical month it is the whole point of
+  // the correction — see cascadePriorEtcForward.
+  const cascade = await cascadePriorEtcForward(month);
+
   const entryById = new Map(entries.map((e) => [e.id, e]));
   await logAudit({
     action: "etc.submitMonth",
     entityType: "EtcMonth",
     entityId: month,
-    summary: `Submitted ${updates.length} ETC entr${updates.length === 1 ? "y" : "ies"} for ${month}`,
+    summary:
+      `Submitted ${updates.length} ETC entr${updates.length === 1 ? "y" : "ies"} for ${month}` +
+      (cascade.entriesUpdated > 0
+        ? ` — carried forward into ${cascade.monthsUpdated.join(", ")} (${cascade.entriesUpdated} Prior ETC updated)`
+        : "") +
+      (cascade.stoppedAtLockedMonth ? ` — carry-forward stopped at locked month ${cascade.stoppedAtLockedMonth}` : ""),
     metadata: {
       staleDeleted: staleIds.length,
+      cascade,
       entries: updates.map((u) => ({
         jobId: entryById.get(u.id)?.jobId,
         section: entryById.get(u.id)?.section,
@@ -433,12 +445,20 @@ export async function saveAllNewEtcDrafts(month: string, formData: FormData): Pr
   return { ok: true };
 }
 
-// Admin-only: re-opens a locked (fully-submitted) month for editing.
-export async function reopenMonth(month: string, _formData: FormData) {
-  const session = await auth();
-  const role = (session?.user as { role?: string } | undefined)?.role;
-  if (role !== "ADMIN") {
-    throw new Error("Only an admin can reopen a submitted month.");
+// Re-opens a locked (fully-submitted) month for editing.
+//
+// Gated by the same confirmation phrase as Submit and Lock, entered every
+// time (no session cookie): unfreezing a closed month is the single most
+// consequential thing this page can do, so it should cost a deliberate
+// keystroke each time rather than staying unlocked for the session the way
+// Save does. This used to be role === "ADMIN" instead; the password replaced
+// that check on request (2026-08-02) so a manager correcting their own month
+// isn't blocked on an admin account. Same treatment as every other gate here
+// — an "are you sure" gesture, not a real access boundary.
+export async function reopenMonth(month: string, formData: FormData) {
+  const submittedPassword = String(formData.get("reopenPassword") ?? "");
+  if (!safeEqual(submittedPassword, SUBMIT_LOCK_PASSWORD)) {
+    throw new Error("Incorrect password — the month was not reopened.");
   }
 
   await prisma.$transaction(async (tx) => {
@@ -448,6 +468,90 @@ export async function reopenMonth(month: string, _formData: FormData) {
   await logAudit({ action: "etc.reopenMonth", entityType: "EtcMonth", entityId: month, summary: `Reopened ETC month ${month}` });
 
   revalidatePath("/etc");
+}
+
+// Pushes a corrected month's New ETC forward into the months that derive from
+// it. Prior ETC of month N+1 IS the New ETC of month N (seedMonth, above), so
+// re-submitting a corrected historical month leaves every later month holding
+// a Prior ETC computed from the value that just changed — and Hours Left,
+// the suggested New ETC, and every dollar figure downstream with it.
+//
+// Nothing else does this. seedMonth refreshes Prior ETC the same way, but it
+// only runs from startMonth and Refresh Data, and Refresh Data is refused on
+// anything but the current month (isSafeForLiveEtcSync) — so before this, a
+// June correction sat in June until somebody happened to refresh July.
+//
+// Two rules, both about not repeating the July 2026 history-corruption bug:
+//
+//   • Only `needsReview` rows are rewritten. A submitted row is a decision
+//     somebody made and locked; it is not this function's to revise.
+//   • The walk STOPS at the first locked month rather than skipping past it.
+//     If July is frozen, July's New ETC hasn't moved, so August's Prior ETC
+//     is still correct — there is nothing downstream to fix, and continuing
+//     would only risk touching months this correction never reached. The
+//     stopped-at month is returned so the caller can say so out loud.
+async function cascadePriorEtcForward(fromMonth: string): Promise<{
+  monthsUpdated: string[];
+  entriesUpdated: number;
+  stoppedAtLockedMonth: string | null;
+}> {
+  const monthsUpdated: string[] = [];
+  let entriesUpdated = 0;
+  let stoppedAtLockedMonth: string | null = null;
+
+  let prev = fromMonth;
+  let current = nextMonth(fromMonth);
+
+  // Bounded by the number of months that actually exist — a runaway here
+  // would walk the calendar forever.
+  for (;;) {
+    const entries = await prisma.etcEntry.findMany({ where: { month: current } });
+    if (entries.length === 0) break; // no such month — end of the chain
+
+    if (isMonthLocked(entries)) {
+      stoppedAtLockedMonth = current;
+      break;
+    }
+
+    const priorEntries = await prisma.etcEntry.findMany({
+      where: { month: prev },
+      select: { jobId: true, section: true, newEtc: true },
+    });
+    const priorByKey = new Map(priorEntries.map((e) => [`${e.jobId}-${e.section}`, Number(e.newEtc)]));
+
+    const writes: { id: number; priorEtc: number; hoursLeftCalc: number }[] = [];
+    for (const entry of entries) {
+      if (!entry.needsReview) continue; // confirmed history — never revised here
+      const priorEtc = priorByKey.get(`${entry.jobId}-${entry.section}`);
+      // No matching row upstream means this job/section didn't exist in the
+      // corrected month. Its Prior ETC came from quoted hours instead (see
+      // seedMonth) and has nothing to do with what just changed.
+      if (priorEtc === undefined) continue;
+
+      const rounded = round2(priorEtc);
+      const hoursLeftCalc = round2(calcHoursLeft(rounded, Number(entry.hoursWorked)));
+      if (round2(Number(entry.priorEtc)) === rounded && round2(Number(entry.hoursLeftCalc)) === hoursLeftCalc) continue;
+      writes.push({ id: entry.id, priorEtc: rounded, hoursLeftCalc });
+    }
+
+    if (writes.length > 0) {
+      // Array form (like saveAllNewEtcDrafts) rather than the interactive one:
+      // every write is known up front, so there's no need to hold a callback
+      // transaction open while this loop thinks.
+      await prisma.$transaction(
+        writes.map((w) =>
+          prisma.etcEntry.update({ where: { id: w.id }, data: { priorEtc: w.priorEtc, hoursLeftCalc: w.hoursLeftCalc } }),
+        ),
+      );
+      monthsUpdated.push(current);
+      entriesUpdated += writes.length;
+    }
+
+    prev = current;
+    current = nextMonth(current);
+  }
+
+  return { monthsUpdated, entriesUpdated, stoppedAtLockedMonth };
 }
 
 // Parity with the original sheet's "Refresh Data" button, which did everything

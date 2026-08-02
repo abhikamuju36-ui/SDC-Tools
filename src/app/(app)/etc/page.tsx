@@ -15,7 +15,8 @@ import { StandardRatesProvider, EtcStandardCells, StandardGrandCells } from "@/c
 import type { StandardJobBase, StandardRates, FrozenStandardRow, PoolRowInput } from "@/components/EtcStandardColumns";
 import { EtcRatesButton } from "@/components/EtcRatesButton";
 import { StandardPoolPanel } from "@/components/StandardPoolPanel";
-import type { PoolPanelRow } from "@/components/StandardPoolPanel";
+import type { PoolPanelRow, NewProjectRow } from "@/components/StandardPoolPanel";
+import { newProjectsEnteringMonth } from "@/lib/standard-pool-local";
 import {
   refreshPools,
   savePools,
@@ -27,6 +28,7 @@ import { calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, r
 import { submitMonth, reopenMonth, syncPowerBiForEtc } from "@/lib/etc-actions";
 import { RunReportButton } from "@/components/RunReportButton";
 import { SubmitAndLockButton } from "@/components/SubmitAndLockButton";
+import { ReopenMonthButton } from "@/components/ReopenMonthButton";
 import { SaveEtcDraftsButton } from "@/components/SaveEtcDraftsButton";
 import { isStandardSheetUnlocked, hadWrongPassword, unlockStandardSheet, lockStandardSheet } from "@/lib/standard-sheet-gate";
 import { isEtcEditUnlocked, hadEtcEditWrongPassword, lockEtcEdit } from "@/lib/etc-edit-gate";
@@ -557,6 +559,9 @@ export default async function MonthlyEtcPage({
   // set via the "ETC Rates" button, stored on the StandardSheetSetting row.
   let standardRates: StandardRates = { engrRate: 170, shopRate: 140, partsMarkup: 1.2 };
   let poolPanelRows: PoolPanelRow[] = [];
+  // The jobs behind this month's "New Hours Added" — itemised under the pool
+  // block, since the Projects page no longer carries a new-project view.
+  let poolNewProjects: NewProjectRow[] = [];
   let poolsCarriedFrom: string | null = null;
   let poolsUpstreamNote: string | null = null;
   // Frozen snapshot rows for a submitted month — the grid renders these instead
@@ -564,15 +569,20 @@ export default async function MonthlyEtcPage({
   let frozenStandardRows: FrozenStandardRow[] | undefined;
 
   if (showStandards) {
-    const [execEtcByJob, effective, setting] = await Promise.all([
+    const [execEtcByJob, effective, setting, newProjects] = await Promise.all([
       getExecutionEtcByJob(jobs.map((j) => j.id), month),
       // Same carry-forward fallback the /standard-sheet tab uses, so the inline
       // Standard fees and the pool panel never silently collapse to $0 for a
       // month whose pools were never pulled.
       loadEffectivePools(month),
       prisma.standardSheetSetting.findUnique({ where: { id: 1 } }),
+      // Always for THIS month, never the carried-from one: the list explains
+      // which jobs started in the month you are looking at. When the pools are
+      // a carry-forward estimate the panel already says so on its own banner.
+      newProjectsEnteringMonth(month),
     ]);
     const pools = effective.pools;
+    poolNewProjects = newProjects;
     poolsCarriedFrom = effective.carriedFrom;
     // The pools sync records WHY a month has no figures of its own (normally:
     // Power BI has not published the period yet). Read here so the panel can say
@@ -757,13 +767,12 @@ export default async function MonthlyEtcPage({
               Submit and Lock
             </button>
           ))}
-        {locked && role === "ADMIN" && (
-          <form action={reopenMonth.bind(null, month)}>
-            <button type="submit" className={BUTTON_SECONDARY}>
-              Reopen for editing
-            </button>
-          </form>
-        )}
+        {/* Password-gated rather than admin-only (changed 2026-08-02): the
+            person who needs to correct a closed month is the manager who
+            filled it in, and requiring an ADMIN account for that just meant
+            corrections didn't happen. Same confirmation phrase as Submit and
+            Lock; the check itself is server-side in reopenMonth. */}
+        {locked && <ReopenMonthButton action={reopenMonth.bind(null, month)} month={month} className={BUTTON_SECONDARY} />}
         {/* Sync History now lives inside the merged "Sync Data" menu above. */}
         {/* Password-gated Standard Sheet columns (Dan/Lisa only) — same
             unlock cookie as the /standard-sheet tab. */}
@@ -863,7 +872,7 @@ export default async function MonthlyEtcPage({
         {!started
           ? `"Refresh Data" starts ${month}: it seeds the job rows and pulls the latest hours (Paylocity) and parts costs (TotalETO), just like the sheet.`
           : locked
-            ? `${month} is submitted and locked — these numbers are frozen exactly as submitted. Pick a month above to view any past submission.`
+            ? `${month} is submitted and locked — these numbers are frozen exactly as submitted. Pick a month above to view any past submission, or "Reopen for editing" to correct this one (the corrected New ETC carries forward into the next month's Prior ETC when you re-submit).`
             : `"Refresh Data" pulls the latest hours (Paylocity) and parts costs (TotalETO) for the selected month. Enter Hours Worked, confirm or override each New ETC (suggestion shown in yellow), then Submit and Lock.`}
       </p>
 
@@ -1126,8 +1135,14 @@ export default async function MonthlyEtcPage({
                     if (d !== null) { t.diff += d; t.decided++; }
                   }
 
+                  // No row-level hover:bg on the <tr> below — the hover wash is
+                  // the `tbody tr:hover > td` rule in globals.css, which paints
+                  // an inset shadow OVER each cell's own fill. A background on
+                  // the <tr> paints BEHIND the cells, so it only ever showed on
+                  // the handful of plain-white ones, tinting those twice while
+                  // the coloured cells (Prior ETC, Diff, New ETC) got nothing.
                   return (
-                    <tr key={job.id} className={`hover:bg-sdc-blue-light/40 ${zebra}`}>
+                    <tr key={job.id} className={zebra}>
                       <td className={`sticky left-0 z-10 w-10 min-w-10 overflow-hidden px-2 py-1 text-center align-middle text-[10px] leading-none whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}>{jobIndex + 1}</td>
                       {/* Job Id and Job Name both carry the right-click menu
                           (Job Hour Details / Project Schedule) — the same one the
@@ -1505,6 +1520,7 @@ export default async function MonthlyEtcPage({
               carriedFrom={poolsCarriedFrom}
               upstreamNote={poolsUpstreamNote}
               rows={poolPanelRows}
+              newProjects={poolNewProjects}
               isSubmitted={standardSheetSubmitted}
               isAdmin={role === "ADMIN"}
               poolsEditable={!standardSheetSubmitted && !poolsCarriedFrom}

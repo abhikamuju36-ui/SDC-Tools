@@ -116,7 +116,14 @@ export async function savePools(month: string, formData: FormData) {
   for (const category of categories) {
     const pool = await prisma.categoryPool.findUnique({ where: { category_month: { category, month } } });
     if (!pool) continue; // pool rows come from Refresh Pools (Power BI) or migration
-    const hoursPulledThisMonth = manualCell(`pulled__${category}`, Number(pool.hoursPulledThisMonth));
+    // Hours pulled is stored as a whole number (2026-08-02, by request) — it's
+    // a manual decision and the panel displays it, and every figure derived
+    // from it, rounded anyway. Rounding on the way in keeps the stored value,
+    // the cell on screen and the Standard Fee it drives all telling the same
+    // story. Applied to the fallback too, so a save that doesn't touch this
+    // field still normalises a legacy decimal. Rate is NOT rounded — that one
+    // legitimately carries cents.
+    const hoursPulledThisMonth = Math.round(manualCell(`pulled__${category}`, Number(pool.hoursPulledThisMonth)));
     const rate = manualCell(`rate__${category}`, Number(pool.rate));
     const newEtcHours = round2(Number(pool.hoursAvailable) - hoursPulledThisMonth);
     const standardFee = round2(newEtcHours * rate);

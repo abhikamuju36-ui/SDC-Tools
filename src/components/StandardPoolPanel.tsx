@@ -34,6 +34,41 @@ export type PoolPanelRow = {
   hasData: boolean;
 };
 
+// One project behind the "New Hours Added this Month" figures above. Mirrors
+// NewPoolProject in standard-pool-local.ts, which is where these are computed.
+export type NewProjectRow = {
+  jobId: string;
+  jobName: string;
+  startDate: string;
+  hours: Record<string, number>;
+  total: number;
+};
+
+// The four pool columns of the new-projects table, in display order: the two
+// standalone departments first, then the two warranty pools under a shared
+// "War" header with Eng/Shop beneath it. Grouping them that way (rather than
+// four flat columns in the department blocks' own order) puts the two figures
+// people compare side by side and buys back the width that "War E"/"War S"
+// spent repeating the word.
+//
+// `head` is abbreviated hard because five columns have to fit a 320px panel;
+// `full` carries the real name into each header's tooltip.
+type PoolColumn = { category: string; head: string; full: string; group?: string };
+const POOL_COLUMNS: PoolColumn[] = [
+  { category: "ENGINEERING_PM", head: "PM", full: "Engineering — PM" },
+  { category: "SHOP_MANUFACTURING", head: "Mfg", full: "Shop — Manufacturing" },
+  { category: "ENGINEERING_WARRANTY", head: "Eng", full: "Warranty — Engineering", group: "War" },
+  { category: "SHOP_WARRANTY", head: "Shop", full: "Warranty — Shop", group: "War" },
+];
+// Split once, so the two header rows and the body can't fall out of step with
+// each other or with the order above.
+const PLAIN_COLUMNS = POOL_COLUMNS.filter((c) => !c.group);
+const WAR_COLUMNS = POOL_COLUMNS.filter((c) => c.group);
+const POOL_ORDER = POOL_COLUMNS.map((c) => c.category);
+// A rule down the left of the warranty pair, so the span above it reads as a
+// group rather than as a stray label.
+const groupEdge = (c: PoolColumn) => (c.category === WAR_COLUMNS[0]?.category ? "border-l border-sdc-border" : "");
+
 function whole(n: number): string {
   return Math.round(n).toLocaleString();
 }
@@ -66,6 +101,7 @@ export function StandardPoolPanel({
   carriedFrom,
   upstreamNote,
   rows,
+  newProjects,
   isSubmitted,
   isAdmin,
   poolsEditable,
@@ -81,6 +117,8 @@ export function StandardPoolPanel({
   // ETC period for <month> yet".
   upstreamNote?: string | null;
   rows: PoolPanelRow[];
+  // The jobs behind this month's "New Hours Added" — see NewProjects below.
+  newProjects: NewProjectRow[];
   isSubmitted: boolean;
   isAdmin: boolean;
   poolsEditable: boolean;
@@ -171,6 +209,12 @@ export function StandardPoolPanel({
                   </div>
                 ))}
                 <PoolTotals />
+                <NewProjects
+                  month={month}
+                  projects={newProjects}
+                  storedByCategory={Object.fromEntries(rows.map((r) => [r.category, r.newHoursAddedThisMonth]))}
+                  isSubmitted={isSubmitted}
+                />
               </div>
               {poolsEditable && (
                 <div className="border-t border-sdc-border px-3 py-2">
@@ -224,7 +268,10 @@ function PoolDeptRow({ row, poolsEditable }: { row: PoolPanelRow; poolsEditable:
   const cell = useStandardPoolCell(row.category);
   const editable = poolsEditable && row.hasData && !!cell;
 
-  const pulledStr = cell?.pulled ?? String(row.hoursPulledThisMonth);
+  // Rounded here too, for the no-provider fallback path — the live cell is
+  // already seeded rounded (see StandardRatesProvider), and the two must agree
+  // or the same month would show 669 with the provider and 669.02 without.
+  const pulledStr = cell?.pulled ?? String(Math.round(row.hoursPulledThisMonth));
   const newEtcHours = cell?.newEtcHours ?? row.newEtcHours;
 
   return (
@@ -252,6 +299,184 @@ function PoolDeptRow({ row, poolsEditable }: { row: PoolPanelRow; poolsEditable:
           strong
         />
       </dl>
+    </div>
+  );
+}
+
+// The jobs behind "New Hours Added this Month", itemised.
+//
+// Every department block above shows a single New Hours Added number with no
+// way to ask what it is. That was survivable while the Projects page carried
+// the new-project view; it no longer does, so this is the only place the
+// question gets answered and it belongs next to the figure it explains.
+//
+// Computed by newProjectsEnteringMonth() — the SAME function the pool figures
+// sum from, so this list always adds up to them. A job is here when its Start
+// Date falls in the month (the verified upstream rule) and it quoted hours
+// into at least one of the four pool sections.
+function NewProjects({
+  month,
+  projects,
+  storedByCategory,
+  isSubmitted,
+}: {
+  month: string;
+  projects: NewProjectRow[];
+  // Each department block's "New Hours Added this Month", keyed by pool
+  // category. The footer column under each department is supposed to equal
+  // its entry here — see the reconciliation note below.
+  storedByCategory: Record<string, number>;
+  isSubmitted: boolean;
+}) {
+  const total = projects.reduce((s, p) => s + p.total, 0);
+  const storedNewHours = POOL_ORDER.reduce((s, c) => s + (storedByCategory[c] ?? 0), 0);
+  // Column totals — the whole point of the footer row: each one should match
+  // the department block of the same name higher up the panel.
+  const columnTotals = Object.fromEntries(
+    POOL_ORDER.map((c) => [c, projects.reduce((s, p) => s + (p.hours[c] ?? 0), 0)]),
+  ) as Record<string, number>;
+  // This list is computed LIVE from job data; the figures above are whatever
+  // was stored on the pool rows, which for older months came from Power BI's
+  // archived period and for a frozen month can never be recomputed. When a
+  // job's quoted hours or Start Date changes after that, the two drift.
+  //
+  // Seen live on 2026-06: the pool rows are source="power_bi", written
+  // 2026-07-08, totalling 726h; the same two jobs now quote 762h. Saying so is
+  // the whole reason this reconciliation exists — a list that visibly doesn't
+  // add up to the number above it, with no explanation, is worse than no list.
+  // Half an hour of slack because both sides round for display.
+  const drift = total - storedNewHours;
+  const reconciles = Math.abs(drift) < 0.5;
+
+  return (
+    <div className="border-t border-sdc-border">
+      <div className="flex items-baseline justify-between gap-2 bg-sdc-gray-50 px-3 py-1.5">
+        <p className="text-xs font-semibold text-sdc-navy">New projects this month</p>
+        <p className="shrink-0 text-[11px] tabular-nums text-sdc-gray-500">
+          {projects.length === 0 ? "none" : `${projects.length} · ${whole(total)} h`}
+        </p>
+      </div>
+
+      {projects.length === 0 ? (
+        <p className="px-3 py-2.5 text-[11px] leading-relaxed text-sdc-gray-400">
+          No job has a Start Date in {month}, so nothing was added to the pools — every department&apos;s New Hours Added above is
+          zero.
+        </p>
+      ) : (
+        <>
+          <p className="px-3 pt-2 text-[10px] leading-relaxed text-sdc-gray-400">
+            Jobs whose Start Date falls in {month}. Their quoted hours are what &quot;New Hours Added this Month&quot; is made of.
+          </p>
+          {!reconciles && (
+            <p className="mx-3 mt-1.5 rounded border border-sdc-yellow bg-sdc-yellow-bg/60 px-2 py-1.5 text-[10px] leading-relaxed text-sdc-gray-600">
+              These add to <strong>{whole(total)} h</strong>, but the New Hours Added figures above total{" "}
+              <strong>{whole(storedNewHours)} h</strong>.{" "}
+              {isSubmitted
+                ? "The pool figures were frozen when this month was submitted; this list is live, so a quoted-hours change since then shows up here and not above."
+                : "The pool figures are from the last Refresh — click Refresh to recompute them from these jobs."}
+            </p>
+          )}
+          {/* One row per job, one column per department, and a footer that
+              totals each column. The footer is the useful part: each figure
+              there should equal the "New Hours Added this Month" line in the
+              department block of the same name above, so the panel now shows
+              its own working.
+
+              The job NAME isn't a column — five columns already fill a 320px
+              panel — so it rides on the row's tooltip instead. */}
+          <table className="mt-1.5 w-full border-collapse text-[10px]">
+            {/* Two header rows: Job/PM/Mfg span both, and "War" spans the two
+                warranty columns named beneath it. */}
+            <thead>
+              <tr className="border-t border-sdc-border bg-sdc-gray-50">
+                {/* sdc-gray-600, not the sdc-gray-500 used elsewhere in this
+                    file: only 50/100/400/600/700 are defined in globals.css's
+                    @theme block, so `text-sdc-gray-500` generates no class at
+                    all and silently inherits. */}
+                <th rowSpan={2} className="px-1.5 py-1 text-left align-bottom font-semibold text-sdc-gray-600">
+                  Job
+                </th>
+                {PLAIN_COLUMNS.map((c) => (
+                  <th
+                    key={c.category}
+                    rowSpan={2}
+                    className="px-1 py-1 text-right align-bottom font-semibold text-sdc-gray-600"
+                    title={c.full}
+                  >
+                    {c.head}
+                  </th>
+                ))}
+                <th
+                  colSpan={WAR_COLUMNS.length}
+                  className="border-l border-sdc-border px-1 pt-1 text-center font-semibold text-sdc-gray-600"
+                  title="Warranty"
+                >
+                  War
+                </th>
+              </tr>
+              <tr className="border-b border-sdc-border bg-sdc-gray-50">
+                {WAR_COLUMNS.map((c) => (
+                  <th
+                    key={c.category}
+                    className={`px-1 pb-1 text-right font-normal text-sdc-gray-600 ${groupEdge(c)}`}
+                    title={c.full}
+                  >
+                    {c.head}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {projects.map((p) => (
+                <tr key={p.jobId} className="border-b border-sdc-border-soft/60" title={`${p.jobId} — ${p.jobName} · started ${p.startDate}`}>
+                  <td className="px-1.5 py-1 text-left font-mono text-sdc-navy">{p.jobId}</td>
+                  {POOL_COLUMNS.map((c) => {
+                    const h = p.hours[c.category] ?? 0;
+                    return (
+                      <td
+                        key={c.category}
+                        className={`px-1 py-1 text-right tabular-nums ${groupEdge(c)} ${h > 0 ? "text-sdc-navy" : "text-sdc-navy/25"}`}
+                        title={h > 0 ? exactHours(h) : undefined}
+                      >
+                        {/* An em dash, not "0" — a job that quoted nothing into
+                            a pool contributed nothing, and a column of zeroes
+                            reads as data when it's absence. */}
+                        {h > 0 ? whole(h) : "—"}
+                      </td>
+                    );
+                  })}
+                </tr>
+              ))}
+            </tbody>
+            <tfoot>
+              <tr className="border-t border-sdc-border bg-sdc-gray-50">
+                <td className="px-1.5 py-1 text-left font-semibold text-sdc-gray-600">Total</td>
+                {POOL_COLUMNS.map((c) => {
+                  const sum = columnTotals[c.category] ?? 0;
+                  const stored = storedByCategory[c.category] ?? 0;
+                  // Flag the specific department that doesn't reconcile rather
+                  // than only saying the grand totals differ — with a column
+                  // per pool, "which one" is now answerable at a glance.
+                  const off = Math.abs(sum - stored) >= 0.5;
+                  return (
+                    <td
+                      key={c.category}
+                      className={`px-1 py-1 text-right font-semibold tabular-nums ${groupEdge(c)} ${off ? "text-sdc-yellow-text" : "text-sdc-navy"}`}
+                      title={
+                        off
+                          ? `${exactHours(sum)} here vs ${exactHours(stored)} in the ${c.full} block above`
+                          : `${exactHours(sum)} — matches the ${c.full} block above`
+                      }
+                    >
+                      {whole(sum)}
+                    </td>
+                  );
+                })}
+              </tr>
+            </tfoot>
+          </table>
+        </>
+      )}
     </div>
   );
 }

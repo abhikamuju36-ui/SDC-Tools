@@ -1,0 +1,122 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+
+// Reopening a submitted month unfreezes numbers that are already history, so
+// it's gated behind a password prompt — the same "are you sure" gesture as
+// Submit and Lock, and the same phrase. The real check is server-side in
+// reopenMonth; this only collects the answer.
+//
+// Deliberately NOT the session-cookie treatment that Save gets
+// (etc-edit-gate.ts): Save is a thing you do dozens of times an hour, this is
+// a thing you should have to mean each time.
+//
+// A popover rather than window.prompt() to match SubmitAndLockButton and
+// EtcRatesButton. Unlike SubmitAndLockButton — which fills a hidden field on
+// the big grid form — this owns its own form, since reopening posts nothing
+// but the password.
+export function ReopenMonthButton({
+  action,
+  month,
+  className,
+}: {
+  action: (formData: FormData) => Promise<void>;
+  month: string;
+  className?: string;
+}) {
+  const [open, setOpen] = useState(false);
+  const [password, setPassword] = useState("");
+  const wrapRef = useRef<HTMLDivElement>(null);
+  const inputRef = useRef<HTMLInputElement>(null);
+  const formRef = useRef<HTMLFormElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    inputRef.current?.focus();
+    function onDown(e: MouseEvent) {
+      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape") setOpen(false);
+    }
+    document.addEventListener("mousedown", onDown);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("mousedown", onDown);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [open]);
+
+  function confirm() {
+    if (password.length === 0) return;
+    // Submit before clearing: closing the popover unmounts the form, and a
+    // requestSubmit() on a form that's already gone silently does nothing.
+    formRef.current?.requestSubmit();
+    setOpen(false);
+  }
+
+  return (
+    <div ref={wrapRef} className="relative">
+      <button
+        type="button"
+        className={className}
+        title={`Unfreeze ${month} so its entries can be corrected.`}
+        onClick={() => {
+          setPassword("");
+          setOpen((v) => !v);
+        }}
+      >
+        Reopen for editing
+      </button>
+      {open && (
+        <div className="absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border border-sdc-border bg-white p-3 shadow-lg">
+          <p className="mb-1 text-xs font-semibold text-sdc-navy">Enter password to reopen {month}</p>
+          {/* Says what reopening actually costs. The carry-forward is the part
+              people don't expect, and it's the reason this isn't reversible by
+              just locking the month again. */}
+          <p className="mb-2 text-[11px] leading-relaxed text-sdc-gray-500">
+            This unfreezes every entry in the month. Re-submitting it afterwards carries the corrected New ETC forward into the
+            next month&apos;s Prior ETC.
+          </p>
+          <form ref={formRef} action={action}>
+            <input type="hidden" name="reopenPassword" value={password} />
+            <input
+              ref={inputRef}
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") {
+                  // The hidden field already carries the value; let the click
+                  // path do the submitting so both routes behave identically.
+                  e.preventDefault();
+                  confirm();
+                }
+              }}
+              placeholder="Password"
+              aria-label="Reopen month password"
+              className="w-full rounded-md border border-sdc-border px-2 py-1.5 text-sm outline-none focus:border-sdc-blue"
+            />
+          </form>
+          <div className="mt-3 flex justify-end gap-2">
+            <button
+              type="button"
+              className="rounded-md px-3 py-1.5 text-sm text-sdc-gray-600 hover:bg-sdc-gray-100"
+              onClick={() => setOpen(false)}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              onClick={confirm}
+              disabled={password.length === 0}
+              className="rounded-md bg-sdc-blue px-3 py-1.5 text-sm font-semibold text-white hover:bg-sdc-blue-dark disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Reopen
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}

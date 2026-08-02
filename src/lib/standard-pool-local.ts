@@ -47,10 +47,17 @@ import { fetchJobHoursRowsWithIssues, type PoolHoursByMonth } from "@/lib/sharep
 //
 // ── What stays manual ──────────────────────────────────────────────────────
 //
-// Hours being pulled this month, and Rate. Preserved verbatim for any row that
-// already exists; only the drivers and the figures derived from them are
-// rewritten. Same contract syncCategoryPoolsFromPowerBi had, so a manager's
-// decision is never overwritten by a background pass.
+// Hours being pulled this month, and Rate. Preserved for any row that already
+// exists; only the drivers and the figures derived from them are rewritten.
+// Same contract syncCategoryPoolsFromPowerBi had, so a manager's decision is
+// never overwritten by a background pass.
+//
+// One qualification since 2026-08-02: Hours being pulled is ROUNDED to a whole
+// hour on the way through. The number a manager chose is kept — 669.02 stays
+// 669, it is never replaced by the default — but the fractional part is not,
+// because the panel displays this cell and everything derived from it rounded,
+// so the decimals were precision nobody could see and made the displayed hours
+// disagree with the dollars. Rate is untouched; it legitimately carries cents.
 
 export type LocalPoolResult = {
   poolsUpserted: number;
@@ -72,30 +79,80 @@ function monthOf(d: Date): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-// New Hours Added, per pool, for `month` — the verified definition above.
-export async function quotedHoursEnteringMonth(month: string): Promise<Record<PoolCategory, number>> {
+// One project that entered the pools this month, and what it contributed.
+// The per-job detail behind each pool's "New Hours Added this Month".
+export type NewPoolProject = {
+  jobId: string;
+  jobName: string;
+  startDate: string; // YYYY-MM-DD
+  hours: Record<PoolCategory, number>;
+  total: number;
+};
+
+// The projects whose quoted hours land in `month`'s pools, itemised.
+//
+// This is the SOURCE for New Hours Added — quotedHoursEnteringMonth below is a
+// sum of it, deliberately, so the itemised list shown in the Standard Fees
+// panel can never disagree with the pool figure it's meant to explain. Two
+// separate queries with the same membership rule would drift the first time
+// one of them was edited.
+//
+// Membership is the verified rule described at the top of this file: Job.
+// startDate falls in the month, nothing else. Jobs contributing zero pool
+// hours are dropped — they started this month but added nothing to these four
+// sections, so listing them under "new hours added" would only be noise.
+export async function newProjectsEnteringMonth(month: string): Promise<NewPoolProject[]> {
   const jobs = await prisma.job.findMany({
     // Type gate as everywhere else: a job with no Type is noise and must never
     // reach a figure. It makes no difference to the verified match (every job
     // in the archived months is typed) but the rule is not conditional on that.
     where: { type: { in: [...VALID_JOB_TYPES] }, startDate: { not: null } },
-    select: { id: true, startDate: true },
+    select: { id: true, jobId: true, jobName: true, startDate: true },
   });
-  const entering = jobs.filter((j) => j.startDate && monthOf(j.startDate) === month).map((j) => j.id);
-
-  const out = Object.fromEntries(POOL_CATEGORIES.map((c) => [c, 0])) as Record<PoolCategory, number>;
-  if (entering.length === 0) return out;
+  const entering = jobs.filter((j) => j.startDate && monthOf(j.startDate) === month);
+  if (entering.length === 0) return [];
 
   const est = await prisma.estimatedHours.findMany({
-    where: { jobId: { in: entering }, section: { in: Object.values(POOL_QUOTED_SECTION) } },
-    select: { section: true, quotedHours: true },
+    where: { jobId: { in: entering.map((j) => j.id) }, section: { in: Object.values(POOL_QUOTED_SECTION) } },
+    select: { jobId: true, section: true, quotedHours: true },
   });
-  for (const category of POOL_CATEGORIES) {
-    const section = POOL_QUOTED_SECTION[category];
-    out[category] = round2(
-      est.filter((e) => e.section === section).reduce((s, e) => s + Number(e.quotedHours), 0),
-    );
+
+  const sectionToCategory = new Map(
+    POOL_CATEGORIES.map((c) => [POOL_QUOTED_SECTION[c], c] as const),
+  );
+
+  const out: NewPoolProject[] = [];
+  for (const job of entering) {
+    const hours = Object.fromEntries(POOL_CATEGORIES.map((c) => [c, 0])) as Record<PoolCategory, number>;
+    for (const e of est) {
+      if (e.jobId !== job.id) continue;
+      const category = sectionToCategory.get(e.section);
+      if (!category) continue;
+      hours[category] += Number(e.quotedHours);
+    }
+    for (const c of POOL_CATEGORIES) hours[c] = round2(hours[c]);
+    const total = round2(POOL_CATEGORIES.reduce((s, c) => s + hours[c], 0));
+    if (total === 0) continue;
+    out.push({
+      jobId: job.jobId,
+      jobName: job.jobName,
+      startDate: job.startDate!.toISOString().slice(0, 10),
+      hours,
+      total,
+    });
   }
+  // Biggest contributor first — the reason the pool moved is usually one job.
+  return out.sort((a, b) => b.total - a.total || a.jobId.localeCompare(b.jobId));
+}
+
+// New Hours Added, per pool, for `month` — the verified definition above.
+export async function quotedHoursEnteringMonth(month: string): Promise<Record<PoolCategory, number>> {
+  const projects = await newProjectsEnteringMonth(month);
+  const out = Object.fromEntries(POOL_CATEGORIES.map((c) => [c, 0])) as Record<PoolCategory, number>;
+  for (const p of projects) {
+    for (const c of POOL_CATEGORIES) out[c] += p.hours[c];
+  }
+  for (const c of POOL_CATEGORIES) out[c] = round2(out[c]);
   return out;
 }
 
@@ -138,10 +195,24 @@ export async function computeCategoryPoolsLocally(
       where: { category_month: { category, month } },
       select: { hoursPulledThisMonth: true, rate: true },
     });
-    // Sheet margin notes: PM "Defaults to 450", the rest "Defaults to Hours
-    // Worked This Month". Rate carries forward from the prior month.
-    const defaultPulled = category === "ENGINEERING_PM" ? 450 : hoursWorkedThisMonth;
-    const hoursPulledThisMonth = existing ? Number(existing.hoursPulledThisMonth) : defaultPulled;
+    // Sheet margin notes: PM "Defaults to 450", the rest (Warranty and Mfg, in
+    // both Engineering and Shop) "Defaults to Hours Worked This Month".
+    //
+    // Rounded to a whole hour, confirmed 2026-08-02: this cell is a manual
+    // decision that a manager then edits, and seeding it with 802.53 asked
+    // them to reason about a hundredth of an hour that the panel doesn't even
+    // display (every figure here renders through whole()). The exact worked
+    // figure is untouched and still shown on its own line above.
+    //
+    // Rate carries forward from the prior month.
+    const defaultPulled = category === "ENGINEERING_PM" ? 450 : Math.round(hoursWorkedThisMonth);
+    // An EXISTING row keeps its manual value — but rounded, so a Refresh also
+    // normalises the legacy decimals seeded before this rule (e.g. 669.02).
+    // This is the one thing a refresh now changes about a manual cell, and it
+    // is written back below rather than left to drift out of step with the
+    // newEtcHours computed from it. Frozen and PBI-archived months never reach
+    // here (poolRefreshBlockedBy), so no locked figure moves.
+    const hoursPulledThisMonth = existing ? Math.round(Number(existing.hoursPulledThisMonth)) : defaultPulled;
     const rate = existing
       ? Number(existing.rate)
       : prior
@@ -160,6 +231,10 @@ export async function computeCategoryPoolsLocally(
         newHoursAddedThisMonth,
         hoursAvailable,
         hoursWorkedThisMonth,
+        // Written on update as well now — see the rounding note above. It is
+        // still the manager's own value, only rounded; the refresh never
+        // substitutes the default for a row that already exists.
+        hoursPulledThisMonth,
         newEtcHours,
         standardFee,
         source: "local",
