@@ -1,9 +1,8 @@
 "use client";
 
-import { useState, useTransition } from "react";
+import { useState } from "react";
 import { TOOLBAR_BTN, TOOLBAR_BTN_MUTED } from "@/components/ui/classnames";
-import { ProjectsEditModeToggle } from "@/components/ProjectsEditMode";
-import { unlockProjects, lockProjects } from "@/lib/projects-gate";
+import { ProjectsEditModeToggle, useProjectsEditMode } from "@/components/ProjectsEditMode";
 
 // The first control on the Projects toolbar: either the password box (locked)
 // or the Edit Mode switch plus a way back out (unlocked).
@@ -20,30 +19,60 @@ import { unlockProjects, lockProjects } from "@/lib/projects-gate";
 // to fix. (Written after exactly that shipped and was caught on review; the
 // same hazard is why ProjectsEditModeToggle is careful to be type="button".)
 //
-// So both controls are plain buttons that call the server action directly with
-// a hand-built FormData. No nesting, nothing submitted but the password, and
-// useTransition gives the pending state a form submission would have provided.
-export function ProjectsGateControl({ unlocked }: { unlocked: boolean }) {
+// So both controls are plain buttons. They POST to /api/projects/gate rather
+// than calling a server action — an action would make Next re-render /quoted,
+// which is nine sequential database round trips and made "Unlocking..." sit
+// there for seconds. The route handler just sets the cookie; the toolbar swaps
+// on client state held by ProjectsEditModeProvider.
+export function ProjectsGateControl() {
+  const { unlocked, onUnlocked, lock } = useProjectsEditMode();
   const [password, setPassword] = useState("");
   const [wrong, setWrong] = useState(false);
-  const [pending, startTransition] = useTransition();
+  const [busy, setBusy] = useState(false);
 
-  function submit() {
-    if (password.length === 0 || pending) return;
-    startTransition(async () => {
-      const fd = new FormData();
-      fd.set("password", password);
-      const result = await unlockProjects(fd);
+  async function submit() {
+    if (password.length === 0 || busy) return;
+    setBusy(true);
+    try {
+      const res = await fetch("/api/projects/gate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "unlock", password }),
+      });
+      const result = (await res.json()) as { ok?: boolean };
       if (result.ok) {
-        // On success the action revalidates and this whole subtree is replaced
-        // by the unlocked branch — clearing the field is just hygiene, so the
-        // typed password isn't sitting in a detached React tree.
         setPassword("");
         setWrong(false);
+        onUnlocked();
       } else {
         setWrong(true);
       }
-    });
+    } catch {
+      // Network/route failure is not a wrong password, and saying so would send
+      // someone hunting for a password that was fine.
+      setWrong(false);
+      window.alert("Couldn't reach the server to unlock. Check your connection and try again.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function doLock() {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await fetch("/api/projects/gate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ action: "lock" }),
+      });
+    } finally {
+      setBusy(false);
+      // Locally regardless: if the request failed the cookie is still set, but
+      // the next write would be refused by the server anyway, and leaving the
+      // toolbar claiming "unlocked" after someone clicked Lock is worse.
+      lock();
+    }
   }
 
   if (!unlocked) {
@@ -78,7 +107,7 @@ export function ProjectsGateControl({ unlocked }: { unlocked: boolean }) {
           placeholder="Password"
           aria-label="Projects password"
           aria-invalid={wrong || undefined}
-          disabled={pending}
+          disabled={busy}
           className={`h-8 w-32 rounded-md border px-2 text-xs text-sdc-navy outline-none focus:border-sdc-blue disabled:opacity-60 ${
             wrong ? "border-sdc-red" : "border-sdc-border"
           }`}
@@ -87,10 +116,10 @@ export function ProjectsGateControl({ unlocked }: { unlocked: boolean }) {
           // type="button", not submit: see the note at the top of this file.
           type="button"
           onClick={submit}
-          disabled={password.length === 0 || pending}
+          disabled={password.length === 0 || busy}
           className={`${TOOLBAR_BTN} border-sdc-border bg-white text-sdc-navy hover:bg-sdc-blue-light disabled:cursor-not-allowed disabled:opacity-50`}
         >
-          {pending ? "Unlocking…" : "Unlock"}
+          {busy ? "Unlocking…" : "Unlock"}
         </button>
         {wrong && <span className="text-xs font-medium text-sdc-red-text">Wrong password</span>}
       </div>
@@ -102,13 +131,13 @@ export function ProjectsGateControl({ unlocked }: { unlocked: boolean }) {
       <ProjectsEditModeToggle />
       <button
         type="button"
-        onClick={() => startTransition(async () => void (await lockProjects()))}
-        disabled={pending}
+        onClick={doLock}
+        disabled={busy}
         className={`${TOOLBAR_BTN} border-sdc-border bg-white text-sdc-gray-600 hover:bg-sdc-blue-light disabled:opacity-50`}
-        title="Lock this grid again — hides the PM, Manufacturing and Warranty sections and turns editing off"
+        title="Lock this grid again — turns editing off and hides the PM, Manufacturing and Warranty sections"
       >
         <LockIcon />
-        {pending ? "Locking…" : "Lock"}
+        {busy ? "Locking…" : "Lock"}
       </button>
     </div>
   );

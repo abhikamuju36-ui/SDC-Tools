@@ -1,8 +1,7 @@
-"use server";
+import "server-only";
 
 import { createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
-import { revalidatePath } from "next/cache";
 import { PROJECTS_EDIT_COOKIE } from "@/lib/projects-edit-cookie";
 
 // The password gate on the Projects grid (/quoted). Two things sit behind it,
@@ -61,32 +60,41 @@ export async function isProjectsUnlocked(): Promise<boolean> {
   return value != null && safeEqual(value, cookieToken());
 }
 
-// Returns whether the attempt was accepted, rather than flagging a failure in
-// a short-lived cookie the way standard-sheet-gate.ts does. The caller is a
-// client component that awaits this directly (it has to be — see
-// ProjectsGateControl for why a <form> can't be used here), so it can just hold
-// the failure in state; a cookie round-trip would be a worse version of the
-// same thing.
-export async function unlockProjects(formData: FormData): Promise<{ ok: boolean }> {
-  const attempt = String(formData.get("password") ?? "");
-  if (!safeEqual(attempt, expectedPassword())) return { ok: false };
+// ── Why these are NOT server actions ────────────────────────────────────────
+//
+// They were, and unlocking took seconds. Next re-renders the current route
+// after EVERY server action, and rendering /quoted is nine sequential database
+// round trips — the shared views, three job queries, the actual hours for every
+// job, and getSchedulerLinkContext(), which reaches a DIFFERENT MySQL server
+// over the network. ProjectsEditMode.tsx documents the same discovery about the
+// Edit Mode switch, in almost the same words, for the same reason.
+//
+// And that re-render bought nothing. Since the restricted sections started
+// following Edit Mode rather than this gate, unlocking changes only which
+// toolbar controls are drawn — no column appears or disappears. So the whole
+// page was being re-rendered to swap a password box for a toggle button.
+//
+// These are plain functions now, called from a route handler
+// (app/api/projects/gate/route.ts) over fetch. A route handler sets cookies and
+// returns JSON without touching the RSC tree, so unlocking costs one round trip
+// and the toolbar swaps in client state. Locking is the same, except the caller
+// refreshes afterwards IF it was editing, because that genuinely does remove
+// columns.
+export async function verifyProjectsPassword(attempt: string): Promise<boolean> {
+  return safeEqual(attempt, expectedPassword());
+}
 
+export async function setProjectsUnlocked(): Promise<void> {
   const cookieStore = await cookies();
   // Session-scoped (no maxAge): closing the browser relocks the tab.
   cookieStore.set(COOKIE_NAME, cookieToken(), { httpOnly: true, sameSite: "lax", path: "/" });
-  // Unlike the Edit Mode switch — which is client state precisely to avoid this
-  // round trip — unlocking MUST re-render: the four restricted columns don't
-  // exist in the current markup, and only the server can add them.
-  revalidatePath("/quoted");
-  return { ok: true };
 }
 
 // Drops back behind the gate without closing the browser. Also clears Edit
 // Mode's own cookie: leaving the grid unlocked-for-editing behind a locked gate
 // would be a state the toggle can't represent.
-export async function lockProjects(): Promise<void> {
+export async function clearProjectsUnlocked(): Promise<void> {
   const cookieStore = await cookies();
   cookieStore.delete(COOKIE_NAME);
   cookieStore.delete(PROJECTS_EDIT_COOKIE);
-  revalidatePath("/quoted");
 }

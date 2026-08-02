@@ -41,9 +41,28 @@ import { writeProjectsEditCookie } from "@/lib/projects-edit-cookie";
 // the server. See projects-edit-mode.ts for why writing it client-side gives
 // nothing away.
 
-type EditModeValue = { editing: boolean; mayEdit: boolean; pending: boolean; toggle: () => void };
+type EditModeValue = {
+  editing: boolean;
+  mayEdit: boolean;
+  pending: boolean;
+  toggle: () => void;
+  // The password gate. Held here rather than in ProjectsGateControl because
+  // mayEdit depends on it, and because keeping it in client state is what lets
+  // unlocking swap the toolbar without re-rendering the page.
+  unlocked: boolean;
+  onUnlocked: () => void;
+  lock: () => void;
+};
 
-const EditModeCtx = createContext<EditModeValue>({ editing: false, mayEdit: false, pending: false, toggle: () => {} });
+const EditModeCtx = createContext<EditModeValue>({
+  editing: false,
+  mayEdit: false,
+  pending: false,
+  toggle: () => {},
+  unlocked: false,
+  onUnlocked: () => {},
+  lock: () => {},
+});
 
 export function useProjectsEditMode(): EditModeValue {
   return useContext(EditModeCtx);
@@ -51,18 +70,30 @@ export function useProjectsEditMode(): EditModeValue {
 
 export function ProjectsEditModeProvider({
   initialEditing,
-  mayEdit,
+  signedIn,
+  initiallyUnlocked,
   children,
 }: {
   // The cookie's value at render time, so a reload keeps you where you were.
   initialEditing: boolean;
   // False when nobody is signed in.
-  mayEdit: boolean;
+  signedIn: boolean;
+  // The password gate's cookie at render time. Seeds client state from here on
+  // — see `unlocked` below.
+  initiallyUnlocked: boolean;
   children: ReactNode;
 }) {
-  const [editing, setEditing] = useState(initialEditing && mayEdit);
   const router = useRouter();
   const [pending, startTransition] = useTransition();
+  // Client state, seeded from the server. Unlocking flips it locally after the
+  // route handler has set the httpOnly cookie, so the toolbar swaps instantly
+  // instead of waiting on a full re-render of this page. It is safe to hold
+  // here because it grants nothing: every write re-checks the real cookie in
+  // assertProjectsEditable(), and the restricted COLUMNS are decided by the
+  // server from that cookie, not from this flag.
+  const [unlocked, setUnlocked] = useState(initiallyUnlocked);
+  const mayEdit = signedIn && unlocked;
+  const [editing, setEditing] = useState(initialEditing && signedIn && initiallyUnlocked);
 
   function toggle() {
     if (!mayEdit) return;
@@ -105,14 +136,30 @@ export function ProjectsEditModeProvider({
     });
   }
 
+  // Unlocking needs NO refresh: the restricted columns follow Edit Mode, which
+  // is still off at this point, so nothing the server rendered has changed
+  // except which toolbar controls belong on screen — and that is this state.
+  function onUnlocked() {
+    setUnlocked(true);
+  }
+
+  // Locking does need one, but only if the restricted columns are actually on
+  // screen — i.e. only if we were editing. Otherwise the markup is already
+  // correct and a refresh would be seconds spent rendering the same thing.
+  function lock() {
+    const wasEditing = editing;
+    setUnlocked(false);
+    setEditing(false);
+    if (wasEditing) startTransition(() => router.refresh());
+  }
+
   return (
-    // `editing && mayEdit`, not the raw state. mayEdit is a prop, so it drops to
-    // false the moment the password gate is locked from the toolbar — and the
-    // state, seeded once by useState, would otherwise still say true. That left
-    // a locked page with live cells and a Save button (which the server would
-    // then refuse), because ProjectsGateControl swaps the TOGGLE out but
+    // `editing && mayEdit`, not the raw state — belt and braces now that lock()
+    // clears both, but it also covers the signed-out case. Without it a locked
+    // page could keep live cells and a Save button that the server then
+    // refuses, since ProjectsGateControl swaps the TOGGLE out while
     // WhenEditing and ProjectsEditFieldset read this context.
-    <EditModeCtx.Provider value={{ editing: editing && mayEdit, mayEdit, pending, toggle }}>
+    <EditModeCtx.Provider value={{ editing: editing && mayEdit, mayEdit, pending, toggle, unlocked, onUnlocked, lock }}>
       {children}
     </EditModeCtx.Provider>
   );

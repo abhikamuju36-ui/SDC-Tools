@@ -425,7 +425,7 @@ export default async function QuotedPage({
       {/* Wraps the toolbar AND the grid: the switch, the Add/Save buttons and
           the fieldset that locks the cells all read the same client state, so
           they can never show three different opinions about the mode. */}
-      <ProjectsEditModeProvider initialEditing={initialEditing} mayEdit={mayEdit}>
+      <ProjectsEditModeProvider initialEditing={initialEditing} signedIn={signedIn} initiallyUnlocked={projectsUnlocked}>
       <div className="mb-1 flex items-end justify-between gap-4">
         <PageTitle>Projects</PageTitle>
         <WhenEditing>
@@ -457,7 +457,7 @@ export default async function QuotedPage({
       <div className="mb-5 flex flex-wrap gap-2.5">
         {/* First in the row: whether the grid is live is the one thing a user
             shouldn't have to discover by typing into it. */}
-        <ProjectsGateControl unlocked={projectsUnlocked} />
+        <ProjectsGateControl />
         <ProjectsFilterMenu
           filters={[
             { key: "customers", label: "Customer", options: allCustomers, selected: selectedCustomers, searchable: true },
