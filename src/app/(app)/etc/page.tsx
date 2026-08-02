@@ -507,6 +507,41 @@ export default async function MonthlyEtcPage({
   // admin-only (Reopen, Sync History) is password-gated instead, checked
   // server-side in the action rather than by hiding a button. 2026-08-02.
 
+  // Hours recorded against jobs this month's grid does NOT render.
+  //
+  // Found 2026-08-02 reconciling against Power BI: job 1163 had 105.82 July
+  // hours sitting in EtcEntry while the grid showed 3,128 instead of 3,234.
+  // The job's status had moved to HeadStart, and etcActiveJobFilter is
+  // status:"Active" — so seeding had created its rows while it was Active, the
+  // hours sync kept filling them in, and the grid then stopped showing it.
+  //
+  // This is not only a display gap. pruneStaleEntries deletes exactly these
+  // rows on the next Refresh Data, and submitMonth counts them as staleIds and
+  // deletes them on submit — so the hours disappear with no record that they
+  // were ever there.
+  //
+  // Stating it rather than silently including or excluding it: whether
+  // HeadStart work belongs in an ETC month is a business call, and quietly
+  // changing which jobs a month contains would move the pools and the
+  // Standard Fees with it. Same treatment the unattributed-hours banner
+  // above already gives its own shortfall.
+  const renderedJobIds = jobs.map((j) => j.id);
+  const hiddenJobEntries =
+    renderedJobIds.length > 0
+      ? await prisma.etcEntry.findMany({
+          where: { month, hoursWorked: { gt: 0 }, jobId: { notIn: renderedJobIds } },
+          select: { hoursWorked: true, job: { select: { jobId: true, jobName: true, status: true } } },
+        })
+      : [];
+  const hiddenJobHours = [...hiddenJobEntries
+    .reduce((m, e) => {
+      const k = e.job.jobId;
+      const cur = m.get(k) ?? { jobId: k, jobName: e.job.jobName, status: e.job.status, hours: 0 };
+      cur.hours += Number(e.hoursWorked);
+      return m.set(k, cur);
+    }, new Map<string, { jobId: string; jobName: string; status: string | null; hours: number }>())
+    .values()].sort((a, b) => b.hours - a.hours);
+
   // Numeric Job Id order like the sheet (979 before 1020 before 10000) — the
   // column is a string, so the DB's own sort is lexicographic.
   jobs.sort((a, b) => compareJobIds(a.jobId, b.jobId));
@@ -879,6 +914,26 @@ export default async function MonthlyEtcPage({
             .map((i) => `"${i.label}" — ${wholeNum(Number(i.hours))}h across ${i.rows} entries`)
             .join("; ")}
           . These need correcting in Paylocity before the month is submitted.
+        </p>
+      )}
+
+      {/* Hours on jobs this grid isn't showing — see the note where
+          hiddenJobHours is built. Red, not amber, because unlike the
+          unattributed hours above these are attached to a real job and are
+          scheduled to be DELETED by the next Refresh Data or Submit. */}
+      {hiddenJobHours.length > 0 && (
+        <p className="mb-4 rounded-lg border border-sdc-red-border bg-sdc-red-bg px-3 py-2 text-xs leading-relaxed text-sdc-red-text">
+          <strong>
+            {wholeNum(hiddenJobHours.reduce((s, j) => s + j.hours, 0))} hours this month are recorded against{" "}
+            {hiddenJobHours.length === 1 ? "a job" : "jobs"} this grid isn&apos;t showing
+          </strong>{" "}
+          — so {hiddenJobHours.length === 1 ? "it is" : "they are"} missing from every total below:{" "}
+          {hiddenJobHours
+            .map((j) => `${j.jobId} ${j.jobName} (${j.status ?? "no status"}) — ${wholeNum(j.hours)}h`)
+            .join("; ")}
+          . The grid only lists <strong>Active</strong> jobs, and these have moved off that status since the month was
+          seeded. Their rows still exist and will be <strong>deleted by the next Refresh Data or Submit ETC</strong>. Set
+          the job back to Active to bring it into the month, or accept the loss deliberately.
         </p>
       )}
 
