@@ -2,6 +2,7 @@
 
 import { useMemo } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { nextParams, notePendingParams } from "@/lib/url-params";
 import type { EChartsOption } from "echarts";
 import { EChart } from "@/components/charts/EChart";
 import { card } from "@/components/ui/classnames";
@@ -39,11 +40,18 @@ export function DataQualityExplorer({ data }: { data: PunchExplorer }) {
   // Every slicer writes the same way: set or clear one param, keep the rest, and
   // keep ?tab=quality so changing a filter doesn't bounce you back to Overview.
   function setParam(key: string, value: string | null) {
-    const qs = new URLSearchParams(searchParams.toString());
+    // nextParams, not searchParams directly — these four slicers sit next to
+    // each other and get used in quick succession, and until a change commits
+    // useSearchParams still reports the value from before it. Building on that
+    // would drop the slicer set a moment earlier. See lib/url-params.ts.
+    const currentQs = searchParams.toString();
+    const qs = nextParams(currentQs);
     if (value) qs.set(key, value);
     else qs.delete(key);
     qs.set("tab", "quality");
-    router.push(`${pathname}?${qs.toString()}`, { scroll: false });
+    const q = qs.toString();
+    notePendingParams(currentQs, q);
+    router.push(`${pathname}?${q}`, { scroll: false });
   }
 
   const from = searchParams.get("dqFrom") ?? "";
@@ -127,10 +135,13 @@ export function DataQualityExplorer({ data }: { data: PunchExplorer }) {
           <button
             type="button"
             onClick={() => {
-              const qs = new URLSearchParams(searchParams.toString());
+              const currentQs = searchParams.toString();
+              const qs = nextParams(currentQs);
               for (const k of ["dqFrom", "dqTo", "dqEmp", "dqFn", "dqMtd"]) qs.delete(k);
               qs.set("tab", "quality");
-              router.push(`${pathname}?${qs.toString()}`, { scroll: false });
+              const q = qs.toString();
+              notePendingParams(currentQs, q);
+              router.push(`${pathname}?${q}`, { scroll: false });
             }}
             className="text-xs font-medium text-sdc-blue hover:underline"
           >

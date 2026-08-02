@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useSearchParams } from "next/navigation";
+import { nextParams } from "@/lib/url-params";
 
 // Clicking toggles asc/desc if already sorting by this key, otherwise
 // switches to this key ascending. Preserves other params (e.g. `cols`).
@@ -29,7 +30,12 @@ export function SortButton({
   const active = currentSort === sortKey;
 
   const nextDir = active && currentDir === "asc" ? "desc" : "asc";
-  const qs = new URLSearchParams(searchParams.toString());
+  // Reads the in-flight params but deliberately does NOT record one: this is a
+  // <Link> whose href is built at render, and the user may never click it.
+  // Recording here would claim a navigation that hasn't happened. Reading is
+  // still worth it — click Sort while a filter is committing and the sort
+  // carries that filter forward instead of reverting it. See lib/url-params.ts.
+  const qs = nextParams(searchParams.toString());
   qs.set("sort", sortKey);
   qs.set("dir", nextDir);
   // Two of these labels carry a literal newline ("Start\nDate") so they wrap in

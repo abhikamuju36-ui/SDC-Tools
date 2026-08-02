@@ -2,6 +2,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { nextParams, notePendingParams } from "@/lib/url-params";
 import { INPUT } from "@/components/ui/classnames";
 
 // Searchable MULTI-job picker for the Job Hour Details slicer. Writes
@@ -131,11 +132,18 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
   // than deleting the param — that difference is what stops the server helpfully
   // re-selecting a default job the moment you remove the last one.
   function apply(next: string[]) {
-    const qs = new URLSearchParams(searchParams.toString());
+    // nextParams: jobs are added one chip at a time, so the second click
+    // regularly lands before the first has committed — and until it does,
+    // useSearchParams still reports the older query string. See
+    // lib/url-params.ts.
+    const currentQs = searchParams.toString();
+    const qs = nextParams(currentQs);
     qs.set("jobs", next.join(","));
     qs.delete("job"); // drop the legacy single-job param
     try { window.localStorage.setItem(LAST_KEY, next.join(",")); } catch { /* ignore */ }
-    router.push(`${pathname}?${qs.toString()}`, { scroll: false });
+    const q = qs.toString();
+    notePendingParams(currentQs, q);
+    router.push(`${pathname}?${q}`, { scroll: false });
   }
 
   // Add or remove one job, keeping the order the list is shown in so the chips

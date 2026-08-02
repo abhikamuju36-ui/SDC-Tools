@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
+import { nextParams, notePendingParams } from "@/lib/url-params";
 
 // Consolidated "View" dropdown for the Monthly ETC toolbar — merges what used
 // to be three separate buttons (Columns, Billable, Grid Size) into one menu:
@@ -109,35 +110,47 @@ export function EtcViewMenu({
     return () => document.removeEventListener("click", onClick);
   }, []);
 
-  function push(qs: URLSearchParams) {
-    router.push(`${pathname}?${qs.toString()}`, { scroll: false });
+  // One writer for all three toggles, so the in-flight handling can't be right
+  // in two of them and missing in the third.
+  //
+  // This menu navigates on EVERY tick, so the second tick reliably lands while
+  // the first is still rendering — and until that commits, useSearchParams
+  // still reports the query string from before it. Building straight from the
+  // hook would rebuild the URL without the first tick and silently undo it,
+  // which is what made these checkboxes feel like they don't stay ticked.
+  // See lib/url-params.ts.
+  function apply(mutate: (qs: URLSearchParams) => void) {
+    const currentQs = searchParams.toString();
+    const qs = nextParams(currentQs);
+    mutate(qs);
+    const q = qs.toString();
+    notePendingParams(currentQs, q);
+    router.push(`${pathname}?${q}`, { scroll: false });
   }
 
   function toggleGroup(group: string) {
     const next = new Set(groupSet);
     if (next.has(group)) next.delete(group);
     else next.add(group);
-    const qs = new URLSearchParams(searchParams.toString());
-    // Both (or none) selected is the default full grid — never collapse to zero.
-    if (next.size === 0 || next.size === GROUPS.length) qs.delete("dept");
-    else qs.set("dept", GROUPS.filter((g) => next.has(g)).join(","));
-    push(qs);
+    apply((qs) => {
+      // Both (or none) selected is the default full grid — never collapse to zero.
+      if (next.size === 0 || next.size === GROUPS.length) qs.delete("dept");
+      else qs.set("dept", GROUPS.filter((g) => next.has(g)).join(","));
+    });
   }
 
   function toggleJobName() {
-    const qs = new URLSearchParams(searchParams.toString());
-    if (showJobName) qs.set("jobname", "0");
-    else qs.delete("jobname");
-    push(qs);
+    apply((qs) => {
+      if (showJobName) qs.set("jobname", "0");
+      else qs.delete("jobname");
+    });
   }
 
   function toggleBillable(value: string) {
     const next = new Set(billableSet);
     if (next.has(value)) next.delete(value);
     else next.add(value);
-    const qs = new URLSearchParams(searchParams.toString());
-    qs.set("billables", Array.from(next).join(","));
-    push(qs);
+    apply((qs) => qs.set("billables", Array.from(next).join(",")));
   }
 
   // Uncontrolled native <details>: the browser adds/removes `open` on the DOM

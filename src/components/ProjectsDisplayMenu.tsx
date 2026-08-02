@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useRef, useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { nextParams, notePendingParams } from "@/lib/url-params";
 import { TOOLBAR_BTN, TOOLBAR_BTN_NEUTRAL } from "@/components/ui/classnames";
 import { GridZoomBody } from "@/components/GridZoomControls";
 import { ACTUALS_PARAM, isActualsOn } from "@/lib/quoted-display-prefs";
@@ -38,10 +39,15 @@ export function ProjectsDisplayMenu() {
   // entry per click would make Back walk the checkbox instead of leaving the
   // page. The Show-all switch pushes, deliberately — that one changes the data.
   const toggleActuals = useCallback(() => {
-    const qs = new URLSearchParams(searchParams.toString());
+    // See lib/url-params.ts — this replace goes through a transition too, so
+    // useSearchParams stays on the old value until it commits, and a filter
+    // changed just before this would be dropped from the URL.
+    const currentQs = searchParams.toString();
+    const qs = nextParams(currentQs);
     if (showActuals) qs.delete(ACTUALS_PARAM);
     else qs.set(ACTUALS_PARAM, "1");
     const q = qs.toString();
+    notePendingParams(currentQs, q);
     startTransition(() => {
       router.replace(q ? `${pathname}?${q}` : pathname, { scroll: false });
     });

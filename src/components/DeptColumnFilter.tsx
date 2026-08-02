@@ -2,6 +2,7 @@
 
 import { useEffect, useRef } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
+import { nextParams, notePendingParams } from "@/lib/url-params";
 
 // Column visibility controls for the Monthly ETC grid. Toggles the `dept`
 // query param (comma-separated billing groups) to hide section-column blocks,
@@ -31,12 +32,18 @@ export function DeptColumnFilter({ selected, showJobName }: { selected: string[]
   }, []);
 
   function navigate(next: Set<string>) {
-    const qs = new URLSearchParams(searchParams.toString());
+    // This one navigates on EVERY tick, so a second tick almost always lands
+    // while the first is still rendering — exactly the case where
+    // useSearchParams still reports the older value. See lib/url-params.ts.
+    const currentQs = searchParams.toString();
+    const qs = nextParams(currentQs);
     // Both (or none) is the default full grid — keep the URL clean and never
     // let the grid collapse to zero section columns.
     if (next.size === 0 || next.size === GROUPS.length) qs.delete("dept");
     else qs.set("dept", GROUPS.filter((g) => next.has(g)).join(","));
-    router.push(`/etc?${qs.toString()}`, { scroll: false });
+    const q = qs.toString();
+    notePendingParams(currentQs, q);
+    router.push(`/etc?${q}`, { scroll: false });
   }
 
   function toggle(group: string) {
@@ -47,11 +54,14 @@ export function DeptColumnFilter({ selected, showJobName }: { selected: string[]
   }
 
   function toggleJobName() {
-    const qs = new URLSearchParams(searchParams.toString());
+    const currentQs = searchParams.toString();
+    const qs = nextParams(currentQs);
     // Shown is the default — keep the URL clean unless hidden.
     if (showJobName) qs.set("jobname", "0");
     else qs.delete("jobname");
-    router.push(`/etc?${qs.toString()}`, { scroll: false });
+    const q = qs.toString();
+    notePendingParams(currentQs, q);
+    router.push(`/etc?${q}`, { scroll: false });
   }
 
   return (

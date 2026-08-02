@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { nextParams, notePendingParams } from "@/lib/url-params";
 import { useTransition } from "react";
 
 // Shared behaviour for the Projects toolbar's bucketed dropdowns (Filters,
@@ -69,9 +70,15 @@ export function useDraftParamsMenu<K extends string>({
 
   function apply() {
     if (!dirty) return; // opened, looked, closed — no need to reload the grid
-    const qs = new URLSearchParams(searchParams.toString());
+    // nextParams, not searchParams directly: inside a transition that hook
+    // still reports the PRE-navigation query string, so closing a second menu
+    // while the first is still rendering would rebuild the URL without the
+    // first menu's change and silently revert it. See lib/url-params.ts.
+    const current = searchParams.toString();
+    const qs = nextParams(current);
     buildParams(draft, qs);
     const q = qs.toString();
+    notePendingParams(current, q); // before the push, so the next menu sees it
     startTransition(() => {
       router.push(q ? `${pathname}?${q}` : pathname, { scroll: false });
     });

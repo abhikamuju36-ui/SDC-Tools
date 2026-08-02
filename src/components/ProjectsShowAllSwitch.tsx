@@ -2,6 +2,7 @@
 
 import { useTransition } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
+import { nextParams, notePendingParams } from "@/lib/url-params";
 import { isShowingAll, encodeParamList, ACTUALS_PARAM, QUOTED_VIEW_PARAMS } from "@/lib/quoted-display-prefs";
 
 // "Show all" ⇄ "Reset" — one switch that flips the whole grid between the
@@ -57,7 +58,11 @@ export function ProjectsShowAllSwitch({
   const showingAll = isShowingAll(searchParams, all);
 
   function flip() {
-    const qs = new URLSearchParams(searchParams.toString());
+    // See lib/url-params.ts. Reset in particular must build on whatever is
+    // actually in flight: clearing the view params off a stale base would put
+    // back a filter the user had just changed.
+    const currentQs = searchParams.toString();
+    const qs = nextParams(currentQs);
     if (showingAll) {
       // Reset: drop every view param so the page's own defaults apply again —
       // `actuals` among them, so hiding the actual hours is part of the same
@@ -75,6 +80,7 @@ export function ProjectsShowAllSwitch({
       qs.set(ACTUALS_PARAM, "1"); // actual hours in the cells
     }
     const q = qs.toString();
+    notePendingParams(currentQs, q);
     startTransition(() => {
       router.push(q ? `${pathname}?${q}` : pathname, { scroll: false });
     });
