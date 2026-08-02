@@ -11,7 +11,6 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
     await signOut({ redirectTo: "/login" });
   }
 
-  const role = (session?.user as { role?: string } | undefined)?.role;
 
   return (
     // The Scheduler's base URL lives in server-only env (SCHEDULER_BASE_URL),
@@ -19,7 +18,6 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
     // there. `/?view=projects` lands on the Scheduler's Projects page.
     <AppShell
       userEmail={session?.user?.email}
-      role={role}
       signOutAction={handleSignOut}
       // Carries a 60-second signed assertion of who is signed in here, so the
       // Scheduler can start its own session instead of showing a login modal to

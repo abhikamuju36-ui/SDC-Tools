@@ -1,6 +1,6 @@
 "use client";
 
-import { useActionState, useEffect, useRef } from "react";
+import { useActionState, useEffect, useRef, useState } from "react";
 import { syncEtcHistory, type SyncHistoryResult } from "@/lib/etc-actions";
 import { useToast } from "@/components/ui/Toast";
 
@@ -13,6 +13,7 @@ const INITIAL_STATE: SyncHistoryResult = { monthsRefreshed: 0, reconciledMonths:
 export function SyncHistoryButton({ className }: { className?: string }) {
   const [state, formAction, pending] = useActionState(syncEtcHistory, INITIAL_STATE);
   const { toast } = useToast();
+  const [password, setPassword] = useState("");
   const wasPending = useRef(false);
 
   useEffect(() => {
@@ -27,12 +28,25 @@ export function SyncHistoryButton({ className }: { className?: string }) {
     wasPending.current = pending;
   }, [pending, state, toast]);
 
+  // Password-gated in the form itself (checked server-side in syncEtcHistory).
+  // This used to be admin-only, which hid the button and gated nothing — the
+  // action was reachable by anyone signed in. It re-pulls every historical
+  // month, so it earns a deliberate keystroke.
   return (
-    <form action={formAction}>
+    <form action={formAction} className="space-y-1.5">
+      <input
+        type="password"
+        name="syncHistoryPassword"
+        value={password}
+        onChange={(e) => setPassword(e.target.value)}
+        placeholder="Password"
+        aria-label="Sync History password"
+        className="w-full rounded-md border border-sdc-border px-2 py-1 text-xs outline-none focus:border-sdc-blue"
+      />
       <button
         type="submit"
         className={className}
-        disabled={pending}
+        disabled={pending || password.length === 0}
         title="Re-pull all past months from Power BI's ETC Historical measures. Months submitted in this app are never overwritten — only their display-only fields (Hours Worked/Prior ETC) self-heal if Power BI's archive changes after the fact."
       >
         {pending ? "Syncing…" : "Sync History"}

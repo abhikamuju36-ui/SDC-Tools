@@ -7,13 +7,11 @@ import { ToastProvider } from "@/components/ui/Toast";
 export default function AppShell({
   children,
   userEmail,
-  role,
   signOutAction,
   schedulerProjectsUrl,
 }: {
   children: React.ReactNode;
   userEmail?: string | null;
-  role?: string;
   signOutAction: () => Promise<void>;
   schedulerProjectsUrl?: string;
 }) {
@@ -27,7 +25,7 @@ export default function AppShell({
       >
         Skip to content
       </a>
-      <Sidebar userEmail={userEmail} role={role} signOutAction={signOutAction} schedulerProjectsUrl={schedulerProjectsUrl} />
+      <Sidebar userEmail={userEmail} signOutAction={signOutAction} schedulerProjectsUrl={schedulerProjectsUrl} />
       <main id="main-content" className="min-w-0 flex-1 bg-background">
         <ToastProvider>{children}</ToastProvider>
       </main>

@@ -196,12 +196,11 @@ const ADMIN_GROUP: NavGroup = {
 
 export default function Sidebar({
   userEmail,
-  role,
   signOutAction,
   schedulerProjectsUrl,
 }: {
   userEmail?: string | null;
-  role?: string;
+  // No `role` prop any more — nothing in the sidebar is role-gated.
   signOutAction: () => Promise<void>;
   // Absolute URL of the SDC Scheduler's Projects page, resolved server-side in
   // the layout (SCHEDULER_BASE_URL). Undefined hides the link rather than
@@ -210,7 +209,12 @@ export default function Sidebar({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  const baseGroups = role === "ADMIN" ? [...GROUPS, ADMIN_GROUP] : GROUPS;
+  // The Admin group is shown to everyone. Its pages gate themselves with a
+  // password (audit-log-gate.ts), and hiding the link as WELL meant that gate
+  // could never be reached by anyone it was written for. Role-based hiding was
+  // dropped app-wide on 2026-08-02 — this app has one shared team password,
+  // not a role hierarchy.
+  const baseGroups = [...GROUPS, ADMIN_GROUP];
 
   // User-chosen link order (localStorage, per browser). useSyncExternalStore
   // rather than reading storage in render — that would hydrate differently from

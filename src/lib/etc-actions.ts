@@ -12,6 +12,7 @@ import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
 import { isEtcEditUnlocked, trySetEtcEditUnlocked } from "@/lib/etc-edit-gate";
+import { matchesConfirmPassword } from "@/lib/confirm-password";
 
 // Submit and Lock's confirmation gate — an "are you sure" step before
 // freezing a month's numbers, not a real access boundary, so the password is
@@ -643,7 +644,17 @@ export type SyncHistoryResult = {
 // Takes/returns the (state, formData) shape useActionState expects — see
 // SyncHistoryButton, which surfaces this result as a toast instead of the
 // reconciliation only being visible in the audit log.
-export async function syncEtcHistory(_prevState: SyncHistoryResult | null, _formData: FormData): Promise<SyncHistoryResult> {
+export async function syncEtcHistory(_prevState: SyncHistoryResult | null, formData: FormData): Promise<SyncHistoryResult> {
+  // Gated by the shared confirmation phrase (2026-08-02). Two reasons, and the
+  // second is the important one:
+  //
+  //  • It replaces a `role === "ADMIN"` check that only ever hid the BUTTON.
+  //  • The action itself had no guard at all, so any signed-in user could
+  //    invoke it directly and re-pull every historical month. Hiding a control
+  //    is not gating the thing behind it.
+  if (!matchesConfirmPassword(String(formData.get("syncHistoryPassword") ?? ""))) {
+    throw new Error("Incorrect password — Sync History was not run.");
+  }
   const result = await syncEtcHistoryFromPowerBi();
   const reconciledMonths = [...new Set([...result.monthsOwnedWithPbiHistoryNow, ...result.poolMonthsOwnedWithPbiHistoryNow])];
   const reconciledNote =

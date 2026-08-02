@@ -1,6 +1,5 @@
 import { Fragment } from "react";
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
 import { compareJobIds, isSdcCustomer } from "@/lib/job-filters";
 import { EtcViewMenu } from "@/components/EtcViewMenu";
 import { EtcSyncMenu } from "@/components/EtcSyncMenu";
@@ -480,12 +479,11 @@ export default async function MonthlyEtcPage({
   // projects a month contains.
   const { where: monthJobWhere, monthIsLocked } = await getEtcMonthJobWhere(month);
 
-  const [jobs, session, lastPowerBiSync, hoursActualFreshness, etcHoursFreshness, importIssues] = await Promise.all([
+  const [jobs, lastPowerBiSync, hoursActualFreshness, etcHoursFreshness, importIssues] = await Promise.all([
     prisma.job.findMany({
       where: monthJobWhere,
       include: { etcEntries: { where: { month } }, executionRate: true },
     }),
-    auth(),
     prisma.jobMonthlyActualHours.findFirst({ orderBy: { syncedAt: "desc" }, select: { syncedAt: true } }),
     prisma.powerBiFreshness.findUnique({ where: { source: "hours_actual" }, select: { refreshedThrough: true, status: true, checkedAt: true } }),
     // The ETC grid's own hours sync, tracked separately: syncActualHours can
@@ -497,7 +495,9 @@ export default async function MonthlyEtcPage({
     // is stated rather than left as an unexplained shortfall.
     prisma.hoursImportIssue.findMany({ where: { month }, orderBy: { hours: "desc" } }),
   ]);
-  const role = (session?.user as { role?: string } | undefined)?.role;
+  // No `role` read here any more: every control on this page that used to be
+  // admin-only (Reopen, Sync History) is password-gated instead, checked
+  // server-side in the action rather than by hiding a button. 2026-08-02.
 
   // Numeric Job Id order like the sheet (979 before 1020 before 10000) — the
   // column is a string, so the DB's own sort is lexicographic.
@@ -721,17 +721,17 @@ export default async function MonthlyEtcPage({
         />
         <EtcViewMenu selectedGroups={visibleGroups} showJobName={showJobName} selectedBillables={selectedBillables} />
         {/* Sync menu merges the two upstream data-pull actions: Refresh Data
-            (current month, everyone) and Sync History (past months, admin). */}
-        {(!locked || role === "ADMIN") && (
-          <EtcSyncMenu>
-            {!locked && (
-              <form action={syncPowerBiForEtc.bind(null, month)}>
-                <RunReportButton className={`${BUTTON_PRIMARY} w-full`}>Refresh Data (this month)</RunReportButton>
-              </form>
-            )}
-            {role === "ADMIN" && <SyncHistoryButton className={`${BUTTON_SECONDARY} w-full`} />}
-          </EtcSyncMenu>
-        )}
+            (current month) and Sync History (past months, password-gated).
+            Always rendered now — Sync History is no longer admin-only, so the
+            menu always has at least one thing in it. */}
+        <EtcSyncMenu>
+          {!locked && (
+            <form action={syncPowerBiForEtc.bind(null, month)}>
+              <RunReportButton className={`${BUTTON_PRIMARY} w-full`}>Refresh Data (this month)</RunReportButton>
+            </form>
+          )}
+          <SyncHistoryButton className={`${BUTTON_SECONDARY} w-full`} />
+        </EtcSyncMenu>
         {/* Batch-saves every currently-typed New ETC override on the grid —
             typing alone doesn't persist anything (see EtcSectionCells).
             Password-gated the first time each session (a separate cookie/
@@ -766,10 +766,10 @@ export default async function MonthlyEtcPage({
             <button
               type="button"
               disabled
-              title="Clear the Columns and Billable filters first — a filtered view doesn't show every entry that Submit and Lock would freeze."
+              title="Clear the Columns and Billable filters first — a filtered view doesn't show every entry that Submit & Lock ETC would freeze."
               className={`${BUTTON_SECONDARY} disabled:cursor-not-allowed disabled:opacity-50`}
             >
-              Submit and Lock
+              Submit & Lock ETC
             </button>
           ))}
         {/* Password-gated rather than admin-only (changed 2026-08-02): the
@@ -878,7 +878,7 @@ export default async function MonthlyEtcPage({
           ? `"Refresh Data" starts ${month}: it seeds the job rows and pulls the latest hours (Paylocity) and parts costs (TotalETO), just like the sheet.`
           : locked
             ? `${month} is submitted and locked — these numbers are frozen exactly as submitted. Pick a month above to view any past submission, or "Reopen for editing" to correct this one (the corrected New ETC carries forward into the next month's Prior ETC when you re-submit).`
-            : `"Refresh Data" pulls the latest hours (Paylocity) and parts costs (TotalETO) for the selected month. Enter Hours Worked, confirm or override each New ETC (suggestion shown in yellow), then Submit and Lock.`}
+            : `"Refresh Data" pulls the latest hours (Paylocity) and parts costs (TotalETO) for the selected month. Enter Hours Worked, confirm or override each New ETC (suggestion shown in yellow), then Submit & Lock ETC. That freezes the hours; the Standard Fees panel submits its Standard Sheet separately.`}
       </p>
 
       {/* KPI strip. Computed from the same rows the grid's grand-total row sums
