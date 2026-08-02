@@ -65,3 +65,6 @@ on prem gateway/
 
 # Python (scripts/etl_job_hours.py)
 __pycache__/
+
+# Rollback dumps written by the repair scripts — data, not code.
+scripts/_backup_*.json
