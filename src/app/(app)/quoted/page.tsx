@@ -254,10 +254,19 @@ export default async function QuotedPage({
   // assertProjectsEditable() re-checks the same thing on every write, so this
   // is only what the toolbar renders.
   const mayEdit = signedIn && projectsUnlocked;
-  // PM / Manufacturing / Warranty Engineering / Warranty Shop. Filtered out of
-  // the columns, the phase pickers and the "Show all" switch while locked, so a
-  // hand-typed ?cols=10-111 has nothing to turn on either.
-  const sectionAllowed = (code: string) => projectsUnlocked || !RESTRICTED_SECTION_CODES.has(code);
+  // The server's view of Edit Mode. The switch itself is client state (see
+  // ProjectsEditMode.tsx), but the cookie behind it is what decides whether the
+  // restricted sections are RENDERED — and that has to be decided here, because
+  // hiding them in the browser would still ship the hours in the HTML.
+  const editingNow = initialEditing && mayEdit;
+  // PM / Manufacturing / Warranty Engineering / Warranty Shop, shown only while
+  // actually editing — not merely while unlocked. Read-only is the state most
+  // visits sit in, and "unlocked but not editing" showed these hours to anyone
+  // who had ever typed the password this session.
+  //
+  // Filtered out of the columns, the phase pickers and the "Show all" switch,
+  // so a hand-typed ?cols=10-111 has nothing to turn on either.
+  const sectionAllowed = (code: string) => editingNow || !RESTRICTED_SECTION_CODES.has(code);
   const visibleSections = SECTIONS.filter((s) => sectionAllowed(s.code));
   // Saved/published grid views ("Views ▾") — loaded for everyone; the team
   // default + shared list come from the DB, personal views live in the browser.

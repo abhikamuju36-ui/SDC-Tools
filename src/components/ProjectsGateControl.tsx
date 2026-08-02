@@ -51,7 +51,11 @@ export function ProjectsGateControl({ unlocked }: { unlocked: boolean }) {
       <div className="flex items-center gap-1.5">
         <span
           className={`${TOOLBAR_BTN} ${TOOLBAR_BTN_MUTED} cursor-default`}
-          title="Enter the password to edit this grid and show the PM, Manufacturing and Warranty sections"
+          // Unlocking alone does NOT reveal the restricted sections — they
+          // follow Edit Mode, which unlocking merely makes available. Saying
+          // "show the ... sections" here would have someone typing the password
+          // and then wondering where the columns were.
+          title="Enter the password to enable Edit Mode, which also makes the PM, Manufacturing and Warranty sections available"
         >
           <LockIcon />
           Locked

@@ -12,9 +12,15 @@ import { PROJECTS_EDIT_COOKIE } from "@/lib/projects-edit-cookie";
 //      signed-in user could flip the grid live and start typing into quoted
 //      hours.
 //   2. The four POOL sections — PM (10-111), Manufacturing (10-413), Warranty
-//      Engineering (70-211) and Warranty Shop (70-411). Locked, they are absent
-//      from the grid AND from the Sections picker, so there is nothing to
-//      reveal by fiddling with the ?cols= parameter.
+//      Engineering (70-211) and Warranty Shop (70-411). They are absent from
+//      the grid AND from the Sections picker, so there is nothing to reveal by
+//      fiddling with the ?cols= parameter.
+//
+// Note the sections track EDIT MODE, not this gate directly (see
+// quoted/page.tsx): unlocking is necessary but not sufficient, and switching
+// back to Read-only hides them again. Unlocked-but-not-editing is the state
+// most of a session sits in, and leaving the hours on screen for it would have
+// meant one password entry exposing them for the rest of the browser session.
 //
 // One lock for both because they are the same question — "should this person be
 // changing and seeing the standard-fee inputs" — and two passwords for one

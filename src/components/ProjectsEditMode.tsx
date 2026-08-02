@@ -1,6 +1,7 @@
 "use client";
 
-import { createContext, useContext, useState, type ReactNode } from "react";
+import { createContext, useContext, useState, useTransition, type ReactNode } from "react";
+import { useRouter } from "next/navigation";
 import { TOOLBAR_BTN, TOOLBAR_BTN_MUTED } from "@/components/ui/classnames";
 import { countChanged } from "@/lib/dirty-form";
 import { writeProjectsEditCookie } from "@/lib/projects-edit-cookie";
@@ -18,10 +19,20 @@ import { writeProjectsEditCookie } from "@/lib/projects-edit-cookie";
 // read as a dead button for as long as that took.
 //
 // So the switch flips client state instead, which is instant, and writes the
-// cookie in the background with no revalidation. Nothing about the grid's
-// CONTENT depends on the mode — the same rows, the same figures either way —
-// only whether its controls accept input, and a <fieldset disabled> does that in
-// one attribute without re-rendering anything.
+// cookie in the background. Whether the controls accept input is a
+// <fieldset disabled> away, with nothing re-rendered.
+//
+// ── ...and why it now refreshes anyway ──────────────────────────────────────
+// That paragraph used to end "nothing about the grid's CONTENT depends on the
+// mode — the same rows, the same figures either way". That stopped being true
+// on 2026-08-02: the four restricted sections (PM, Manufacturing, and the two
+// Warranties) are only rendered while editing, and they are rendered by the
+// SERVER — hiding them client-side would leave the hours sitting in the HTML,
+// which is not hiding them at all.
+//
+// So toggle() now fires router.refresh() as well. The instant part is kept
+// where it matters: the cells unlock on the click, and the refresh only ever
+// delays a COLUMN appearing or disappearing.
 //
 // The cookie still matters — it's what saveQuotedHours checks — but the browser
 // writes it directly rather than through a server action. An action would have
@@ -30,9 +41,9 @@ import { writeProjectsEditCookie } from "@/lib/projects-edit-cookie";
 // the server. See projects-edit-mode.ts for why writing it client-side gives
 // nothing away.
 
-type EditModeValue = { editing: boolean; mayEdit: boolean; toggle: () => void };
+type EditModeValue = { editing: boolean; mayEdit: boolean; pending: boolean; toggle: () => void };
 
-const EditModeCtx = createContext<EditModeValue>({ editing: false, mayEdit: false, toggle: () => {} });
+const EditModeCtx = createContext<EditModeValue>({ editing: false, mayEdit: false, pending: false, toggle: () => {} });
 
 export function useProjectsEditMode(): EditModeValue {
   return useContext(EditModeCtx);
@@ -50,6 +61,8 @@ export function ProjectsEditModeProvider({
   children: ReactNode;
 }) {
   const [editing, setEditing] = useState(initialEditing && mayEdit);
+  const router = useRouter();
+  const [pending, startTransition] = useTransition();
 
   function toggle() {
     if (!mayEdit) return;
@@ -72,13 +85,34 @@ export function ProjectsEditModeProvider({
         if (!ok) return;
       }
     }
-    // Both instant, both local: nothing here waits on the network.
+    // Both instant, both local — the cells unlock on the click, which is the
+    // whole reason this is client state.
     setEditing(next);
     writeProjectsEditCookie(next);
+    // ...but the four restricted sections (PM, Mfg, the two Warranties) are
+    // rendered by the SERVER off this cookie, and only appear while editing.
+    // Hiding them in the browser wouldn't hide them — the hours would still be
+    // in the HTML — so the server has to render the other set, which means a
+    // refresh. Fired after the cookie is written, so the request carries it.
+    //
+    // This is the one thing the original design deliberately avoided, and the
+    // cost is real: the page re-renders every job with its hours. It is
+    // narrowed as far as it can be — the cells are already live by the time
+    // this lands, so the wait only ever delays a COLUMN appearing or
+    // disappearing, never the ability to type.
+    startTransition(() => {
+      router.refresh();
+    });
   }
 
   return (
-    <EditModeCtx.Provider value={{ editing, mayEdit, toggle }}>
+    // `editing && mayEdit`, not the raw state. mayEdit is a prop, so it drops to
+    // false the moment the password gate is locked from the toolbar — and the
+    // state, seeded once by useState, would otherwise still say true. That left
+    // a locked page with live cells and a Save button (which the server would
+    // then refuse), because ProjectsGateControl swaps the TOGGLE out but
+    // WhenEditing and ProjectsEditFieldset read this context.
+    <EditModeCtx.Provider value={{ editing: editing && mayEdit, mayEdit, pending, toggle }}>
       {children}
     </EditModeCtx.Provider>
   );
@@ -115,7 +149,7 @@ export function WhenEditing({ children }: { children: ReactNode }) {
 // because "this grid is live" is the one piece of state on this page nobody
 // should have to discover by typing into it.
 export function ProjectsEditModeToggle() {
-  const { editing, mayEdit, toggle } = useProjectsEditMode();
+  const { editing, mayEdit, pending, toggle } = useProjectsEditMode();
 
   if (!mayEdit) {
     return (
@@ -133,7 +167,12 @@ export function ProjectsEditModeToggle() {
       type="button"
       onClick={toggle}
       aria-pressed={editing}
-      title={editing ? "Turn editing off — the grid goes back to read-only" : "Turn editing on — cells become editable and Save appears"}
+      aria-busy={pending}
+      title={
+        editing
+          ? "Turn editing off — the grid goes back to read-only and the PM, Manufacturing and Warranty columns are hidden"
+          : "Turn editing on — cells become editable, Save appears, and the PM, Manufacturing and Warranty columns become available"
+      }
       className={`${TOOLBAR_BTN} ${
         editing ? "border-sdc-yellow bg-sdc-yellow-bg text-sdc-navy" : "border-sdc-border bg-white text-sdc-gray-500 hover:bg-sdc-blue-light"
       }`}
@@ -142,6 +181,9 @@ export function ProjectsEditModeToggle() {
         <span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white shadow transition-all ${editing ? "left-3" : "left-0.5"}`} />
       </span>
       {editing ? "Editing" : "Read-only"}
+      {/* The cells are already live/locked by now; this only says the column
+          set is still catching up, so the switch doesn't look stuck. */}
+      {pending && <span className="text-[10px] font-normal opacity-60">updating columns…</span>}
     </button>
   );
 }
