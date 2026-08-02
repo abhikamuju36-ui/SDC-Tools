@@ -97,7 +97,7 @@ const ZOOM_CONTROLS = "[&_td]:py-[var(--quoted-row-py,6px)] [&_.qc]:px-[var(--qu
 const DATA_COL = "calc(max(4.7rem, 72px) + 2 * var(--quoted-col-px, 4px))";
 const DATA_COL_STYLE = { width: DATA_COL, minWidth: DATA_COL, maxWidth: DATA_COL } as const;
 
-// The two money columns (Cost Quoted / Cost Actual). Right-aligned, unlike the
+// The two money columns (Cost Quoted / Actual Cost). Right-aligned, unlike the
 // rest of the grid: these are the only figures here with a variable digit count,
 // and a right edge is what lets "$8,600" and "$1,406,923" be compared at a
 // glance. tabular-nums keeps the digits in columns while editing.
@@ -727,8 +727,11 @@ export default async function QuotedPage({
               <th rowSpan={3} className="min-w-[90px] border-l border-sdc-border bg-sdc-green-bg px-2 py-2 text-center align-bottom text-sdc-green-text">
                 Cost Quoted
               </th>
+              {/* "Actual Cost" on screen; the column is still
+                  Job.costActualHistorical in the schema and in the TotalETO
+                  sync, so don't rename those chasing this. */}
               <th rowSpan={3} className="min-w-[90px] bg-sdc-green-bg px-2 py-2 text-center align-bottom text-sdc-green-text">
-                Cost Actual Historical
+                Actual Cost
               </th>
             </tr>
             <tr className={TABLE_HEADER_ROW}>
@@ -1061,7 +1064,7 @@ export default async function QuotedPage({
                       <MoneyCell
                         name={`jobField__${job.id}__costActualHistorical`}
                         defaultValue={job.costActualHistorical != null ? Number(job.costActualHistorical).toString() : ""}
-                        ariaLabel={`Cost Actual, ${job.jobName}`}
+                        ariaLabel={`Actual Cost, ${job.jobName}`}
                         className={MONEY_INPUT}
                       />
                     </div>

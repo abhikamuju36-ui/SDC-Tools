@@ -123,7 +123,10 @@ export default function NewProjectPage() {
             <input type="number" step="0.01" name="costQuoted" className={`mt-1 w-full ${INPUT}`} />
           </div>
           <div>
-            <label className={LABEL}>Cost Actual Historical ($)</label>
+            {/* Same field the Projects grid calls "Actual Cost" — the two must
+                not disagree. The `name` is still costActualHistorical because
+                that is the column and what saveNewRows reads. */}
+            <label className={LABEL}>Actual Cost ($)</label>
             <input type="number" step="0.01" name="costActualHistorical" className={`mt-1 w-full ${INPUT}`} />
           </div>
         </div>

@@ -163,7 +163,7 @@ export function NewProjectRows({
               <MoneyCell
                 name={`newRow__${tempId}__costActualHistorical`}
                 defaultValue=""
-                ariaLabel="New project Cost Actual"
+                ariaLabel="New project Actual Cost"
                 className="w-full min-w-0 border-none bg-transparent text-right tabular-nums outline-none"
               />
             </div>
