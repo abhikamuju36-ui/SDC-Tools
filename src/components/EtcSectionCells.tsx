@@ -310,7 +310,7 @@ export function EtcSectionCells({
         className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-500`}
         title={`${round2(hoursLeft)} = Prior ETC (${round2(priorEtc)}) − Hours Worked (${worked})`}
       >
-        {wholeNum(hoursLeft)}
+        {wholeNum(hoursLeftShown)}
       </td>
       <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(decided)} px-1 py-1 text-center align-middle whitespace-nowrap`}>
         {/* No hours worked -> carry-forward is deterministic, safe to auto-fill.
