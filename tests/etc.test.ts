@@ -163,22 +163,30 @@ test("isSafeForLiveEtcSync: a month further in the future than 'next' is unsafe 
 // So an untouched cell is silent unless the section is genuinely overspent.
 // Those hours are booked whether or not anyone has typed a New ETC.
 
-// ── Rule change 2026-08-03, by request ──────────────────────────────────────
-// An untyped New ETC counts as 0, so Diff IS Hours Left until someone plans the
-// section. These two tests previously asserted 0 for both cases, under the rule
-// that compared an untouched cell against the SUGGESTION. That was internally
-// consistent but unreadable on screen: with the cell visibly empty, "77 − blank
-// = 0" beside "−7 − blank = −7" looked arbitrary, and was reported as a bug.
-test("newEtcDiff: an untouched cell with hours left reports ALL of it as unaccounted", () => {
-  // Prior 100, worked 40 -> 60 left, nothing planned -> the whole 60 is the gap.
-  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 100, hoursWorked: 40 }), 60);
+// ── The rule, as of 2026-08-03 ──────────────────────────────────────────────
+// An UNDECIDED cell has no Diff. Until a manager enters a New ETC there is
+// nothing to compare against, so the cell prints EMPTY and contributes 0 to every
+// total that sums it. Diff reports decisions.
+//
+// This column went through three rules in two days, so the discarded ones are
+// worth naming: it returned null (the column read "—" everywhere, hiding real
+// overruns), then compared an untouched cell against the SUGGESTION (correct but
+// unreadable on screen — "77 − blank = 0" beside "−7 − blank = −7"), and now
+// reports nothing at all until somebody decides.
+test("newEtcDiff: an untouched cell has no variance, whatever is left", () => {
+  // Prior 100, worked 40 -> 60 left, but nobody has planned it. 0 means
+  // "contributes nothing"; the CELL renders empty — see EtcSectionCells.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 100, hoursWorked: 40 }), 0);
 });
 
-test("newEtcDiff: an untouched cell with NO hours worked reports its whole balance", () => {
-  // The carry-forward case. Submitting as-is would still write the suggestion
-  // (Prior) — see effectiveNewEtc — but nobody has DECIDED that yet, and Diff
-  // reports decisions.
-  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 100, hoursWorked: 0 }), 100);
+test("newEtcDiff: an untouched cell with NO hours worked has no variance either", () => {
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 100, hoursWorked: 0 }), 0);
+});
+
+test("newEtcDiff: a DECIDED cell reports its real overrun", () => {
+  // Prior 20, worked 50 -> 30 past the estimate; the manager plans 10 more.
+  // -30 − 10 = -40.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: 10, newEtc: 0, priorEtc: 20, hoursWorked: 50 }), -40);
 });
 
 test("newEtcDiff: a typed New ETC is clamped at 0, never negative", () => {
@@ -194,12 +202,12 @@ test("newEtcDiff: typing the suggestion is what makes a cell read on-plan", () =
   assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: 60, newEtc: 0, priorEtc: 100, hoursWorked: 40 }), 0);
 });
 
-test("newEtcDiff: an untouched but OVERSPENT cell reports the overrun", () => {
-  // Prior 20, worked 50 -> 30 hours past the estimate. The suggestion clamps at
-  // 0 (a plan can't be negative) while Hours Left is -30, so the gap IS the
-  // overrun. This is the case the old rule suppressed, and the case the column
-  // most needs to surface.
-  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 20, hoursWorked: 50 }), -30);
+test("newEtcDiff: an untouched OVERSPENT cell still reports nothing", () => {
+  // Prior 20, worked 50 -> 30 hours past the estimate, and Diff is deliberately
+  // silent about it. The overrun is already visible in Hours Left (-30); Diff is
+  // about decisions. This is the exact case the 2026-08-02 rule existed to
+  // surface here, given up knowingly when the column became decisions-only.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 20, hoursWorked: 50 }), 0);
 });
 
 test("newEtcDiff: never returns null", () => {

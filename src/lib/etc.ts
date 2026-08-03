@@ -77,8 +77,17 @@ export function newEtcDiff(entry: {
   // NOT changed — it answers "what will this month be if submitted as-is", and
   // the carry-forward into next month's Prior ETC depends on that answer. Making
   // it 0 would zero every unplanned section's balance at submission.
-  const decided = isNewEtcDecided(entry) ? Math.max(effectiveNewEtc(entry), 0) : 0;
-  return calcHoursLeft(Number(entry.priorEtc), Number(entry.hoursWorked)) - decided;
+  // An UNDECIDED cell has no variance and contributes NOTHING (2026-08-03, third
+  // and final revision — see the history above). Diff reports decisions: until a
+  // manager enters a New ETC there is nothing to compare against, so the cell
+  // prints empty and adds 0 to every total that sums it.
+  //
+  // Returning 0 rather than null keeps every caller — the cell, the row totals,
+  // the grand total, the KPI cards, the live store — on one numeric type. "Adds
+  // nothing" and "is nothing" are the same thing to a sum; only the CELL needs to
+  // tell them apart, and it does that with isNewEtcDecided directly.
+  if (!isNewEtcDecided(entry)) return 0;
+  return calcHoursLeft(Number(entry.priorEtc), Number(entry.hoursWorked)) - Math.max(effectiveNewEtc(entry), 0);
 }
 
 export function round2(n: number): number {

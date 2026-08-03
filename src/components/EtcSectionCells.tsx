@@ -223,7 +223,8 @@ export function EtcSectionCells({
   // Both figures remain exact in the cell tooltips.
   const workedRounded = Math.round(worked);
   const hoursLeftShown = Math.round(priorEtc) - workedRounded;
-  const diffShown = hoursLeftShown - Math.round(effective);
+  // Empty string, not a number, when nothing has been decided — see `diff` above.
+  const diffShown = hasNewEtcValue ? hoursLeftShown - Math.round(Math.max(effective, 0)) : null;
 
   // An existing row is addressed by its entry id; one that does not exist yet is
   // addressed by job + section, and saveAllNewEtcDrafts/submitMonth create it.
@@ -331,7 +332,7 @@ export function EtcSectionCells({
         />
       </td>
       <td
-        className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diffShown)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+        className={`border-l border-sdc-border ${ETC_COL_W} ${diffShown == null ? "bg-white" : diffBg(diffShown)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
         // The tooltip still distinguishes the two cases even though the number
         // no longer does — whether that New ETC is a manager's figure or the
         // suggestion standing in for one is worth being able to check.
