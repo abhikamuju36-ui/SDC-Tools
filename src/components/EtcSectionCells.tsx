@@ -111,9 +111,19 @@ export function EtcSectionCells({
       ? String(initialDraft)
       : initialConfirmed != null
         ? String(initialConfirmed)
-        : monthComplete !== false && initialWorked === 0
-          ? String(round2(priorEtc))
-          : "";
+        : // A cell with NO row yet starts blank, never auto-filled (2026-08-03).
+          //
+          // The carry-forward below fires when nothing was worked, which is true
+          // of every not-yet-created cell — and its Prior ETC is 0, so all ~350 of
+          // them rendered a literal "0" instead of an empty box. They then posted
+          // newEtcCreate__…=0 on submit, so Submit tried to create a row for every
+          // unquoted section in one transaction and timed out. There is also
+          // nothing to carry forward here by definition: no prior estimate exists.
+          entryId == null
+          ? ""
+          : monthComplete !== false && initialWorked === 0
+            ? String(round2(priorEtc))
+            : "";
   const [newEtcText, setNewEtcText] = useState(initialText);
 
   const hoursLeft = calcHoursLeft(priorEtc, worked);

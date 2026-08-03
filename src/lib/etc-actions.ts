@@ -79,6 +79,16 @@ function parseNewEtcCreateFields(formData: FormData): TypedNewCell[] {
     if (trimmed === "") continue;
     const value = Number(trimmed);
     if (!Number.isFinite(value) || value < 0) continue;
+    // Zero creates nothing. A row that never existed, planned at 0, is a row
+    // saying "no hours needed for a section nobody quoted" — it moves no figure
+    // and only adds noise.
+    //
+    // It is also a hard backstop for the class of bug that took Submit down on
+    // 2026-08-03: the create-cells briefly rendered a literal "0" instead of an
+    // empty box, so every one of ~350 unquoted sections posted a value and Submit
+    // tried to create them all in one transaction. That render bug is fixed in
+    // EtcSectionCells, but nothing downstream should depend on it.
+    if (value === 0) continue;
     out.push({ jobId, section, value: round2(value) });
   }
   return out;
