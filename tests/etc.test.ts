@@ -243,6 +243,49 @@ test("effectiveNewEtc: forecast still uses the suggestion when undecided", () =>
   assert.equal(effectiveNewEtc({ needsReview: false, newEtcDraft: 15, newEtc: 7, priorEtc: 20, hoursWorked: 5 }), 7);
 });
 
+// ── The zero-hours carry-forward, pinned at every level it is consumed ──────
+//
+// "If no hours were worked this month, New ETC carries the prior forward" is the
+// oldest rule in this app (ported from the Managers Fill Out sheet, confirmed by Dan)
+// and it was re-confirmed as a standing requirement on 2026-08-03.
+//
+// suggestNewEtc is already covered above, but the rule is READ at three levels and
+// only the bottom one was tested. effectiveNewEtc — what the Total New ETC column
+// sums and what submitMonth falls back to — had no zero-hours case at all, so the
+// composition could have regressed while suggestNewEtc stayed green.
+test("carry-forward: a zero-hours cell forecasts its prior, not zero", () => {
+  // What the grid totals sum and what Submit would write.
+  assert.equal(effectiveNewEtc({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 80, hoursWorked: 0 }), 80);
+  assert.equal(effectiveNewEtc({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 12, hoursWorked: 0 }), 12);
+  // A prior of 0 carries 0 forward — the rule, not an absence of one.
+  assert.equal(effectiveNewEtc({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 0, hoursWorked: 0 }), 0);
+});
+
+test("carry-forward: the exact prior survives, unrounded", () => {
+  // The BOX displays a whole number, but the forecast and the submitted value must
+  // keep the stored figure — rounding here would shave hours off a month's balance
+  // every time it carried forward.
+  assert.equal(effectiveNewEtc({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 40.5, hoursWorked: 0 }), 40.5);
+  assert.equal(suggestNewEtc(40.5, 0), 40.5);
+});
+
+test("carry-forward: an explicit draft still wins — the one designed exception", () => {
+  // The rule is the DEFAULT, not a lock: a manager can zero a cancelled scope, and
+  // that has to survive. Worth pinning, because 11 of July's zero-hours cells carried
+  // an explicit 0 draft written in a single batch on 2026-08-03 — the mechanism is
+  // legitimate even when a particular write was not.
+  assert.equal(effectiveNewEtc({ needsReview: true, newEtcDraft: 0, newEtc: 0, priorEtc: 80, hoursWorked: 0 }), 0);
+  assert.equal(effectiveNewEtc({ needsReview: true, newEtcDraft: 55, newEtc: 0, priorEtc: 0, hoursWorked: 0 }), 55);
+  // And an explicit 0 counts as a decision, so nothing re-suggests over it.
+  assert.equal(isNewEtcDecided({ needsReview: true, newEtcDraft: 0 }), true);
+});
+
+test("carry-forward: no hours worked means no variance to report", () => {
+  // Diff must stay silent on a carried-forward cell: nothing was spent, so there is
+  // nothing to be over or under by.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 80, hoursWorked: 0 }), 0);
+});
+
 test("isNewEtcDecided: draft or submitted, nothing else", () => {
   assert.equal(isNewEtcDecided({ needsReview: true, newEtcDraft: null }), false);
   assert.equal(isNewEtcDecided({ needsReview: true, newEtcDraft: 0 }), true); // an explicit zero IS a decision
