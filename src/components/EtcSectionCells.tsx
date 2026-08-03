@@ -192,8 +192,11 @@ export function EtcSectionCells({
   // it is what the month would submit as, and next month's Prior ETC carries from
   // it. The two answer different questions — "what is planned" vs "what has been
   // decided" — and only the second one belongs in a variance column.
-  const diffBasis = hasNewEtcValue ? Math.max(effective, 0) : 0;
-  const diff = hoursLeft - diffBasis;
+  // An UNDECIDED cell contributes NOTHING — matching newEtcDiff() server-side, so
+  // this cell, the row totals, the grand total and the KPI cards all count one
+  // set. It used to subtract 0 here, which made Diff equal Hours Left and fed
+  // that same figure into the "unplanned" KPI split.
+  const diff = hasNewEtcValue ? hoursLeft - Math.max(effective, 0) : 0;
 
   // ── What the row PRINTS, as opposed to what it computes ────────────────────
   //
@@ -333,17 +336,16 @@ export function EtcSectionCells({
       </td>
       <td
         className={`border-l border-sdc-border ${ETC_COL_W} ${diffShown == null ? "bg-white" : diffBg(diffShown)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
-        // The tooltip still distinguishes the two cases even though the number
-        // no longer does — whether that New ETC is a manager's figure or the
-        // suggestion standing in for one is worth being able to check.
+        // The tooltip is where an EMPTY cell explains itself — there is no number
+        // to hover, so it says why, and what would happen on submit anyway.
         title={
           hasNewEtcValue
-            ? `${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(effective)})`
-            : `${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (0). Nothing planned here yet, so all of it is unaccounted for. ` +
-              `Submitting as-is would use the suggestion, ${round2(suggested)}.`
+            ? `${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(Math.max(effective, 0))})`
+            : `No New ETC entered yet, so there is nothing to compare against and no variance to report. ` +
+              `Hours Left is ${round2(hoursLeft)}; submitting as-is would use the suggestion, ${round2(suggested)}.`
         }
       >
-        {wholeNum(diff)}
+        {diffShown == null ? "" : wholeNum(diffShown)}
       </td>
     </>
   );
