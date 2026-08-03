@@ -178,7 +178,14 @@ export async function computeCategoryPoolsLocally(
 ): Promise<LocalPoolResult> {
   if (!isValidMonth(month)) throw new Error(`"${month}" is not a valid month (expected YYYY-MM).`);
 
-  const poolHours = prefetchedPoolHours ?? (await fetchJobHoursRowsWithIssues()).poolHours;
+  // onlyMonth on the fallback path (2026-08-03). This function reads exactly one key per
+  // category — `${month}::${category}`, below — so the other months in a full fetch are
+  // parsed and thrown away. That made the Standard Fees "Refresh" button pay ~5s of
+  // Power BI parsing for data it could not use; scoped, it is ~0.75s.
+  //
+  // The prefetched path is untouched and still passes every month: auto-sync computes
+  // pools for many months in one pass, so there the full map is the point.
+  const poolHours = prefetchedPoolHours ?? (await fetchJobHoursRowsWithIssues({ onlyMonth: month })).poolHours;
   const newHoursAdded = await quotedHoursEnteringMonth(month);
 
   const priorPools = await prisma.categoryPool.findMany({ where: { month: previousMonth(month) } });
