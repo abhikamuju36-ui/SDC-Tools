@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { registerEtcField, forgetEtcField, updateEtcField } from "@/lib/etc-dirty-tracker";
 import { publishPartsCell, forgetPartsCell } from "@/lib/etc-live-totals";
+import { isNewEtcCellDecided, type NewEtcCellState } from "@/lib/etc";
 
 const NEUTRAL_BG = "bg-[#F2F2F2]";
 const ATTENTION_BG = "bg-[#FAFAC4]";
@@ -37,7 +38,7 @@ export function PartsCostNewEtcCell({
   suggested,
   jobName,
   initialValue,
-  attentionWhenBlank,
+  cellState,
   hint,
   locked,
 }: {
@@ -52,11 +53,16 @@ export function PartsCostNewEtcCell({
   suggested: number;
   jobName: string;
   initialValue: string;
-  // True when a blank cell here means "someone still has to decide this": money
-  // was spent this month, and the month is neither submitted nor historical.
-  // Whether a value is PRESENT is judged from the input itself, so clearing a
-  // cell brings the yellow straight back.
-  attentionWhenBlank: boolean;
+  // This cell's whole state, so "is it decided" comes from the ONE rule in
+  // lib/etc.ts that also colours the section-hours cells and scopes Clear ETC —
+  // rather than the private expression this cell used to carry. That expression
+  // treated any submittedAt as decided, so on a reopened month every Parts Cost
+  // cell read as settled while the hours cells beside it correctly went yellow.
+  //
+  // All primitives, so it crosses the server/client boundary as plain data.
+  // Whether a value is PRESENT is still judged from the live input below, so
+  // clearing a cell by hand brings the yellow straight back.
+  cellState: NewEtcCellState;
   // Tooltip only — deliberately NOT a placeholder. A placeholder here renders
   // bold in the same grey as a real value, so an untouched cell read as a
   // decided one; see the call site in etc/page.tsx.
@@ -91,10 +97,10 @@ export function PartsCostNewEtcCell({
     return () => forgetPartsCell(jobId);
   }, [jobId]);
 
-  // Decided = this cell holds a value RIGHT NOW. Not "was typed in at some
-  // point": a latching touched-flag left an emptied cell looking settled when
-  // it no longer was. Same rule as EtcSectionCells.
-  const decided = !attentionWhenBlank || value.trim() !== "";
+  // Decided = judged from the value this cell holds RIGHT NOW. Not "was typed in
+  // at some point": a latching touched-flag left an emptied cell looking settled
+  // when it no longer was. Literally the same function as EtcSectionCells.
+  const decided = isNewEtcCellDecided(cellState, value);
   const displayValue = focused ? value : value.trim() === "" ? "" : currency(Number(value));
 
   return (

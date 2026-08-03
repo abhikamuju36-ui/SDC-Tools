@@ -90,6 +90,125 @@ export function newEtcDiff(entry: {
   return calcHoursLeft(Number(entry.priorEtc), Number(entry.hoursWorked)) - Math.max(effectiveNewEtc(entry), 0);
 }
 
+// ── The yellow "needs attention" New ETC cell ───────────────────────────────
+//
+// Yellow means one thing: somebody still has to make a judgement call here. It
+// used to be computed inline inside EtcSectionCells only, which was fine while
+// the colour was the only consumer. Clear ETC changed that — it acts on exactly
+// the yellow cells, so a server action now has to answer the same question the
+// cell answers, and two copies of this rule would mean a button that clears a
+// different set than the one the manager can see.
+//
+// Both functions are pure and take the cell's whole state, so the client cell
+// (which knows the LIVE text) and the server (which only knows what would seed)
+// get identical answers from identical inputs.
+export type NewEtcCellState = {
+  priorEtc: number;
+  hoursWorked: number;
+  // The saved draft, if any.
+  draft: number | null;
+  // The submitted value — non-null ONLY on a submitted or historical month. This
+  // is what makes a reopened cell arrive pre-filled.
+  confirmed: number | null;
+  // Clear ETC blanked this cell deliberately (EtcEntry.newEtcClearedAt).
+  cleared: boolean;
+  // A fully-submitted month nobody has reopened.
+  locked: boolean;
+  // Are the month's actuals complete? Gates the zero-hours carry-forward.
+  // Gates the zero-hours carry-forward when the prior is NON-zero, so a partial
+  // mid-month figure can't look final. A zero carry-forward ignores it — 0 cannot
+  // masquerade as anything. See newEtcSeedText.
+  monthComplete: boolean;
+  // How this column seeds its box, because it decides what "unchanged" looks like
+  // as a STRING:
+  //   * "whole" (default) — the hours cells. Hours display as whole numbers
+  //     everywhere, and the box is seeded with the same whole number it will
+  //     submit (2026-08-03), so display, submission and next month's Prior ETC are
+  //     one figure.
+  //   * "exact" — Parts Cost, which is MONEY and keeps its cents. Rounding a
+  //     dollar seed to whole would quietly drop cents from what a no-changes
+  //     resubmit writes.
+  precision?: "whole" | "exact";
+  // Does a REOPENED month ask this cell's question again?
+  //
+  // True (default) for the section-hours columns: on a reopen every cell arrives
+  // carrying the figure it was submitted with, and re-opening a month is
+  // re-reviewing it, so holding the old number counts as unanswered.
+  //
+  // FALSE for Parts Cost (2026-08-03, by request): its New ETC must ALWAYS show a
+  // figure. Treating a carried-over dollar estimate as unanswered blanked the
+  // column on a reopened month, which is not what that column is for. Setting this
+  // false makes such a cell decided — so it is never yellow, never clearable, and
+  // never counted by Clear ETC. One flag, and all three follow.
+  reopenAsksAgain?: boolean;
+};
+
+function fmt(n: number, precision: "whole" | "exact" | undefined): string {
+  return precision === "exact" ? String(round2(n)) : String(Math.round(n));
+}
+
+// What the New ETC box holds on arrival.
+export function newEtcSeedText(s: NewEtcCellState): string {
+  // Cleared beats confirmed — that is the entire reason newEtcClearedAt exists.
+  // A draft saved afterwards wins again, so re-entering a value un-clears the
+  // cell even if the flag were somehow left behind.
+  if (s.cleared && s.draft == null) return "";
+  if (s.draft != null) return fmt(s.draft, s.precision);
+  if (s.confirmed != null) return fmt(s.confirmed, s.precision);
+  // ── Nothing worked this month ─────────────────────────────────────────────
+  // New ETC just carries the prior forward, so there is no decision to make and the
+  // box shows that figure. suggestNewEtc(prior, 0) IS priorEtc, so this is the
+  // suggestion, spelled as the prior because that is what carrying forward means.
+  //
+  // Shown even for a section with NO row yet (2026-08-03, by request). Those cells
+  // used to stay blank deliberately, which left whole stretches of the grid sitting
+  // at Prior 0 / Worked 0 / Hours Left 0 with an empty New ETC and an empty Diff —
+  // reading as missing data rather than as "nothing needed here".
+  //
+  // They were blanked because of a real outage, not fussiness: rendering a literal
+  // "0" made every one of ~350 unquoted sections post a value, and Submit tried to
+  // create them all in one transaction and timed out. That is now blocked at the
+  // source — parseNewEtcCreateFields drops a 0 outright, specifically so nothing
+  // downstream depends on this box being empty.
+  //
+  // A ZERO carry-forward shows even mid-month: monthComplete exists so a partial
+  // figure cannot masquerade as final, and 0 cannot. A non-zero prior still waits
+  // for the month's actuals to be complete.
+  if (s.hoursWorked === 0 && (s.monthComplete || s.priorEtc === 0)) return fmt(s.priorEtc, s.precision);
+  return "";
+}
+
+// Has this cell been decided? `text` is the CURRENT contents — the live input
+// value on the client, the seed text on the server. Yellow is !decided.
+//
+// Two ways to be decided:
+//   * no hours worked this month — New ETC carries the prior forward, nothing to
+//     decide, so the cell stays neutral even mid-month
+//   * a value is present AND it isn't just last submission's figure sitting
+//     untouched in a reopened month (see below)
+//
+// A REOPENED month asks its questions again: every cell arrives carrying the
+// value it was submitted with, so judging on presence alone painted the whole
+// grid as decided and lost the manager's checklist. Holding the old figure is a
+// valid answer — retype it, or just submit — but it is an answer nobody has
+// given yet, so it reads as yellow until the value CHANGES.
+export function isNewEtcCellDecided(s: NewEtcCellState, text: string): boolean {
+  if (s.hoursWorked === 0) return true;
+  const hasValue = text.trim() !== "";
+  const reopenedUntouched =
+    s.reopenAsksAgain !== false && !s.locked && s.confirmed != null && text === fmt(s.confirmed, s.precision);
+  return hasValue && !reopenedUntouched;
+}
+
+// The set Clear ETC acts on: yellow AND actually holding something to remove.
+// A yellow-but-empty cell is the normal state of an in-progress month and there
+// is nothing to clear in it.
+export function isNewEtcClearable(s: NewEtcCellState): boolean {
+  const text = newEtcSeedText(s);
+  if (text.trim() === "") return false;
+  return !isNewEtcCellDecided(s, text);
+}
+
 export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }

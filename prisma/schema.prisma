@@ -312,6 +312,12 @@ model EtcEntry {
   hoursLeftCalc Decimal   @db.Decimal(10, 2) // system-suggested (priorEtc - hoursWorked)
   newEtc        Decimal   @db.Decimal(10, 2) // manager-confirmed value
   newEtcDraft   Decimal?  @db.Decimal(10, 2) // typed-but-unsubmitted override, autosaved so a Refresh can't wipe it (the sheet preserved typed New ETC cells)
+  // Set by Clear ETC. Distinguishes "no draft" from "deliberately blanked": on a
+  // REOPENED month the cell seeds from `newEtc` when newEtcDraft is null, so
+  // nulling the draft alone would re-show last submission's figure and the clear
+  // would look like it did nothing. Reset to null the moment a value is saved or
+  // the month is submitted. See clearYellowNewEtc in lib/etc-actions.ts.
+  newEtcClearedAt DateTime?
   needsReview   Boolean   @default(true) // replaces cell highlighting
   enteredById   Int?
   enteredBy     User?     @relation(fields: [enteredById], references: [id])

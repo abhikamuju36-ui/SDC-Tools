@@ -1,21 +1,21 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { calcHoursLeft, suggestNewEtc, round2 } from "@/lib/etc";
+import { calcHoursLeft, suggestNewEtc, round2, newEtcSeedText, isNewEtcCellDecided, type NewEtcCellState } from "@/lib/etc";
 import { registerEtcField, forgetEtcField, updateEtcField } from "@/lib/etc-dirty-tracker";
 import { publishEtcCell, forgetEtcCell } from "@/lib/etc-live-totals";
 import { hours as formatHours } from "@/components/ui/format";
 import { ETC_COL_W } from "@/components/ui/classnames";
+import { diffCellStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
 
 const HOURS_WORKED_BG = "bg-[#C7DAF7]";
 const HOURS_LEFT_BG = "bg-[#F1F6FD]";
 function newEtcBg(hasValue: boolean) {
   return hasValue ? "bg-[#F2F2F2]" : "bg-[#FAFAC4]";
 }
-function diffBg(diff: number) {
-  if (Math.abs(diff) < 0.005) return "bg-white";
-  return diff < 0 ? "bg-[#EEADAC]" : "bg-[#9FCE62]";
-}
+// The Diff colouring is shared with etc/page.tsx and, crucially, with the live
+// repaint in EtcLiveTotals — see components/ui/etc-diff-colors.ts. It is a gradient
+// now: the shade carries HOW FAR off plan, not just which side.
 // Whole hours with thousands separators, via the shared formatter — these cells
 // sit in the same rows as the ones rendered by etc/page.tsx, so the two must
 // format identically or one grid row would print "1,769" beside "1769".
@@ -46,6 +46,7 @@ export function EtcSectionCells({
   initialWorked,
   initialDraft,
   initialConfirmed,
+  cleared,
   locked,
   monthComplete,
 }: {
@@ -82,6 +83,10 @@ export function EtcSectionCells({
   // of April's 366 cells had a worked==0 manager override != priorEtc that
   // a round-trip would have wiped.
   initialConfirmed: number | null;
+  // Clear ETC deliberately blanked this cell (EtcEntry.newEtcClearedAt). Without
+  // it, a cleared cell on a reopened month would seed straight back from
+  // initialConfirmed above and the clear would look like it never happened.
+  cleared?: boolean;
   locked: boolean;
   // False while the month's actuals are still incomplete (Paylocity not yet
   // refreshed through month-end). When false we do NOT auto-fill the New ETC
@@ -112,25 +117,25 @@ export function EtcSectionCells({
   // including the totals that sum this very cell, was rounded. Rounded on the way
   // in (2026-08-03, by request) so what is displayed, what is submitted, and what
   // carries into next month's Prior ETC are all the same number.
-  const whole = (n: number) => String(Math.round(n));
-  const initialText =
-    initialDraft != null
-      ? whole(initialDraft)
-      : initialConfirmed != null
-        ? whole(initialConfirmed)
-        : // A cell with NO row yet starts blank, never auto-filled (2026-08-03).
-          //
-          // The carry-forward below fires when nothing was worked, which is true
-          // of every not-yet-created cell — and its Prior ETC is 0, so all ~350 of
-          // them rendered a literal "0" instead of an empty box. They then posted
-          // newEtcCreate__…=0 on submit, so Submit tried to create a row for every
-          // unquoted section in one transaction and timed out. There is also
-          // nothing to carry forward here by definition: no prior estimate exists.
-          entryId == null
-          ? ""
-          : monthComplete !== false && initialWorked === 0
-            ? whole(priorEtc)
-            : "";
+  //
+  // The seeding rule itself moved to lib/etc.ts (newEtcSeedText) when Clear ETC
+  // arrived: that button acts on exactly the yellow cells, so a server action has
+  // to compute "is this cell yellow, and does it hold anything" from the same code
+  // that colours it here. Two copies would mean a button that clears a different
+  // set than the manager can see. The rule is unchanged — including that a cell
+  // with NO row yet stays blank rather than auto-filling (its Prior ETC is 0, so
+  // the zero-hours carry-forward would print a literal "0" in ~350 empty boxes and
+  // post a create for every unquoted section).
+  const cellState: NewEtcCellState = {
+    priorEtc,
+    hoursWorked: worked,
+    draft: initialDraft,
+    confirmed: initialConfirmed,
+    cleared: cleared === true,
+    locked,
+    monthComplete: monthComplete !== false,
+  };
+  const initialText = newEtcSeedText(cellState);
   const [newEtcText, setNewEtcText] = useState(initialText);
 
   const hoursLeft = calcHoursLeft(priorEtc, worked);
@@ -166,9 +171,9 @@ export function EtcSectionCells({
   //
   // `locked` excluded: a submitted month nobody has reopened is finished, and
   // painting it all yellow would be shouting at a closed book.
-  const reopenedUntouched =
-    !locked && initialConfirmed != null && newEtcText.trim() === whole(initialConfirmed);
-  const decided = worked === 0 || (hasNewEtcValue && !reopenedUntouched);
+  // Judged against the LIVE text, so the yellow clears the moment the value is
+  // changed and comes straight back if it is emptied again.
+  const decided = isNewEtcCellDecided(cellState, newEtcText);
   const newEtcNum = Number(newEtcText);
   const effective = newEtcText.trim() === "" || !Number.isFinite(newEtcNum) ? suggested : newEtcNum;
   // Live for every cell, typed or not (2026-08-02, by request). It used to
@@ -268,8 +273,8 @@ export function EtcSectionCells({
   // and a render React discards must not be allowed to change what other
   // components read.
   useEffect(() => {
-    publishEtcCell(cellKey, { jobId, billingGroup, prior: priorEtc, worked, hoursLeft, effective, diff, decided: hasNewEtcValue });
-  }, [cellKey, jobId, billingGroup, priorEtc, worked, hoursLeft, effective, diff, hasNewEtcValue]);
+    publishEtcCell(cellKey, { jobId, billingGroup, sectionCode, prior: priorEtc, worked, hoursLeft, effective, diff, decided: hasNewEtcValue });
+  }, [cellKey, jobId, billingGroup, sectionCode, priorEtc, worked, hoursLeft, effective, diff, hasNewEtcValue]);
 
   // Unmount is what makes a month switch or a column filter self-cleaning: the
   // grid is keyed on the month, so every cell tears down and takes its
@@ -335,7 +340,11 @@ export function EtcSectionCells({
         />
       </td>
       <td
-        className={`border-l border-sdc-border ${ETC_COL_W} ${diffShown == null ? "bg-white" : diffBg(diffShown)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+        className={`border-l border-sdc-border ${ETC_COL_W} ${diffShown == null ? "bg-white" : ""} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+        // Coloured from the ROUNDED value, so the shade matches the number printed
+        // in the cell rather than the exact figure behind it. Recomputed on every
+        // keystroke, since diffShown derives from the live New ETC text.
+        style={diffCellStyle(diffShown, DIFF_CEILING.hoursCell)}
         // The tooltip is where an EMPTY cell explains itself — there is no number
         // to hover, so it says why, and what would happen on submit anyway.
         title={

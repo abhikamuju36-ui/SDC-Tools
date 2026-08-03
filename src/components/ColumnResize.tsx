@@ -3,7 +3,7 @@
 import { useEffect } from "react";
 
 // Generic Excel-style column-width drag handle, wired up once at the document
-// level (same pattern as RowSelect/ExcelCellFocus) so any table can opt a
+// level (same pattern as ExcelCellFocus) so any table can opt a
 // column into resizing just by rendering a `.col-resize-handle` element in
 // that column's header cell — no per-page drag logic needed.
 //

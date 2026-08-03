@@ -39,6 +39,11 @@ export type LiveCell = {
   jobId: number;
   // Which of the two rollup blocks this section feeds.
   billingGroup: "Engineering" | "Shop";
+  // Which COLUMN this cell sits in. The <tfoot> carries a grand total per section
+  // as well as per billing group, and the per-section one is the total directly
+  // beneath the cell a manager is typing in — the most-watched figure on the page
+  // (see readEtcLiveSectionTotals).
+  sectionCode: string;
   prior: number;
   worked: number;
   hoursLeft: number;
@@ -84,6 +89,7 @@ export function publishEtcCell(cellKey: string, cell: LiveCell): void {
     prev &&
     prev.jobId === cell.jobId &&
     prev.billingGroup === cell.billingGroup &&
+    prev.sectionCode === cell.sectionCode &&
     prev.prior === cell.prior &&
     prev.worked === cell.worked &&
     prev.hoursLeft === cell.hoursLeft &&
@@ -170,6 +176,69 @@ export function useEtcLiveTotals(): Map<number, JobTotals> {
 // Non-hook read, for imperative repainting (see EtcLiveTotals.tsx).
 export function readEtcLiveTotals(): Map<number, JobTotals> {
   return snapshot();
+}
+
+// ── The <tfoot> grand totals ────────────────────────────────────────────────
+//
+// The footer holds THREE families of total, and until 2026-08-03 only one of them
+// was wired up:
+//
+//   • per billing group (Engineering / Shop)  — was live
+//   • per SECTION column (ME Gen, Robot, …)   — was NOT, and it is the total
+//     sitting directly under the cell being typed in
+//   • Parts Cost                              — was NOT, though its New ETC
+//     column is manager-editable like any other
+//
+// So a manager typed a New ETC, watched the cell update, and watched the total
+// immediately below it sit still. Reasonably, they read that as the edit not
+// having registered at all — and then as Save being broken, since Save (which
+// deliberately skips revalidatePath for speed) doesn't repaint anything either.
+// The values were being saved correctly the whole time; nothing said so.
+//
+// Same two-cells-only rule as the per-job blocks: Prior ETC and Hours Worked
+// aren't editable and Hours Left derives from them, so only New ETC and Diff can
+// move. Still pure summation — no formula of its own (see the header note).
+export type SectionTotals = { newEtc: number; diff: number };
+
+function computeSectionTotals(): Map<string, SectionTotals> {
+  const bySection = new Map<string, SectionTotals>();
+  for (const c of cells.values()) {
+    let t = bySection.get(c.sectionCode);
+    if (!t) bySection.set(c.sectionCode, (t = { newEtc: 0, diff: 0 }));
+    t.newEtc += c.effective;
+    // Per cell, matching the server — the suggestion clamps at zero per cell and
+    // that clamp can't be reproduced from a column's sums.
+    t.diff += c.diff;
+  }
+  return bySection;
+}
+
+// Parts Cost is dollars and has one cell per job, so its grand total is summed
+// from the parts cells rather than the section cells.
+function computePartsGrandTotal(): SectionTotals {
+  const total = { newEtc: 0, diff: 0 };
+  for (const p of parts.values()) {
+    total.newEtc += p.newEtc;
+    total.diff += p.diff;
+  }
+  return total;
+}
+
+let cachedFooterVersion = -1;
+let cachedSections: Map<string, SectionTotals> = new Map();
+let cachedParts: SectionTotals = { newEtc: 0, diff: 0 };
+
+function footerSnapshot(): { sections: Map<string, SectionTotals>; parts: SectionTotals } {
+  if (cachedFooterVersion !== version) {
+    cachedSections = computeSectionTotals();
+    cachedParts = computePartsGrandTotal();
+    cachedFooterVersion = version;
+  }
+  return { sections: cachedSections, parts: cachedParts };
+}
+
+export function readEtcLiveFooterTotals(): { sections: Map<string, SectionTotals>; parts: SectionTotals } {
+  return footerSnapshot();
 }
 
 export function subscribeEtcLiveTotals(cb: () => void): () => void {

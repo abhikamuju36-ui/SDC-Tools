@@ -23,12 +23,13 @@ import {
   reopenStandardSheetMonth,
 } from "@/lib/standard-sheet-actions";
 import { ETC_SECTIONS, PARTS_COST_SECTION } from "@/lib/sections";
-import { calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, round2, workingDaysInMonth, effectiveNewEtc, newEtcDiff } from "@/lib/etc";
+import { calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, round2, workingDaysInMonth, effectiveNewEtc, newEtcDiff, isNewEtcClearable, newEtcSeedText, isNewEtcCellDecided, type NewEtcCellState } from "@/lib/etc";
 import { submitMonth, reopenMonth, syncPowerBiForEtc } from "@/lib/etc-actions";
 import { RunReportButton } from "@/components/RunReportButton";
 import { SubmitAndLockButton } from "@/components/SubmitAndLockButton";
 import { ReopenMonthButton } from "@/components/ReopenMonthButton";
 import { SaveEtcDraftsButton } from "@/components/SaveEtcDraftsButton";
+import { ClearEtcButton } from "@/components/ClearEtcButton";
 import { EtcAutosave } from "@/components/EtcAutosave";
 import { EtcLiveTotals } from "@/components/EtcLiveTotals";
 import { isStandardSheetUnlocked, hadWrongPassword, unlockStandardSheet, lockStandardSheet } from "@/lib/standard-sheet-gate";
@@ -41,7 +42,8 @@ import { MonthYearSelect } from "@/components/MonthYearSelect";
 import { JobCellMenuHost } from "@/components/JobCellMenuHost";
 import { jobCellMenuProps } from "@/lib/job-cell-menu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
-import { BUTTON_PRIMARY, BUTTON_SECONDARY, TABLE_HEADER_ROW, TABLE_GRID, ETC_COL_W } from "@/components/ui/classnames";
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, BUTTON_DANGER, TABLE_HEADER_ROW, TABLE_GRID, ETC_COL_W } from "@/components/ui/classnames";
+import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
 
@@ -192,20 +194,10 @@ const HOURS_LEFT_BG = "bg-[#F1F6FD]";
 function newEtcBg(_hasValue: boolean) {
   return "bg-[#F2F2F2]";
 }
-function diffBg(diff: number) {
-  // Epsilon, not ===: hour sums carry float residue (1e-13) that would tint
-  // the cell red/green while wholeNum displays a plain 0.
-  if (Math.abs(diff) < 0.005) return "bg-white";
-  return diff < 0 ? "bg-[#EEADAC]" : "bg-[#9FCE62]";
-}
-// The footer's counterpart. The Total row is dark now (see the
-// `tfoot tr.etc-total-row` rule in globals.css), which wins over any cell
-// background — so down there the variance has to read as TEXT instead. Same
-// epsilon as above so the two rows agree about what counts as zero.
-function diffTextOnDark(diff: number) {
-  if (Math.abs(diff) < 0.005) return "";
-  return diff < 0 ? "etc-total-diff-over" : "etc-total-diff-under";
-}
+// The Diff colouring lives in components/ui/etc-diff-colors.ts: the live repaint
+// (EtcLiveTotals) has to apply the SAME colours when a total's number changes, and it
+// was leaving the server's behind. It is a magnitude gradient now, applied as inline
+// styles — Tailwind cannot generate a computed colour.
 
 // Hours display on this page is whole numbers with thousands separators — no
 // decimals, rounded rather than truncated. Delegates to the shared formatter so
@@ -762,6 +754,34 @@ export default async function MonthlyEtcPage({
   const monthComplete =
     locked || isHistoricalMonth || (hoursRefreshedThrough != null && hoursRefreshedThrough >= monthEndDate);
 
+  // How many New ETC cells Clear ETC would empty: the YELLOW ones that actually
+  // hold a figure. Computed with the same rule that colours the cells
+  // (isNewEtcClearable in lib/etc.ts), so the count in the confirmation prompt is
+  // the count that will actually go — the action recomputes it server-side before
+  // writing, and the two agree because they call the same function.
+  //
+  // On a first-pass month this is 0: yellow cells are blank there, and there is
+  // nothing to clear. It is a reopened month that fills this up, where every cell
+  // arrives carrying the figure it was submitted with.
+  const clearableCount = allEntries.filter(
+    (e) =>
+      e.needsReview &&
+      isNewEtcClearable({
+        priorEtc: Number(e.priorEtc),
+        hoursWorked: round2(Number(e.hoursWorked)),
+        draft: e.newEtcDraft != null ? Number(e.newEtcDraft) : null,
+        confirmed: isHistoricalMonth || e.submittedAt != null ? round2(Number(e.newEtc)) : null,
+        cleared: e.newEtcClearedAt != null,
+        locked,
+        monthComplete,
+        // Parts Cost is excluded: its New ETC always shows a figure, so it is never
+        // awaiting a decision and never part of this count. Same flag the cell
+        // itself passes, so the number on the button matches what turns yellow.
+        precision: e.section === PARTS_COST_SECTION ? "exact" : "whole",
+        reopenAsksAgain: e.section !== PARTS_COST_SECTION,
+      } satisfies NewEtcCellState),
+  ).length;
+
   // Grand totals footer, matching the real sheet's row 63 — accumulated as
   // each job row below computes its own values, then rendered once after.
   // No `decided` counter any more: newEtcDiff is live for every cell, so every
@@ -814,6 +834,14 @@ export default async function MonthlyEtcPage({
             Lock); later Save clicks this session skip the prompt. */}
         {!locked && (
           <SaveEtcDraftsButton formId="etc-month-form" month={month} unlocked={etcEditUnlocked} wrongPassword={etcEditWrongPassword} className={BUTTON_PRIMARY} />
+        )}
+        {/* Empties every New ETC cell still awaiting a decision (the yellow ones),
+            leaving them yellow so the grid reads as a checklist of what to
+            re-enter. Confirmation phrase every time — it erases entered values in
+            bulk, so it is gated like Reopen Month rather than like Save. Hidden on
+            a locked month: there is nothing unconfirmed left to clear. */}
+        {!locked && (
+          <ClearEtcButton month={month} clearableCount={clearableCount} className={BUTTON_DANGER} />
         )}
         {/* Autosaves New ETC cells ~1.5s after typing stops — but only once
             Save has been clicked with the password this session, so autosave
@@ -1211,18 +1239,25 @@ export default async function MonthlyEtcPage({
               <tbody>
                 {visibleJobs.map((job, jobIndex) => {
                   const entryByCode = new Map(job.etcEntries.map((e) => [e.section, e]));
-                  // Jobs that STARTED this month, called out across the whole row.
+                  // ── The two row highlights ────────────────────────────────
                   //
+                  // The two colours were SWAPPED on 2026-08-03, by request: started
+                  // this month is now the yellow and active T&M is now the lavender.
+                  // Nothing else about either rule changed, and no legend or second
+                  // grid carries these shades, so the swap is these four class names.
+                  //
+                  // Jobs that STARTED this month, called out across the whole row.
                   // These are the rows whose Prior ETC came from the quote rather
                   // than from a carried balance (see the startsThisMonth rule in
                   // seedMonth), so "no history, opening at quote" is worth being
                   // able to see rather than infer from a Start Date column that
                   // isn't on this grid.
                   //
-                  // Lavender on purpose: every other colour here already means
-                  // something — blue is Prior ETC, yellow is "needs a decision",
-                  // red/green are over/under. A new colour is the only one that
-                  // can't be misread as a status.
+                  // It wears the deeper #fdf0c2 yellow rather than anything nearer
+                  // the New ETC cell's #FAFAC4: that one means "this cell needs a
+                  // decision", and two near-identical shades meaning different things
+                  // is how a legend stops being read at all. The gap between them is
+                  // the point, whichever category is wearing it.
                   //
                   // Applied through the zebra classes rather than on the <tr>: the
                   // hover wash and every coloured cell paint over a row background,
@@ -1231,29 +1266,31 @@ export default async function MonthlyEtcPage({
                   const startsThisMonth =
                     job.startDate != null &&
                     `${job.startDate.getUTCFullYear()}-${String(job.startDate.getUTCMonth() + 1).padStart(2, "0")}` === month;
-                  // Active T&M, yellow, sorted to the bottom of the grid (see the
-                  // sort above). Wins over the started-this-month lavender: T&M is
+                  // Active T&M, lavender, sorted to the bottom of the grid (see the
+                  // sort above). Still WINS over the started-this-month tint: T&M is
                   // what the row IS, where "started this month" is only where it is
                   // in its life, and a row can be both.
                   //
-                  // A deeper yellow than the New ETC cell's #FAFAC4, deliberately —
-                  // that one means "this cell needs a decision", and two shades of
-                  // the same colour meaning different things is how a legend stops
-                  // being read at all.
+                  // Lavender reads cleanly here because every other colour on this
+                  // grid already means something — blue is Prior ETC, yellow is
+                  // "needs a decision", red/green are over/under — so it can't be
+                  // misread as a status.
                   const tmRow = isActiveTm(job);
                   const zebra = tmRow
-                    ? "bg-[#fdf0c2]"
+                    ? "bg-[#efe7fb]"
                     : startsThisMonth
-                      ? "bg-[#efe7fb]"
+                      ? "bg-[#fdf0c2]"
                       : jobIndex % 2 === 1
                         ? "bg-sdc-gray-50/60"
                         : "";
                   // Sticky columns need a fully opaque background — the translucent
                   // zebra tint above lets scrolled-under columns bleed through them.
+                  // These two are the darker, opaque counterparts of the pair above
+                  // and swap with them.
                   const zebraSticky = tmRow
-                    ? "bg-[#fbe79c]"
+                    ? "bg-[#e5d9f7]"
                     : startsThisMonth
-                      ? "bg-[#e5d9f7]"
+                      ? "bg-[#fbe79c]"
                       : jobIndex % 2 === 1
                         ? "bg-sdc-gray-50"
                         : "bg-white";
@@ -1389,6 +1426,10 @@ export default async function MonthlyEtcPage({
                               initialWorked={round2(worked)}
                               initialDraft={draft}
                               initialConfirmed={isHistoricalMonth || entry.submittedAt != null ? round2(Number(entry.newEtc)) : null}
+                              // Clear ETC blanked this cell on purpose — without
+                              // this it would seed straight back from the confirmed
+                              // value above.
+                              cleared={entry.newEtcClearedAt != null}
                               locked={locked}
                               monthComplete={monthComplete}
                             />
@@ -1445,7 +1486,11 @@ export default async function MonthlyEtcPage({
                               data-live="diff"
                               data-group={group}
                               data-job={job.id}
-                              className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                              className={`border-l border-sdc-border ${ETC_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                              // A rollup of one billing group for one job, so it
+                              // scales against the hours-TOTAL ceiling rather than a
+                              // single cell's.
+                              style={diffCellStyle(diff, DIFF_CEILING.hoursTotal)}
                               title={`${round2(diff)} = the sum of (Hours Left − New ETC) across this job's ${
                                 group === "Engineering" ? "Engineering" : "Shop"
                               } cells. A cell with no New ETC typed yet compares against the suggestion, so it reads 0 unless that section is already overspent.`}
@@ -1479,10 +1524,35 @@ export default async function MonthlyEtcPage({
                         // Parallels the per-section-hours rule (see EtcSectionCells):
                         // Parts Cost New ETC needs manager attention (yellow) only
                         // when money was actually spent this month (spent > 0) and no
-                        // value has been decided yet. $0-spent, drafted, or already
-                        // submitted/historical cells stay neutral.
-                        const decidedCost =
-                          spent === 0 || draftCost != null || isHistoricalMonth || partsCostEntry.submittedAt != null;
+                        // value has been decided yet.
+                        //
+                        // Now computed by the SHARED rule (lib/etc.ts) rather than its
+                        // own expression. The two had drifted: this one counted any
+                        // submittedAt as decided, so on a REOPENED month every Parts
+                        // Cost cell read as settled while the hours cells beside it
+                        // correctly went yellow again — 39 of July 2026's cells. A
+                        // dollar estimate carried over from last submission is no more
+                        // decided than an hours one, and Clear ETC acts on yellow, so
+                        // leaving Parts Cost out would have made it unclearable.
+                        const partsCostState = {
+                          priorEtc: prior,
+                          hoursWorked: spent,
+                          draft: draftCost,
+                          confirmed: isHistoricalMonth || partsCostEntry.submittedAt != null ? round2(Number(partsCostEntry.newEtc)) : null,
+                          cleared: partsCostEntry.newEtcClearedAt != null,
+                          locked,
+                          monthComplete,
+                          // MONEY — keeps its cents. See NewEtcCellState.precision.
+                          precision: "exact",
+                          // Parts Cost New ETC ALWAYS shows a figure (2026-08-03, by
+                          // request): a reopened month does not blank it and Clear ETC
+                          // does not touch it. Treating a carried-over dollar estimate
+                          // as unanswered emptied all 39 of July's cells, which is not
+                          // what this column is for.
+                          reopenAsksAgain: false,
+                        } satisfies NewEtcCellState;
+                        const partsCostSeed = newEtcSeedText(partsCostState);
+                        const decidedCost = isNewEtcCellDecided(partsCostState, partsCostSeed);
 
                         partsCostGrandTotal.prior += prior;
                         partsCostGrandTotal.worked += spent;
@@ -1516,23 +1586,22 @@ export default async function MonthlyEtcPage({
                               spent={spent}
                               suggested={suggestedCost}
                               jobName={job.jobName}
-                              initialValue={
-                                draftCost != null
-                                  ? String(draftCost)
-                                  : // Reopened month: seed with the confirmed value so a
-                                    // no-changes resubmit can't replace it with the suggestion.
-                                    isHistoricalMonth || partsCostEntry.submittedAt != null
-                                    ? String(round2(Number(partsCostEntry.newEtc)))
-                                    : // Don't auto-fill until the month's actuals are complete.
-                                      monthComplete && spent === 0
-                                      ? String(round2(suggestedCost))
-                                      : ""
-                              }
+                              // Same seed as before — a draft, else the confirmed
+                              // value on a reopened month (so a no-changes resubmit
+                              // can't replace it with the suggestion), else the
+                              // carry-forward once actuals are complete — but via the
+                              // shared rule, which additionally honours a Clear ETC
+                              // blanking. Cents preserved (precision "exact").
+                              initialValue={partsCostSeed}
                               // Deliberately NOT `!decidedCost`: that counts a
                               // saved draft as decided forever, so clearing a
                               // drafted cell would leave it neutral. The cell
                               // judges presence from its own value.
-                              attentionWhenBlank={spent !== 0 && !isHistoricalMonth && partsCostEntry.submittedAt == null}
+                              //
+                              // A reopened month now qualifies: its cells hold last
+                              // submission's figure and nobody has confirmed it this
+                              // pass, so it is genuinely awaiting an answer.
+                              cellState={partsCostState}
                               // NO placeholder hint, matching the per-section
                               // hours cells (see EtcSectionCells). It used to
                               // show the suggestion — and the placeholder is
@@ -1552,7 +1621,11 @@ export default async function MonthlyEtcPage({
                               locked={locked}
                             />
                             <td
-                              className={`border-l border-sdc-border ${decidedCost ? diffBg(diffCost) : ""} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                              className={`border-l border-sdc-border overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                              // Dollars, so its own ceiling. Uncoloured when nothing
+                              // is decided — there is no variance to report, which is
+                              // also why the cell prints "—" rather than $0.
+                              style={decidedCost ? diffCellStyle(diffCost, DIFF_CEILING.moneyCell) : undefined}
                               title={
                                 decidedCost
                                   ? `${currencyExact(diffCost)} = Money Left (${currencyExact(moneyLeft)}) − New ETC (${currencyExact(effectiveNewEtcCost)})`
@@ -1635,9 +1708,25 @@ export default async function MonthlyEtcPage({
                           >
                             {wholeNum(hoursLeft)}
                           </td>
-                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
+                          {/* The two totals that move as a manager types, at the
+                              foot of the very column they're typing in — the most
+                              watched pair of numbers on the page. EtcLiveTotals
+                              repaints them through these hooks; without them the
+                              column total sat frozen until a save, which read as
+                              the edit (and then Save itself) not working at all. */}
                           <td
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffTextOnDark(diff)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            data-live="newEtc"
+                            data-section={s.code}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`}
+                            title={String(round2(t.newEtc))}
+                          >
+                            {monthComplete ? wholeNum(t.newEtc) : "—"}
+                          </td>
+                          <td
+                            data-live="diff"
+                            data-section={s.code}
+                            className={`border-l border-sdc-border ${ETC_COL_W} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            style={diffTotalStyle(diff, DIFF_CEILING.hoursTotal)}
                             title={`${round2(diff)} = the sum of (Hours Left − New ETC) down this column. Cells with no New ETC typed compare against the suggestion, so they read 0 unless already overspent.`}
                           >
                             {wholeNum(diff)}
@@ -1676,7 +1765,8 @@ export default async function MonthlyEtcPage({
                             data-live="diff"
                             data-group={group}
                             data-job="all"
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${diffTextOnDark(diff)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            style={diffTotalStyle(diff, DIFF_CEILING.hoursTotal)}
                             title={`${round2(diff)} = the sum of (Hours Left − New ETC) down this column. A cell with no New ETC typed compares against the suggestion, so it reads 0 unless that section is already overspent.`}
                           >
                             {wholeNum(diff)}
@@ -1701,9 +1791,20 @@ export default async function MonthlyEtcPage({
                           >
                             {currency(moneyLeft)}
                           </td>
-                          <td className={`border-l border-sdc-border ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`} title={currencyExact(t.newEtc)}>{monthComplete ? currency(t.newEtc) : "—"}</td>
+                          {/* Parts Cost New ETC is manager-editable
+                              (PartsCostNewEtcCell), so its grand total has to move
+                              with it the same way the hours columns do. */}
                           <td
-                            className={`border-l border-sdc-border ${diffTextOnDark(diffCost)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            data-live="partsNewEtc"
+                            className={`border-l border-sdc-border ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`}
+                            title={currencyExact(t.newEtc)}
+                          >
+                            {monthComplete ? currency(t.newEtc) : "—"}
+                          </td>
+                          <td
+                            data-live="partsDiff"
+                            className={`border-l border-sdc-border overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            style={diffTotalStyle(diffCost, DIFF_CEILING.moneyTotal)}
                             title={`${currencyExact(diffCost)} = Money Left (${currencyExact(moneyLeft)}) − New ETC (${currencyExact(t.newEtc)})`}
                           >
                             {currency(diffCost)}

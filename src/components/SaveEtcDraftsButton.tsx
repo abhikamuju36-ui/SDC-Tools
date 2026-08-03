@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { saveAllNewEtcDrafts } from "@/lib/etc-actions";
 import { isEtcDirty, rebaselineEtcFields } from "@/lib/etc-dirty-tracker";
+import { useToast } from "@/components/ui/Toast";
 
 // Batch-saves every currently-typed New ETC override across the grid in one
 // click — nothing in EtcSectionCells autosaves on its own (see its comment),
@@ -33,6 +34,7 @@ export function SaveEtcDraftsButton({
   const [pending, startTransition] = useTransition();
   const wrapRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
+  const { toast } = useToast();
 
   useEffect(() => {
     if (!open) return;
@@ -82,6 +84,19 @@ export function SaveEtcDraftsButton({
         rebaselineEtcFields(fd);
         setOpen(false);
         setPassword("");
+        // Say what happened. This action deliberately doesn't revalidate (it runs
+        // on every autosave pass and re-rendering the whole month is what made
+        // saving feel slow), so without this the button went "Saving…" and then
+        // back to "Save" with nothing else on screen changing — which is why a
+        // save that wrote 11 drafts got reported as Save being broken.
+        // "No changes" is stated out loud rather than shown as a success, because
+        // a manager who expected to save something needs to know the difference.
+        toast(
+          result.saved > 0
+            ? `Saved ${result.saved} New ETC value${result.saved === 1 ? "" : "s"}.`
+            : "Nothing to save — no New ETC values have changed.",
+          result.saved > 0 ? "success" : "info",
+        );
       }
       // Wrong password: leave the popover open so "Wrong password" (from the
       // refreshed wrongPassword prop) is visible, and don't touch dirty —

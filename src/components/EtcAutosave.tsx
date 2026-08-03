@@ -63,7 +63,16 @@ export function EtcAutosave({ formId, month, unlocked, locked }: { formId: strin
       // a hidden input and is Power-BI-owned; nothing else here is editable,
       // but naming the field explicitly keeps a future input from silently
       // joining the autosave.
-      if (t instanceof HTMLInputElement && t.name.startsWith("newEtcOverride__")) schedule();
+      //
+      // BOTH New ETC field namespaces, not just the override one. A section a job
+      // was never quoted for has no EtcEntry yet, so its cell posts
+      // `newEtcCreate__<jobId>__<section>` instead (see EtcSectionCells) — and
+      // that was half of July's grid, 357 of 754 cells. Watching only the
+      // override prefix meant typing in any of them scheduled nothing: autosave
+      // was genuinely dead for those cells until the manager happened to touch a
+      // quoted one, which then swept them in via the shared FormData. The manual
+      // Save button always handled both (parseNewEtcCreateFields).
+      if (t instanceof HTMLInputElement && (t.name.startsWith("newEtcOverride__") || t.name.startsWith("newEtcCreate__"))) schedule();
     };
     form.addEventListener("input", onEdit);
     return () => form.removeEventListener("input", onEdit);

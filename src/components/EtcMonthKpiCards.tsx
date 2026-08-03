@@ -4,6 +4,7 @@ import { useMemo, useState, useSyncExternalStore, useTransition } from "react";
 import { usd, hours as fmtHours } from "@/components/ui/format";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 import { ETC_SECTIONS } from "@/lib/sections";
+import { offGridBySection, sectionName, type OffGridJob } from "@/lib/off-grid-hours";
 import type { EtcMonthKpis } from "@/lib/etc-month-kpis";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
 import type { UnattributedDetail } from "@/lib/unattributed-hours";
@@ -19,14 +20,10 @@ const SECTION_GROUP = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]))
 
 type DrillScope = "Engineering" | "Shop" | "All" | "Unattributed" | "OffGrid";
 
-// One job whose hours exist in the month but which the grid does not list.
-export type OffGridJob = {
-  jobId: string;
-  jobName: string;
-  status: string | null;
-  hours: number;
-  sections: { section: string; hours: number }[];
-};
+// Re-exported so the page's existing `import type { OffGridJob }` keeps working; the
+// type and the rollup both live in lib/off-grid-hours.ts now, where a plain test can
+// reach them (this component imports a "use server" action, which one cannot).
+export type { OffGridJob };
 
 // KPI strip at the top of the Monthly ETC page: hours worked and variance for
 // Engineering and Shop, parts money spent, and how many people booked time —
@@ -109,6 +106,11 @@ export function EtcMonthKpiCards({
   // Summed here rather than passed in, so the card and its drill can never
   // disagree about how much is off the grid.
   const offGridTotal = offGridJobs.reduce((s, j) => s + j.hours, 0);
+  // "By job" is the default because the ACTION lives on the job — setting it back to
+  // Active is what saves the hours. "By section" answers the other question: what kind
+  // of work is about to be lost.
+  const [offGridView, setOffGridView] = useState<"job" | "section">("job");
+  const offGridSections = useMemo(() => offGridBySection(offGridJobs), [offGridJobs]);
 
   // How many cards the strip will render, so the xl grid can be exactly that
   // many columns wide. Six fixed cards, plus the off-grid one when it applies.
@@ -274,10 +276,18 @@ export function EtcMonthKpiCards({
             the banner above the grid, because this is the one figure here that
             is MISSING from every other figure — it belongs beside the totals it
             is absent from, not only in a notice people learn to scroll past.
-            Shown even at zero: "0 unattributed" is a daily reassurance that the
-            import is clean, where an absent card says nothing either way. */}
+            Shown even at zero: "0 undefined errors" is a daily reassurance that
+            the import is clean, where an absent card says nothing either way.
+
+            Labelled "Undefined errors" (2026-08-03, by request) rather than the
+            "Unattributed hours" it read before: the punches it counts are booked
+            to the literal job number "NOT DEFINED", which is what the banner above
+            the grid already calls them, so the card and the banner now use one
+            word for one thing. The internals still say `unattributed` throughout
+            (types, the store, lib/unattributed-hours.ts) — that describes the data
+            accurately and renaming it would touch six files for no visible gain. */}
         <Card
-          label="Unattributed hours"
+          label="Undefined errors"
           value={fmtHours(unattributedTotal)}
           tone={unattributedTotal > 0 ? "warn" : undefined}
           hint={
@@ -295,10 +305,10 @@ export function EtcMonthKpiCards({
             stopped showing — and both are MISSING from every other figure on this
             strip, which is exactly why they belong on it rather than only in a
             banner above a table people scroll past.
-            Red rather than amber: unattributed hours sit there until someone fixes
-            Paylocity, but these rows are DELETED by the next Refresh Data or
+            Red rather than amber: undefined-error hours sit there until someone
+            fixes Paylocity, but these rows are DELETED by the next Refresh Data or
             Submit ETC, so the window to act on them closes.
-            Hidden at zero, unlike Unattributed: "0 unattributed" is a daily
+            Hidden at zero, unlike Undefined errors: "0 undefined errors" is a daily
             reassurance the import is clean, whereas a permanent "0 off-grid" card
             would just be a column of nothing on the normal month. */}
         {offGridTotal > 0 && (
@@ -331,34 +341,90 @@ export function EtcMonthKpiCards({
             <strong>deleted by the next Refresh Data or Submit ETC</strong>. Set a job back to Active to bring it into the month, or accept
             the loss deliberately.
           </p>
+          {/* Two readings of the same 181 hours. Both total identically — they have to,
+              since the card above shows that figure too. */}
+          <div className="mb-2 flex items-center gap-1.5">
+            <span className="text-[10px] font-medium text-sdc-gray-500">Split by</span>
+            {(["job", "section"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setOffGridView(v)}
+                aria-pressed={offGridView === v}
+                title={
+                  v === "job"
+                    ? "One row per job — the job is where the fix is (set it back to Active)"
+                    : "One row per section, summed across every off-grid job"
+                }
+                className={`h-6 rounded-md border px-2 text-[10px] font-medium transition-colors ${
+                  offGridView === v
+                    ? "border-sdc-blue bg-sdc-blue text-white"
+                    : "border-sdc-border bg-white text-sdc-navy hover:bg-sdc-blue-light"
+                }`}
+              >
+                {v === "job" ? "Job" : "Section"}
+              </button>
+            ))}
+          </div>
           <div className="styled-scrollbar max-h-72 overflow-auto rounded-lg border border-sdc-border">
             <table className="w-full border-collapse text-[11px]">
               <thead className="sticky top-0 bg-sdc-gray-100">
                 <tr className="text-left text-[10px] font-semibold uppercase tracking-wide text-sdc-gray-500">
-                  <th className="px-2 py-1.5">Job</th>
-                  <th className="px-2 py-1.5">Status</th>
-                  <th className="px-2 py-1.5">Sections</th>
-                  <th className="px-2 py-1.5 text-right">Hours</th>
+                  {offGridView === "job" ? (
+                    <>
+                      <th className="px-2 py-1.5">Job</th>
+                      <th className="px-2 py-1.5">Status</th>
+                      <th className="px-2 py-1.5">Sections</th>
+                      <th className="px-2 py-1.5 text-right">Hours</th>
+                    </>
+                  ) : (
+                    <>
+                      <th className="px-2 py-1.5">Section</th>
+                      <th className="px-2 py-1.5">Jobs</th>
+                      <th className="px-2 py-1.5 text-right">Hours</th>
+                    </>
+                  )}
                 </tr>
               </thead>
               <tbody>
-                {offGridJobs.map((j) => (
-                  <tr key={j.jobId} className="border-t border-sdc-border-soft align-top">
-                    <td className="px-2 py-1.5">
-                      <span className="font-mono font-semibold text-sdc-blue-dark">{j.jobId}</span>
-                      <span className="ml-1.5 text-sdc-gray-600">{j.jobName}</span>
-                    </td>
-                    <td className="px-2 py-1.5 whitespace-nowrap text-sdc-yellow-text">{j.status ?? "—"}</td>
-                    <td className="px-2 py-1.5 text-sdc-gray-600">
-                      {j.sections.map((s) => `${s.section} ${fmtHours(s.hours)}`).join(" · ")}
-                    </td>
-                    <td className="px-2 py-1.5 text-right font-semibold tabular-nums text-sdc-navy">{fmtHours(j.hours)}</td>
-                  </tr>
-                ))}
+                {offGridView === "job"
+                  ? offGridJobs.map((j) => (
+                      <tr key={j.jobId} className="border-t border-sdc-border-soft align-top">
+                        <td className="px-2 py-1.5">
+                          <span className="font-mono font-semibold text-sdc-blue-dark">{j.jobId}</span>
+                          <span className="ml-1.5 text-sdc-gray-600">{j.jobName}</span>
+                        </td>
+                        <td className="px-2 py-1.5 whitespace-nowrap text-sdc-yellow-text">{j.status ?? "—"}</td>
+                        {/* One section per LINE, named. It used to be a single
+                            interpunct-joined string ("10-313 71 · 10-211 37 · …"),
+                            which is unreadable past two sections and gave the codes no
+                            names at all. */}
+                        <td className="px-2 py-1.5 text-sdc-gray-600">
+                          {j.sections.map((s) => (
+                            <span key={s.section} className="block whitespace-nowrap">
+                              <span className="font-mono">{s.section}</span>
+                              {sectionName(s.section) ? ` ${sectionName(s.section)}` : ""}
+                              <span className="ml-1 font-semibold tabular-nums text-sdc-navy">{fmtHours(s.hours)}</span>
+                            </span>
+                          ))}
+                        </td>
+                        <td className="px-2 py-1.5 text-right font-semibold tabular-nums text-sdc-navy">{fmtHours(j.hours)}</td>
+                      </tr>
+                    ))
+                  : offGridSections.map((s) => (
+                      <tr key={s.section} className="border-t border-sdc-border-soft align-top">
+                        <td className="px-2 py-1.5 whitespace-nowrap">
+                          <span className="font-mono font-semibold text-sdc-blue-dark">{s.section}</span>
+                          {s.name && <span className="ml-1.5 text-sdc-gray-600">{s.name}</span>}
+                        </td>
+                        <td className="px-2 py-1.5 font-mono text-sdc-gray-600">{s.jobIds.join(", ")}</td>
+                        <td className="px-2 py-1.5 text-right font-semibold tabular-nums text-sdc-navy">{fmtHours(s.hours)}</td>
+                      </tr>
+                    ))}
               </tbody>
               <tfoot>
                 <tr className="border-t-2 border-sdc-navy bg-sdc-gray-50 font-semibold">
-                  <td className="px-2 py-1.5" colSpan={3}>
+                  <td className="px-2 py-1.5" colSpan={offGridView === "job" ? 3 : 2}>
                     Total
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums text-sdc-navy">{fmtHours(offGridTotal)}</td>
@@ -379,7 +445,7 @@ export function EtcMonthKpiCards({
           </p>
         ) : unattributedError ? (
           <p className="rounded-xl border border-sdc-red-border bg-sdc-red-bg p-4 text-xs font-medium text-sdc-red-text shadow-sm">
-            Could not load the unattributed detail — {unattributedError}
+            Could not load the undefined-errors detail — {unattributedError}
           </p>
         ) : (
           <HoursDetailPanel
@@ -394,7 +460,9 @@ export function EtcMonthKpiCards({
                   )}. Refresh Data to bring the stored figure up to date.`
                 : "These punches reach no figure on this page. Correct the job number in Paylocity, then Refresh Data."
             }
-            title={`Unattributed hours — ${month}`}
+            // Matches the card that opened it — a drill panel titled with the old
+            // name would read as a different report.
+            title={`Undefined errors — ${month}`}
             onClose={() => setDrill(null)}
           />
         )

@@ -20,6 +20,15 @@
       "runtimeArgs": ["run", "dev:preview2"],
       "port": 3010,
       "autoPort": true
+    },
+    {
+      "name": "sdc-etc-planner-verify",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set AUTH_URL=http://localhost:3021&& set NEXT_DIST_DIR=.next-verify&& npx next dev -p 3021"
+      ],
+      "port": 3021
     }
   ]
 }

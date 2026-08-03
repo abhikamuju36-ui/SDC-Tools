@@ -3,7 +3,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { calcHoursLeft, suggestNewEtc, isMonthLocked, round2, nextMonth, isValidMonth, isSafeForLiveEtcSync, latestPriorEtcByKey } from "@/lib/etc";
+import { calcHoursLeft, suggestNewEtc, isMonthLocked, round2, nextMonth, isValidMonth, isSafeForLiveEtcSync, latestPriorEtcByKey, isNewEtcClearable, type NewEtcCellState } from "@/lib/etc";
 import { etcActiveJobFilter } from "@/lib/job-filters";
 import { syncActualHours, syncHoursWorked, syncPartsCost } from "@/lib/sync-powerbi";
 import { fetchJobHoursRowsWithIssues } from "@/lib/job-hours-source";
@@ -462,12 +462,18 @@ export async function submitMonth(month: string, formData: FormData) {
         throw new Error(`Invalid New ETC override "${rawOverride}" for entry ${entry.id} (section ${entry.section}).`);
       }
       override = round2(overrideVal);
-    } else if (isHistorical) {
+    } else if (isHistorical && entry.newEtcClearedAt == null) {
       // Historical correction pass: an untouched New ETC cell renders EMPTY
       // (the original submit consumed its draft), so "no override" here means
       // "keep the manager's confirmed value" — NOT "recompute the suggestion",
       // which would silently erase every manager override in the month on a
       // no-changes resubmit. To change a historical cell, type the new value.
+      //
+      // UNLESS Clear ETC blanked it deliberately. An empty box means two different
+      // things on a historical month — "I didn't touch this" and "I cleared this on
+      // purpose" — and newEtcClearedAt is what tells them apart. Without this check
+      // the restore below would hand the old figure straight back and the clear
+      // would survive only until the next submit.
       override = round2(Number(entry.newEtc));
     }
 
@@ -498,6 +504,10 @@ export async function submitMonth(month: string, formData: FormData) {
             hoursLeftCalc: round2(calcHoursLeft(priorEtc, u.hoursWorked)),
             newEtc,
             newEtcDraft: null, // draft is consumed by the submission
+            // The "deliberately blank" marker is spent too: this cell now HAS a
+            // confirmed value, so on a later reopen it should seed from that value
+            // like any other, not stay blank from a clear two passes ago.
+            newEtcClearedAt: null,
             needsReview: false,
             submittedAt: new Date(),
             ...(userId ? { enteredById: Number(userId) } : {}),
@@ -555,12 +565,18 @@ export async function submitMonth(month: string, formData: FormData) {
 // unlock cookie isn't already set, `newEtcSavePassword` must match, and a
 // correct one sets the cookie so later clicks this session skip straight to
 // saving. A wrong password saves nothing at all, not even the other fields.
-export async function saveAllNewEtcDrafts(month: string, formData: FormData): Promise<{ ok: boolean }> {
+// `saved` is how many rows the click actually wrote, so the caller can SAY so.
+// Reported 2026-08-03 as "Save isn't working": it was working — the audit log had
+// 15 successful batches that afternoon — but nothing on screen acknowledged a
+// save. There is deliberately no revalidatePath here (see the note at the end),
+// so a save that wrote 11 drafts looked exactly like one that wrote none, and
+// like one that failed. A count makes the three distinguishable.
+export async function saveAllNewEtcDrafts(month: string, formData: FormData): Promise<{ ok: boolean; saved: number }> {
   if (!(await isEtcEditUnlocked())) {
     const attempt = String(formData.get("newEtcSavePassword") ?? "");
     if (!(await trySetEtcEditUnlocked(attempt))) {
       revalidatePath("/etc");
-      return { ok: false };
+      return { ok: false, saved: 0 };
     }
   }
 
@@ -591,7 +607,20 @@ export async function saveAllNewEtcDrafts(month: string, formData: FormData): Pr
     if (nextDraft === currentDraft) continue; // unchanged — skip the write and the audit noise
 
     changes.push({ entryId: entry.id, from: currentDraft, to: nextDraft });
-    writes.push(prisma.etcEntry.update({ where: { id: entry.id }, data: { newEtcDraft: nextDraft } }));
+    writes.push(
+      prisma.etcEntry.update({
+        where: { id: entry.id },
+        data: {
+          newEtcDraft: nextDraft,
+          // Entering a value un-clears a cell Clear ETC had blanked: the manager
+          // has now answered it, so the "deliberately blank" marker is spent. Only
+          // on a real value — saving an empty box over an already-empty cleared
+          // cell is a no-op above and must leave the marker in place, or the cell
+          // would seed straight back from its confirmed value.
+          ...(nextDraft !== null ? { newEtcClearedAt: null } : {}),
+        },
+      }),
+    );
   }
 
   // ── Cells that have no row yet ─────────────────────────────────────────────
@@ -655,7 +684,110 @@ export async function saveAllNewEtcDrafts(month: string, formData: FormData): Pr
   // The paths that DO change what the server would render still revalidate:
   // submitMonth, startMonth, reopenMonth, clearMonth, the sync steps, and the
   // wrong-password branch above.
-  return { ok: true };
+  return { ok: true, saved: writes.length };
+}
+
+// ── Clear ETC ───────────────────────────────────────────────────────────────
+//
+// Empties every YELLOW New ETC cell in the month — the cells still waiting on a
+// manager's judgement — and leaves them yellow so the grid reads as a checklist of
+// what to re-enter.
+//
+// Which cells that is, exactly: yellow means hours were worked this month and no
+// decision has been made. On a first-pass month those cells are already empty, so
+// this does nothing. On a REOPENED month they arrive carrying the figure they were
+// submitted with, and that is what this removes — 142 of July 2026's cells at the
+// time of writing. It is scoped by lib/etc.ts's isNewEtcClearable, the same rule
+// that paints the cell, so it can never clear something the manager can't see as
+// yellow, or miss something they can.
+//
+// Never touches a DECIDED cell (a value somebody typed) and never touches confirmed
+// history: `needsReview` false rows are skipped outright and a fully-submitted month
+// is refused. Reopen it first if that is really the intent.
+//
+// ── Why it needs newEtcClearedAt ────────────────────────────────────────────
+// Setting newEtcDraft to null is NOT enough. A reopened cell seeds from `newEtc`
+// whenever the draft is null, so the cleared cell would come straight back with
+// last submission's figure and the button would look broken. The column records
+// "deliberately blank" as distinct from "no draft".
+//
+// Gated by the confirmation phrase EVERY time, with no session cookie — unlike Save.
+// Erasing 142 entered values in one click is closer to Reopen Month than to a save,
+// so it should cost a deliberate keystroke each time. The cleared values are written
+// to the audit log so any single figure can be looked up and restored.
+export async function clearYellowNewEtc(
+  month: string,
+  formData: FormData,
+): Promise<{ ok: boolean; cleared: number; reason?: "password" | "locked" | "month" }> {
+  if (!isValidMonth(month)) return { ok: false, cleared: 0, reason: "month" };
+
+  const attempt = String(formData.get("clearEtcPassword") ?? "");
+  if (!safeEqual(attempt, SUBMIT_LOCK_PASSWORD)) {
+    return { ok: false, cleared: 0, reason: "password" };
+  }
+
+  const entries = await prisma.etcEntry.findMany({
+    where: { month },
+    select: {
+      id: true, jobId: true, section: true, needsReview: true,
+      newEtcDraft: true, newEtc: true, priorEtc: true, hoursWorked: true,
+      submittedAt: true, newEtcClearedAt: true,
+    },
+  });
+  if (entries.length === 0) return { ok: true, cleared: 0 };
+  if (isMonthLocked(entries)) return { ok: false, cleared: 0, reason: "locked" };
+
+  // Same definition the grid uses: on a historical month every cell reads as
+  // confirmed even without its own submittedAt.
+  const latest = await prisma.etcEntry.findFirst({ orderBy: { month: "desc" }, select: { month: true } });
+  const isHistorical = latest != null && month < latest.month;
+
+  const targets: { entryId: number; jobId: number; section: string; draft: number | null; confirmed: number | null }[] = [];
+  for (const e of entries) {
+    if (!e.needsReview) continue; // confirmed history — never touched
+    const state: NewEtcCellState = {
+      priorEtc: Number(e.priorEtc),
+      hoursWorked: round2(Number(e.hoursWorked)),
+      draft: e.newEtcDraft != null ? Number(e.newEtcDraft) : null,
+      confirmed: isHistorical || e.submittedAt != null ? round2(Number(e.newEtc)) : null,
+      cleared: e.newEtcClearedAt != null,
+      // Parts Cost New ETC always shows a figure, so it is never awaiting a decision
+      // and this action never touches it (2026-08-03, by request — an earlier pass
+      // did clear it, and blanked all 39 of July's cells). Same two flags the cell
+      // passes, so what this writes and what the manager sees as yellow are one set.
+      precision: e.section === PARTS_COST_SECTION ? "exact" : "whole",
+      reopenAsksAgain: e.section !== PARTS_COST_SECTION,
+      locked: false, // isMonthLocked was refused above
+      // Cannot change the answer: monthComplete only gates the zero-hours
+      // carry-forward seed, and a zero-hours cell is decided by definition, so it
+      // is never clearable either way.
+      monthComplete: true,
+    };
+    if (!isNewEtcClearable(state)) continue;
+    targets.push({ entryId: e.id, jobId: e.jobId, section: e.section, draft: state.draft, confirmed: state.confirmed });
+  }
+
+  if (targets.length === 0) return { ok: true, cleared: 0 };
+
+  // One statement rather than N updates in a transaction: every target gets the
+  // same two fields, and 142 sequential round-trips is what made other bulk paths
+  // on this page feel slow.
+  await prisma.etcEntry.updateMany({
+    where: { id: { in: targets.map((t) => t.entryId) } },
+    data: { newEtcDraft: null, newEtcClearedAt: new Date() },
+  });
+
+  await logAudit({
+    action: "etc.clearYellowNewEtc",
+    entityType: "EtcMonth",
+    entityId: month,
+    summary: `Cleared ${targets.length} unconfirmed New ETC value(s) for ${month}`,
+    // The removed figures, so a manager can look up and restore any one of them.
+    metadata: { cleared: targets },
+  });
+
+  revalidatePath("/etc");
+  return { ok: true, cleared: targets.length };
 }
 
 // Re-opens a locked (fully-submitted) month for editing.

@@ -1,6 +1,5 @@
 import Sidebar from "@/components/Sidebar";
 import ExcelCellFocus from "@/components/ExcelCellFocus";
-import RowSelect from "@/components/RowSelect";
 import ColumnResize from "@/components/ColumnResize";
 import { ToastProvider } from "@/components/ui/Toast";
 
@@ -29,8 +28,10 @@ export default function AppShell({
       <main id="main-content" className="min-w-0 flex-1 bg-background">
         <ToastProvider>{children}</ToastProvider>
       </main>
+      {/* RowSelect (click-to-highlight-a-whole-row) removed 2026-08-03 by request —
+          see the note where its CSS used to live in globals.css. Hover highlighting
+          and Excel-style cell focus are unaffected. */}
       <ExcelCellFocus />
-      <RowSelect />
       <ColumnResize />
     </div>
   );

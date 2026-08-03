@@ -370,13 +370,13 @@ td:hover > input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
 }
 
 /* Row-follow highlight: the line under the pointer tints as you move, with no
- * click needed. Clicking to pin a row (RowSelect, below) still works and still
- * survives scrolling — but reading across a wide grid shouldn't cost a click
- * you then have to undo, which is what it did before this.
+ * click needed. This is now the ONLY row highlight — the click-to-pin selection
+ * it used to coexist with was removed on 2026-08-03 (see the note below), so
+ * reading across a wide grid costs nothing and leaves nothing to undo.
  *
- * Same inset-box-shadow mechanism as the pinned state so it composes over a
- * cell's own background rather than replacing it. Excluded on the pinned row
- * itself, which would otherwise stack both.
+ * An inset box-shadow rather than background-color, so it composes over a cell's
+ * own background instead of replacing it — the ETC grid's cells nearly all carry
+ * an opaque fill of their own.
  *
  * Strengthened 2026-08-02 (0.05 -> 0.12): at 5% the wash was invisible on the
  * ETC grid, which is the grid that needs it most — nearly every cell there
@@ -389,37 +389,24 @@ td:hover > input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
  * appearing on hover would add 2px to the row's height and make the whole
  * table jump as the pointer moves down it. Listed BEFORE the wash because the
  * first shadow in the list paints on top. */
-tbody tr:hover:not(.row-selected) > td {
+tbody tr:hover > td {
   box-shadow:
     inset 0 1px 0 rgba(21, 116, 196, 0.45),
     inset 0 -1px 0 rgba(21, 116, 196, 0.45),
     inset 0 0 0 9999px rgba(21, 116, 196, 0.12);
 }
 
-/* Excel-style row selection: clicking a row's "#" cell (RowSelect.tsx)
- * toggles this class on the <tr>, highlighting the whole row until another
- * row is selected or the same one is clicked again. `tr.row-selected > td`
- * is a compound selector with higher specificity than any single Tailwind
- * utility class (e.g. a cell's own bg-* color), so it reliably overlays every
- * cell without needing !important — same mechanism as the table's other
- * cross-cutting rules (borders, sticky-column fills).
- * An inset box-shadow, not background-color, does the tinting: box-shadow
- * paints on top of whatever background-color/image the cell already has but
- * (per the CSS painting order) still underneath its text — a flat
- * background-color override was replacing strong cells like "Prior ETC"
- * (dark blue bg + white text) with the pale selection tint, leaving their
- * white text unreadably faint. The translucent wash keeps every cell's own
- * color legible while still reading as clearly selected. */
-tr.row-selected > td {
-  box-shadow: inset 0 0 0 9999px rgba(37, 99, 235, 0.24);
-  border-top: 2px solid #2b2b2b;
-  border-bottom: 2px solid #2b2b2b;
-}
-tr.row-selected > td:first-child {
-  background-color: var(--sdc-green);
-  color: #fff;
-  font-weight: 700;
-}
+/* The Excel-style CLICK-to-select row highlight was removed app-wide on
+ * 2026-08-03, by request: `tr.row-selected` (a blue wash, 2px dark rules top and
+ * bottom, and a green "#" gutter cell) plus the RowSelect.tsx listener that
+ * applied it. On a grid where clicking is how you edit a cell, a persistent
+ * whole-row highlight followed every edit around and competed with the colours
+ * that carry meaning here — the yellow "needs attention" New ETC cells and the
+ * red/green Diff cells.
+ *
+ * The HOVER highlight above is deliberately kept: it tracks the pointer, so it
+ * costs nothing to dismiss and is what makes a 40-column row readable across.
+ * Its `:not(.row-selected)` guard went with the selection rule. */
 
 /* The Monthly ETC grid's Total row.
  *
@@ -433,7 +420,7 @@ tr.row-selected > td:first-child {
  * Standard columns), each with its own bg-* utility, and changing them one at a
  * time is how one gets missed. `tfoot tr.etc-total-row > td` is a compound
  * selector, so it outranks any single utility class without !important — the
- * same mechanism the row-selected and hover rules above rely on.
+ * same mechanism the hover rule above relies on.
  *
  * Deliberately NOT --sdc-navy: that is the phase banner's colour at the top of
  * the same table, and reusing it would make the footer read as another header.
@@ -449,21 +436,17 @@ tfoot tr.etc-total-row > td {
 tfoot tr.etc-total-row > td.sticky {
   background-color: #1e3a5f;
 }
-/* The Diff cells keep their meaning as TEXT, since the fill is now the row's.
- * Applied by the cells themselves (diffTextOnDark in etc/page.tsx).
+/* The footer Diff cells keep their meaning as TEXT, since the fill is now the
+ * row's — but the two flat classes that used to do it (.etc-total-diff-under /
+ * -over, #b6e08a and #ffb0ac) were removed on 2026-08-03. The colour is a
+ * magnitude GRADIENT now, so it has to be a computed value, and Tailwind cannot
+ * generate one: see diffTotalStyle in components/ui/etc-diff-colors.ts.
  *
- * Written as the full descendant chain, NOT a bare `.etc-total-diff-over`: the
- * row rule above is `tfoot tr.etc-total-row > td` (0,2,2) and would otherwise
- * out-specify a lone class (0,1,0) and paint these the same pale blue as every
- * other footer cell — silently losing the red/green the row exists to show. */
-tfoot tr.etc-total-row > td.etc-total-diff-under {
-  color: #b6e08a; /* under Quoted — the body's #9FCE62, lifted to carry on dark */
-  font-weight: 700;
-}
-tfoot tr.etc-total-row > td.etc-total-diff-over {
-  color: #ffb0ac; /* over — the body's #EEADAC, likewise */
-  font-weight: 700;
-}
+ * The gradient is applied as an inline style, which incidentally removes the
+ * specificity trap those rules existed to dodge — they had to be written as the
+ * full descendant chain because the row rule above (0-2-2) out-specifies a lone
+ * class (0-1-0), and a bare class would have been painted over in the same pale
+ * blue as every other footer cell. An inline style beats every selector. */
 
 /* Bounded table wrappers (data grids with sticky headers/columns) get their
  * own scrollbars now instead of the whole page scrolling. Unstyled, these
