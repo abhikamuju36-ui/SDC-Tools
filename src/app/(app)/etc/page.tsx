@@ -1239,30 +1239,25 @@ export default async function MonthlyEtcPage({
               <tbody>
                 {visibleJobs.map((job, jobIndex) => {
                   const entryByCode = new Map(job.etcEntries.map((e) => [e.section, e]));
-                  // ── The two row highlights ────────────────────────────────
+                  // ── The two row-category highlights ───────────────────────
                   //
-                  // The two colours were SWAPPED on 2026-08-03, by request: started
-                  // this month is now the yellow and active T&M is now the lavender.
-                  // Nothing else about either rule changed, and no legend or second
-                  // grid carries these shades, so the swap is these four class names.
+                  // Both mark a property of the JOB, so as of 2026-08-03 they colour ONLY
+                  // the three frozen identity columns (#, Job ID, Job Name) — see
+                  // zebraSticky below. They were swapped that same day, by request:
+                  // started-this-month is the yellow, active T&M the lavender.
                   //
-                  // Jobs that STARTED this month, called out across the whole row.
-                  // These are the rows whose Prior ETC came from the quote rather
-                  // than from a carried balance (see the startsThisMonth rule in
-                  // seedMonth), so "no history, opening at quote" is worth being
-                  // able to see rather than infer from a Start Date column that
-                  // isn't on this grid.
+                  // Jobs that STARTED this month are the rows whose Prior ETC came from
+                  // the quote rather than from a carried balance (see the startsThisMonth
+                  // rule in seedMonth), so "no history, opening at quote" is worth being
+                  // able to see rather than infer from a Start Date column that isn't on
+                  // this grid.
                   //
-                  // It wears the deeper #fdf0c2 yellow rather than anything nearer
-                  // the New ETC cell's #FAFAC4: that one means "this cell needs a
-                  // decision", and two near-identical shades meaning different things
-                  // is how a legend stops being read at all. The gap between them is
-                  // the point, whichever category is wearing it.
-                  //
-                  // Applied through the zebra classes rather than on the <tr>: the
-                  // hover wash and every coloured cell paint over a row background,
-                  // so a <tr> tint would only ever show on the few plain cells. Same
-                  // approach the Projects grid uses for its SDC-customer rows.
+                  // It wears the deeper #fbe79c yellow rather than anything nearer the
+                  // New ETC cell's #FAFAC4: that one means "this cell needs a decision",
+                  // and two near-identical shades meaning different things is how a
+                  // legend stops being read at all. Confining the category tints to the
+                  // identity columns removes the collision entirely — inside the grid,
+                  // yellow now only ever means "decide this".
                   const startsThisMonth =
                     job.startDate != null &&
                     `${job.startDate.getUTCFullYear()}-${String(job.startDate.getUTCMonth() + 1).padStart(2, "0")}` === month;
@@ -1276,17 +1271,23 @@ export default async function MonthlyEtcPage({
                   // "needs a decision", red/green are over/under — so it can't be
                   // misread as a status.
                   const tmRow = isActiveTm(job);
-                  const zebra = tmRow
-                    ? "bg-[#efe7fb]"
-                    : startsThisMonth
-                      ? "bg-[#fdf0c2]"
-                      : jobIndex % 2 === 1
-                        ? "bg-sdc-gray-50/60"
-                        : "";
-                  // Sticky columns need a fully opaque background — the translucent
-                  // zebra tint above lets scrolled-under columns bleed through them.
-                  // These two are the darker, opaque counterparts of the pair above
-                  // and swap with them.
+                  // The <tr> carries ONLY the plain alternating stripe. The category
+                  // colours were removed from it on 2026-08-03, by request: they now
+                  // mark just the three frozen identity columns (#, Job ID, Job Name)
+                  // rather than washing across the whole row.
+                  //
+                  // Restricting it is the right call — those tints say something about
+                  // the JOB, not about any individual figure, and every data column
+                  // already uses colour for its own meaning (blue Prior ETC, yellow
+                  // "needs a decision", the red/green Diff gradient). A row-wide wash
+                  // sat underneath all of that and showed through wherever a cell had no
+                  // fill of its own, so the same yellow meant "started this month" in one
+                  // column and "decide this" in the next.
+                  const zebra = jobIndex % 2 === 1 ? "bg-sdc-gray-50/60" : "";
+                  // The frozen columns, where the category colour now lives exclusively.
+                  // They need a fully OPAQUE background regardless: they sit above the
+                  // scrolling body, and a translucent fill lets the columns passing
+                  // underneath bleed through them.
                   const zebraSticky = tmRow
                     ? "bg-[#e5d9f7]"
                     : startsThisMonth
