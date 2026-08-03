@@ -37,7 +37,24 @@ export const DEFAULT_VISIBLE_STATUSES: JobStatus[] = ["Active", "HeadStart"];
 // The one job universe the Monthly ETC month operates on — the grid, seeding,
 // pruning, and submission must all use this same filter, or entries get seeded
 // for jobs the grid never renders and the month can never be submitted.
-export const etcActiveJobFilter = { status: "Active", completeDate: null, ...validJobTypeFilter };
+// `billable: true` added 2026-08-03, by request: an Active NON-billable job must
+// never appear on the Monthly ETC grid. Internal work (SDC Showroom, Non-Billable,
+// Team Initiatives, Spare Parts, StateLogic…) is not planned job-by-job, so it was
+// only ever noise on a sheet about billable estimates — and it fed the Engineering
+// and Shop totals the team signs off.
+//
+// The stored flag is enough on its own: isSdcCustomer forces billable=false on
+// save, and no SDC-customer job is currently stored as billable (checked
+// 2026-08-03), so there is no second rule to keep in step here.
+//
+// This is the ONE universe the month operates on, so excluding them here excludes
+// them from seeding, pruning and submission too — which is the point. Two
+// consequences worth knowing: pruneStaleEntries will delete their existing
+// unsubmitted rows on the next Refresh (215.5 July hours across 1083/4000/6000/
+// 7000), and those hours then surface on the "Hours off the grid" KPI card, which
+// is exactly what that card is for. The punch rows in JobHoursDetail are untouched,
+// so the Projects grid and Job Hour Details still count them.
+export const etcActiveJobFilter = { status: "Active", completeDate: null, billable: true, ...validJobTypeFilter };
 
 // SDC's own internal projects are never billable to an outside customer — this
 // overrides whatever the Billable dropdown is set to, both when saving and for
