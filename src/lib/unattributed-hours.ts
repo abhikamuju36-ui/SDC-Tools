@@ -4,7 +4,7 @@ import { SECTIONS } from "@/lib/sections";
 import { fetchJobHoursRowsWithIssues } from "@/lib/job-hours-source";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
 
-// Punch-level detail behind the "Undefined errors" KPI card (labelled
+// Punch-level detail behind the "Undefined hours" KPI card (labelled
 // "Unattributed hours" until 2026-08-03; the identifiers here still say
 // `unattributed`, which describes the data) — the time booked
 // to something that isn't a job number ("Not Defined", "2026 SERVICE") and so

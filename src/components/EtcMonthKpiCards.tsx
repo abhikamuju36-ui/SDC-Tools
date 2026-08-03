@@ -276,18 +276,21 @@ export function EtcMonthKpiCards({
             the banner above the grid, because this is the one figure here that
             is MISSING from every other figure — it belongs beside the totals it
             is absent from, not only in a notice people learn to scroll past.
-            Shown even at zero: "0 undefined errors" is a daily reassurance that
+            Shown even at zero: "0 undefined hours" is a daily reassurance that
             the import is clean, where an absent card says nothing either way.
 
-            Labelled "Undefined errors" (2026-08-03, by request) rather than the
-            "Unattributed hours" it read before: the punches it counts are booked
-            to the literal job number "NOT DEFINED", which is what the banner above
-            the grid already calls them, so the card and the banner now use one
-            word for one thing. The internals still say `unattributed` throughout
-            (types, the store, lib/unattributed-hours.ts) — that describes the data
-            accurately and renaming it would touch six files for no visible gain. */}
+            Labelled "Undefined hours" (2026-08-03, by request). It read
+            "Unattributed hours" until earlier the same day, then "Undefined errors"
+            briefly; this is the settled name. The punches it counts are booked to the
+            literal job number "NOT DEFINED", which is what the banner above the grid
+            already calls them, so the card and the banner use one word for one thing —
+            and "hours" is what the figure actually is, which "errors" was not.
+
+            The internals still say `unattributed` throughout (types, the store,
+            lib/unattributed-hours.ts) — that describes the data accurately and renaming
+            it would touch six files for no visible gain. */}
         <Card
-          label="Undefined errors"
+          label="Undefined hours"
           value={fmtHours(unattributedTotal)}
           tone={unattributedTotal > 0 ? "warn" : undefined}
           hint={
@@ -308,7 +311,7 @@ export function EtcMonthKpiCards({
             Red rather than amber: undefined-error hours sit there until someone
             fixes Paylocity, but these rows are DELETED by the next Refresh Data or
             Submit ETC, so the window to act on them closes.
-            Hidden at zero, unlike Undefined errors: "0 undefined errors" is a daily
+            Hidden at zero, unlike Undefined hours: "0 undefined hours" is a daily
             reassurance the import is clean, whereas a permanent "0 off-grid" card
             would just be a column of nothing on the normal month. */}
         {offGridJobs.length > 0 && (
@@ -467,7 +470,7 @@ export function EtcMonthKpiCards({
           </p>
         ) : unattributedError ? (
           <p className="rounded-xl border border-sdc-red-border bg-sdc-red-bg p-4 text-xs font-medium text-sdc-red-text shadow-sm">
-            Could not load the undefined-errors detail — {unattributedError}
+            Could not load the undefined-hours detail — {unattributedError}
           </p>
         ) : (
           <HoursDetailPanel
@@ -484,7 +487,7 @@ export function EtcMonthKpiCards({
             }
             // Matches the card that opened it — a drill panel titled with the old
             // name would read as a different report.
-            title={`Undefined errors — ${month}`}
+            title={`Undefined hours — ${month}`}
             onClose={() => setDrill(null)}
           />
         )
