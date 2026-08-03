@@ -72,29 +72,59 @@ test("the band scales with the ceiling, not a fixed hour count", () => {
   assert.ok(diffCellStyle(20, H).backgroundColor);
 });
 
-test("a bigger positive variance is a stronger green — monotonic all the way up", () => {
-  // All past the 8h dead band.
-  const steps = [9, 12, 20, 40, 60, 80].map((v) => luminance(diffCellStyle(v, H).backgroundColor));
-  for (let i = 1; i < steps.length; i++) {
-    // Stronger green = darker here, so luminance must fall.
-    assert.ok(steps[i] < steps[i - 1], `not monotonic at step ${i}: ${steps[i - 1]} -> ${steps[i]}`);
+// The four bands, on an 80h ceiling: none <=8h, light 8-32h, medium 32-56h, dark 56h+.
+
+test("colour is CONSTANT inside a band — that is what makes tiers readable", () => {
+  // A continuous ramp gave every cell a slightly different shade, which cannot be
+  // ranked by eye. Four steps can.
+  for (const band of [
+    [9, 15, 24, 32], // light
+    [33, 40, 50, 56], // medium
+    [57, 70, 80, 200], // darkest, incl. past the ceiling
+  ]) {
+    const shades = band.map((v) => diffCellStyle(v, H).backgroundColor);
+    assert.equal(new Set(shades).size, 1, `band ${band.join("/")} should be one shade, got ${[...new Set(shades)].join(" ")}`);
   }
 });
 
-test("a bigger negative variance is a stronger red — monotonic all the way down", () => {
-  const steps = [-9, -12, -20, -40, -60, -80].map((v) => luminance(diffCellStyle(v, H).backgroundColor));
-  for (let i = 1; i < steps.length; i++) {
-    assert.ok(steps[i] < steps[i - 1], `not monotonic at step ${i}: ${steps[i - 1]} -> ${steps[i]}`);
-  }
+test("each band is strictly stronger than the one below it", () => {
+  const light = luminance(diffCellStyle(20, H).backgroundColor);
+  const medium = luminance(diffCellStyle(45, H).backgroundColor);
+  const dark = luminance(diffCellStyle(70, H).backgroundColor);
+  // Stronger = darker for a body background.
+  assert.ok(medium < light, `medium (${medium}) should be darker than light (${light})`);
+  assert.ok(dark < medium, `dark (${dark}) should be darker than medium (${medium})`);
 });
 
-test("the gradient still uses its full range after the band is removed", () => {
-  // Rescaled across (band, ceiling] rather than clipped: the first coloured value is the
-  // palest tint and the ceiling is the strongest. Clipping would waste the top 10%.
-  const justPast = rgb(diffCellStyle(8.01, H).backgroundColor);
-  const atCeiling = rgb(diffCellStyle(80, H).backgroundColor);
-  assert.ok(luminance(diffCellStyle(8.01, H).backgroundColor) > 200, `first tint should be near-white, got rgb(${justPast})`);
-  assert.ok(luminance(diffCellStyle(80, H).backgroundColor) < 130, `ceiling should be strong, got rgb(${atCeiling})`);
+test("the same three tiers apply to red", () => {
+  const light = luminance(diffCellStyle(-20, H).backgroundColor);
+  const medium = luminance(diffCellStyle(-45, H).backgroundColor);
+  const dark = luminance(diffCellStyle(-70, H).backgroundColor);
+  assert.ok(medium < light);
+  assert.ok(dark < medium);
+});
+
+test("band boundaries are inclusive at the top — a value on a line stays cooler", () => {
+  // Exactly 10% is uncoloured; exactly 40% is still light; exactly 70% is still medium.
+  assert.deepEqual(diffCellStyle(8, H), {}, "8h (10%) should be uncoloured");
+  assert.notDeepEqual(diffCellStyle(8.01, H), {}, "just past 10% should be light");
+  assert.equal(diffCellStyle(32, H).backgroundColor, diffCellStyle(20, H).backgroundColor, "32h (40%) is still light");
+  assert.notEqual(diffCellStyle(32.01, H).backgroundColor, diffCellStyle(20, H).backgroundColor, "just past 40% is medium");
+  assert.equal(diffCellStyle(56, H).backgroundColor, diffCellStyle(45, H).backgroundColor, "56h (70%) is still medium");
+  assert.notEqual(diffCellStyle(56.01, H).backgroundColor, diffCellStyle(45, H).backgroundColor, "just past 70% is dark");
+});
+
+test("only the darkest band flips the text to white", () => {
+  // Makes the rule legible in itself: white text means top band.
+  assert.equal(diffCellStyle(20, H).color, undefined, "light keeps the cell's own text");
+  assert.equal(diffCellStyle(45, H).color, undefined, "medium keeps the cell's own text");
+  assert.equal(diffCellStyle(70, H).color, "#ffffff", "dark needs white text");
+  assert.equal(diffCellStyle(-70, H).color, "#ffffff");
+});
+
+test("the light band is a genuine tint, the dark band genuinely dark", () => {
+  assert.ok(luminance(diffCellStyle(20, H).backgroundColor) > 195, "light should read as a pale tint");
+  assert.ok(luminance(diffCellStyle(70, H).backgroundColor) < 135, "dark should read as strong");
 });
 
 test("both sides ramp together, with red allowed to read hotter", () => {
@@ -177,21 +207,30 @@ test("footer colours text, never a background", () => {
   assert.ok(diffTotalStyle(50, DIFF_CEILING.hoursTotal).color);
 });
 
-test("footer green intensifies monotonically as the variance grows", () => {
-  // All past the 40h dead band on a 400h ceiling.
-  const steps = [50, 100, 200, 400].map((v) => chroma(diffTotalStyle(v, DIFF_CEILING.hoursTotal).color));
+// The footer uses the same four bands. On a 400h ceiling: none <=40h, light 40-160h,
+// medium 160-280h, dark 280h+. One value per band, since colour is flat inside one.
+const T = DIFF_CEILING.hoursTotal;
+
+test("footer green steps up a tier at a time", () => {
+  const steps = [60, 200, 350].map((v) => chroma(diffTotalStyle(v, T).color));
   for (let i = 1; i < steps.length; i++) {
     assert.ok(steps[i] > steps[i - 1], `footer green should intensify: ${steps[i - 1]} -> ${steps[i]}`);
   }
 });
 
-test("footer red intensifies monotonically too, and both sides come out bold", () => {
-  const steps = [-50, -100, -200, -400].map((v) => chroma(diffTotalStyle(v, DIFF_CEILING.hoursTotal).color));
+test("footer red steps up a tier at a time too, and both sides come out bold", () => {
+  const steps = [-60, -200, -350].map((v) => chroma(diffTotalStyle(v, T).color));
   for (let i = 1; i < steps.length; i++) {
     assert.ok(steps[i] > steps[i - 1], `footer red should intensify: ${steps[i - 1]} -> ${steps[i]}`);
   }
-  assert.equal(diffTotalStyle(50, DIFF_CEILING.hoursTotal).fontWeight, 700);
-  assert.equal(diffTotalStyle(-50, DIFF_CEILING.hoursTotal).fontWeight, 700);
+  assert.equal(diffTotalStyle(60, T).fontWeight, 700);
+  assert.equal(diffTotalStyle(-60, T).fontWeight, 700);
+});
+
+test("footer colour is flat inside a band, like the body", () => {
+  assert.equal(diffTotalStyle(60, T).color, diffTotalStyle(150, T).color, "both light");
+  assert.equal(diffTotalStyle(200, T).color, diffTotalStyle(270, T).color, "both medium");
+  assert.deepEqual(diffTotalStyle(30, T), {}, "30h of 400h is inside the uncoloured band");
 });
 
 test("footer text stays clear of the row's own fill wherever it IS coloured", () => {
