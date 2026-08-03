@@ -564,6 +564,18 @@ export default async function MonthlyEtcPage({
   // column is a string, so the DB's own sort is lexicographic.
   jobs.sort((a, b) => compareJobIds(a.jobId, b.jobId));
 
+  // Active T&M jobs sink to the BOTTOM, whatever the Job Id order says.
+  //
+  // Time & materials is billed as it is worked, so an ETC on one is a different
+  // kind of number from a fixed-quote estimate — grouping them out of the main
+  // sequence keeps the two from being read as one list. Same device the Projects
+  // grid uses to sink SDC's own jobs.
+  //
+  // Array#sort is stable, so this only moves rows across the T&M boundary and
+  // leaves the Job Id order within each group untouched.
+  const isActiveTm = (j: { status: string | null; type: string | null }) => j.status === "Active" && j.type === "T&M";
+  jobs.sort((a, b) => Number(isActiveTm(a)) - Number(isActiveTm(b)));
+
   // Rows the grid actually renders after the Billable filter. The FULL `jobs`
   // set still drives month status (started/locked/pending) and submission —
   // this filter is a display-only view, so it never changes what a Submit &
@@ -1219,10 +1231,32 @@ export default async function MonthlyEtcPage({
                   const startsThisMonth =
                     job.startDate != null &&
                     `${job.startDate.getUTCFullYear()}-${String(job.startDate.getUTCMonth() + 1).padStart(2, "0")}` === month;
-                  const zebra = startsThisMonth ? "bg-[#efe7fb]" : jobIndex % 2 === 1 ? "bg-sdc-gray-50/60" : "";
+                  // Active T&M, yellow, sorted to the bottom of the grid (see the
+                  // sort above). Wins over the started-this-month lavender: T&M is
+                  // what the row IS, where "started this month" is only where it is
+                  // in its life, and a row can be both.
+                  //
+                  // A deeper yellow than the New ETC cell's #FAFAC4, deliberately —
+                  // that one means "this cell needs a decision", and two shades of
+                  // the same colour meaning different things is how a legend stops
+                  // being read at all.
+                  const tmRow = isActiveTm(job);
+                  const zebra = tmRow
+                    ? "bg-[#fdf0c2]"
+                    : startsThisMonth
+                      ? "bg-[#efe7fb]"
+                      : jobIndex % 2 === 1
+                        ? "bg-sdc-gray-50/60"
+                        : "";
                   // Sticky columns need a fully opaque background — the translucent
                   // zebra tint above lets scrolled-under columns bleed through them.
-                  const zebraSticky = startsThisMonth ? "bg-[#e5d9f7]" : jobIndex % 2 === 1 ? "bg-sdc-gray-50" : "bg-white";
+                  const zebraSticky = tmRow
+                    ? "bg-[#fbe79c]"
+                    : startsThisMonth
+                      ? "bg-[#e5d9f7]"
+                      : jobIndex % 2 === 1
+                        ? "bg-sdc-gray-50"
+                        : "bg-white";
 
                   // "Total (New ETC)" — a pure rollup, confirmed from the real sheet's
                   // formulas (SUM of the Engineering blocks' Prior/Worked/New ETC,
