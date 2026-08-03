@@ -504,43 +504,47 @@ export default async function MonthlyEtcPage({
 
   // Hours recorded against jobs this month's grid does NOT render.
   //
-  // Found 2026-08-02 reconciling against Power BI: job 1163 had 105.82 July
-  // hours sitting in EtcEntry while the grid showed 3,128 instead of 3,234.
-  // The job's status had moved to HeadStart, and etcActiveJobFilter is
-  // status:"Active" — so seeding had created its rows while it was Active, the
-  // hours sync kept filling them in, and the grid then stopped showing it.
+  // Found 2026-08-02 reconciling against Power BI: job 1163 had 105.82 July hours while
+  // the grid showed 3,128 instead of 3,234. Its status had moved to HeadStart, and
+  // etcActiveJobFilter is status:"Active" — so seeding created its rows while it was
+  // Active, the hours sync kept filling them in, and the grid then stopped showing it.
   //
-  // This is not only a display gap. pruneStaleEntries deletes exactly these
-  // rows on the next Refresh Data, and submitMonth counts them as staleIds and
-  // deletes them on submit — so the hours disappear with no record that they
-  // were ever there.
+  // ── Sourced from PUNCHES, not EtcEntry (2026-08-03) ───────────────────────
   //
-  // Stating it rather than silently including or excluding it: whether
-  // HeadStart work belongs in an ETC month is a business call, and quietly
-  // changing which jobs a month contains would move the pools and the
-  // Standard Fees with it. Same treatment the unattributed-hours banner
-  // above already gives its own shortfall.
+  // This used to read EtcEntry, and that was the wrong table: pruneStaleEntries deletes
+  // exactly these rows on the next Refresh Data and submitMonth deletes them as staleIds
+  // on submit, so the figure this card exists to show was erased by the very actions it
+  // was warning about. Asked to stop that happening, and the honest fix is not to keep
+  // the rows — prune has to delete them or a month can never be submitted (seeding,
+  // pruning and submission must all share etcActiveJobFilter) — but to stop depending on
+  // them.
+  //
+  // JobHoursDetail is the durable record: one row per employee/day/job/section, written
+  // by the hours sync and never touched by prune or submit. Reading it makes this card
+  // unwipeable by design rather than by a promise not to delete.
+  //
+  // It is also simply more complete. Measured on 2026-07 the moment this changed: 126.3
+  // hours existed in punches with no EtcEntry row at all — 105.81h of it job 1163's,
+  // exactly the loss the paragraph above predicted, plus 8.99h of job 4000 that was
+  // under-reported even while the job WAS listed, and 11.5h on four Complete jobs that
+  // never appeared. The card's figure moves up accordingly; it was wrong before, not now.
+  //
+  // No PARTS_COST concern here either: punches are hours by construction, so there is no
+  // dollars-in-an-hours-total trap to avoid (which EtcEntry needed excluding for).
+  //
+  // Type-gated like every other job query. Still deliberately NOT folded into any total:
+  // whether this work belongs in an ETC month is a business call, and quietly changing
+  // which jobs a month contains would move the pools and the Standard Fees with it.
   const renderedJobIds = jobs.map((j) => j.id);
-  const hiddenJobEntries =
-    renderedJobIds.length > 0
-      ? await prisma.etcEntry.findMany({
-          where: {
-            month,
-            hoursWorked: { gt: 0 },
-            jobId: { notIn: renderedJobIds },
-            // PARTS_COST stores DOLLARS in hoursWorked. Excluded here (2026-08-03)
-            // rather than filtered afterwards: this figure is reported as hours,
-            // and the original version of this query summed every section, so a
-            // hidden job with parts spend contributed its dollars to an "N hours"
-            // banner. Same reason the ETC totals treat Parts Cost as its own block.
-            section: { not: PARTS_COST_SECTION },
-          },
-          // `section` came along in 2026-08-03 so the KPI card's drill can say
-          // WHERE the hours went, not just how many there were. "106h on job 1163"
-          // is a number; "106h, 78 of it Mech Build" is something you can act on.
-          select: { hoursWorked: true, section: true, job: { select: { jobId: true, jobName: true, status: true } } },
-        })
-      : [];
+  const hiddenJobEntries = await prisma.jobHoursDetail.findMany({
+    where: {
+      month,
+      hours: { gt: 0 },
+      jobId: { notIn: renderedJobIds },
+      job: validJobTypeFilter,
+    },
+    select: { hours: true, section: true, job: { select: { jobId: true, jobName: true, status: true } } },
+  });
   // ── HeadStart jobs are ALWAYS listed here ─────────────────────────────────
   //
   // 2026-08-03, by request. The query above only finds a job that has EtcEntry rows
@@ -568,25 +572,34 @@ export default async function MonthlyEtcPage({
     select: { jobId: true, jobName: true, status: true },
   });
 
-  const hiddenByJob = new Map<string, { jobId: string; jobName: string; status: string | null; hours: number; sections: { section: string; hours: number }[] }>();
+  // Punch rows are one per employee/day/section, so sections are ACCUMULATED into a map
+  // rather than pushed. Pushing (which was right for EtcEntry, one row per section) would
+  // list "ME Gen" once per working day.
+  const hiddenByJob = new Map<string, { jobId: string; jobName: string; status: string | null; hours: number; sectionHours: Map<string, number> }>();
   for (const e of hiddenJobEntries) {
     const k = e.job.jobId;
-    const cur = hiddenByJob.get(k) ?? { jobId: k, jobName: e.job.jobName, status: e.job.status, hours: 0, sections: [] as { section: string; hours: number }[] };
-    cur.hours += Number(e.hoursWorked);
-    cur.sections.push({ section: e.section, hours: Number(e.hoursWorked) });
+    const cur = hiddenByJob.get(k) ?? { jobId: k, jobName: e.job.jobName, status: e.job.status, hours: 0, sectionHours: new Map<string, number>() };
+    const h = Number(e.hours);
+    cur.hours += h;
+    cur.sectionHours.set(e.section, (cur.sectionHours.get(e.section) ?? 0) + h);
     hiddenByJob.set(k, cur);
   }
   // Added AFTER, so a HeadStart job that does have hours keeps them rather than being
   // overwritten with an empty shell.
   for (const j of headStartJobs) {
     if (hiddenByJob.has(j.jobId)) continue;
-    hiddenByJob.set(j.jobId, { jobId: j.jobId, jobName: j.jobName, status: j.status, hours: 0, sections: [] });
+    hiddenByJob.set(j.jobId, { jobId: j.jobId, jobName: j.jobName, status: j.status, hours: 0, sectionHours: new Map() });
   }
 
   const hiddenJobHours = [...hiddenByJob.values()]
     // Sections in the Monthly ETC grid's own column order, not by hours (2026-08-03,
     // by request) — see compareSections. Jobs stay ordered by hours, biggest first.
-    .map((j) => ({ ...j, sections: j.sections.sort((a, b) => compareSections(a.section, b.section)) }))
+    .map(({ sectionHours, ...j }) => ({
+      ...j,
+      sections: [...sectionHours.entries()]
+        .map(([section, hours]) => ({ section, hours }))
+        .sort((a, b) => compareSections(a.section, b.section)),
+    }))
     .sort((a, b) => b.hours - a.hours);
 
   // Numeric Job Id order like the sheet (979 before 1020 before 10000) — the
@@ -1036,12 +1049,12 @@ export default async function MonthlyEtcPage({
           {hiddenJobHours
             .map((j) => `${j.jobId} ${j.jobName} (${j.status ?? "no status"}) — ${j.hours > 0 ? `${wholeNum(j.hours)}h` : "no hours booked"}`)
             .join("; ")}
-          . The grid only lists <strong>Active, billable</strong> jobs. A job with hours here qualified when the month was
-          seeded and has since moved status or is non-billable; its rows still exist and will be{" "}
-          <strong>deleted by the next Refresh Data or Submit ETC</strong>, so set it back to Active and billable to bring it
-          into the month, or accept the loss deliberately. <strong>HeadStart</strong> jobs are listed always, even at 0
-          hours — they have no PO so they are never planned in an ETC month, but one that starts booking time needs to be
-          seen.
+          . The grid only lists <strong>Active, billable</strong> jobs, so anything else lands here: a job that moved status
+          or is non-billable, one already Complete, or a <strong>HeadStart</strong> job (no PO, so never planned in an ETC
+          month — listed always, even at 0 hours, so one that starts booking time is seen). To bring a job into the month set
+          it back to Active and billable, or accept the shortfall deliberately.{" "}
+          <strong>These hours are counted from the punch records</strong>, so they stay visible here and are not affected by
+          Refresh Data or Submit ETC — but they reach no figure in the grid below until the job qualifies.
         </p>
       )}
 

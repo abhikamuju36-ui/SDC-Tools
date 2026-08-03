@@ -338,24 +338,19 @@ export function EtcMonthKpiCards({
           {/* The WHY and the WHAT-NOW, not just the number. This is the one figure
               on the strip with a deadline attached, and a drill that only restated
               the total would send someone hunting for the explanation. */}
-          <p className="mb-3 text-[11px] leading-relaxed text-sdc-gray-600">
-            The grid lists <strong>Active, billable</strong> jobs only, so a job lands here for one of two reasons.
+          <p className="mb-2 text-[11px] leading-relaxed text-sdc-gray-600">
+            The grid lists <strong>Active, billable</strong> jobs only, so anything else lands here — a job that moved status, one that is
+            non-billable, one already Complete, or a <strong>HeadStart</strong> job (no PO, so never planned in an ETC month; listed always,
+            even at 0 hours, so one that starts booking time is seen). Set a job back to Active and billable to bring it into the month, or
+            accept the shortfall deliberately.
           </p>
-          <ul className="mb-3 ml-4 list-disc space-y-1 text-[11px] leading-relaxed text-sdc-gray-600">
-            <li>
-              <strong>It has hours but left that universe.</strong> It qualified when the month was seeded — so its rows were created and the
-              hours sync kept filling them in — and has since moved status or is non-billable. Those rows are{" "}
-              <strong>deleted by the next Refresh Data or Submit ETC</strong>, so the hours vanish with no record. Set the job back to Active
-              and billable to bring it into the month, or accept the loss deliberately.
-            </li>
-            <li>
-              {/* Listed even at 0h, by request. A HeadStart job booking time is the case
-                  job-filters.ts flags as "the line to revisit", and it can only be
-                  noticed if the job is on screen. */}
-              <strong>It is HeadStart.</strong> No PO yet, so it is not planned in an ETC month at all — these are listed always, even at 0
-              hours, because a HeadStart job that starts booking time should be seen rather than silently dropped.
-            </li>
-          </ul>
+          {/* Sourced from JobHoursDetail, not EtcEntry — see where hiddenJobEntries is
+              built. Worth stating outright, because the previous version of this panel
+              promised the opposite and was right to: it read rows that prune deletes. */}
+          <p className="mb-3 text-[11px] leading-relaxed text-sdc-gray-600">
+            Counted from the <strong>punch records</strong>, so this figure stays visible and is not affected by Refresh Data or Submit ETC.
+            It still reaches no total in the grid below until the job qualifies.
+          </p>
           {/* Two readings of the same 181 hours. Both total identically — they have to,
               since the card above shows that figure too. */}
           <div className="mb-2 flex items-center gap-1.5">
