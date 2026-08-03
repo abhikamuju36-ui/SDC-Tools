@@ -536,12 +536,18 @@ export default async function MonthlyEtcPage({
   // whether this work belongs in an ETC month is a business call, and quietly changing
   // which jobs a month contains would move the pools and the Standard Fees with it.
   const renderedJobIds = jobs.map((j) => j.id);
+  // COMPLETE jobs are excluded (2026-08-03, by request). Reading from punches surfaced
+  // four of them holding 11.5 July hours, and they are not what this card is for: every
+  // other row here is a job you might still act on by setting it back to Active and
+  // billable, whereas a finished job is finished — a stray hour booked to it is a
+  // timesheet matter, not an ETC planning gap. Those hours remain visible on Job Hour
+  // Details and the Projects grid, which is where they belong.
   const hiddenJobEntries = await prisma.jobHoursDetail.findMany({
     where: {
       month,
       hours: { gt: 0 },
       jobId: { notIn: renderedJobIds },
-      job: validJobTypeFilter,
+      job: { ...validJobTypeFilter, status: { not: "Complete" } },
     },
     select: { hours: true, section: true, job: { select: { jobId: true, jobName: true, status: true } } },
   });
