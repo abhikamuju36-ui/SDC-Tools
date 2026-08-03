@@ -1199,10 +1199,30 @@ export default async function MonthlyEtcPage({
               <tbody>
                 {visibleJobs.map((job, jobIndex) => {
                   const entryByCode = new Map(job.etcEntries.map((e) => [e.section, e]));
-                  const zebra = jobIndex % 2 === 1 ? "bg-sdc-gray-50/60" : "";
+                  // Jobs that STARTED this month, called out across the whole row.
+                  //
+                  // These are the rows whose Prior ETC came from the quote rather
+                  // than from a carried balance (see the startsThisMonth rule in
+                  // seedMonth), so "no history, opening at quote" is worth being
+                  // able to see rather than infer from a Start Date column that
+                  // isn't on this grid.
+                  //
+                  // Lavender on purpose: every other colour here already means
+                  // something — blue is Prior ETC, yellow is "needs a decision",
+                  // red/green are over/under. A new colour is the only one that
+                  // can't be misread as a status.
+                  //
+                  // Applied through the zebra classes rather than on the <tr>: the
+                  // hover wash and every coloured cell paint over a row background,
+                  // so a <tr> tint would only ever show on the few plain cells. Same
+                  // approach the Projects grid uses for its SDC-customer rows.
+                  const startsThisMonth =
+                    job.startDate != null &&
+                    `${job.startDate.getUTCFullYear()}-${String(job.startDate.getUTCMonth() + 1).padStart(2, "0")}` === month;
+                  const zebra = startsThisMonth ? "bg-[#efe7fb]" : jobIndex % 2 === 1 ? "bg-sdc-gray-50/60" : "";
                   // Sticky columns need a fully opaque background — the translucent
                   // zebra tint above lets scrolled-under columns bleed through them.
-                  const zebraSticky = jobIndex % 2 === 1 ? "bg-sdc-gray-50" : "bg-white";
+                  const zebraSticky = startsThisMonth ? "bg-[#e5d9f7]" : jobIndex % 2 === 1 ? "bg-sdc-gray-50" : "bg-white";
 
                   // "Total (New ETC)" — a pure rollup, confirmed from the real sheet's
                   // formulas (SUM of the Engineering blocks' Prior/Worked/New ETC,
