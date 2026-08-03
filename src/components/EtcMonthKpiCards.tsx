@@ -115,7 +115,7 @@ export function EtcMonthKpiCards({
   // How many cards the strip will render, so the xl grid can be exactly that
   // many columns wide. Six fixed cards, plus the off-grid one when it applies.
   // Kept next to offGridTotal, which is the only thing that decides it.
-  const cardCount = 6 + (offGridTotal > 0 ? 1 : 0);
+  const cardCount = 6 + (offGridJobs.length > 0 ? 1 : 0);
 
   const [drill, setDrill] = useState<DrillScope | null>(null); // null = closed
   // Whether the summary strip is showing. Read through useSyncExternalStore for the
@@ -311,7 +311,7 @@ export function EtcMonthKpiCards({
             Hidden at zero, unlike Undefined errors: "0 undefined errors" is a daily
             reassurance the import is clean, whereas a permanent "0 off-grid" card
             would just be a column of nothing on the normal month. */}
-        {offGridTotal > 0 && (
+        {offGridJobs.length > 0 && (
           <Card
             label="Hours off the grid"
             value={fmtHours(offGridTotal)}
@@ -336,11 +336,23 @@ export function EtcMonthKpiCards({
               on the strip with a deadline attached, and a drill that only restated
               the total would send someone hunting for the explanation. */}
           <p className="mb-3 text-[11px] leading-relaxed text-sdc-gray-600">
-            The grid lists <strong>Active</strong> jobs only. These were Active when the month was seeded — so their rows were created and
-            the hours sync has been filling them in — and have since moved to another status. Their rows still exist and are{" "}
-            <strong>deleted by the next Refresh Data or Submit ETC</strong>. Set a job back to Active to bring it into the month, or accept
-            the loss deliberately.
+            The grid lists <strong>Active, billable</strong> jobs only, so a job lands here for one of two reasons.
           </p>
+          <ul className="mb-3 ml-4 list-disc space-y-1 text-[11px] leading-relaxed text-sdc-gray-600">
+            <li>
+              <strong>It has hours but left that universe.</strong> It qualified when the month was seeded — so its rows were created and the
+              hours sync kept filling them in — and has since moved status or is non-billable. Those rows are{" "}
+              <strong>deleted by the next Refresh Data or Submit ETC</strong>, so the hours vanish with no record. Set the job back to Active
+              and billable to bring it into the month, or accept the loss deliberately.
+            </li>
+            <li>
+              {/* Listed even at 0h, by request. A HeadStart job booking time is the case
+                  job-filters.ts flags as "the line to revisit", and it can only be
+                  noticed if the job is on screen. */}
+              <strong>It is HeadStart.</strong> No PO yet, so it is not planned in an ETC month at all — these are listed always, even at 0
+              hours, because a HeadStart job that starts booking time should be seen rather than silently dropped.
+            </li>
+          </ul>
           {/* Two readings of the same 181 hours. Both total identically — they have to,
               since the card above shows that figure too. */}
           <div className="mb-2 flex items-center gap-1.5">
@@ -400,22 +412,32 @@ export function EtcMonthKpiCards({
                             which is unreadable past two sections and gave the codes no
                             names at all. */}
                         <td className="px-2 py-1.5 text-sdc-gray-600">
-                          {j.sections.map((s) => (
-                            <span key={s.section} className="block whitespace-nowrap">
-                              <span className="font-mono">{s.section}</span>
-                              {sectionName(s.section) ? ` ${sectionName(s.section)}` : ""}
-                              <span className="ml-1 font-semibold tabular-nums text-sdc-navy">{fmtHours(s.hours)}</span>
-                            </span>
-                          ))}
+                          {/* A HeadStart job is listed even with nothing booked, so this
+                              says so rather than leaving the cell blank and looking like
+                              missing data. */}
+                          {j.sections.length === 0 ? (
+                            <span className="text-sdc-gray-400">No hours booked this month</span>
+                          ) : (
+                            // Name only — the code is dropped (2026-08-03, by request).
+                            // It falls back to the code for anything the app does not
+                            // model, so a row can never render as a bare number.
+                            j.sections.map((s) => (
+                              <span key={s.section} className="block whitespace-nowrap">
+                                {sectionName(s.section) ?? s.section}
+                                <span className="ml-1 font-semibold tabular-nums text-sdc-navy">{fmtHours(s.hours)}</span>
+                              </span>
+                            ))
+                          )}
                         </td>
                         <td className="px-2 py-1.5 text-right font-semibold tabular-nums text-sdc-navy">{fmtHours(j.hours)}</td>
                       </tr>
                     ))
                   : offGridSections.map((s) => (
                       <tr key={s.section} className="border-t border-sdc-border-soft align-top">
-                        <td className="px-2 py-1.5 whitespace-nowrap">
-                          <span className="font-mono font-semibold text-sdc-blue-dark">{s.section}</span>
-                          {s.name && <span className="ml-1.5 text-sdc-gray-600">{s.name}</span>}
+                        <td className="px-2 py-1.5 whitespace-nowrap text-sdc-navy">
+                          {/* Name only, matching the by-job view. Falls back to the code
+                              for a section the app does not model. */}
+                          {s.name ?? s.section}
                         </td>
                         <td className="px-2 py-1.5 font-mono text-sdc-gray-600">{s.jobIds.join(", ")}</td>
                         <td className="px-2 py-1.5 text-right font-semibold tabular-nums text-sdc-navy">{fmtHours(s.hours)}</td>

@@ -1,6 +1,7 @@
 import { Fragment } from "react";
 import { prisma } from "@/lib/prisma";
-import { compareJobIds, isSdcCustomer } from "@/lib/job-filters";
+import { compareJobIds, isSdcCustomer, validJobTypeFilter } from "@/lib/job-filters";
+import { compareSections } from "@/lib/off-grid-hours";
 import { EtcViewMenu } from "@/components/EtcViewMenu";
 import { EtcSyncMenu } from "@/components/EtcSyncMenu";
 import { SyncHistoryButton } from "@/components/SyncHistoryButton";
@@ -540,16 +541,52 @@ export default async function MonthlyEtcPage({
           select: { hoursWorked: true, section: true, job: { select: { jobId: true, jobName: true, status: true } } },
         })
       : [];
-  const hiddenJobHours = [...hiddenJobEntries
-    .reduce((m, e) => {
-      const k = e.job.jobId;
-      const cur = m.get(k) ?? { jobId: k, jobName: e.job.jobName, status: e.job.status, hours: 0, sections: [] as { section: string; hours: number }[] };
-      cur.hours += Number(e.hoursWorked);
-      cur.sections.push({ section: e.section, hours: Number(e.hoursWorked) });
-      return m.set(k, cur);
-    }, new Map<string, { jobId: string; jobName: string; status: string | null; hours: number; sections: { section: string; hours: number }[] }>())
-    .values()]
-    .map((j) => ({ ...j, sections: j.sections.sort((a, b) => b.hours - a.hours) }))
+  // ── HeadStart jobs are ALWAYS listed here ─────────────────────────────────
+  //
+  // 2026-08-03, by request. The query above only finds a job that has EtcEntry rows
+  // WITH hours, which means a HeadStart job appears only by accident — if it happened
+  // to be seeded while it was still Active and hasn't been pruned yet. A job that was
+  // HeadStart all along has no rows, so it was invisible on this page entirely.
+  //
+  // Both of the current HeadStart jobs are in exactly that state: 1151 and 1163 have
+  // ZERO July rows. And 1163 is the job the comment above was written about, when it
+  // held 105.82 July hours — those rows have since been deleted, which is the loss that
+  // comment predicted actually happening.
+  //
+  // job-filters.ts states the standing assumption: "A HeadStart job has no PO, so no
+  // hours can be booked against it… If HeadStart work does start getting booked, this
+  // is the line to revisit." Listing them here is the cheap half of revisiting it —
+  // they stay out of the grid and out of every total, so the ENG/SHOP figures the team
+  // signs off are untouched, but a HeadStart job booking time is now visible instead of
+  // silently dropped.
+  //
+  // Type-gated like every other job query (non-negotiable). No need to exclude the
+  // rendered set: etcActiveJobFilter is status "Active", so a HeadStart job can never
+  // be in it.
+  const headStartJobs = await prisma.job.findMany({
+    where: { status: "HeadStart", ...validJobTypeFilter },
+    select: { jobId: true, jobName: true, status: true },
+  });
+
+  const hiddenByJob = new Map<string, { jobId: string; jobName: string; status: string | null; hours: number; sections: { section: string; hours: number }[] }>();
+  for (const e of hiddenJobEntries) {
+    const k = e.job.jobId;
+    const cur = hiddenByJob.get(k) ?? { jobId: k, jobName: e.job.jobName, status: e.job.status, hours: 0, sections: [] as { section: string; hours: number }[] };
+    cur.hours += Number(e.hoursWorked);
+    cur.sections.push({ section: e.section, hours: Number(e.hoursWorked) });
+    hiddenByJob.set(k, cur);
+  }
+  // Added AFTER, so a HeadStart job that does have hours keeps them rather than being
+  // overwritten with an empty shell.
+  for (const j of headStartJobs) {
+    if (hiddenByJob.has(j.jobId)) continue;
+    hiddenByJob.set(j.jobId, { jobId: j.jobId, jobName: j.jobName, status: j.status, hours: 0, sections: [] });
+  }
+
+  const hiddenJobHours = [...hiddenByJob.values()]
+    // Sections in the Monthly ETC grid's own column order, not by hours (2026-08-03,
+    // by request) — see compareSections. Jobs stay ordered by hours, biggest first.
+    .map((j) => ({ ...j, sections: j.sections.sort((a, b) => compareSections(a.section, b.section)) }))
     .sort((a, b) => b.hours - a.hours);
 
   // Numeric Job Id order like the sheet (979 before 1020 before 10000) — the
@@ -987,17 +1024,24 @@ export default async function MonthlyEtcPage({
           scheduled to be DELETED by the next Refresh Data or Submit. */}
       {hiddenJobHours.length > 0 && (
         <p className="mb-4 rounded-lg border border-sdc-red-border bg-sdc-red-bg px-3 py-2 text-xs leading-relaxed text-sdc-red-text">
+          {/* Counts only jobs that actually carry hours. HeadStart jobs are listed
+              always, including at 0h (see where headStartJobs is queried), and a
+              headline of "181 hours across 5 jobs" when two of them booked nothing
+              would misdescribe its own list. */}
           <strong>
             {wholeNum(hiddenJobHours.reduce((s, j) => s + j.hours, 0))} hours this month are recorded against{" "}
-            {hiddenJobHours.length === 1 ? "a job" : "jobs"} this grid isn&apos;t showing
+            {hiddenJobHours.filter((j) => j.hours > 0).length === 1 ? "a job" : "jobs"} this grid isn&apos;t showing
           </strong>{" "}
-          — so {hiddenJobHours.length === 1 ? "it is" : "they are"} missing from every total below:{" "}
+          — so they are missing from every total below:{" "}
           {hiddenJobHours
-            .map((j) => `${j.jobId} ${j.jobName} (${j.status ?? "no status"}) — ${wholeNum(j.hours)}h`)
+            .map((j) => `${j.jobId} ${j.jobName} (${j.status ?? "no status"}) — ${j.hours > 0 ? `${wholeNum(j.hours)}h` : "no hours booked"}`)
             .join("; ")}
-          . The grid only lists <strong>Active</strong> jobs, and these have moved off that status since the month was
-          seeded. Their rows still exist and will be <strong>deleted by the next Refresh Data or Submit ETC</strong>. Set
-          the job back to Active to bring it into the month, or accept the loss deliberately.
+          . The grid only lists <strong>Active, billable</strong> jobs. A job with hours here qualified when the month was
+          seeded and has since moved status or is non-billable; its rows still exist and will be{" "}
+          <strong>deleted by the next Refresh Data or Submit ETC</strong>, so set it back to Active and billable to bring it
+          into the month, or accept the loss deliberately. <strong>HeadStart</strong> jobs are listed always, even at 0
+          hours — they have no PO so they are never planned in an ETC month, but one that starts booking time needs to be
+          seen.
         </p>
       )}
 

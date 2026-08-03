@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { offGridBySection, type OffGridJob } from "../src/lib/off-grid-hours";
+import { offGridBySection, compareSections, type OffGridJob } from "../src/lib/off-grid-hours";
 
 // "Hours off the grid", split by section (2026-08-03, by request).
 //
@@ -50,13 +50,28 @@ test("one row per distinct section, no duplicates", () => {
   assert.equal(new Set(rows.map((r) => r.section)).size, rows.length);
 });
 
-test("sorted by hours descending — biggest loss first", () => {
+test("ordered like the Monthly ETC grid's columns, NOT by hours", () => {
+  // 2026-08-03, by request. The grid's column order is the sheet's order and it is what
+  // a reader already has in their head; a second ordering on the same set of sections
+  // costs them a re-orientation for nothing.
   const rows = offGridBySection(JULY);
-  for (let i = 1; i < rows.length; i++) {
-    assert.ok(rows[i].hours <= rows[i - 1].hours, `not sorted at ${i}`);
-  }
-  assert.equal(rows[0].section, "10-313");
-  assert.equal(rows[0].hours, 71);
+  const order = rows.map((r) => r.section);
+  const expected = [...order].sort(compareSections);
+  assert.deepEqual(order, expected);
+  // Explicitly: 10-211 (ME Gen) precedes 10-313 (Software) even though Software has far
+  // more hours — which is exactly what the old hours-descending sort got wrong.
+  assert.ok(order.indexOf("10-211") < order.indexOf("10-313"), `got ${order.join(", ")}`);
+  const software = rows.find((r) => r.section === "10-313")!;
+  assert.equal(software.hours, 71);
+});
+
+test("a section the app does not model sorts after every grid column", () => {
+  // It must not interleave with the real columns, and it must not vanish.
+  const rows = offGridBySection([
+    { jobId: "1", jobName: "a", status: null, hours: 8, sections: [{ section: "99-999", hours: 3 }, { section: "10-211", hours: 5 }] },
+  ]);
+  assert.deepEqual(rows.map((r) => r.section), ["10-211", "99-999"]);
+  assert.equal(rows.reduce((s, r) => s + r.hours, 0), 8);
 });
 
 test("section codes are given their names", () => {

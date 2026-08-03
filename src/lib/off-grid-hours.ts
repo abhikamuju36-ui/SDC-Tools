@@ -1,4 +1,4 @@
-import { SECTIONS } from "@/lib/sections";
+import { SECTIONS, ETC_SECTIONS } from "@/lib/sections";
 
 // "Hours off the grid" — time booked to jobs whose EtcEntry rows exist for the month but
 // which the grid no longer lists, because the job left Active status after the month was
@@ -34,6 +34,32 @@ export function sectionName(code: string): string | undefined {
   return SECTION_NAME.get(code);
 }
 
+// ── Canonical section order ─────────────────────────────────────────────────
+//
+// Sections list in the SAME order as the Monthly ETC grid's columns (2026-08-03, by
+// request), not by hours descending. The grid's column order is the sheet's order and
+// it is what everyone reading this page already has in their head — a second ordering
+// on the same set of things costs the reader a re-orientation for no gain.
+//
+// ETC_SECTIONS is exactly the grid's column sequence, so its index IS that order.
+// Anything outside it (the pool sections the grid excludes, or a code the app does not
+// model) sorts after the known ones, keeping the full SECTIONS order among themselves
+// so the tail is stable rather than arbitrary.
+const ETC_ORDER = new Map(ETC_SECTIONS.map((s, i) => [s.code, i]));
+const ALL_ORDER = new Map(SECTIONS.map((s, i) => [s.code, i]));
+
+export function sectionSortIndex(code: string): number {
+  const inGrid = ETC_ORDER.get(code);
+  if (inGrid != null) return inGrid;
+  const known = ALL_ORDER.get(code);
+  // Offset past every grid column so these always follow, never interleave.
+  return ETC_ORDER.size + (known ?? ALL_ORDER.size);
+}
+
+export function compareSections(a: string, b: string): number {
+  return sectionSortIndex(a) - sectionSortIndex(b) || a.localeCompare(b);
+}
+
 // The off-grid hours rolled up by SECTION instead of by job (2026-08-03, by request:
 // "split by the sections"). The two views answer different questions — "which jobs am I
 // about to lose hours on" versus "which kinds of work" — and the second is what tells you
@@ -43,7 +69,7 @@ export function sectionName(code: string): string | undefined {
 // screen at once. Hence the tests: a rollup that dropped or double-counted a job's hours
 // would put three different numbers in front of the reader for one thing.
 //
-// Sorted by hours descending — biggest loss first.
+// Ordered like the Monthly ETC grid's columns, NOT by hours — see compareSections.
 export function offGridBySection(jobs: OffGridJob[]): OffGridSection[] {
   const map = new Map<string, OffGridSection>();
   for (const j of jobs) {
@@ -56,5 +82,5 @@ export function offGridBySection(jobs: OffGridJob[]): OffGridSection[] {
       map.set(s.section, cur);
     }
   }
-  return [...map.values()].sort((a, b) => b.hours - a.hours || a.section.localeCompare(b.section));
+  return [...map.values()].sort((a, b) => compareSections(a.section, b.section));
 }
