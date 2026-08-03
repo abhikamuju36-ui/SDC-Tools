@@ -441,8 +441,17 @@ export async function submitMonth(month: string, formData: FormData) {
       throw new Error(`Missing Hours Worked for entry ${entry.id} (section ${entry.section}).`);
     }
     const hoursWorked = Number(rawHours);
-    if (!Number.isFinite(hoursWorked) || hoursWorked < 0) {
-      throw new Error(`Invalid Hours Worked "${rawHours}" for entry ${entry.id} (section ${entry.section}).`);
+    // Negative is invalid for HOURS — nobody un-works time — but PARTS_COST
+    // stores MONEY SPENT in this same column, and money spent genuinely can go
+    // negative: a credit note, a returned part, an over-invoice corrected in
+    // TotalETO. This guard was written for hours and applied to both, so a single
+    // credit anywhere in the month made Submit ETC impossible: 2026-06 could not
+    // be submitted at all because entry 50196 carried -134.99 (found 2026-08-03).
+    const negativeAllowed = entry.section === PARTS_COST_SECTION;
+    if (!Number.isFinite(hoursWorked) || (hoursWorked < 0 && !negativeAllowed)) {
+      throw new Error(
+        `Invalid Hours Worked "${rawHours}" for entry ${entry.id} (section ${entry.section}).`,
+      );
     }
 
     const rawOverride = formData.get(`newEtcOverride__${entry.id}`);
