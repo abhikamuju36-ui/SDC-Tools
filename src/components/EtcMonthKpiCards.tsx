@@ -112,10 +112,12 @@ export function EtcMonthKpiCards({
   const [offGridView, setOffGridView] = useState<"job" | "section">("job");
   const offGridSections = useMemo(() => offGridBySection(offGridJobs), [offGridJobs]);
 
-  // How many cards the strip will render, so the xl grid can be exactly that
-  // many columns wide. Six fixed cards, plus the off-grid one when it applies.
-  // Kept next to offGridTotal, which is the only thing that decides it.
-  const cardCount = 6 + (offGridJobs.length > 0 ? 1 : 0);
+  // How many cards the strip will render, so the xl grid can be exactly that many
+  // columns wide. FIVE fixed cards — Engineering hours, Shop hours, Parts spent, People
+  // booked, Undefined hours — plus the off-grid one when it applies. Was six until
+  // "Total hours worked" was removed on 2026-08-03; leaving this at 6 would have left a
+  // permanently empty column at the end of the strip.
+  const cardCount = 5 + (offGridJobs.length > 0 ? 1 : 0);
 
   const [drill, setDrill] = useState<DrillScope | null>(null); // null = closed
   // Whether the summary strip is showing. Read through useSyncExternalStore for the
@@ -267,11 +269,10 @@ export function EtcMonthKpiCards({
           drillOpen={drill === "All"}
           onDrill={kpis.hasPunchData ? () => toggleDrill("All") : undefined}
         />
-        <Card
-          label="Total hours worked"
-          value={fmtHours(kpis.engineering.worked + kpis.shop.worked)}
-          hint={`${fmtHours(kpis.engineering.worked)} eng + ${fmtHours(kpis.shop.worked)} shop`}
-        />
+        {/* "Total hours worked" removed 2026-08-03, by request. It was just
+            Engineering + Shop, both of which are the two cards to its left, and its own
+            hint spelled that out ("2,980 eng + 2,675 shop") — so it restated two figures
+            already on screen and cost a column doing it. */}
         {/* Hours booked to something that isn't a job number. A card, not just
             the banner above the grid, because this is the one figure here that
             is MISSING from every other figure — it belongs beside the totals it
