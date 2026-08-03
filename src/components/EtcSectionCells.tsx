@@ -106,11 +106,18 @@ export function EtcSectionCells({
   // tracker needs the same value as its baseline — the cell is "dirty" only
   // when what's in it differs from what it loaded with, so both have to read
   // from one expression or they'd drift apart.
+  // Hours show as WHOLE numbers everywhere in the app (ui/format.ts), but this
+  // cell is an <input> and seeded itself with the stored Decimal verbatim — so
+  // the New ETC column printed 93.75, 410.57, 15.48 while every figure around it,
+  // including the totals that sum this very cell, was rounded. Rounded on the way
+  // in (2026-08-03, by request) so what is displayed, what is submitted, and what
+  // carries into next month's Prior ETC are all the same number.
+  const whole = (n: number) => String(Math.round(n));
   const initialText =
     initialDraft != null
-      ? String(initialDraft)
+      ? whole(initialDraft)
       : initialConfirmed != null
-        ? String(initialConfirmed)
+        ? whole(initialConfirmed)
         : // A cell with NO row yet starts blank, never auto-filled (2026-08-03).
           //
           // The carry-forward below fires when nothing was worked, which is true
@@ -122,7 +129,7 @@ export function EtcSectionCells({
           entryId == null
           ? ""
           : monthComplete !== false && initialWorked === 0
-            ? String(round2(priorEtc))
+            ? whole(priorEtc)
             : "";
   const [newEtcText, setNewEtcText] = useState(initialText);
 
@@ -160,7 +167,7 @@ export function EtcSectionCells({
   // `locked` excluded: a submitted month nobody has reopened is finished, and
   // painting it all yellow would be shouting at a closed book.
   const reopenedUntouched =
-    !locked && initialConfirmed != null && newEtcText.trim() === String(initialConfirmed);
+    !locked && initialConfirmed != null && newEtcText.trim() === whole(initialConfirmed);
   const decided = worked === 0 || (hasNewEtcValue && !reopenedUntouched);
   const newEtcNum = Number(newEtcText);
   const effective = newEtcText.trim() === "" || !Number.isFinite(newEtcNum) ? suggested : newEtcNum;
@@ -311,7 +318,9 @@ export function EtcSectionCells({
             button (password-gated) batch-saves the whole grid at once. */}
         <input
           type="number"
-          step="0.01"
+          // Whole hours — the column displays and submits integers (see
+          // initialText). A 0.01 step invited the decimals this fixed.
+          step="1"
           min="0"
           name={fieldName}
           value={newEtcText}
