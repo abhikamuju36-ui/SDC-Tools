@@ -24,7 +24,26 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${montserrat.variable} h-full antialiased`}>
+    <html
+      lang="en"
+      className={`${montserrat.variable} h-full antialiased`}
+      // The pre-paint script below writes to this element's `style` attribute
+      // (root font-size + the five grid density vars) before React hydrates, so
+      // React's expected <html> — which has no style attribute at all — can never
+      // match the DOM. That logged a hydration error on EVERY page, ending in
+      // "This won't be patched up", which buries any real mismatch in noise.
+      //
+      // This is the React-sanctioned escape for a deliberate, unavoidable
+      // server/client difference, and the same thing next-themes does for the
+      // identical problem. It is NOT a blanket silencer: it covers only this
+      // element's own attributes and does not cascade to children, so a genuine
+      // mismatch anywhere inside the app still reports.
+      //
+      // The alternative — moving the preference to a cookie so the server could
+      // render the style itself — would remove the difference rather than excuse
+      // it, but it changes where the preference lives and costs a cookie on every
+      // request. Not worth it for a display preference.
+      suppressHydrationWarning>
       <body className="min-h-full flex flex-col">
         {/* Restore every persisted display preference BEFORE first paint.
             Tailwind sizes are rem, so the root font-size scales the whole UI

@@ -48,8 +48,33 @@ test("positive is green, negative is red", () => {
   assert.ok(over[0] > over[1], `expected red-dominant, got rgb(${over})`);
 });
 
+// ── The 10% dead band ───────────────────────────────────────────────────────
+// Below a tenth of the ceiling there is NO colour at all (2026-08-03, by request:
+// "10 percent white, from then on increase the gradient"). A small variance is noise —
+// rounding, a half-day, a punch landing either side of a month end — and colouring it
+// tinted nearly every cell on the grid, which reads the same as tinting none of them.
+
+test("inside the dead band a cell keeps its own background", () => {
+  // 10% of an 80h ceiling is 8h.
+  for (const v of [0.1, 1, 4, 7.9, 8, -0.1, -1, -4, -7.9, -8]) {
+    assert.deepEqual(diffCellStyle(v, H), {}, `${v}h should be uncoloured`);
+  }
+});
+
+test("just past the dead band, colour begins", () => {
+  assert.ok(diffCellStyle(8.5, H).backgroundColor, "8.5h should be tinted");
+  assert.ok(diffCellStyle(-8.5, H).backgroundColor, "-8.5h should be tinted");
+});
+
+test("the band scales with the ceiling, not a fixed hour count", () => {
+  // 20h is inside the band for a 400h total but well past it for an 80h cell.
+  assert.deepEqual(diffCellStyle(20, DIFF_CEILING.hoursTotal), {});
+  assert.ok(diffCellStyle(20, H).backgroundColor);
+});
+
 test("a bigger positive variance is a stronger green — monotonic all the way up", () => {
-  const steps = [1, 5, 10, 20, 40, 60, 80].map((v) => luminance(diffCellStyle(v, H).backgroundColor));
+  // All past the 8h dead band.
+  const steps = [9, 12, 20, 40, 60, 80].map((v) => luminance(diffCellStyle(v, H).backgroundColor));
   for (let i = 1; i < steps.length; i++) {
     // Stronger green = darker here, so luminance must fall.
     assert.ok(steps[i] < steps[i - 1], `not monotonic at step ${i}: ${steps[i - 1]} -> ${steps[i]}`);
@@ -57,10 +82,19 @@ test("a bigger positive variance is a stronger green — monotonic all the way u
 });
 
 test("a bigger negative variance is a stronger red — monotonic all the way down", () => {
-  const steps = [-1, -5, -10, -20, -40, -60, -80].map((v) => luminance(diffCellStyle(v, H).backgroundColor));
+  const steps = [-9, -12, -20, -40, -60, -80].map((v) => luminance(diffCellStyle(v, H).backgroundColor));
   for (let i = 1; i < steps.length; i++) {
     assert.ok(steps[i] < steps[i - 1], `not monotonic at step ${i}: ${steps[i - 1]} -> ${steps[i]}`);
   }
+});
+
+test("the gradient still uses its full range after the band is removed", () => {
+  // Rescaled across (band, ceiling] rather than clipped: the first coloured value is the
+  // palest tint and the ceiling is the strongest. Clipping would waste the top 10%.
+  const justPast = rgb(diffCellStyle(8.01, H).backgroundColor);
+  const atCeiling = rgb(diffCellStyle(80, H).backgroundColor);
+  assert.ok(luminance(diffCellStyle(8.01, H).backgroundColor) > 200, `first tint should be near-white, got rgb(${justPast})`);
+  assert.ok(luminance(diffCellStyle(80, H).backgroundColor) < 130, `ceiling should be strong, got rgb(${atCeiling})`);
 });
 
 test("both sides ramp together, with red allowed to read hotter", () => {
@@ -113,16 +147,22 @@ test("zero and null produce an EMPTY style, so nothing is stranded", () => {
 });
 
 test("float residue counts as zero, matching what the formatter prints", () => {
-  // Hour sums carry ~1e-13. Without the epsilon a column showing a plain "0" would
-  // be tinted.
+  // Hour sums carry ~1e-13. The epsilon existed before the dead band and is now
+  // subsumed by it for any realistic ceiling — but it still guards the case of a
+  // ceiling small enough that 1e-13 would otherwise escape the band.
   assert.deepEqual(diffCellStyle(1e-13, H), {});
   assert.deepEqual(diffCellStyle(-1e-13, H), {});
-  assert.deepEqual(diffCellStyle(0.004, H), {});
-  assert.notDeepEqual(diffCellStyle(0.006, H), {});
-  // Both functions must agree on the boundary, or a body row and the footer would
-  // disagree about what counts as on-plan.
-  assert.deepEqual(diffTotalStyle(0.004, H), {});
-  assert.notDeepEqual(diffTotalStyle(0.006, H), {});
+  assert.deepEqual(diffCellStyle(1e-13, 1e-9), {});
+  assert.deepEqual(diffTotalStyle(1e-13, 1e-9), {});
+});
+
+test("body and footer agree on the dead-band boundary", () => {
+  // A cell and the total beneath it must not disagree about what is worth colouring.
+  for (const v of [4, 8, -8, 20]) {
+    const cellColoured = diffCellStyle(v, DIFF_CEILING.hoursTotal).backgroundColor != null;
+    const totalColoured = diffTotalStyle(v, DIFF_CEILING.hoursTotal).color != null;
+    assert.equal(cellColoured, totalColoured, `disagreement at ${v}`);
+  }
 });
 
 // ── The dark <tfoot> ────────────────────────────────────────────────────────
@@ -138,14 +178,15 @@ test("footer colours text, never a background", () => {
 });
 
 test("footer green intensifies monotonically as the variance grows", () => {
-  const steps = [1, 20, 100, 400].map((v) => chroma(diffTotalStyle(v, DIFF_CEILING.hoursTotal).color));
+  // All past the 40h dead band on a 400h ceiling.
+  const steps = [50, 100, 200, 400].map((v) => chroma(diffTotalStyle(v, DIFF_CEILING.hoursTotal).color));
   for (let i = 1; i < steps.length; i++) {
     assert.ok(steps[i] > steps[i - 1], `footer green should intensify: ${steps[i - 1]} -> ${steps[i]}`);
   }
 });
 
 test("footer red intensifies monotonically too, and both sides come out bold", () => {
-  const steps = [-1, -20, -100, -400].map((v) => chroma(diffTotalStyle(v, DIFF_CEILING.hoursTotal).color));
+  const steps = [-50, -100, -200, -400].map((v) => chroma(diffTotalStyle(v, DIFF_CEILING.hoursTotal).color));
   for (let i = 1; i < steps.length; i++) {
     assert.ok(steps[i] > steps[i - 1], `footer red should intensify: ${steps[i - 1]} -> ${steps[i]}`);
   }
@@ -153,11 +194,12 @@ test("footer red intensifies monotonically too, and both sides come out bold", (
   assert.equal(diffTotalStyle(-50, DIFF_CEILING.hoursTotal).fontWeight, 700);
 });
 
-test("footer text stays clear of the row's own fill at every intensity", () => {
+test("footer text stays clear of the row's own fill wherever it IS coloured", () => {
   // The Total row is #1e3a5f. Any variance colour has to stay well clear of it or the
-  // number disappears into the background.
+  // number disappears into the background. Only meaningful outside the dead band —
+  // inside it the cell keeps the footer's own legible pale blue.
   const ROW = luminance("rgb(30, 58, 95)");
-  for (const v of [1, -1, 50, -50, 400, -400, 5000, -5000]) {
+  for (const v of [50, -50, 400, -400, 5000, -5000]) {
     const l = luminance(diffTotalStyle(v, DIFF_CEILING.hoursTotal).color);
     assert.ok(l - ROW > 60, `variance ${v} is too close to the row fill (${l} vs ${ROW})`);
   }

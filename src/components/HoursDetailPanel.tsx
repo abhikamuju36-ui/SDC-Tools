@@ -142,7 +142,11 @@ export function HoursDetailPanel({
   //
   // Grouping applies to the FILTERED rows, so it composes with the three selects
   // rather than competing with them, and the Total stays the same figure either way.
-  const [groupBy, setGroupBy] = useState<GroupKey[]>([]);
+  // Opens grouped by DEPARTMENT (2026-08-03, by request). A raw punch list is the wrong
+  // first view: 25 lines of "NOT DEFINED / Jake Wiegand" answers "which punches" when the
+  // question being asked is "where did the time go". Department is the coarsest useful
+  // answer, and the chips take you finer or back to the lines in one click.
+  const [groupBy, setGroupBy] = useState<GroupKey[]>(["department"]);
   // Which groups are opened to show the punches inside them. Cleared whenever the
   // grouping changes, because the keys it holds describe the OLD shape — a stale key
   // wouldn't crash (it simply wouldn't match) but it would leave rows silently open or

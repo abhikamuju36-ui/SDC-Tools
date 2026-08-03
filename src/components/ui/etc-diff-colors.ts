@@ -44,11 +44,34 @@ export const DIFF_CEILING = {
   moneyTotal: 250_000,
 } as const;
 
-// Square-rooted rather than linear: most variances sit near the bottom of the range,
-// and a linear ramp makes everything under ~15% of the ceiling look identically pale.
-// The sqrt lifts small values into visibility while still ranking the large ones.
+// The first slice of the range stays completely uncoloured (2026-08-03, by request:
+// "10 percent white, from then on increase the gradient").
+//
+// A small variance is noise — rounding, a half-day, one punch landing either side of a
+// month end — and colouring it made almost every cell on the grid tinted, which is the
+// same as none of them being tinted. Below this share of the ceiling the cell keeps its
+// own background and the footer its own text colour; the gradient starts here and runs
+// to full saturation at the ceiling.
+const DEAD_BAND = 0.1;
+
+// Returns 0 for anything inside the dead band; otherwise the share of the REMAINING
+// range, square-rooted. Most variances sit near the bottom, and a linear ramp makes
+// everything in the lower third look identically pale — the sqrt lifts small values
+// into visibility while still ranking the large ones.
+//
+// Rescaled across (DEAD_BAND, 1] rather than just clipped, so the gradient still uses
+// its whole colour range: at exactly the dead-band edge it is the palest tint, at the
+// ceiling the strongest.
 function intensity(diff: number, ceiling: number): number {
-  return Math.sqrt(Math.min(1, Math.abs(diff) / ceiling));
+  const share = Math.min(1, Math.abs(diff) / ceiling);
+  if (share <= DEAD_BAND) return 0;
+  return Math.sqrt((share - DEAD_BAND) / (1 - DEAD_BAND));
+}
+
+// Inside the dead band there is no colour at all — distinct from "intensity 0", which
+// is the palest tint. Both call sites need this test, so it lives with the band.
+function withinDeadBand(diff: number, ceiling: number): boolean {
+  return Math.abs(diff) / ceiling <= DEAD_BAND;
 }
 
 type Rgb = readonly [number, number, number];
@@ -80,6 +103,8 @@ const WHITE_TEXT_ABOVE = 0.62;
  */
 export function diffCellStyle(diff: number | null, ceiling: number): { backgroundColor?: string; color?: string } {
   if (diff == null || Math.abs(diff) < EPSILON) return {};
+  // Small variances stay white — see DEAD_BAND.
+  if (withinDeadBand(diff, ceiling)) return {};
   const t = intensity(diff, ceiling);
   const [pale, strong] = diff < 0 ? CELL_RED : CELL_GREEN;
   const style: { backgroundColor?: string; color?: string } = { backgroundColor: mix(pale, strong, t) };
@@ -107,6 +132,9 @@ const TOTAL_RED: readonly [Rgb, Rgb] = [
  */
 export function diffTotalStyle(diff: number | null, ceiling: number): { color?: string; fontWeight?: number } {
   if (diff == null || Math.abs(diff) < EPSILON) return {};
+  // Same dead band as the body, so a cell and the total beneath it agree about what
+  // counts as "not worth colouring".
+  if (withinDeadBand(diff, ceiling)) return {};
   const t = intensity(diff, ceiling);
   const [faint, vivid] = diff < 0 ? TOTAL_RED : TOTAL_GREEN;
   return { color: mix(faint, vivid, t), fontWeight: 700 };
