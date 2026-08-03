@@ -139,7 +139,29 @@ export function EtcSectionCells({
   // current value instead means the yellow comes straight back when the value
   // goes, which is the state the manager is actually in.
   const hasNewEtcValue = newEtcText.trim() !== "";
-  const decided = worked === 0 || hasNewEtcValue;
+  // ── A REOPENED month asks the same questions again ─────────────────────────
+  //
+  // On a reopen every cell arrives carrying the value it was submitted with
+  // (initialConfirmed), so `hasNewEtcValue` is true everywhere and the whole grid
+  // rendered as decided. The manager lost the one thing the yellow is for: which
+  // cells actually need a judgement call this pass.
+  //
+  // So a previously-confirmed cell with hours worked goes yellow again — even
+  // though it is filled in, and even though a manager filled it (2026-08-03, by
+  // request). Re-opening a month is re-reviewing it; a cell that needed attention
+  // the first time needs it again.
+  //
+  // It clears the moment the value is CHANGED, not merely visited, so the colour
+  // works as a checklist: yellow means "still holding last submission's number",
+  // grey means "I have looked at this and moved it". Keeping the same figure is a
+  // valid answer — retype it, or just submit, since Submit takes what is in the
+  // box either way.
+  //
+  // `locked` excluded: a submitted month nobody has reopened is finished, and
+  // painting it all yellow would be shouting at a closed book.
+  const reopenedUntouched =
+    !locked && initialConfirmed != null && newEtcText.trim() === String(initialConfirmed);
+  const decided = worked === 0 || (hasNewEtcValue && !reopenedUntouched);
   const newEtcNum = Number(newEtcText);
   const effective = newEtcText.trim() === "" || !Number.isFinite(newEtcNum) ? suggested : newEtcNum;
   // Live for every cell, typed or not (2026-08-02, by request). It used to
