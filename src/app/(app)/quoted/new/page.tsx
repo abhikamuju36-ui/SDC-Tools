@@ -119,14 +119,15 @@ export default function NewProjectPage() {
             <input type="date" name="completeDate" className={`mt-1 w-full ${INPUT}`} />
           </div>
           <div>
-            <label className={LABEL}>Cost Quoted ($)</label>
+            <label className={LABEL}>Parts Cost Quoted ($)</label>
             <input type="number" step="0.01" name="costQuoted" className={`mt-1 w-full ${INPUT}`} />
           </div>
           <div>
-            {/* Same field the Projects grid calls "Actual Cost" — the two must
-                not disagree. The `name` is still costActualHistorical because
-                that is the column and what saveNewRows reads. */}
-            <label className={LABEL}>Actual Cost ($)</label>
+            {/* Same two fields the Projects grid shows as "Parts Cost Quoted" and
+                "Parts Cost Actual" — the labels must not disagree. The `name`s are
+                still costQuoted/costActualHistorical because those are the columns
+                and what saveNewRows reads. */}
+            <label className={LABEL}>Parts Cost Actual ($)</label>
             <input type="number" step="0.01" name="costActualHistorical" className={`mt-1 w-full ${INPUT}`} />
           </div>
         </div>

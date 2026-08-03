@@ -65,9 +65,30 @@ function snapshotView(): ViewConfig {
 // Apply a view: restore the density prefs into localStorage, then hard-navigate
 // to /quoted with the saved params so ProjectsDisplayMenu re-initialises from
 // localStorage on mount (it restores density there).
-function applyView(name: string, config: ViewConfig) {
-  if (config.grid?.rowPy != null) window.localStorage.setItem(GRID_ROW_KEY, String(config.grid.rowPy));
-  if (config.grid?.colPx != null) window.localStorage.setItem(GRID_COL_KEY, String(config.grid.colPx));
+// A SOFT navigation since 2026-08-03. This used to end in window.location.assign
+// — a full browser reload, refetching the document and the JS bundles and
+// re-hydrating the whole app shell, which made picking a view the slowest control
+// on this toolbar by a wide margin.
+//
+// The reload existed for one reason: ProjectsDisplayMenu restores grid density
+// from localStorage in a MOUNT effect, so only a fresh page picked up the values
+// written just below. Solved by applying them here too — they are two CSS custom
+// properties on <html>, and setting them directly is exactly what that effect
+// does. localStorage is still written so the choice survives a real reload.
+function applyView(name: string, config: ViewConfig, router: { push: (href: string) => void }) {
+  // The same clamp the density stepper enforces, so a hand-edited saved view
+  // can't set an absurd row height.
+  const clamp = (n: number) => Math.min(16, Math.max(0, n));
+  if (config.grid?.rowPy != null) {
+    const v = clamp(config.grid.rowPy);
+    window.localStorage.setItem(GRID_ROW_KEY, String(v));
+    document.documentElement.style.setProperty("--quoted-row-py", `${v}px`);
+  }
+  if (config.grid?.colPx != null) {
+    const v = clamp(config.grid.colPx);
+    window.localStorage.setItem(GRID_COL_KEY, String(v));
+    document.documentElement.style.setProperty("--quoted-col-px", `${v}px`);
+  }
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(config.params)) sp.set(k, v);
   // Views saved before Actuals moved into the URL carry it as a config field
@@ -77,7 +98,7 @@ function applyView(name: string, config: ViewConfig) {
     if (config.actuals) sp.set("actuals", "1");
   }
   sp.set("view", name); // label only — the page ignores it for data
-  window.location.assign(`/quoted?${sp.toString()}`);
+  router.push(`/quoted?${sp.toString()}`);
 }
 
 export function ProjectViewsMenu({
@@ -172,7 +193,7 @@ export function ProjectViewsMenu({
           <div className="col-view-row flex items-center gap-1 px-2">
             <button
               type="button"
-              onClick={() => applyView("Team Default", teamDefault.config)}
+              onClick={() => applyView("Team Default", teamDefault.config, router)}
               className="flex-1 truncate rounded border-y-2 border-sdc-blue-100 px-2 py-1 text-left text-xs font-semibold text-sdc-navy hover:bg-sdc-blue-light"
             >
               Team Default
@@ -186,7 +207,7 @@ export function ProjectViewsMenu({
         {sharedViews.length > 0 && sec("Shared")}
         {sharedViews.map((v) => (
           <div key={v.name} className="col-view-row flex items-center gap-1 px-2">
-            <button type="button" onClick={() => applyView(v.name, v.config)} className={rowBtn}>
+            <button type="button" onClick={() => applyView(v.name, v.config, router)} className={rowBtn}>
               {v.name}
               {v.owner ? <span className="text-[10px] text-sdc-gray-400"> · {v.owner}</span> : null}
             </button>
@@ -202,7 +223,7 @@ export function ProjectViewsMenu({
         {myNames.length ? (
           myNames.map((name) => (
             <div key={name} className="col-view-row flex items-center gap-1 px-2">
-              <button type="button" onClick={() => applyView(name, mine[name])} className={rowBtn}>
+              <button type="button" onClick={() => applyView(name, mine[name], router)} className={rowBtn}>
                 {name}
               </button>
               <button type="button" title="Share this view with everyone" className={iconBtn} disabled={busy} onClick={() => handlePublish(name, mine[name])}>

@@ -12,10 +12,15 @@ import { MenuStatus, MenuApplyHint } from "@/components/MenuStatus";
 // option set, and a date range is neither. Folding it in would have meant
 // teaching that menu a second shape for one filter.
 //
-// Same apply-on-close behaviour as the other menus (useDraftParamsMenu), so
-// setting a field and both ends is one navigation, not three. The hook is
+// Applies as you go, like the other menus (useDraftParamsMenu). The hook is
 // generic over string[] per param — a date is just a one-element list here,
 // empty meaning "not set".
+//
+// Slower debounce than the checkbox menus, though: a date is TYPED, and a
+// half-typed year is a complete, valid, wildly wrong date as far as the input is
+// concerned (type "2026" a digit at a time and it reports 0002 on the way). The
+// checkbox menus only ever coalesce deliberate clicks, so 250ms is plenty there;
+// here it wants to be past the gap between keystrokes.
 //
 // One field at a time, deliberately: "started after X AND completed before Y"
 // reads like a useful question but is a different filter (a duration), and
@@ -39,12 +44,8 @@ export function ProjectsDateFilter({
   from: string; // "YYYY-MM-DD", "" when unset
   to: string;
 }) {
-  // Remount on a committed change, which resets the draft — same contract the
-  // hook documents for the other menus.
-  return <DateFilterBody key={`${field}|${from}|${to}`} field={field} from={from} to={to} />;
-}
-
-function DateFilterBody({ field, from, to }: { field: DateFilterField; from: string; to: string }) {
+  // No remount wrapper — the hook resyncs its own draft, and remounting would
+  // close the menu the moment a date applied. See useDraftParamMenu.
   const committed: Record<Key, string[]> = {
     dateField: [field],
     from: from ? [from] : [],
@@ -53,6 +54,7 @@ function DateFilterBody({ field, from, to }: { field: DateFilterField; from: str
 
   const { draft, setValues, dirty, pending, detailsRef, detailsProps } = useDraftParamsMenu<Key>({
     committed,
+    debounceMs: 700,
     buildParams: (d, qs) => {
       const f = d.from[0] ?? "";
       const t = d.to[0] ?? "";
@@ -63,11 +65,16 @@ function DateFilterBody({ field, from, to }: { field: DateFilterField; from: str
       else qs.delete("from");
       if (t) qs.set("to", t);
       else qs.delete("to");
-      // The field only means anything alongside a bound, and "start" is the
-      // page default — so it is written only when it would actually change
-      // something.
+      // Written whenever it isn't the "start" default, even with no range set
+      // yet. It used to also require a bound, on the grounds that the field
+      // means nothing without one — true of the QUERY, but it made the param a
+      // one-way trip: pick Complete Date first (the natural order — choose the
+      // column, then the range) and the value was dropped on the way out, so
+      // the server kept answering "start", the draft never matched what came
+      // back, and the menu sat on "Applying…" forever. Harmless in the URL: the
+      // page only builds a date filter when there's actually a bound.
       const fieldValue = d.dateField[0] ?? "start";
-      if ((f || t) && fieldValue !== "start") qs.set("dateField", fieldValue);
+      if (fieldValue !== "start") qs.set("dateField", fieldValue);
       else qs.delete("dateField");
     },
   });
@@ -85,7 +92,7 @@ function DateFilterBody({ field, from, to }: { field: DateFilterField; from: str
       <summary className={`${TOOLBAR_BTN} ${active ? TOOLBAR_BTN_ACTIVE : TOOLBAR_BTN_NEUTRAL} ${pending ? "opacity-60" : ""}`}>
         Dates
         {active && ` (${FIELD_LABEL[field].replace(" Date", "")})`}
-        <MenuStatus dirty={dirty} pending={pending} />
+        <MenuStatus pending={pending} />
       </summary>
       <div className="absolute left-0 top-full z-30 mt-2 w-60 rounded-lg border border-sdc-border bg-white p-2.5 shadow-lg">
         <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-sdc-gray-600">Filter on</p>

@@ -49,9 +49,16 @@ export const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
 // "last refreshed" means something different for those: they are deliberately
 // idle while the month is locked.
 export const SYNC_SOURCES = [
-  { source: "hours_actual", label: "Actual hours (Paylocity export)", monthScoped: false },
+  // "Power BI" rather than "Paylocity export" since 2026-08-03: it is the same
+  // Paylocity data, but naming the road matters when someone is deciding where to
+  // go and look at why a figure is stale.
+  { source: "hours_actual", label: "Actual hours (Power BI)", monthScoped: false },
   { source: "etc_hours_worked", label: "ETC hours worked", monthScoped: true },
   { source: "parts_cost", label: "Parts cost (TotalETO)", monthScoped: true },
+  // The Projects grid's Parts Cost Actual column. Not month-scoped: it is a
+  // cumulative running total per job, and it covers Complete jobs too — those are
+  // the ones whose parts spend is finished.
+  { source: "parts_cost_actual", label: "Parts cost actual (TotalETO)", monthScoped: false },
   { source: "standard_pools", label: "Standard Fees pools", monthScoped: true },
   // Same wording as the dashboard's long-standing "Jobs from TotalETO" button,
   // which triggers this exact sync. Two names for one feed is precisely the
@@ -87,10 +94,10 @@ export async function runAllSyncs(trigger: SyncTrigger): Promise<SyncRunResult> 
   // instrumentation.ts, which also runs under the Edge runtime, where the Node
   // built-ins these pull in (mssql, msal's native cache, fs) cannot load at all.
   const { syncActualHours, syncHoursWorked, syncPartsCost, recordSyncSuccess, recordSyncFailure, recordSyncNote } = await import("@/lib/sync-powerbi");
-  const { fetchJobHoursRowsWithIssues } = await import("@/lib/sharepoint-hours");
+  const { fetchJobHoursRowsWithIssues } = await import("@/lib/job-hours-source");
   const { computeCategoryPoolsLocally } = await import("@/lib/standard-pool-local");
   const { poolRefreshBlockedBy } = await import("@/lib/standard-pool-eligibility");
-  const { syncFromTotalEto } = await import("@/lib/sync-totaleto");
+  const { syncFromTotalEto, syncPartsCostActual } = await import("@/lib/sync-totaleto");
   const { syncSchedulerTeam } = await import("@/lib/sync-scheduler-team");
   const { prisma } = await import("@/lib/prisma");
   const { isMonthLocked } = await import("@/lib/etc");
@@ -179,6 +186,16 @@ export async function runAllSyncs(trigger: SyncTrigger): Promise<SyncRunResult> 
     if (!month) return null;
     const r = await syncPartsCost(month);
     return `${r.rowsUpserted} upserted`;
+  });
+
+  // Parts Cost Actual on the Projects grid — cumulative invoiced parts spend per
+  // job, from the same TotalETO query the ETC month's "Money Spent" uses, so the
+  // column and that row can't tell different stories. Manager-entered until
+  // 2026-08-03; now pulled, per the policy that Jessica enters the QUOTED figures
+  // and the app pulls the actuals.
+  await step("parts_cost_actual", labelFor("parts_cost_actual"), true, async () => {
+    const r = await syncPartsCostActual();
+    return `${r.jobsUpdated} jobs updated, ${r.jobsNotFound} TotalETO ids with no app job`;
   });
 
   // The Standard Fees pool ledger — the four PM/Warranty/MFG blocks on the ETC

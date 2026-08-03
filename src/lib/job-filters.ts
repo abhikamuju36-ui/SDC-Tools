@@ -1,7 +1,14 @@
 // A job must have a real Type to ever be imported or shown — Custom, Duplicate,
-// Hybrid, or Service. Jobs with no Type (e.g. TotalETO has no Type field at all)
-// are noise and must never appear in any list, count, dashboard, or export.
-export const VALID_JOB_TYPES = ["Custom", "Duplicate", "Hybrid", "Service"] as const;
+// Hybrid, Service, or T&M. Jobs with no Type (e.g. TotalETO has no Type field at
+// all) are noise and must never appear in any list, count, dashboard, or export.
+//
+// "T&M" (time & materials) added 2026-08-03, by request. This list is the ONE
+// place types are declared — the Projects Type dropdown, the Type filter, the
+// new-project validator and the type-gate on every job query all read it — so
+// adding it here is the whole change. Note the gate widens with it: any job
+// already stored as T&M (which was previously unreachable noise) becomes visible
+// app-wide from this commit on. That is the intent.
+export const VALID_JOB_TYPES = ["Custom", "Duplicate", "Hybrid", "Service", "T&M"] as const;
 
 export const validJobTypeFilter = { type: { in: [...VALID_JOB_TYPES] } };
 

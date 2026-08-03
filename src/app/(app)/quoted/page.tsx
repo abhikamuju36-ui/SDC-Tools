@@ -13,20 +13,24 @@ import { listSharedViews } from "@/lib/saved-views-actions";
 import { ProjectsFilterMenu } from "@/components/ProjectsFilterMenu";
 import { ProjectsDateFilter } from "@/components/ProjectsDateFilter";
 import { ProjectsAutosave } from "@/components/ProjectsAutosave";
+import { ProjectsLiveTotals } from "@/components/ProjectsLiveTotals";
 import { ProjectsSectionsMenu } from "@/components/ProjectsSectionsMenu";
 import { ProjectsDisplayMenu } from "@/components/ProjectsDisplayMenu";
 import { ProjectsShowAllSwitch } from "@/components/ProjectsShowAllSwitch";
 import { SortButton } from "@/components/SortButton";
 import { AddProjectButton } from "@/components/AddProjectButton";
 import { NewProjectRows } from "@/components/NewProjectRows";
-import { DateCell } from "@/components/DateCell";
+import { GridDateCells } from "@/components/GridDateCells";
+import { dateCellProps } from "@/lib/date-cell";
 import { MoneyCell } from "@/components/MoneyCell";
 import { SaveQuotedHoursButton } from "@/components/SaveQuotedHoursButton";
-import { JobCellMenu } from "@/components/JobCellMenu";
+import { JobCellMenuHost } from "@/components/JobCellMenuHost";
+import { jobCellMenuProps } from "@/lib/job-cell-menu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
 import { saveQuotedHours } from "@/lib/quoted-actions";
 import { QuotedSaveForm } from "@/components/QuotedSaveForm";
 import { decodeParamList, isActualsOn } from "@/lib/quoted-display-prefs";
+import { quotedCellTone } from "@/lib/quoted-tone";
 import { loadActualHoursBySection } from "@/lib/actual-hours";
 import {
   ProjectsEditModeProvider,
@@ -97,7 +101,7 @@ const ZOOM_CONTROLS = "[&_td]:py-[var(--quoted-row-py,6px)] [&_.qc]:px-[var(--qu
 const DATA_COL = "calc(max(4.7rem, 72px) + 2 * var(--quoted-col-px, 4px))";
 const DATA_COL_STYLE = { width: DATA_COL, minWidth: DATA_COL, maxWidth: DATA_COL } as const;
 
-// The two money columns (Cost Quoted / Actual Cost). Right-aligned, unlike the
+// The two money columns (Parts Cost Quoted / Parts Cost Actual). Right-aligned, unlike the
 // rest of the grid: these are the only figures here with a variable digit count,
 // and a right edge is what lets "$8,600" and "$1,406,923" be compared at a
 // glance. tabular-nums keeps the digits in columns while editing.
@@ -322,6 +326,15 @@ export default async function QuotedPage({
       : decodeParamList(cols)
   ).filter(sectionAllowed); // a saved view or hand-typed ?cols= can't reopen them
   const visibleSet = new Set(visibleCodes);
+  // Does flipping Edit Mode actually CHANGE the rendered columns?
+  //
+  // Only if the user has explicitly asked for a restricted section via ?cols=.
+  // With no cols param — the default, and how most visits look — the four
+  // restricted codes are excluded anyway (DEFAULT_HIDDEN_CODES), so the toggle
+  // adds and removes nothing and the router.refresh() it used to fire
+  // unconditionally re-rendered all 233 rows to produce identical markup. That
+  // refresh is what "updating columns…" was waiting on.
+  const restrictedInCols = cols !== undefined && decodeParamList(cols).some((c) => RESTRICTED_SECTION_CODES.has(c));
 
   const sortKey: SortKey = SORT_KEYS.includes(sort as SortKey) ? (sort as SortKey) : "jobId";
   const sortDir = dir === "desc" ? "desc" : "asc";
@@ -471,7 +484,12 @@ export default async function QuotedPage({
       {/* Wraps the toolbar AND the grid: the switch, the Add/Save buttons and
           the fieldset that locks the cells all read the same client state, so
           they can never show three different opinions about the mode. */}
-      <ProjectsEditModeProvider initialEditing={initialEditing} signedIn={signedIn} initiallyUnlocked={projectsUnlocked}>
+      <ProjectsEditModeProvider
+        initialEditing={initialEditing}
+        signedIn={signedIn}
+        initiallyUnlocked={projectsUnlocked}
+        columnsDependOnMode={restrictedInCols}
+      >
       <div className="mb-1 flex items-end justify-between gap-4">
         <PageTitle>Projects</PageTitle>
         <WhenEditing>
@@ -552,6 +570,15 @@ export default async function QuotedPage({
         />
       </div>
 
+      {/* Keeps ENG/SHOP TOTAL in step with the section cells as they are typed —
+          they are summed on the server, so nothing else would move them until a
+          re-render. Renders nothing; it attaches one delegated listener. */}
+      <ProjectsLiveTotals engCodes={engCodes} shopCodes={shopCodes} />
+      {/* ONE right-click menu for the whole grid — see JobCellMenuHost. It used
+          to be a client component per Job cell, 2 per row. */}
+      <JobCellMenuHost />
+      {/* One delegated handler for every date cell — see GridDateCells. */}
+      <GridDateCells />
       <ProjectsEditFieldset>
       <DragScroll className="max-h-[calc(100vh-170px)] min-w-[480px] overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm select-none styled-scrollbar">
         {/* quiet-controls: hide the per-row dropdown chevrons (Type/Billable/
@@ -724,14 +751,17 @@ export default async function QuotedPage({
                 SHOP
                 <span className="block font-semibold">TOTAL</span>
               </th>
+              {/* "Parts Cost Quoted" / "Parts Cost Actual" on screen (renamed
+                  2026-08-03, by request — they were "Cost Quoted" / "Actual
+                  Cost", which didn't say WHAT cost). The columns are still
+                  Job.costQuoted and Job.costActualHistorical in the schema, in
+                  the TotalETO sync and in the Power BI measures they come from,
+                  so don't rename those chasing this. */}
               <th rowSpan={3} className="min-w-[90px] border-l border-sdc-border bg-sdc-green-bg px-2 py-2 text-center align-bottom text-sdc-green-text">
-                Cost Quoted
+                Parts Cost Quoted
               </th>
-              {/* "Actual Cost" on screen; the column is still
-                  Job.costActualHistorical in the schema and in the TotalETO
-                  sync, so don't rename those chasing this. */}
               <th rowSpan={3} className="min-w-[90px] bg-sdc-green-bg px-2 py-2 text-center align-bottom text-sdc-green-text">
-                Actual Cost
+                Parts Cost Actual
               </th>
             </tr>
             <tr className={TABLE_HEADER_ROW}>
@@ -816,10 +846,15 @@ export default async function QuotedPage({
                       column's long-standing behavior); right-click adds the same
                       menu the Job cell has, so the Scheduler is reachable here
                       too. */}
-                  <JobCellMenu
-                    jobId={job.jobId}
-                    jobName={job.jobName}
-                    schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null}
+                  {/* A plain <td> now: the right-click menu is one delegated
+                      listener (JobCellMenuHost) rather than a client component
+                      per cell. */}
+                  <td
+                    {...jobCellMenuProps({
+                      jobId: job.jobId,
+                      jobName: job.jobName,
+                      schedulerUrl: schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null,
+                    })}
                     title={`Open ${job.jobId} in Job Hour Details — right-click for more`}
                     className={`frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden truncate px-2 py-1.5 text-center font-mono text-[10px] ${zebraSticky}`}
                   >
@@ -830,17 +865,18 @@ export default async function QuotedPage({
                     >
                       {job.jobId}
                     </Link>
-                  </JobCellMenu>
+                  </td>
                   {show("job") && (
                     // The Job Hour Details / Scheduler icon-links that used to
-                    // sit here moved into JobCellMenu's right-click menu — same
-                    // two destinations, without an icon pair on every row.
-                    <JobCellMenu
-                      jobId={job.jobId}
-                      jobName={job.jobName}
-                      schedulerUrl={
-                        schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null
-                      }
+                    // sit here moved into the right-click menu — same two
+                    // destinations, without an icon pair on every row.
+                    <td
+                      {...jobCellMenuProps({
+                        jobId: job.jobId,
+                        jobName: job.jobName,
+                        schedulerUrl: schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null,
+                      })}
+                      title={`${job.jobName} — right-click for options`}
                       style={{ width: "var(--job-col-width, 280px)", minWidth: "var(--job-col-width, 280px)" }}
                       className={`frozen-col frozen-col-last sticky left-[7rem] z-10 overflow-hidden border-l border-r border-sdc-border px-2 py-1.5 text-left align-middle text-[10px] font-medium whitespace-nowrap text-sdc-navy ${zebraSticky}`}
                     >
@@ -855,7 +891,7 @@ export default async function QuotedPage({
                           className={`w-full min-w-0 flex-1 text-left ${tone.weight} ${tone.color}`}
                         />
                       </div>
-                    </JobCellMenu>
+                    </td>
                   )}
                   {show("customer") && (
                     <td
@@ -950,10 +986,12 @@ export default async function QuotedPage({
                       style={{ width: "var(--startdate-col-width, 92px)", minWidth: "var(--startdate-col-width, 92px)", maxWidth: "var(--startdate-col-width, 92px)" }}
                       className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500"
                     >
-                      <DateCell
-                        name={`jobField__${job.id}__startDate`}
-                        defaultValue={dateInputValue(job.startDate)}
-                        ariaLabel={`Start Date, ${job.jobName}`}
+                      <input
+                        {...dateCellProps({
+                          name: `jobField__${job.id}__startDate`,
+                          defaultValue: dateInputValue(job.startDate),
+                          ariaLabel: `Start Date, ${job.jobName}`,
+                        })}
                       />
                     </td>
                   )}
@@ -962,10 +1000,12 @@ export default async function QuotedPage({
                       style={{ width: "var(--completedate-col-width, 92px)", minWidth: "var(--completedate-col-width, 92px)", maxWidth: "var(--completedate-col-width, 92px)" }}
                       className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500"
                     >
-                      <DateCell
-                        name={`jobField__${job.id}__completeDate`}
-                        defaultValue={dateInputValue(job.completeDate)}
-                        ariaLabel={`Complete Date, ${job.jobName}`}
+                      <input
+                        {...dateCellProps({
+                          name: `jobField__${job.id}__completeDate`,
+                          defaultValue: dateInputValue(job.completeDate),
+                          ariaLabel: `Complete Date, ${job.jobName}`,
+                        })}
                       />
                     </td>
                   )}
@@ -983,18 +1023,18 @@ export default async function QuotedPage({
                           //  else (active, at/under quoted) -> yellow. Cells with
                           //  neither a quote nor an actual stay neutral.
                           const q = hours != null ? Number(hours) : 0;
-                          const jobDone = job.status === "Complete";
-                          const tone =
-                            q <= 0 && actual <= 0
-                              ? ""
-                              : actual > q
-                                ? "bg-red-100"
-                                : jobDone
-                                  ? "bg-sdc-green-bg/60"
-                                  : "bg-sdc-yellow-bg/50";
+                          // Shared with the live recompute in ProjectsLiveTotals —
+                          // see lib/quoted-tone.ts.
+                          const tone = quotedCellTone({ quoted: q, actual, jobComplete: job.status === "Complete" });
                           return (
                             <td
                               key={s.code}
+                              // data-cell-actual lets ProjectsLiveTotals recompute
+                              // this cell's over/under tone as the quoted number
+                              // (or the row's Status) is edited. The rule lives in
+                              // lib/quoted-tone.ts so the server class below and
+                              // the live one can't drift.
+                              data-cell-actual={actual}
                               style={DATA_COL_STYLE}
                               className={`qc quoted-actual-cell overflow-hidden border-l border-sdc-border px-1 py-1.5 text-center align-middle font-mono text-[10px] whitespace-nowrap text-sdc-gray-600 ${tone}`}
                               title={`Quoted ${exactHours(hours) ?? "0"} / Actual ${exactHours(actual) ?? "0"}`}
@@ -1026,24 +1066,34 @@ export default async function QuotedPage({
                     // section cells, so it hides when Actuals is toggled off.
                     const sumQ = (codes: string[]) => codes.reduce((s, c) => s + Number(hoursBySection.get(c) ?? 0), 0);
                     const sumA = (codes: string[]) => codes.reduce((s, c) => s + (actualBySection.get(c) ?? 0), 0);
-                    const cell = (label: string, codes: string[]) => {
+                    // data-total / data-job / data-total-quoted are the hooks
+                    // ProjectsLiveTotals writes through: these two figures are
+                    // summed here on the server, so without it the total would
+                    // ignore the number you just typed into the cell beside it
+                    // until something re-rendered the route. data-actual carries
+                    // the un-editable half so the component can rebuild the
+                    // tooltip without re-deriving it.
+                    const cell = (label: string, kind: "eng" | "shop", codes: string[]) => {
                       const q = sumQ(codes);
                       const a = sumA(codes);
                       return (
                         <td
+                          data-total={kind}
+                          data-job={job.id}
+                          data-actual={exactHours(a) ?? "0"}
                           style={DATA_COL_STYLE}
                           className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center align-middle font-mono text-[10px] font-medium"
                           title={`${label} — Quoted ${exactHours(q) ?? "0"} / Actual ${exactHours(a) ?? "0"}`}
                         >
-                          <span className="font-semibold text-sdc-blue-dark">{wholeHours(q)}</span>
+                          <span data-total-quoted className="font-semibold text-sdc-blue-dark">{wholeHours(q)}</span>
                           <span className="actual-suffix text-sdc-gray-400"> /<span className="font-semibold text-sdc-green-text"> {wholeHours(a)}</span></span>
                         </td>
                       );
                     };
                     return (
                       <>
-                        {cell("Engineering", engCodes)}
-                        {cell("Shop", shopCodes)}
+                        {cell("Engineering", "eng", engCodes)}
+                        {cell("Shop", "shop", shopCodes)}
                       </>
                     );
                   })()}
@@ -1053,7 +1103,7 @@ export default async function QuotedPage({
                       <MoneyCell
                         name={`jobField__${job.id}__costQuoted`}
                         defaultValue={job.costQuoted != null ? Number(job.costQuoted).toString() : ""}
-                        ariaLabel={`Cost Quoted, ${job.jobName}`}
+                        ariaLabel={`Parts Cost Quoted, ${job.jobName}`}
                         className={MONEY_INPUT}
                       />
                     </div>
@@ -1064,7 +1114,7 @@ export default async function QuotedPage({
                       <MoneyCell
                         name={`jobField__${job.id}__costActualHistorical`}
                         defaultValue={job.costActualHistorical != null ? Number(job.costActualHistorical).toString() : ""}
-                        ariaLabel={`Actual Cost, ${job.jobName}`}
+                        ariaLabel={`Parts Cost Actual, ${job.jobName}`}
                         className={MONEY_INPUT}
                       />
                     </div>

@@ -17,7 +17,7 @@ import { useRef, type ReactNode } from "react";
 //
 //   NEVER pan from these — the mousedown IS the interaction, and suppressing it
 //   would break them: a <select> must open its dropdown, a date input opens its
-//   picker (DateCell calls showPicker on mousedown), links/buttons/summaries act.
+//   picker (GridDateCells calls showPicker on mousedown), links/buttons/summaries act.
 //
 //   PAN from a text or number input that is NOT currently focused. So the first
 //   press on a cell pans, and once you are actually editing that cell, dragging

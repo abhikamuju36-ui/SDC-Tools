@@ -70,6 +70,98 @@ export const ETC_TRACKED_CODES = new Set(ETC_SECTIONS.map((s) => s.code));
 // the team confirmed.
 export const HOURS_IMPORT_CODES = new Set([...ETC_TRACKED_CODES, "10-413"]);
 
+// ── Punch code -> app column ────────────────────────────────────────────────
+//
+// Punch codes the ETC grid has no column for, mapped onto the column they belong
+// to. Derived from Power BI's OWN bucketing, probed measure by measure against
+// every code in the July export (2026-07-31) rather than assumed:
+//
+//   [Engineering Hours]   counts functions 211, 311, 312, 313, 515-518
+//   [Shop Hours]          counts functions 411, 412
+//   [Manufacturing Hours] counts function  414
+//   [PM Hours]            counts function  111
+//
+// Power BI buckets by FUNCTION regardless of phase; this app has a fixed column
+// per MachineSec-Function pair. So an engineering punch in the Testing phase
+// (40-311) matched no column and silently vanished — 795h in July alone, on top
+// of 834h of manufacturing time booked to 10-414 while the app's Mfg column is
+// coded 10-413, a code that appears nowhere in the punch data at all.
+//
+// Verified against the report job by job: for 1101 in July, Power BI shows
+// Engineering 91 = the app's 73.62 + 40-311 (12.50) + 70-311 (5.00, warranty),
+// and Manufacturing 18 = 10-414 (17.90).
+//
+// Warranty (70-*) is deliberately NOT aliased. Power BI folds it into
+// Engineering/Shop, but the ETC grid's totals are a fixed formula over 9
+// engineering and 4 shop codes that excludes the Warranty phase entirely —
+// confirmed with the team 2026-07-31. Aliasing it in would silently change a
+// total whose definition they had just signed off.
+//
+// Lives here rather than in the reader that used to own it (the now-deleted
+// sharepoint-hours.ts), because it is not a property of any one FILE or feed —
+// it is how a Paylocity function code becomes an app column, and every reader
+// must get the same answer. A second copy is how two sources drift, which is
+// exactly what happened on 2026-08-03 when a Power BI backfill wrote raw codes
+// and left 27,553h stored but columnless.
+export const SECTION_ALIASES: Record<string, string> = {
+  // Manufacturing: the punch data uses 414, the app's column is 413.
+  "10-414": "10-413",
+  // Engineering functions inside a phase whose engineering column is the -211
+  // one. (10-311 is NOT here: it keeps its documented 30/70 split into
+  // 10-312/10-313, which exist as their own columns.)
+  "40-311": "40-211",
+  "40-312": "40-211",
+  "40-313": "40-211",
+  "50-311": "50-211",
+  "50-312": "50-211",
+  "50-313": "50-211",
+  // Shop functions likewise, onto the phase's -411 column.
+  "40-412": "40-411",
+  "50-412": "50-411",
+};
+
+// One punch's hours, resolved to the app column(s) that should carry them.
+//
+// Returns [] when the code reaches no column at all — phases the app doesn't
+// model (80/90), function 417 (Power BI drops it too, so it is not a gap between
+// the two systems), odd MachineSec values. The caller decides whether to report
+// that; this only decides where hours belong.
+//
+// Splitting returns a LIST because 10-311 becomes two rows: design (312) takes
+// 30% and software (313) 70%, per Power BI. Both halves keep the punch's
+// employee, so the Hours Detail drill shows one punch as two attributed lines
+// that still sum to what was booked.
+// `resolve` — the model-derived code->column map (buildColumnResolver in
+// job-hours-source.ts). When given, it WINS over SECTION_ALIASES below, because it
+// is read from the model's own Function Hierarchy rather than reverse-engineered
+// from its measures. SECTION_ALIASES stays as the fallback for when the hierarchy
+// can't be fetched, and as the record of what was known before it was.
+//
+// The nine aliases and the resolver agree everywhere the aliases had an opinion;
+// the resolver simply knows about many more codes (the 11-211..20-211 band above
+// all). Verified 2026-08-03 against job 1101, where the aliases produced 149h of ME
+// Gen and the report showed 634h.
+export function mapPunchToColumns(
+  rawSection: string,
+  hours: number,
+  resolve?: (rawSection: string) => string | null,
+): { section: string; hours: number }[] {
+  const [machineSec, fn] = rawSection.split("-");
+  if (fn === "417") return [];
+  const section = resolve?.(rawSection) ?? SECTION_ALIASES[rawSection] ?? rawSection;
+  if (section === "10-311") {
+    return [
+      { section: "10-312", hours: hours * 0.3 },
+      { section: "10-313", hours: hours * 0.7 },
+    ];
+  }
+  if (!HOURS_IMPORT_CODES.has(section)) return [];
+  // machineSec is read only to keep the signature honest about what a raw code
+  // is; the alias table already encodes the phase rules.
+  void machineSec;
+  return [{ section, hours }];
+}
+
 // ── The four company-wide Standard Fees pools ──────────────────────────────
 //
 // The pools are not a separate universe from the sections above: they ARE the
@@ -111,7 +203,7 @@ export const RESTRICTED_SECTION_CODES: ReadonlySet<string> = new Set(Object.valu
 // need the opposite: warranty is the whole point of two of them.
 //
 // The buckets follow Power BI's own measure definitions as recorded above
-// SECTION_ALIASES in sharepoint-hours.ts — [PM Hours] counts function 111,
+// SECTION_ALIASES just above — [PM Hours] counts function 111,
 // [Manufacturing Hours] counts 414, [Engineering Hours] counts 211/311/312/313
 // and [Shop Hours] counts 411/412 — with the last two restricted to the
 // Warranty phase, since that is the only phase the pools cover.

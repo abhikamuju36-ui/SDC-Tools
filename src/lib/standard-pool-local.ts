@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { round2, isValidMonth } from "@/lib/etc";
 import { VALID_JOB_TYPES, compareJobIds } from "@/lib/job-filters";
 import { POOL_CATEGORIES, POOL_QUOTED_SECTION, type PoolCategory } from "@/lib/sections";
-import { fetchJobHoursRowsWithIssues, type PoolHoursByMonth } from "@/lib/sharepoint-hours";
+import { fetchJobHoursRowsWithIssues, type PoolHoursByMonth } from "@/lib/job-hours-source";
 
 // The "Standard Fees By Department" pool ledger, computed from the app's OWN
 // data instead of Power BI.
@@ -40,7 +40,7 @@ import { fetchJobHoursRowsWithIssues, type PoolHoursByMonth } from "@/lib/sharep
 //
 // Hours Worked this Month — company-wide punches in the pool's phase/function,
 //   from the same Paylocity export the ETC grid's Hours Worked already uses
-//   (see sharepoint-hours.ts's PoolHoursByMonth for why these are tallied
+//   (see job-hours-source.ts's PoolHoursByMonth for why these are tallied
 //   separately from the job rollups). Not part of the formula chain — Hours
 //   Available and New ETC Hours never read it — it is displayed, and it seeds
 //   the default for the manual pulled cell on a brand-new month.

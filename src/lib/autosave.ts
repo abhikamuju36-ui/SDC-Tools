@@ -12,7 +12,13 @@ export type AutosaveStatus = "idle" | "pending" | "saving" | "saved" | "error";
 // How long after the last keystroke a save fires. Long enough that typing
 // "1420" is one save rather than four, short enough that looking away from the
 // screen for a moment means the work is already safe.
-export const AUTOSAVE_DELAY_MS = 1500;
+//
+// 1500ms until 2026-08-03. It was set that high because a save cost a full
+// re-render of the route (revalidatePath), so firing often was genuinely
+// expensive. That round trip is gone — a one-cell save is ~10ms of database work
+// and no render — so the debounce only has to outlast the gap between keystrokes
+// now. 800ms does that and takes "it didn't save immediately" off the table.
+export const AUTOSAVE_DELAY_MS = 800;
 
 // Should a scheduled autosave actually run right now?
 //

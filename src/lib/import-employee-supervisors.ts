@@ -12,7 +12,7 @@ import { logAudit } from "@/lib/audit";
 //
 // parseSupervisorExport is deliberately split from applySupervisorImport so the
 // same apply step can later be fed automatically from SharePoint (Microsoft
-// Graph), exactly like the hours sync (see sharepoint-hours.ts), instead of a
+// Graph), exactly like the hours sync (see job-hours-source.ts), instead of a
 // manual upload — without changing the matching/DB logic.
 
 export type SupervisorExportRow = {

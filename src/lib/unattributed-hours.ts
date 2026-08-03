@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { SECTIONS } from "@/lib/sections";
-import { fetchJobHoursRowsWithIssues } from "@/lib/sharepoint-hours";
+import { fetchJobHoursRowsWithIssues } from "@/lib/job-hours-source";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
 
 // Punch-level detail behind the "Unattributed hours" KPI card — the time booked

@@ -163,14 +163,35 @@ test("isSafeForLiveEtcSync: a month further in the future than 'next' is unsafe 
 // So an untouched cell is silent unless the section is genuinely overspent.
 // Those hours are booked whether or not anyone has typed a New ETC.
 
-test("newEtcDiff: an untouched cell with hours left reads 0, not a variance", () => {
-  // Prior 100, worked 40 -> 60 left, and the suggestion is also 60.
-  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 100, hoursWorked: 40 }), 0);
+// ── Rule change 2026-08-03, by request ──────────────────────────────────────
+// An untyped New ETC counts as 0, so Diff IS Hours Left until someone plans the
+// section. These two tests previously asserted 0 for both cases, under the rule
+// that compared an untouched cell against the SUGGESTION. That was internally
+// consistent but unreadable on screen: with the cell visibly empty, "77 − blank
+// = 0" beside "−7 − blank = −7" looked arbitrary, and was reported as a bug.
+test("newEtcDiff: an untouched cell with hours left reports ALL of it as unaccounted", () => {
+  // Prior 100, worked 40 -> 60 left, nothing planned -> the whole 60 is the gap.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 100, hoursWorked: 40 }), 60);
 });
 
-test("newEtcDiff: an untouched cell with NO hours worked reads 0", () => {
-  // The carry-forward case: suggestion is Prior, so nothing has moved.
-  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 100, hoursWorked: 0 }), 0);
+test("newEtcDiff: an untouched cell with NO hours worked reports its whole balance", () => {
+  // The carry-forward case. Submitting as-is would still write the suggestion
+  // (Prior) — see effectiveNewEtc — but nobody has DECIDED that yet, and Diff
+  // reports decisions.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: null, newEtc: 0, priorEtc: 100, hoursWorked: 0 }), 100);
+});
+
+test("newEtcDiff: a typed New ETC is clamped at 0, never negative", () => {
+  // "max(entered, 0)" — a negative plan is not a plan, and letting one through
+  // would make Diff read HIGHER than Hours Left.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: -5, newEtc: 0, priorEtc: 100, hoursWorked: 40 }), 60);
+});
+
+test("newEtcDiff: typing the suggestion is what makes a cell read on-plan", () => {
+  // The same cell as the first test, once a manager accepts the 60. This is the
+  // pair that shows the column is now reporting DECISIONS: 60 unaccounted before,
+  // 0 after.
+  assert.equal(newEtcDiff({ needsReview: true, newEtcDraft: 60, newEtc: 0, priorEtc: 100, hoursWorked: 40 }), 0);
 });
 
 test("newEtcDiff: an untouched but OVERSPENT cell reports the overrun", () => {

@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { registerEtcField, forgetEtcField, updateEtcField } from "@/lib/etc-dirty-tracker";
+import { publishPartsCell, forgetPartsCell } from "@/lib/etc-live-totals";
 
 const NEUTRAL_BG = "bg-[#F2F2F2]";
 const ATTENTION_BG = "bg-[#FAFAC4]";
@@ -30,6 +31,10 @@ function currency(n: number): string {
 // hidden input under `name`, so Save/Submit parse a clean number.
 export function PartsCostNewEtcCell({
   name,
+  jobId,
+  priorEtc,
+  spent,
+  suggested,
   jobName,
   initialValue,
   attentionWhenBlank,
@@ -37,6 +42,14 @@ export function PartsCostNewEtcCell({
   locked,
 }: {
   name: string;
+  // Published to lib/etc-live-totals.ts so this cell's dollars reach Total ETC $
+  // — and through it % Total, Standard Fees and Total Standard Fees — as they are
+  // typed. `suggested` is the server's own suggestNewEtc for this cell, passed in
+  // rather than recomputed so the live figure and the submitted one agree.
+  jobId: number;
+  priorEtc: number;
+  spent: number;
+  suggested: number;
   jobName: string;
   initialValue: string;
   // True when a blank cell here means "someone still has to decide this": money
@@ -63,6 +76,20 @@ export function PartsCostNewEtcCell({
     // initialValue is the mount-time baseline by design; see EtcSectionCells.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name]);
+
+  // Publish the live dollars for the totals downstream of this cell. Same rule as
+  // EtcSectionCells: an empty or unparseable box means "not decided", which is the
+  // suggestion — exactly what Submit would write.
+  useEffect(() => {
+    const typed = Number(value);
+    const effective = value.trim() === "" || !Number.isFinite(typed) ? suggested : typed;
+    const left = priorEtc - spent;
+    publishPartsCell(jobId, { prior: priorEtc, spent, left, newEtc: effective, diff: left - effective });
+  }, [jobId, priorEtc, spent, suggested, value]);
+
+  useEffect(() => {
+    return () => forgetPartsCell(jobId);
+  }, [jobId]);
 
   // Decided = this cell holds a value RIGHT NOW. Not "was typed in at some
   // point": a latching touched-flag left an emptied cell looking settled when

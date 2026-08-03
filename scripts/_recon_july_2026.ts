@@ -10,7 +10,7 @@ import { runDax } from "../src/lib/powerbi-client";
 import { prisma } from "../src/lib/prisma";
 import { ETC_TRACKED_CODES } from "../src/lib/sections";
 import { round2 } from "../src/lib/etc";
-import { fetchJobHoursRows, hoursByJobSection } from "../src/lib/sharepoint-hours";
+import { fetchJobHoursRows, hoursByJobSection } from "../src/lib/job-hours-source";
 import { getPartsCostSpentByJob } from "../src/lib/sync-totaleto";
 
 const Y = 2026, MO = 7;

@@ -31,8 +31,8 @@ export type SaveQuotedResult =
 
 // Saves every edited cell from the Projects grid — quoted hours by section
 // AND the job-level fields (Job Name, Customer, Type, Status, Start/Complete
-// Date, Cost Quoted, Cost Actual) — in one submission. Only cells whose
-// value actually changed get written; Customer and Cost Quoted also get
+// Date, Parts Cost Quoted, Parts Cost Actual) — in one submission. Only cells
+// whose value actually changed get written; Customer and Parts Cost Quoted get
 // flagged manually-edited so the next TotalETO/Power BI sync can't silently
 // overwrite a manager's correction (same pattern as quotedHoursManuallyEdited
 // below) — those two are the only job fields either sync ever touches.
@@ -56,7 +56,22 @@ export async function saveQuotedHours(_prev: SaveQuotedResult | null, formData: 
     const created = await saveNewRows(formData);
     const cells = await saveHoursCells(formData);
     const jobs = await saveJobFields(formData);
-    revalidatePath("/quoted");
+    // Revalidate ONLY when a row was created (2026-08-03). This is why saving
+    // felt slow: the writes themselves measure ~10ms for a one-cell edit, but
+    // revalidatePath makes the action's response carry a fresh render of the
+    // WHOLE route — 50-233 rows x ~30 controls — which the browser then has to
+    // receive and reconcile. Every keystroke-driven autosave paid for a full page
+    // render to change one number the user had already typed.
+    //
+    // A pure cell edit needs none of it: the new value is on screen because the
+    // user put it there, and QuotedSaveForm re-stamps the `data-baseline`
+    // attributes client-side on success so the fields stop reading as dirty (see
+    // dirty-form.ts — the baseline is the whole reason a re-render was needed).
+    //
+    // A CREATED row is different: it exists only in the browser until now, and
+    // only the server can render it as a real row with an id. That one keeps the
+    // round trip, and it is the rare case.
+    if (created > 0) revalidatePath("/quoted");
     return { ok: true, cells, jobs, created };
   } catch (err) {
     // Every message these helpers throw is written for a manager to read, so it
@@ -376,7 +391,7 @@ async function saveNewRows(formData: FormData): Promise<number> {
     // invisible history.
     const typeRaw = (fields.get("type") ?? "").trim();
     if (typeRaw === "") {
-      throw new Error(`Type is required for new project "${jobId}" — select Custom, Duplicate, Hybrid, or Service.`);
+      throw new Error(`Type is required for new project "${jobId}" — select one of ${VALID_JOB_TYPES.join(", ")}.`);
     }
     if (!VALID_JOB_TYPES.includes(typeRaw as (typeof VALID_JOB_TYPES)[number])) {
       throw new Error(`Invalid Type "${typeRaw}" for new project "${jobId}".`);
@@ -395,8 +410,8 @@ async function saveNewRows(formData: FormData): Promise<number> {
     }
     const startDate = parseDate((fields.get("startDate") ?? "").trim());
     const completeDate = parseDate((fields.get("completeDate") ?? "").trim());
-    const costQuoted = parseMoney((fields.get("costQuoted") ?? "").trim(), "Cost Quoted", `new project "${jobId}"`);
-    const costActualHistorical = parseMoney((fields.get("costActualHistorical") ?? "").trim(), "Cost Actual", `new project "${jobId}"`);
+    const costQuoted = parseMoney((fields.get("costQuoted") ?? "").trim(), "Parts Cost Quoted", `new project "${jobId}"`);
+    const costActualHistorical = parseMoney((fields.get("costActualHistorical") ?? "").trim(), "Parts Cost Actual", `new project "${jobId}"`);
 
     const hoursMap = hoursByTemp.get(tempId) ?? new Map();
     const hours: { section: string; quotedHours: number }[] = [];

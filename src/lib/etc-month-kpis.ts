@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { ETC_SECTIONS, PARTS_COST_SECTION } from "@/lib/sections";
-import { calcHoursLeft, round2, effectiveNewEtc, newEtcDiff } from "@/lib/etc";
+import { calcHoursLeft, round2, effectiveNewEtc, newEtcDiff, isNewEtcDecided } from "@/lib/etc";
 
 // KPI cards for the top of the Monthly ETC page: hours worked and variance for
 // Engineering and Shop, parts money spent, and how many people booked time in
@@ -25,10 +25,16 @@ export type GroupKpi = {
   worked: number;
   hoursLeft: number;
   newEtc: number;
-  // Sum of the per-cell variances across EVERY cell — newEtcDiff is live for
-  // all of them now, so an untouched cell contributes 0 unless its section is
-  // already overspent, in which case it contributes the overrun.
+  // Sum of the per-cell variances across EVERY cell.
   diff: number;
+  // The part of `diff` contributed by cells NOBODY HAS PLANNED yet.
+  //
+  // Since 2026-08-03 an untyped New ETC counts as 0, so an untouched cell
+  // contributes its whole Hours Left. That is the right number, but it is not a
+  // variance — printing "+4,070 under" when the truth is "nobody has planned
+  // 4,070 hours" would be the card lying. Split out so the strip can say which it
+  // is; `diff - diffUnplanned` is the genuine over/under from decided cells.
+  diffUnplanned: number;
   people: number; // distinct employees who booked time in this group this month
 };
 
@@ -65,8 +71,8 @@ export async function getEtcMonthKpis(
   // Summed PER CELL, not derived from the group totals: the suggestion that
   // stands in for an untouched cell clamps at 0 per cell, and that clamp cannot
   // be reproduced from the sums. Every cell counts now — see newEtcDiff.
-  const eng = { prior: 0, worked: 0, newEtc: 0, diff: 0 };
-  const shop = { prior: 0, worked: 0, newEtc: 0, diff: 0 };
+  const eng = { prior: 0, worked: 0, newEtc: 0, diff: 0, diffUnplanned: 0 };
+  const shop = { prior: 0, worked: 0, newEtc: 0, diff: 0, diffUnplanned: 0 };
   const parts = { prior: 0, spent: 0, newEtc: 0, diff: 0 };
 
   for (const job of jobs) {
@@ -85,6 +91,8 @@ export async function getEtcMonthKpis(
       bucket.worked += Number(entry.hoursWorked);
       bucket.newEtc += effectiveNewEtc(entry);
       bucket.diff += newEtcDiff(entry);
+      // Attributed to "unplanned" only while the cell is genuinely undecided.
+      if (!isNewEtcDecided(entry)) bucket.diffUnplanned += newEtcDiff(entry);
     }
   }
 
@@ -110,7 +118,7 @@ export async function getEtcMonthKpis(
   }
 
   const finish = (
-    b: { prior: number; worked: number; newEtc: number; diff: number },
+    b: { prior: number; worked: number; newEtc: number; diff: number; diffUnplanned: number },
     people: number,
   ): GroupKpi => {
     const hoursLeft = calcHoursLeft(b.prior, b.worked);
@@ -120,6 +128,7 @@ export async function getEtcMonthKpis(
       hoursLeft: round2(hoursLeft),
       newEtc: round2(b.newEtc),
       diff: round2(b.diff),
+      diffUnplanned: round2(b.diffUnplanned),
       people,
     };
   };

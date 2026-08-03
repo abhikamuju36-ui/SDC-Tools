@@ -15,7 +15,8 @@ import { MenuStatus, MenuApplyHint, MenuGroup, MenuBulkActions, MenuCheckbox } f
 // which is the only filter state worth surfacing at a glance — "all four
 // filters exist" isn't information.
 //
-// Applies on close, one navigation for the whole visit — see useDraftParamsMenu.
+// Every tick applies on its own, ~250ms later — see useDraftParamsMenu. The
+// menu stays open throughout, so you can watch the grid narrow as you go.
 
 export type FilterKey = "customers" | "types" | "statuses" | "billables";
 
@@ -28,15 +29,12 @@ export type FilterSpec = {
   searchable?: boolean;
 };
 
+// No remount-on-change wrapper here any more. It used to render the body under
+// a key derived from the committed values, which is how the draft got reset;
+// the hook resyncs itself now. With every tick applying immediately, remounting
+// would rebuild the <details> on the first click and close the menu in the
+// user's face — and clear the customer search box while it was at it.
 export function ProjectsFilterMenu({ filters }: { filters: FilterSpec[] }) {
-  // Remount on any change to the committed values, which resets the draft.
-  // JSON, not join — concatenating values makes ["a","bc"] and ["ab","c"] the
-  // same key, so the draft would fail to reset on some real filter changes.
-  const key = JSON.stringify(filters.map((f) => [f.key, f.selected]));
-  return <FilterMenuBody key={key} filters={filters} />;
-}
-
-function FilterMenuBody({ filters }: { filters: FilterSpec[] }) {
   const committed = Object.fromEntries(filters.map((f) => [f.key, f.selected])) as Record<FilterKey, string[]>;
   const { draft, setValues, toggleValue, dirty, pending, detailsRef, detailsProps } = useDraftParamsMenu<FilterKey>({
     committed,
@@ -63,7 +61,7 @@ function FilterMenuBody({ filters }: { filters: FilterSpec[] }) {
       >
         Filters
         {narrowing > 0 && ` (${narrowing})`}
-        <MenuStatus dirty={dirty} pending={pending} />
+        <MenuStatus pending={pending} />
       </summary>
       <div className="styled-scrollbar absolute left-0 top-full z-30 mt-2 max-h-[70vh] w-64 overflow-y-auto rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
         {filters.map((f) => {
@@ -75,9 +73,8 @@ function FilterMenuBody({ filters }: { filters: FilterSpec[] }) {
               key={f.key}
               label={f.label}
               count={`${sel.length}/${f.options.length}`}
-              // Open the ones that are actually filtering, so an active filter is
-              // never hidden behind a collapsed group.
-              defaultOpen={sel.length < f.options.length}
+              // Every group open — MenuGroup's default. This used to open only
+              // the filters that were actively narrowing, which hid the rest.
             >
               {f.searchable && f.options.length > 8 && (
                 <input

@@ -40,7 +40,7 @@ export function PartsCostSummary({
   // totals, so the card says so instead of presenting a short figure as if it
   // were the whole picture — a silently-dropped job reads as "nothing bought".
   failedJobs?: number;
-  // The Cost Quoted figure from the Projects tab (Job.costQuoted), summed across
+  // The Parts Cost Quoted figure from the Projects tab (Job.costQuoted), summed across
   // the selected jobs — per Dan, "Estimated" here is ALWAYS the quoted cost. It
   // was previously the parts New ETC, which read $0 for jobs with no parts ETC
   // rows (job 1142 against a $1.3M quote).
@@ -130,7 +130,7 @@ export function PartsCostSummary({
             // Purchase" clipped here before.
             // Colors mirror the report's colored measure names: Purchased blue,
             // Paid green, the two derived rows plain/neutral.
-            // What each bar means (Estimated = Cost Quoted, Purchased = on a PO
+            // What each bar means (Estimated = Parts Cost Quoted, Purchased = on a PO
             // whether invoiced or not, Paid = the invoiced share, Left to pay =
             // Purchased − Paid) used to be hover text on the bars. Removed by
             // request — the panel covered the card. Kept as documentation here.
@@ -177,7 +177,7 @@ export function PartsCostSummary({
               <p
                 className="cursor-help text-xs font-semibold text-sdc-gray-600"
                 title={
-                  `Projected part cost ${usd(variance.projection)} against the ${usd(variance.estimate)} Cost Quoted estimate — ` +
+                  `Projected part cost ${usd(variance.projection)} against the ${usd(variance.estimate)} Parts Cost Quoted estimate — ` +
                   `${usd(Math.abs(variance.dollars))} ${variance.dollars > 0 ? "over" : "under"}. ` +
                   "Projection = Purchased + estimate to purchase (the Parts New ETC), so this moves as parts are bought and the ETC is revised."
                 }

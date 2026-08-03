@@ -30,6 +30,7 @@ import { SubmitAndLockButton } from "@/components/SubmitAndLockButton";
 import { ReopenMonthButton } from "@/components/ReopenMonthButton";
 import { SaveEtcDraftsButton } from "@/components/SaveEtcDraftsButton";
 import { EtcAutosave } from "@/components/EtcAutosave";
+import { EtcLiveTotals } from "@/components/EtcLiveTotals";
 import { isStandardSheetUnlocked, hadWrongPassword, unlockStandardSheet, lockStandardSheet } from "@/lib/standard-sheet-gate";
 import { isEtcEditUnlocked, hadEtcEditWrongPassword, lockEtcEdit } from "@/lib/etc-edit-gate";
 import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/execution-etc";
@@ -37,7 +38,8 @@ import { PageTitle } from "@/components/ui/Typography";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { hours as formatHours } from "@/components/ui/format";
 import { MonthYearSelect } from "@/components/MonthYearSelect";
-import { JobCellMenu } from "@/components/JobCellMenu";
+import { JobCellMenuHost } from "@/components/JobCellMenuHost";
+import { jobCellMenuProps } from "@/lib/job-cell-menu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
 import { BUTTON_PRIMARY, BUTTON_SECONDARY, TABLE_HEADER_ROW, TABLE_GRID, ETC_COL_W } from "@/components/ui/classnames";
 import { abbreviateLabel } from "@/lib/abbrev";
@@ -529,18 +531,34 @@ export default async function MonthlyEtcPage({
   const hiddenJobEntries =
     renderedJobIds.length > 0
       ? await prisma.etcEntry.findMany({
-          where: { month, hoursWorked: { gt: 0 }, jobId: { notIn: renderedJobIds } },
-          select: { hoursWorked: true, job: { select: { jobId: true, jobName: true, status: true } } },
+          where: {
+            month,
+            hoursWorked: { gt: 0 },
+            jobId: { notIn: renderedJobIds },
+            // PARTS_COST stores DOLLARS in hoursWorked. Excluded here (2026-08-03)
+            // rather than filtered afterwards: this figure is reported as hours,
+            // and the original version of this query summed every section, so a
+            // hidden job with parts spend contributed its dollars to an "N hours"
+            // banner. Same reason the ETC totals treat Parts Cost as its own block.
+            section: { not: PARTS_COST_SECTION },
+          },
+          // `section` came along in 2026-08-03 so the KPI card's drill can say
+          // WHERE the hours went, not just how many there were. "106h on job 1163"
+          // is a number; "106h, 78 of it Mech Build" is something you can act on.
+          select: { hoursWorked: true, section: true, job: { select: { jobId: true, jobName: true, status: true } } },
         })
       : [];
   const hiddenJobHours = [...hiddenJobEntries
     .reduce((m, e) => {
       const k = e.job.jobId;
-      const cur = m.get(k) ?? { jobId: k, jobName: e.job.jobName, status: e.job.status, hours: 0 };
+      const cur = m.get(k) ?? { jobId: k, jobName: e.job.jobName, status: e.job.status, hours: 0, sections: [] as { section: string; hours: number }[] };
       cur.hours += Number(e.hoursWorked);
+      cur.sections.push({ section: e.section, hours: Number(e.hoursWorked) });
       return m.set(k, cur);
-    }, new Map<string, { jobId: string; jobName: string; status: string | null; hours: number }>())
-    .values()].sort((a, b) => b.hours - a.hours);
+    }, new Map<string, { jobId: string; jobName: string; status: string | null; hours: number; sections: { section: string; hours: number }[] }>())
+    .values()]
+    .map((j) => ({ ...j, sections: j.sections.sort((a, b) => b.hours - a.hours) }))
+    .sort((a, b) => b.hours - a.hours);
 
   // Numeric Job Id order like the sheet (979 before 1020 before 10000) — the
   // column is a string, so the DB's own sort is lexicographic.
@@ -789,6 +807,12 @@ export default async function MonthlyEtcPage({
             Save has been clicked with the password this session, so autosave
             can never be the thing that gets past the gate. */}
         <EtcAutosave formId="etc-month-form" month={month} unlocked={etcEditUnlocked} locked={locked} />
+        {/* Keeps the row TOTAL (NEW ETC) block and the grand-total row in step
+            with the section cells as they are typed. Both are summed on the
+            server, so nothing else moves them until a save. Renders nothing. */}
+        <EtcLiveTotals monthComplete={monthComplete} />
+        {/* ONE right-click menu for the whole grid — see JobCellMenuHost. */}
+        <JobCellMenuHost />
         {!locked && etcEditUnlocked && (
           <form action={lockEtcEdit}>
             <button type="submit" className={BUTTON_SECONDARY} title="Relock Save for this session.">
@@ -957,6 +981,8 @@ export default async function MonthlyEtcPage({
           // Same rows the amber banner below is built from, so the card and the
           // banner state one number rather than two that could drift.
           importIssues={importIssues.map((i) => ({ label: i.label, rows: i.rows, hours: Number(i.hours) }))}
+          // Same rows the red banner below is built from — one query, one number.
+          offGridJobs={hiddenJobHours}
         />
       )}
 
@@ -1217,20 +1243,26 @@ export default async function MonthlyEtcPage({
                           (Job Hour Details / Project Schedule) — the same one the
                           Projects grid uses. It replaced the inline Scheduler
                           gantt icon that used to sit beside the job name. */}
-                      <JobCellMenu
-                        jobId={job.jobId}
-                        jobName={job.jobName}
-                        schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null}
+                      {/* Plain <td>; the menu is one delegated listener. */}
+                      <td
+                        {...jobCellMenuProps({
+                          jobId: job.jobId,
+                          jobName: job.jobName,
+                          schedulerUrl: schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null,
+                        })}
                         title={`${job.jobId} — right-click for options`}
                         className={`sticky left-10 z-10 w-20 min-w-20 overflow-hidden px-3 py-1 text-left align-middle font-mono text-[10px] leading-none whitespace-nowrap text-sdc-gray-400 ${showJobName ? "" : "border-r-8 border-[#808080]"} ${zebraSticky}`}
                       >
                         {job.jobId}
-                      </JobCellMenu>
+                      </td>
                       {showJobName && (
-                        <JobCellMenu
-                          jobId={job.jobId}
-                          jobName={job.jobName}
-                          schedulerUrl={schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null}
+                        <td
+                          {...jobCellMenuProps({
+                            jobId: job.jobId,
+                            jobName: job.jobName,
+                            schedulerUrl: schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null,
+                          })}
+                          title={`${job.jobName} — right-click for options`}
                           style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
                           className={`sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] px-3 py-1 text-left align-middle text-[10px] font-medium leading-none whitespace-nowrap text-sdc-navy ${zebraSticky}`}
                         >
@@ -1241,22 +1273,40 @@ export default async function MonthlyEtcPage({
                           <div className="flex min-h-[14px] min-w-0 items-center justify-start gap-1.5">
                             <span className="min-w-0 truncate">{job.jobName}</span>
                           </div>
-                        </JobCellMenu>
+                        </td>
                       )}
                       {visibleCols.map((s, sIdx) => {
                         const edge = edgeFor(s.code, sIdx);
                         const entry = entryByCode.get(s.code);
+                        // No EtcEntry for this job/section — the job was never
+                        // quoted for it, so startMonth seeded no row.
+                        //
+                        // These printed a dead "—" across all five columns until
+                        // 2026-08-03; 357 of July's 754 cells were like that, so
+                        // roughly half the grid could not be planned at all. They
+                        // are now the SAME editable cell as any other, at Prior 0 /
+                        // Worked 0 — which is what they are — and the row is
+                        // created on save if a value is typed. See EtcSectionCells.
                         if (!entry) {
-                          return SUB_COLUMNS.map((col, ci) => (
-                            <td
-                              key={`${s.code}-${col}`}
-                              className={`${ci === 0 ? edge : "border-l border-sdc-border"} ${ETC_COL_W} overflow-hidden px-2 py-1 text-center align-middle whitespace-nowrap ${
-                                col === "Prior ETC" ? "bg-[#5E91D3] text-sdc-gray-700" : `${subColBodyBg(col)} text-sdc-gray-400`
-                              }`}
-                            >
-                              —
-                            </td>
-                          ));
+                          return (
+                            <Fragment key={s.code}>
+                              <EtcSectionCells
+                                entryId={null}
+                                jobId={job.id}
+                                sectionCode={s.code}
+                                billingGroup={s.billingGroup}
+                                edge={edge}
+                                jobName={job.jobName}
+                                sectionName={s.name}
+                                priorEtc={0}
+                                initialWorked={0}
+                                initialDraft={null}
+                                initialConfirmed={null}
+                                locked={locked}
+                                monthComplete={monthComplete}
+                              />
+                            </Fragment>
+                          );
                         }
                         const prior = Number(entry.priorEtc);
                         const worked = Number(entry.hoursWorked);
@@ -1273,6 +1323,11 @@ export default async function MonthlyEtcPage({
                           <Fragment key={s.code}>
                             <EtcSectionCells
                               entryId={entry.id}
+                              // Lets the cell publish its live figures to the
+                              // totals that sum it (lib/etc-live-totals.ts).
+                              jobId={job.id}
+                              sectionCode={s.code}
+                              billingGroup={s.billingGroup}
                               edge={edge}
                               jobName={job.jobName}
                               sectionName={s.name}
@@ -1287,7 +1342,17 @@ export default async function MonthlyEtcPage({
                         );
                       })}
                       {visibleGroups.map((group, gi) => {
-                        const hoursLeft = totals[group].prior - totals[group].worked;
+                        // Printed from the printed inputs, for the same reason as
+                        // the section cells (see EtcSectionCells): Prior is whole
+                        // and Worked is not, so rounding the subtraction
+                        // independently makes the visible arithmetic fail. The
+                        // exact value still drives the tooltip.
+                        const hoursLeftExact = totals[group].prior - totals[group].worked;
+                        const hoursLeft = Math.round(totals[group].prior) - Math.round(totals[group].worked);
+                        // NOT hoursLeft − newEtc: Diff is summed PER CELL because
+                        // the suggestion clamps at zero per cell, and that clamp
+                        // cannot be reproduced from these two column sums. See the
+                        // note where `totals` is built.
                         const diff = totals[group].diff;
                         groupGrandTotals[group].prior += totals[group].prior;
                         groupGrandTotals[group].worked += totals[group].worked;
@@ -1303,14 +1368,29 @@ export default async function MonthlyEtcPage({
                             </td>
                             <td
                               className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-500`}
-                              title={`${round2(hoursLeft)} = Prior ETC (${round2(totals[group].prior)}) − Hours Worked (${round2(totals[group].worked)})`}
+                              title={`${round2(hoursLeftExact)} = Prior ETC (${round2(totals[group].prior)}) − Hours Worked (${round2(totals[group].worked)})`}
                             >
                               {wholeNum(hoursLeft)}
                             </td>
-                            <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`} title={String(round2(totals[group].newEtc))}>
+                            {/* These two are the only cells in the block that move
+                                as a manager types: Prior ETC and Hours Worked
+                                aren't editable, and Hours Left derives from them.
+                                EtcLiveTotals repaints them through these hooks —
+                                see lib/etc-live-totals.ts for why they can't just
+                                wait for a save. */}
+                            <td
+                              data-live="newEtc"
+                              data-group={group}
+                              data-job={job.id}
+                              className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`}
+                              title={String(round2(totals[group].newEtc))}
+                            >
                               {monthComplete ? wholeNum(totals[group].newEtc) : "—"}
                             </td>
                             <td
+                              data-live="diff"
+                              data-group={group}
+                              data-job={job.id}
                               className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
                               title={`${round2(diff)} = the sum of (Hours Left − New ETC) across this job's ${
                                 group === "Engineering" ? "Engineering" : "Shop"
@@ -1375,6 +1455,12 @@ export default async function MonthlyEtcPage({
                             </td>
                             <PartsCostNewEtcCell
                               name={`newEtcOverride__${partsCostEntry.id}`}
+                              // For the live Total ETC $ chain — see
+                              // lib/etc-live-totals.ts.
+                              jobId={job.id}
+                              priorEtc={prior}
+                              spent={spent}
+                              suggested={suggestedCost}
                               jobName={job.jobName}
                               initialValue={
                                 draftCost != null
@@ -1480,7 +1566,10 @@ export default async function MonthlyEtcPage({
                     )}
                     {visibleCols.map((s, sIdx) => {
                       const t = sectionGrandTotals.get(s.code)!;
-                      const hoursLeft = t.prior - t.worked;
+                      // Same rounded-chain rule as every other Hours Left on this
+                      // page — see EtcSectionCells for why.
+                      const hoursLeftExact = t.prior - t.worked;
+                      const hoursLeft = Math.round(t.prior) - Math.round(t.worked);
                       const diff = t.diff;
                       return (
                         <Fragment key={s.code}>
@@ -1488,7 +1577,7 @@ export default async function MonthlyEtcPage({
                           <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-navy`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
                           <td
                             className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-navy`}
-                            title={`${round2(hoursLeft)} = Prior ETC (${round2(t.prior)}) − Hours Worked (${round2(t.worked)})`}
+                            title={`${round2(hoursLeftExact)} = Prior ETC (${round2(t.prior)}) − Hours Worked (${round2(t.worked)})`}
                           >
                             {wholeNum(hoursLeft)}
                           </td>
@@ -1504,7 +1593,9 @@ export default async function MonthlyEtcPage({
                     })}
                     {visibleGroups.map((group, gi) => {
                       const t = groupGrandTotals[group];
-                      const hoursLeft = t.prior - t.worked;
+                      // Same rounded-chain rule as the rows above it.
+                      const hoursLeftExact = t.prior - t.worked;
+                      const hoursLeft = Math.round(t.prior) - Math.round(t.worked);
                       const diff = t.diff;
                       return (
                         <Fragment key={group}>
@@ -1512,12 +1603,25 @@ export default async function MonthlyEtcPage({
                           <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-blue-dark`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
                           <td
                             className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-blue-dark`}
-                            title={`${round2(hoursLeft)} = Prior ETC (${round2(t.prior)}) − Hours Worked (${round2(t.worked)})`}
+                            title={`${round2(hoursLeftExact)} = Prior ETC (${round2(t.prior)}) − Hours Worked (${round2(t.worked)})`}
                           >
                             {wholeNum(hoursLeft)}
                           </td>
-                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-blue-dark`} title={String(round2(t.newEtc))}>{monthComplete ? wholeNum(t.newEtc) : "—"}</td>
+                          {/* Same two live cells as the body rows, at the grand
+                              total. `data-job="all"` marks the footer. */}
                           <td
+                            data-live="newEtc"
+                            data-group={group}
+                            data-job="all"
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-blue-dark`}
+                            title={String(round2(t.newEtc))}
+                          >
+                            {monthComplete ? wholeNum(t.newEtc) : "—"}
+                          </td>
+                          <td
+                            data-live="diff"
+                            data-group={group}
+                            data-job="all"
                             className={`border-l border-sdc-border ${ETC_COL_W} ${diffTextOnDark(diff)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
                             title={`${round2(diff)} = the sum of (Hours Left − New ETC) down this column. A cell with no New ETC typed compares against the suggestion, so it reads 0 unless that section is already overspent.`}
                           >

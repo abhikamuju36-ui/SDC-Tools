@@ -9,6 +9,7 @@ import {
   calcTotalStandardFees,
 } from "@/lib/standard-fees";
 import { saveContingencyAmount, saveJobNotes } from "@/lib/standard-sheet-actions";
+import { useEtcLiveTotals } from "@/lib/etc-live-totals";
 
 // Same weight/treatment as the Monthly ETC grid's other block dividers.
 const STD_EDGE = "border-l-8! border-l-[#808080]!";
@@ -83,6 +84,12 @@ export type LivePoolCell = {
 type Ctx = {
   getComputed: (jobId: number) => StandardComputed | undefined;
   getGrandTotals: () => StandardGrandTotals;
+  // Contingency is an EDITABLE cell whose value feeds Total Standard Fees
+  // (calcTotalStandardFees) and the grand total. It used to live only in the
+  // input's own state, so typing into it moved nothing until the blur-save came
+  // back from the server — the same stale-formula problem as the ETC totals.
+  // Reporting it up here makes the column behave like the spreadsheet it mirrors.
+  setLiveContingency: (jobId: number, amount: number) => void;
   editable: boolean;
   getPoolCell: (category: string) => LivePoolCell | undefined;
   getPoolTotals: () => PoolTotals;
@@ -119,6 +126,15 @@ export function StandardRatesProvider({
   editable?: boolean;
   children: React.ReactNode;
 }) {
+  // Live per-job ETC totals published by the grid's section cells. Subscribing
+  // here rather than threading them down means only this provider re-renders on
+  // a keystroke, not the ~800 cells that produced the number.
+  const liveTotals = useEtcLiveTotals();
+
+  // Contingency amounts as they are being typed, jobId -> amount. An absent entry
+  // means nobody has touched that job, so the server value stands.
+  const [liveContingency, setLiveContingency] = useState<Record<number, number>>({});
+
   // The two manual pool cells live here (seeded once from server data) so the
   // pool panel and the grid's job Standard Fees read the same live values.
   //
@@ -163,8 +179,24 @@ export function StandardRatesProvider({
       for (const r of frozenRows) m.set(r.jobId, { totalEtcDollars: r.totalEtcDollars, percentOfTotal: r.percentOfTotal, standardFees: r.standardFees, totalStandardFees: r.totalStandardFees });
       return m;
     }
+    // Live ETC hours where the grid has published them, the server's figures
+    // otherwise (2026-08-03).
+    //
+    // etcEngineering/etcShop/etcParts arrive as SERVER props, summed from stored
+    // EtcEntry values. So this whole chain — Total ETC $, % Total, Standard Fees,
+    // Total Standard Fees, and the grand totals below — was frozen at page load
+    // while a manager typed New ETC values into the grid beside it. The rates and
+    // pool cells recomputed live; the thing they multiply did not.
+    //
+    // Falls back per job rather than all-or-nothing: a job whose section cells
+    // haven't mounted (filtered out, or the Standard block open on a month with no
+    // grid rendered) keeps its server figure instead of collapsing to zero.
     const withTotals = jobs.map((j) => {
-      const totalEtcDollars = calcTotalEtcDollars({ engineering: j.etcEngineering, shop: j.etcShop, parts: j.etcParts }, rates);
+      const live = liveTotals.get(j.jobId);
+      const engineering = live ? live.engineering.newEtc : j.etcEngineering;
+      const shop = live ? live.shop.newEtc : j.etcShop;
+      const parts = live?.parts ? live.parts.newEtc : j.etcParts;
+      const totalEtcDollars = calcTotalEtcDollars({ engineering, shop, parts }, rates);
       return { ...j, totalEtcDollars };
     });
     const grandTotal = withTotals.reduce((sum, r) => sum + r.totalEtcDollars, 0);
@@ -173,11 +205,14 @@ export function StandardRatesProvider({
       const percentOfTotal = calcPercentOfTotal(r.totalEtcDollars, grandTotal);
       const standardFeeEngineering = calcStandardFeeEngineering(percentOfTotal, poolTotals);
       const standardFeeShop = calcStandardFeeShop(percentOfTotal, poolTotals);
+      // Live contingency where the cell has reported one, the server's value
+      // otherwise — the cell is editable and this is what multiplies it.
+      const contingency = liveContingency[r.jobId] ?? r.contingencyAmount;
       const totalStandardFees = calcTotalStandardFees(
         r.totalEtcDollars,
         standardFeeEngineering,
         standardFeeShop,
-        r.contingencyAmount,
+        contingency,
         contingencyRate
       );
       map.set(r.jobId, {
@@ -188,7 +223,7 @@ export function StandardRatesProvider({
       });
     }
     return map;
-  }, [jobs, rates, poolTotals, contingencyRate, frozenRows]);
+  }, [jobs, rates, poolTotals, contingencyRate, frozenRows, liveTotals, liveContingency]);
 
   const grandTotals = useMemo<StandardGrandTotals>(() => {
     const acc = { totalEtcDollars: 0, percentOfTotal: 0, standardFees: 0, contingencyAmount: 0, totalStandardFees: 0 };
@@ -198,11 +233,11 @@ export function StandardRatesProvider({
       acc.totalEtcDollars += c.totalEtcDollars;
       acc.percentOfTotal += c.percentOfTotal;
       acc.standardFees += c.standardFees;
-      acc.contingencyAmount += j.contingencyAmount;
+      acc.contingencyAmount += liveContingency[j.jobId] ?? j.contingencyAmount;
       acc.totalStandardFees += c.totalStandardFees;
     }
     return acc;
-  }, [jobs, computedByJob]);
+  }, [jobs, computedByJob, liveContingency]);
 
   function getPoolCell(category: string): LivePoolCell | undefined {
     const p = poolRows.find((x) => x.category === category);
@@ -234,6 +269,8 @@ export function StandardRatesProvider({
   const ctx: Ctx = {
     getComputed: (jobId) => computedByJob.get(jobId),
     getGrandTotals: () => grandTotals,
+    setLiveContingency: (jobId, amount) =>
+      setLiveContingency((prev) => (prev[jobId] === amount ? prev : { ...prev, [jobId]: amount })),
     editable,
     getPoolCell,
     getPoolTotals: () => poolTotals,
@@ -330,6 +367,8 @@ function ContingencyNotesInputs({
   notes: string;
   editable: boolean;
 }) {
+  // Only the contingency branch uses it, but the hook has to run unconditionally.
+  const { setLiveContingency } = useStandardRates();
   const initial = field === "contingency" ? (contingency ? String(contingency) : "") : notes;
   const [value, setValue] = useState(initial);
   const [focused, setFocused] = useState(false);
@@ -381,7 +420,15 @@ function ContingencyNotesInputs({
       inputMode="numeric"
       value={displayValue}
       onFocus={() => setFocused(true)}
-      onChange={(e) => setValue(e.target.value.replace(/[^0-9]/g, ""))}
+      onChange={(e) => {
+        const next = e.target.value.replace(/[^0-9]/g, "");
+        setValue(next);
+        // Report it up as it is typed, not on blur: Total Standard Fees and the
+        // grand total are computed FROM this number, and a formula column that
+        // waits for a blur-save round trip is exactly what this page was
+        // criticised for. save() on blur still persists it.
+        setLiveContingency(jobId, next.trim() === "" ? 0 : Number(next));
+      }}
       onBlur={() => {
         setFocused(false);
         save();

@@ -237,6 +237,61 @@ interface TotalEtoCosting {
 // requirement, jobs with no Type must never be imported or shown, so this
 // sync only UPDATES jobs that already exist with a valid Type; it never
 // creates a new job (which would necessarily have Type = null).
+// ── Parts Cost Actual (Job.costActualHistorical) ────────────────────────────
+//
+// The Projects grid's "Parts Cost Actual" column, filled from TotalETO instead
+// of typed in.
+//
+// Policy set 2026-08-03: Jessica enters new projects, their quoted hours and
+// their Parts Cost Quoted; the app pulls actual hours and actual parts cost. This
+// is the second half of that — the column was manager-entered and had NO sync at
+// all (Power BI's model has no equivalent measure; see the note in
+// sync-powerbi.ts).
+//
+// TotalETO over Power BI, deliberately. getPartsCostSpentByJob runs the same
+// query Power BI's own 'Part Purchase' table runs, verified 2026-07-19 to match
+// its [Part Cost Purchased] to the dollar for every real project job — so the two
+// agree, and TotalETO is live where the model waits for a scheduled refresh. It
+// is also already the source for the ETC grid's "Money Spent Month", so this
+// column and that row can never tell different stories.
+//
+// Cumulative, not per-month: the column is a running actual. Windowed from 1990
+// to 2100 rather than by a "since" date, because a job's parts can be invoiced
+// long before its ETC tracking starts.
+//
+// Every job with a real Type, whatever its Status — Complete jobs are precisely
+// the ones whose parts spend is finished and worth reporting, and they were the
+// rows sitting empty.
+export async function syncPartsCostActual(): Promise<{ jobsUpdated: number; jobsNotFound: number }> {
+  const spentByJobId = await getPartsCostSpentByJob(new Date(Date.UTC(1990, 0, 1)), new Date(Date.UTC(2100, 0, 1)));
+
+  const jobs = await prisma.job.findMany({
+    where: { type: { in: [...VALID_JOB_TYPES] } },
+    select: { id: true, jobId: true, costActualHistorical: true },
+  });
+  const byJobId = new Map(jobs.map((j) => [j.jobId, j]));
+
+  let jobsUpdated = 0;
+  let jobsNotFound = 0;
+  for (const [jobId, spent] of spentByJobId) {
+    const job = byJobId.get(jobId);
+    if (!job) {
+      // TotalETO carries spare-parts/service pseudo-IDs that never map to an app
+      // job. Counted, not warned about one by one.
+      jobsNotFound++;
+      continue;
+    }
+    // Only write a real change: this runs on every pass, and rewriting an
+    // identical Decimal would churn updatedAt on all 233 rows for nothing.
+    const current = job.costActualHistorical == null ? null : Number(job.costActualHistorical);
+    const next = Math.round(spent * 100) / 100;
+    if (current != null && Math.abs(current - next) < 0.005) continue;
+    await prisma.job.update({ where: { id: job.id }, data: { costActualHistorical: next } });
+    jobsUpdated++;
+  }
+  return { jobsUpdated, jobsNotFound };
+}
+
 export async function syncFromTotalEto(): Promise<{ jobsUpdated: number; skippedNoType: number }> {
   const pool = await sql.connect(config);
   try {

@@ -51,26 +51,34 @@ export function newEtcDiff(entry: {
   priorEtc: unknown;
   hoursWorked: unknown;
 }): number {
-  // ALWAYS a number now (2026-08-02, by request). It used to return null for an
-  // undecided cell, so the Diff column read "—" on every row nobody had typed
-  // into — which is most of the grid for most of the month, and hid the one
-  // thing the column exists to show: a section that has already burned past its
-  // Prior ETC.
+  // An UNTYPED New ETC counts as 0; a typed one counts as max(value, 0)
+  // (2026-08-03, by request). This is the second revision of the rule, so both
+  // predecessors are worth recording.
   //
-  // Undecided cells compare against the SUGGESTION (effectiveNewEtc), which
-  // makes the column read the way you'd expect:
-  //   • hours worked 0            -> suggestion is Prior, so Diff is 0
-  //   • worked, still hours left  -> suggestion is Hours Left, so Diff is 0
-  //   • worked PAST Prior ETC     -> suggestion clamps at 0 while Hours Left is
-  //                                  negative, so Diff is the overrun
-  // In other words an untouched cell shows 0 unless it is genuinely overspent,
-  // which is exactly when someone should be looking at it.
+  // Until 2026-08-02 this returned null for an undecided cell, so the column read
+  // "—" across most of the grid and hid the one thing it exists to show: a
+  // section already burned past its Prior ETC. That was replaced by comparing
+  // against the SUGGESTION, which fixed the overruns but produced a column that
+  // could not be read off the screen, and was reported as a bug:
   //
-  // The old comment here called that overrun "not earned" and suppressed it.
-  // That reasoning was backwards: the hours are booked whether or not a manager
-  // has typed a number, and hiding the overrun until they do means it surfaces
-  // last, not first.
-  return calcHoursLeft(Number(entry.priorEtc), Number(entry.hoursWorked)) - effectiveNewEtc(entry);
+  //     Prior 174, Worked  98 -> Left  77, blank New ETC -> Diff 0
+  //     Prior 160, Worked 167 -> Left  -7, blank New ETC -> Diff -7
+  //
+  // Both were right under that rule — the suggestion clamps at 0, so it equals
+  // Hours Left while Hours Left is positive and 0 once it goes negative — but with
+  // the cell visibly empty the two look arbitrary side by side.
+  //
+  // Treating a blank as 0 makes the column say ONE thing: Diff is Hours Left
+  // until somebody plans the section, and the real variance once they do.
+  // Overspent cells are unaffected (-7 stays -7); the 77 now reads as 77 hours
+  // nobody has accounted for, which is a fair thing to be told.
+  //
+  // Scope: this is how DIFF reads an empty cell. effectiveNewEtc is deliberately
+  // NOT changed — it answers "what will this month be if submitted as-is", and
+  // the carry-forward into next month's Prior ETC depends on that answer. Making
+  // it 0 would zero every unplanned section's balance at submission.
+  const decided = isNewEtcDecided(entry) ? Math.max(effectiveNewEtc(entry), 0) : 0;
+  return calcHoursLeft(Number(entry.priorEtc), Number(entry.hoursWorked)) - decided;
 }
 
 export function round2(n: number): number {

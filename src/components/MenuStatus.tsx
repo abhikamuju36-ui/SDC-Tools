@@ -5,7 +5,7 @@
 // navigation is in flight. Both occupy the chevron's slot so the button never
 // changes width, and the chevron is hidden while spinning rather than crowded
 // alongside it.
-export function MenuStatus({ dirty, pending }: { dirty: boolean; pending: boolean }) {
+export function MenuStatus({ pending }: { pending: boolean }) {
   if (pending) {
     return (
       <svg viewBox="0 0 16 16" width="10" height="10" className="shrink-0 animate-spin" aria-label="Applying">
@@ -14,9 +14,13 @@ export function MenuStatus({ dirty, pending }: { dirty: boolean; pending: boolea
       </svg>
     );
   }
+  // No "unapplied changes" dot any more (2026-08-03), and no `dirty` prop to
+  // drive one: changes apply on the tick, so the only honest states are
+  // "applying" (the spinner above) and "done". The dot used to mean "you still
+  // have to close this menu"; leaving it would claim something is outstanding
+  // when nothing is.
   return (
     <>
-      {dirty && <span aria-hidden className="h-1.5 w-1.5 shrink-0 rounded-full bg-current" />}
       <svg
         viewBox="0 0 16 16"
         width="10"
@@ -32,11 +36,14 @@ export function MenuStatus({ dirty, pending }: { dirty: boolean; pending: boolea
   );
 }
 
-// Footer line for those menus — applying on close isn't discoverable on its own.
+// Footer line for those menus. It used to read "Applies when you close this
+// menu", which was the instruction for a behaviour that no longer exists —
+// changes apply on the tick. Now it just reports which of the two states the
+// grid is in, so a slow render still has something saying so.
 export function MenuApplyHint({ dirty }: { dirty: boolean }) {
   return (
     <p className="mt-1 border-t border-sdc-border-soft px-1.5 pt-1 text-[10px] text-sdc-gray-400">
-      {dirty ? "Applies when you close this menu" : "Up to date"}
+      {dirty ? "Applying…" : "Up to date"}
     </p>
   );
 }
@@ -45,12 +52,19 @@ export function MenuApplyHint({ dirty }: { dirty: boolean }) {
 // "3/11"-style summary that lets you read the state without opening the group,
 // which is what keeps two-clicks-deep from feeling blind.
 //
-// `defaultOpen` should be set when the group is actively narrowing something —
-// an active filter you'd have to hunt for is worse than a slightly taller menu.
+// OPEN BY DEFAULT (2026-08-03, by request, app-wide). Each caller used to decide
+// per group — open only the ones actively narrowing something, collapse the rest
+// — which meant the same menu had a different shape every time you opened it,
+// and the groups you wanted were behind an extra click precisely when nothing
+// was filtered yet. Everything is expanded now; a group is still collapsible,
+// it just isn't collapsed for you.
+//
+// The default lives here rather than at the call sites so any menu added later
+// inherits it. Callers should NOT pass `defaultOpen` without a specific reason.
 export function MenuGroup({
   label,
   count,
-  defaultOpen = false,
+  defaultOpen = true,
   children,
 }: {
   label: string;

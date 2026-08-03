@@ -4,6 +4,10 @@ import { TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_BTN_NEUTRAL } from "@/componen
 import { useDraftParamsMenu } from "@/components/useDraftParamMenu";
 import { encodeParamList } from "@/lib/quoted-display-prefs";
 import { MenuStatus, MenuApplyHint, MenuGroup, MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
+import { RESTRICTED_SECTION_CODES } from "@/lib/sections";
+import { useProjectsEditMode } from "@/components/ProjectsEditMode";
+import { useRouter } from "next/navigation";
+import { useRef } from "react";
 
 // "Sections ▾" — which columns the grid shows: the four phase pickers plus the
 // info columns (Job/Customer/Type/…), replacing five toolbar buttons.
@@ -19,29 +23,10 @@ export type PhaseSpec = { phase: string; sections: { code: string; name: string 
 export type InfoColumn = { key: string; label: string };
 type Key = "cols" | "hide";
 
+// The remount-on-change wrapper this used to have is gone — the hook resyncs
+// its own draft, and with every tick applying immediately a remount would close
+// the menu on the first click. See useDraftParamMenu.
 export function ProjectsSectionsMenu({
-  phases,
-  visibleCodes,
-  infoColumns,
-  hiddenInfo,
-}: {
-  phases: PhaseSpec[];
-  visibleCodes: string[];
-  infoColumns: InfoColumn[];
-  hiddenInfo: string[];
-}) {
-  return (
-    <SectionsMenuBody
-      key={`${visibleCodes.join("")}|${hiddenInfo.join("")}`}
-      phases={phases}
-      visibleCodes={visibleCodes}
-      infoColumns={infoColumns}
-      hiddenInfo={hiddenInfo}
-    />
-  );
-}
-
-function SectionsMenuBody({
   phases,
   visibleCodes,
   infoColumns,
@@ -67,6 +52,31 @@ function SectionsMenuBody({
     },
   });
 
+  // ── Fetch the restricted sections only when they're actually wanted ────────
+  //
+  // The Edit Mode toggle no longer refreshes the route unless a restricted
+  // column is already on screen (see ProjectsEditMode) — that refresh re-rendered
+  // 233 rows to usually change nothing, and was what "updating columns…" waited
+  // on. The one thing that DID depend on it is this list: the server omits PM,
+  // Manufacturing and the two Warranty sections while locked, so without a
+  // refresh they'd never appear here and could never be switched on.
+  //
+  // So the cost moves to the moment it's needed: if this menu is opened while
+  // editing and the server hasn't sent them, ask for them then. Opening a menu is
+  // a deliberate act and a wait there is expected; toggling a switch is not.
+  const { editing } = useProjectsEditMode();
+  const router = useRouter();
+  const askedRef = useRef(false);
+  const hasRestricted = phases.some((p) => p.sections.some((sec) => RESTRICTED_SECTION_CODES.has(sec.code)));
+  // On OPEN, not on the mode change — asking as soon as Edit Mode flipped would
+  // just move the same refresh back onto the toggle, which is the thing being
+  // fixed. Once per mount is enough; if it fails there is nothing to retry into.
+  function onOpenMaybeFetch(open: boolean) {
+    if (!open || !editing || hasRestricted || askedRef.current) return;
+    askedRef.current = true;
+    router.refresh();
+  }
+
   const cols = draft.cols ?? [];
   const hidden = draft.hide ?? [];
   const allSections = phases.flatMap((p) => p.sections);
@@ -81,13 +91,24 @@ function SectionsMenuBody({
   }
 
   return (
-    <details ref={detailsRef} {...detailsProps} className="group relative inline-block">
+    <details
+      ref={detailsRef}
+      {...detailsProps}
+      onToggle={(e) => {
+        // The hook's handler owns apply-on-close; this only adds the
+        // fetch-on-open above. Both must run, and its ignore-descendants guard
+        // still applies because it sees the same event.
+        detailsProps.onToggle(e);
+        if (e.target === e.currentTarget) onOpenMaybeFetch(e.currentTarget.open);
+      }}
+      className="group relative inline-block"
+    >
       <summary
         className={`${TOOLBAR_BTN} ${allShown ? TOOLBAR_BTN_NEUTRAL : TOOLBAR_BTN_ACTIVE} ${pending ? "opacity-60" : ""}`}
       >
         Sections
         {` (${shownCount}/${allSections.length})`}
-        <MenuStatus dirty={dirty} pending={pending} />
+        <MenuStatus pending={pending} />
       </summary>
       <div className="styled-scrollbar absolute left-0 top-full z-30 mt-2 max-h-[70vh] w-72 overflow-y-auto rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
         {phases.map((p) => {
@@ -98,9 +119,9 @@ function SectionsMenuBody({
               key={p.phase}
               label={p.phase}
               count={`${on}/${phaseCodes.length}`}
-              // Fully-on phases stay collapsed; anything partially hidden opens,
-              // since that's the state someone came here to see or undo.
-              defaultOpen={on > 0 && on < phaseCodes.length}
+              // Every phase open — MenuGroup's default. Fully-on phases used to
+              // stay collapsed, so the common case (nothing hidden yet) opened
+              // to a menu of closed rows.
             >
               <MenuBulkActions onAll={() => setPhase(p, true)} onNone={() => setPhase(p, false)} />
               {p.sections.map((s) => (
@@ -120,7 +141,6 @@ function SectionsMenuBody({
         <MenuGroup
           label="Info columns"
           count={`${infoColumns.length - hidden.length}/${infoColumns.length}`}
-          defaultOpen={hidden.length > 0}
         >
           <MenuBulkActions onAll={() => setValues("hide", [])} onNone={() => setValues("hide", infoColumns.map((c) => c.key))} />
           {infoColumns.map((c) => (

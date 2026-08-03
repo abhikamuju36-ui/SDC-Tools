@@ -8,7 +8,7 @@ import "dotenv/config";
 import { prisma } from "../src/lib/prisma";
 import { ETC_SECTIONS } from "../src/lib/sections";
 import { round2 } from "../src/lib/etc";
-import { fetchJobHoursRows, hoursByJobSection } from "../src/lib/sharepoint-hours";
+import { fetchJobHoursRows, hoursByJobSection } from "../src/lib/job-hours-source";
 
 const MONTH = "2026-07";
 const Y = 2026, MO = 7;

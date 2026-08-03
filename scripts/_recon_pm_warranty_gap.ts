@@ -14,7 +14,7 @@
 import "dotenv/config";
 import { runDax } from "../src/lib/powerbi-client";
 import { prisma } from "../src/lib/prisma";
-import { fetchJobHoursRowsWithIssues } from "../src/lib/sharepoint-hours";
+import { fetchJobHoursRowsWithIssues } from "../src/lib/job-hours-source";
 import { type PoolCategory } from "../src/lib/sections";
 import { round2 } from "../src/lib/etc";
 

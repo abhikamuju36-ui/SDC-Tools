@@ -3,8 +3,9 @@
 import { Fragment } from "react";
 import { VALID_JOB_TYPES } from "@/lib/job-filters";
 import { useNewProjectRowIds, removeNewProjectRow } from "@/components/NewProjectRowsStore";
-import { DateCell } from "@/components/DateCell";
+import { dateCellProps } from "@/lib/date-cell";
 import { MoneyCell } from "@/components/MoneyCell";
+import { NEW_ROW_PREFIX } from "@/components/ProjectsLiveTotals";
 
 type PhaseGroup = { phase: string; sections: { code: string; name: string }[] };
 
@@ -111,12 +112,12 @@ export function NewProjectRows({
           )}
           {show("startDate") && (
             <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500">
-              <DateCell name={`newRow__${tempId}__startDate`} defaultValue="" ariaLabel="New project Start Date" />
+              <input {...dateCellProps({ name: `newRow__${tempId}__startDate`, defaultValue: "", ariaLabel: "New project Start Date" })} />
             </td>
           )}
           {show("completeDate") && (
             <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500">
-              <DateCell name={`newRow__${tempId}__completeDate`} defaultValue="" ariaLabel="New project Complete Date" />
+              <input {...dateCellProps({ name: `newRow__${tempId}__completeDate`, defaultValue: "", ariaLabel: "New project Complete Date" })} />
             </td>
           )}
           {phaseGroups.map((g) =>
@@ -138,13 +139,26 @@ export function NewProjectRows({
               </Fragment>
             ) : null
           )}
-          {/* Grand-total columns (Engineering + Shop, computed on save) — match
-              the grid's two total columns that span all phases. */}
-          <td className="overflow-hidden border-l border-sdc-border bg-sdc-blue-light/60 px-1 py-1.5 text-center align-middle font-mono text-[10px] font-medium whitespace-nowrap text-sdc-navy">
-            —
+          {/* Grand-total columns (Engineering + Shop). These rendered a hardcoded
+              "—" until 2026-08-03, so a new project's totals stayed blank however
+              many hours were typed into the row — the only cells on this grid
+              where the total wasn't merely stale but missing. ProjectsLiveTotals
+              sums them through these hooks, exactly as it does for a saved row. */}
+          <td
+            data-total="eng"
+            data-job={`${NEW_ROW_PREFIX}${tempId}`}
+            data-actual="0"
+            className="overflow-hidden border-l border-sdc-border bg-sdc-blue-light/60 px-1 py-1.5 text-center align-middle font-mono text-[10px] font-medium whitespace-nowrap text-sdc-navy"
+          >
+            <span data-total-quoted>0</span>
           </td>
-          <td className="overflow-hidden border-l border-sdc-border bg-sdc-blue-light/60 px-1 py-1.5 text-center align-middle font-mono text-[10px] font-medium whitespace-nowrap text-sdc-navy">
-            —
+          <td
+            data-total="shop"
+            data-job={`${NEW_ROW_PREFIX}${tempId}`}
+            data-actual="0"
+            className="overflow-hidden border-l border-sdc-border bg-sdc-blue-light/60 px-1 py-1.5 text-center align-middle font-mono text-[10px] font-medium whitespace-nowrap text-sdc-navy"
+          >
+            <span data-total-quoted>0</span>
           </td>
           <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-2 py-1.5 text-center align-middle text-[10px] font-medium text-sdc-navy">
             <div className="flex items-center justify-center gap-0.5">
@@ -152,7 +166,7 @@ export function NewProjectRows({
               <MoneyCell
                 name={`newRow__${tempId}__costQuoted`}
                 defaultValue=""
-                ariaLabel="New project Cost Quoted"
+                ariaLabel="New project Parts Cost Quoted"
                 className="w-full min-w-0 border-none bg-transparent text-right tabular-nums outline-none"
               />
             </div>
@@ -163,7 +177,7 @@ export function NewProjectRows({
               <MoneyCell
                 name={`newRow__${tempId}__costActualHistorical`}
                 defaultValue=""
-                ariaLabel="New project Actual Cost"
+                ariaLabel="New project Parts Cost Actual"
                 className="w-full min-w-0 border-none bg-transparent text-right tabular-nums outline-none"
               />
             </div>

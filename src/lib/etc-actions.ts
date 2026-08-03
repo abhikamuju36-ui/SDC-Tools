@@ -6,7 +6,7 @@ import { auth } from "@/lib/auth";
 import { calcHoursLeft, suggestNewEtc, isMonthLocked, round2, nextMonth, isValidMonth, isSafeForLiveEtcSync, latestPriorEtcByKey } from "@/lib/etc";
 import { etcActiveJobFilter } from "@/lib/job-filters";
 import { syncActualHours, syncHoursWorked, syncPartsCost } from "@/lib/sync-powerbi";
-import { fetchJobHoursRowsWithIssues } from "@/lib/sharepoint-hours";
+import { fetchJobHoursRowsWithIssues } from "@/lib/job-hours-source";
 import { syncEtcHistoryFromPowerBi } from "@/lib/sync-etc-history";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
 import { revalidatePath } from "next/cache";
@@ -46,6 +46,42 @@ async function assertMonthSeedable(month: string): Promise<void> {
   if (month !== expected) {
     throw new Error(`The next ETC month after ${latest.month} is ${expected} — months must be started in order.`);
   }
+}
+
+// `newEtcCreate__<jobPk>__<section>` — a New ETC typed into a cell that has no
+// EtcEntry yet, because startMonth only seeds sections the job was QUOTED for.
+// 357 of July's 754 cells were in that state (2026-08-03), rendering as a dead
+// "—" that no manager could plan. The grid renders them as ordinary editable
+// cells now; this is how the row behind one comes into existence.
+//
+// Shared by Save and Submit so the two cannot disagree about what a typed value
+// in one of those cells means.
+//
+// Returns only cells with a REAL value: an empty one is the normal state of most
+// of the grid, and creating a row for each would add ~350 empty entries a month,
+// move no figure, and quietly widen what the month contains.
+export type TypedNewCell = { jobId: number; section: string; value: number };
+
+function parseNewEtcCreateFields(formData: FormData): TypedNewCell[] {
+  const out: TypedNewCell[] = [];
+  for (const [key, raw] of formData.entries()) {
+    if (!key.startsWith("newEtcCreate__")) continue;
+    const rest = key.slice("newEtcCreate__".length);
+    const sep = rest.indexOf("__");
+    if (sep === -1) continue;
+    const jobId = Number(rest.slice(0, sep));
+    const section = rest.slice(sep + 2);
+    if (!Number.isInteger(jobId)) continue;
+    // Only sections the grid tracks — a hand-posted field must not be able to
+    // invent a row for a code the app does not model.
+    if (!ETC_TRACKED_CODES.has(section)) continue;
+    const trimmed = String(raw).trim();
+    if (trimmed === "") continue;
+    const value = Number(trimmed);
+    if (!Number.isFinite(value) || value < 0) continue;
+    out.push({ jobId, section, value: round2(value) });
+  }
+  return out;
 }
 
 // Deletes unsubmitted entries the grid can never render — either the job no
@@ -148,10 +184,56 @@ async function seedMonth(month: string) {
       }[] = [];
       const toUpdate: { id: number; priorEtc: number; hoursLeftCalc: number }[] = [];
 
+      // Sections that carry a balance forward but have no QUOTE behind them.
+      //
+      // Seeding used to iterate job.estimatedHours alone, so a section the job was
+      // never quoted for could never be seeded — even when the previous month left
+      // a New ETC sitting on it. That is now reachable: the grid lets a manager
+      // plan any section (see parseNewEtcCreateFields), so a June cell at
+      // Prior 0 / Worked 0 / New ETC 1 must arrive in July as Prior 1, exactly
+      // like every quoted section. Without this it would be stranded — the
+      // balance would simply vanish at the month boundary.
+      //
+      // Built from priorEntries rather than by parsing priorByKey's composite
+      // keys: section codes contain a hyphen and so does the key separator.
+      const priorSectionsByJob = new Map<number, Set<string>>();
+      for (const p of priorEntries) {
+        if (!ETC_TRACKED_CODES.has(p.section)) continue;
+        let set = priorSectionsByJob.get(p.jobId);
+        if (!set) priorSectionsByJob.set(p.jobId, (set = new Set()));
+        set.add(p.section);
+      }
+
+      // A job whose Start Date falls IN this month opens at its quote, whatever
+      // the carry-forward chain says (2026-08-03, by request).
+      //
+      // The rule used to be "no ETC history -> quoted", which is only a proxy for
+      // this one and diverges exactly where it matters. Jobs 1159 and 1160 both
+      // started in July but already had rows from earlier months — seeded before
+      // anyone had entered their quote, so those rows carried 0. July then
+      // inherited 0 against quotes of 100, 260 and 150, and 1160 read Hours Left
+      // -175 on a job that had simply never been given its estimate.
+      //
+      // This is also Power BI's own rule: [ETC Historical Hours Prior Month] uses
+      // [Hours Quoted] for a job whose Start Date falls in the period.
+      //
+      // Confirmed history is still untouched — the needsReview check below is what
+      // guarantees that, so this can only ever correct an open month.
+      const monthOfDate = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+
       for (const job of jobs) {
+        const startsThisMonth = job.startDate != null && monthOfDate(job.startDate) === month;
+        const quotedBySection = new Map<string, number>();
         for (const eh of job.estimatedHours) {
           if (!ETC_TRACKED_CODES.has(eh.section)) continue;
-          const key = `${job.id}-${eh.section}`;
+          quotedBySection.set(eh.section, Number(eh.quotedHours));
+        }
+        // The union: everything quoted, plus everything with ETC history. A
+        // section in both is visited once.
+        const sectionsToSeed = new Set<string>([...quotedBySection.keys(), ...(priorSectionsByJob.get(job.id) ?? [])]);
+
+        for (const section of sectionsToSeed) {
+          const key = `${job.id}-${section}`;
           const existing = existingByKey.get(key);
           if (existing && !existing.needsReview) continue; // already submitted — don't touch confirmed history
 
@@ -167,7 +249,11 @@ async function seedMonth(month: string) {
           // "no row in the immediately preceding month" — which reset a
           // worked-down balance back to full quote every time a job skipped a
           // period. See latestPriorEtcByKey.
-          const priorEtc = carried !== undefined ? carried : Number(eh.quotedHours);
+          // A history-only section has no quote to fall back to — but `carried`
+          // is always defined for it by construction, so the fallback is never
+          // reached there. The ?? 0 is belt-and-braces, not a real branch.
+          // startsThisMonth WINS over the carried balance — see the note above.
+          const priorEtc = !startsThisMonth && carried !== undefined ? carried : (quotedBySection.get(section) ?? 0);
           const hoursWorked = existing ? Number(existing.hoursWorked) : 0;
 
           // newEtc is deliberately NOT written for an existing row — it's a
@@ -178,7 +264,7 @@ async function seedMonth(month: string) {
           if (!existing) {
             toCreate.push({
               jobId: job.id,
-              section: eh.section,
+              section,
               month,
               priorEtc,
               hoursWorked: 0,
@@ -239,6 +325,44 @@ export async function submitMonth(month: string, formData: FormData) {
   const session = await auth();
   const userId = (session?.user as { id?: string } | undefined)?.id;
 
+  // Cells typed into a section that had no row yet, materialised BEFORE the read
+  // below so they take part in this submission like any other entry.
+  //
+  // Without this, a manager who typed into one of those cells and hit Submit
+  // before autosave fired would lose the value silently — Submit only ever walked
+  // rows that already existed. They are created as drafts (needsReview true); the
+  // normal path below is what confirms them.
+  //
+  // Skipped on a locked month: the guard below is what rejects the submission, and
+  // creating rows first would leave them behind after it throws.
+  const lockedAlready = await prisma.etcEntry.findMany({ where: { month }, select: { needsReview: true } });
+  const typedNewCells = isMonthLocked(lockedAlready) ? [] : parseNewEtcCreateFields(formData);
+  if (typedNewCells.length > 0) {
+    await prisma.$transaction(
+      typedNewCells.map((c) =>
+        prisma.etcEntry.upsert({
+          where: { jobId_section_month: { jobId: c.jobId, section: c.section, month } },
+          update: { newEtcDraft: c.value },
+          create: {
+            jobId: c.jobId,
+            section: c.section,
+            month,
+            priorEtc: 0,
+            hoursWorked: 0,
+            hoursLeftCalc: 0,
+            newEtc: 0,
+            newEtcDraft: c.value,
+            needsReview: true,
+          },
+        }),
+      ),
+    );
+  }
+  // Keyed for the Hours Worked lookup below: a row created a moment ago has no
+  // `hoursWorked__<id>` field in this form (its id did not exist when the page
+  // rendered), and its hours are 0 by definition.
+  const createdKeys = new Set(typedNewCells.map((c) => `${c.jobId}::${c.section}`));
+
   const allEntries = await prisma.etcEntry.findMany({ where: { month } });
 
   // A locked month is frozen history — a stale tab re-POSTing this form (or a
@@ -289,6 +413,14 @@ export async function submitMonth(month: string, formData: FormData) {
   for (const entry of entries) {
     const rawHours = formData.get(`hoursWorked__${entry.id}`);
     if (rawHours === null || rawHours === "") {
+      // A row this submission just created: no time booked to it, and its typed
+      // New ETC is already on the draft. Handled before the historical branch so
+      // the "Missing Hours Worked" guard below keeps its full strength for the
+      // case it exists for — an entry that SHOULD have been rendered and wasn't.
+      if (createdKeys.has(`${entry.jobId}::${entry.section}`)) {
+        inputs.push({ id: entry.id, hoursWorked: 0, override: entry.newEtcDraft != null ? round2(Number(entry.newEtcDraft)) : null });
+        continue;
+      }
       // On a historical correction pass, an entry hidden from the grid (e.g.
       // its job is type-gated out of rendering) simply keeps its stored Hours
       // Worked AND its stored New ETC instead of failing the whole submission.
@@ -443,18 +575,67 @@ export async function saveAllNewEtcDrafts(month: string, formData: FormData): Pr
     writes.push(prisma.etcEntry.update({ where: { id: entry.id }, data: { newEtcDraft: nextDraft } }));
   }
 
+  // ── Cells that have no row yet ─────────────────────────────────────────────
+  //
+  // `newEtcCreate__<jobId>__<section>` comes from a cell the grid now renders for
+  // a section the job was never quoted for (see EtcSectionCells). Half of July's
+  // grid was cells like that, unplannable because nobody had quoted them.
+  //
+  // Created ONLY when a value is actually typed. An empty one is the normal state
+  // of most of the grid — creating a row for each would add ~350 empty entries a
+  // month, move nothing, and quietly widen what the month contains.
+  const created = parseNewEtcCreateFields(formData);
+  for (const { jobId: jobPk, section, value: rounded } of created) {
+    // Prior ETC and Hours Worked are 0 by definition here: no prior estimate was
+    // ever carried into this cell and no time has been booked to it this month.
+    // needsReview stays true — this is a draft, exactly like any other unsubmitted
+    // cell, and Submit is what confirms it.
+    writes.push(
+      prisma.etcEntry.upsert({
+        where: { jobId_section_month: { jobId: jobPk, section, month } },
+        update: { newEtcDraft: rounded },
+        create: {
+          jobId: jobPk,
+          section,
+          month,
+          priorEtc: 0,
+          hoursWorked: 0,
+          hoursLeftCalc: 0,
+          newEtc: 0,
+          newEtcDraft: rounded,
+          needsReview: true,
+        },
+      }),
+    );
+  }
+
   if (writes.length > 0) {
     await prisma.$transaction(writes);
     await logAudit({
       action: "etc.saveAllNewEtcDrafts",
       entityType: "EtcEntry",
       entityId: month,
-      summary: `Batch-saved ${changes.length} New ETC draft(s) for ${month}`,
-      metadata: { changes },
+      summary:
+        `Batch-saved ${changes.length} New ETC draft(s) for ${month}` +
+        (created.length > 0 ? `, creating ${created.length} entry(ies) for previously unquoted sections` : ""),
+      metadata: { changes, created },
     });
   }
 
-  revalidatePath("/etc");
+  // Deliberately NO revalidatePath (2026-08-03). This is the DRAFT save — it runs
+  // on every autosave pass, and revalidating made the action's response carry a
+  // fresh render of the whole month: 59 jobs x 13 sections x 5 sub-columns, plus
+  // Parts Cost and the Standard Fees block. That render, not the writes (a handful
+  // of updates in one transaction), is what made saving feel slow.
+  //
+  // Nothing on screen needs it either: the drafts being saved are the values the
+  // manager just typed, the client re-baselines the dirty tracker from the posted
+  // FormData (rebaselineEtcFields, called by EtcAutosave and SaveEtcDraftsButton),
+  // and every derived figure now recomputes live (lib/etc-live-totals.ts).
+  //
+  // The paths that DO change what the server would render still revalidate:
+  // submitMonth, startMonth, reopenMonth, clearMonth, the sync steps, and the
+  // wrong-password branch above.
   return { ok: true };
 }
 
@@ -612,10 +793,18 @@ export async function syncPowerBiForEtc(month: string, _formData: FormData) {
   await assertCurrentEtcMonth(month);
 
   await seedMonth(month);
-  // ONE parse of the ~12,600-row export, shared by both hours syncs. They read
-  // the same file and parsing it costs ~900ms, so fetching per sync spent ~1.6s
-  // of every click on reading the same workbook twice (measured 2026-07-31).
-  const hoursExport = await fetchJobHoursRowsWithIssues();
+  // ONE read of the feed, shared by both hours syncs — and scoped to THIS MONTH.
+  //
+  // Both were load-bearing at different times. Sharing the read dates from when
+  // the source was a local workbook and parsing it twice cost ~1.6s a click.
+  // Scoping it to one month dates from the move to Power BI (2026-08-03), where
+  // the full 18-month span is one DAX round-trip per month: this button was
+  // re-pulling and re-writing every month in order to refresh one, which is what
+  // made it sit on "Refreshing…" for ~15s.
+  //
+  // Correct as well as faster — the button refreshes ONE month. History is the
+  // scheduled pass's job (auto-sync.ts), which still reads the whole span.
+  const hoursExport = await fetchJobHoursRowsWithIssues({ onlyMonth: month });
   await syncActualHours(hoursExport);
   await syncHoursWorked(month, hoursExport.rows);
   await syncPartsCost(month);

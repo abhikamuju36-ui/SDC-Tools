@@ -1,7 +1,7 @@
 "use client";
 
-import { createContext, useActionState, useContext, useRef } from "react";
-import { changedFormData, countChanged } from "@/lib/dirty-form";
+import { createContext, useActionState, useContext, useEffect, useRef } from "react";
+import { BASELINE_ATTR, changedFormData, countChanged } from "@/lib/dirty-form";
 import type { SaveQuotedResult } from "@/lib/quoted-actions";
 
 // The Projects grid's <form>. Two jobs, both of which need a client component:
@@ -46,6 +46,46 @@ export function QuotedSaveForm({
 }) {
   const [result, dispatch, pending] = useActionState(action, null);
   const formRef = useRef<HTMLFormElement>(null);
+  // What the in-flight save is writing: field name -> the value we sent. Held so
+  // that on success the controls can be re-baselined here, instead of waiting for
+  // the server to re-render the grid just to restate the same numbers.
+  const inFlightValues = useRef<Map<string, string> | null>(null);
+
+  // ── Re-baseline on success, so a save costs no page render ──────────────────
+  //
+  // dirty-form.ts decides "changed" by comparing a control's value to its
+  // server-rendered `data-baseline`. Until 2026-08-03 the only thing that
+  // refreshed those attributes was revalidatePath re-rendering the whole route
+  // after every save — which is what made saving slow (the writes are ~10ms).
+  //
+  // The client already knows what it just persisted, so it can stamp the new
+  // baseline itself. The field then reads clean, autosave stops re-sending it, and
+  // nothing re-renders.
+  //
+  // Guarded on the value being UNCHANGED since we sent it: if the user kept typing
+  // during the save, that newer value is genuinely unsaved, and stamping our older
+  // one as the baseline would mark it clean and lose the edit. Leaving it dirty is
+  // what makes useAutosave's follow-up pass pick it up.
+  useEffect(() => {
+    const sent = inFlightValues.current;
+    if (pending || !sent) return;
+    inFlightValues.current = null;
+    if (!result?.ok) return; // a rejected save changed nothing; keep the fields dirty
+    const form = formRef.current;
+    if (!form) return;
+    // A created row has no id-bearing control here yet — the server re-render
+    // (still triggered for that case) is what replaces the temp row, so leave
+    // those alone entirely.
+    if (result.created > 0) return;
+    for (const el of Array.from(form.elements)) {
+      if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement)) continue;
+      if (!el.name) continue;
+      const value = sent.get(el.name);
+      if (value === undefined) continue;
+      if (el.value !== value) continue; // edited again mid-flight — still dirty, correctly
+      el.setAttribute(BASELINE_ATTR, value);
+    }
+  }, [pending, result]);
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
     // Owning the submit outright: React would otherwise serialize the whole form
@@ -60,7 +100,14 @@ export function QuotedSaveForm({
     // to be doubted in the first place.
     const changed = countChanged(form);
     console.debug(`[Projects] saving ${changed} changed field${changed === 1 ? "" : "s"} of ${form.elements.length}`);
-    dispatch(changedFormData(form));
+    const fd = changedFormData(form);
+    // Remember what is being written, for the re-baselining effect above. Built
+    // from the FormData actually dispatched rather than re-read off the DOM, so
+    // the two can't disagree.
+    const sent = new Map<string, string>();
+    for (const [name, value] of fd.entries()) if (typeof value === "string") sent.set(name, value);
+    inFlightValues.current = sent;
+    dispatch(fd);
   }
 
   return (

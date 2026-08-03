@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 
-// Currency grid cell for the Projects tab's Cost Quoted / Actual Cost columns.
+// Currency grid cell for the Projects tab's Parts Cost Quoted / Parts Cost Actual columns.
 //
 // Replaces a bare <input type="number">, which cannot show thousands separators
 // at all — a seven-figure quote rendered as "1300000" and had to be counted by

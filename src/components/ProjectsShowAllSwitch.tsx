@@ -90,33 +90,56 @@ export function ProjectsShowAllSwitch({
     <button
       type="button"
       onClick={flip}
+      // Disabled while the navigation is in flight, which is the difference
+      // between "slow" and "broken" (2026-08-03). This switch takes the grid from
+      // 50 rows to 233 and turns actuals on, so the render is a real wait — and
+      // the only feedback used to be a slight fade on a small button. Clicking it
+      // again during that wait flipped the state STRAIGHT BACK, so an impatient
+      // second click undid the first and the switch looked like it did nothing.
+      // Now the click can't be re-entered, and the label says what it's doing.
+      disabled={pending}
       aria-pressed={showingAll}
+      aria-busy={pending}
       title={
-        showingAll
-          ? "Back to the default view: Active + Billable jobs, default columns, actuals hidden"
-          : "Show everything: all statuses and billable types, every column, actual hours in cells"
+        pending
+          ? "Working — the grid is re-rendering"
+          : showingAll
+            ? "Back to the default view: Active + Billable jobs, default columns, actuals hidden"
+            : "Show everything: all statuses and billable types, every column, actual hours in cells — this is a big grid, so it takes a moment"
       }
       className={`flex h-8 shrink-0 items-center gap-2 rounded-lg border px-2.5 text-xs font-medium transition-colors ${
         showingAll
           ? "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark"
           : "border-sdc-border bg-white text-sdc-navy hover:bg-sdc-blue-light"
-      } ${pending ? "opacity-60" : ""}`}
+      } ${pending ? "cursor-wait opacity-70" : ""}`}
     >
       {/* A real switch track, not another dropdown-looking pill: this is the one
-          control on the toolbar that's binary, and it should look it. */}
-      <span
-        aria-hidden
-        className={`relative h-3.5 w-6 shrink-0 rounded-full transition-colors ${
-          showingAll ? "bg-sdc-blue" : "bg-sdc-gray-100"
-        }`}
-      >
+          control on the toolbar that's binary, and it should look it. While the
+          navigation is in flight the knob is replaced by a spinner in the same
+          slot, so the button neither changes width nor sits there looking idle. */}
+      {pending ? (
+        <svg viewBox="0 0 16 16" width="14" height="14" className="shrink-0 animate-spin" aria-hidden>
+          <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25" />
+          <path d="M8 2 a6 6 0 0 1 6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+        </svg>
+      ) : (
         <span
-          className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white shadow transition-all ${
-            showingAll ? "left-3" : "left-0.5"
+          aria-hidden
+          className={`relative h-3.5 w-6 shrink-0 rounded-full transition-colors ${
+            showingAll ? "bg-sdc-blue" : "bg-sdc-gray-100"
           }`}
-        />
-      </span>
-      {showingAll ? "Reset" : "Show all"}
+        >
+          <span
+            className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white shadow transition-all ${
+              showingAll ? "left-3" : "left-0.5"
+            }`}
+          />
+        </span>
+      )}
+      {/* The label reports the DESTINATION while working — "Reset" sitting there
+          for three seconds after you clicked "Show all" reads as the click having
+          been swallowed. */}
+      {pending ? (showingAll ? "Resetting…" : "Showing all…") : showingAll ? "Reset" : "Show all"}
     </button>
   );
 }

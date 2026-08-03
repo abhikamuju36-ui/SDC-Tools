@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { calcHoursLeft, suggestNewEtc, round2 } from "@/lib/etc";
 import { registerEtcField, forgetEtcField, updateEtcField } from "@/lib/etc-dirty-tracker";
+import { publishEtcCell, forgetEtcCell } from "@/lib/etc-live-totals";
 import { hours as formatHours } from "@/components/ui/format";
 import { ETC_COL_W } from "@/components/ui/classnames";
 
@@ -35,6 +36,9 @@ function wholeNum(n: number): string {
 // the next Submit or Sync round-trip.
 export function EtcSectionCells({
   entryId,
+  jobId,
+  sectionCode,
+  billingGroup,
   edge,
   jobName,
   sectionName,
@@ -45,7 +49,25 @@ export function EtcSectionCells({
   locked,
   monthComplete,
 }: {
-  entryId: number;
+  // NULL when this job/section has no EtcEntry yet.
+  //
+  // startMonth seeds one row per section the job was QUOTED for, so a section it
+  // was never quoted for had no row — and the grid printed a dead "—" in all five
+  // of its columns. 357 of July's 754 cells were like that (2026-08-03), so a
+  // manager could not plan a section simply because nobody had quoted it, even
+  // with work happening there.
+  //
+  // Now every cell is editable and the row is CREATED on save if a value is
+  // typed. Prior ETC and Hours Worked are 0 for these, which is exactly what they
+  // are — no prior estimate, no time booked yet.
+  entryId: number | null;
+  // Which job this cell belongs to and which rollup block it feeds. Used to
+  // publish the cell's live figures (lib/etc-live-totals.ts) so the row totals,
+  // the grand-total row and the Standard Sheet can move as you type — and, when
+  // entryId is null, to name the field the create-on-save path reads.
+  jobId: number;
+  sectionCode: string;
+  billingGroup: "Engineering" | "Shop";
   edge: string;
   jobName: string;
   sectionName: string;
@@ -122,9 +144,56 @@ export function EtcSectionCells({
   //
   // Matches newEtcDiff() server-side, so this cell, the row totals and the KPI
   // cards all still count the same set.
-  const diff = hoursLeft - effective;
+  // Diff reads an EMPTY New ETC as 0, and a typed one as max(value, 0)
+  // (2026-08-03, by request) — matching newEtcDiff() server-side exactly, which
+  // is what keeps this cell, the row totals, the grand total and the KPI cards
+  // counting the same thing.
+  //
+  // Deliberately NOT `effective`: that still falls back to the suggestion because
+  // it is what the month would submit as, and next month's Prior ETC carries from
+  // it. The two answer different questions — "what is planned" vs "what has been
+  // decided" — and only the second one belongs in a variance column.
+  const diffBasis = hasNewEtcValue ? Math.max(effective, 0) : 0;
+  const diff = hoursLeft - diffBasis;
 
-  const fieldName = `newEtcOverride__${entryId}`;
+  // ── What the row PRINTS, as opposed to what it computes ────────────────────
+  //
+  // Reported 2026-08-03: "a lot of values are wrong based on the formulae".
+  // Audited across July's 398 hours cells — the maths is right everywhere
+  // (stored Hours Left matches Prior − Worked, and Diff never violated
+  // Hours Left − New ETC). What was wrong was the PRINTING.
+  //
+  // Prior ETC is always a whole number; Hours Worked is not (129 of 398 cells
+  // carry a fraction, straight from the punch feed). Rounding each cell on its
+  // own then breaks the visible subtraction whenever Worked lands on exactly
+  // x.5 — and the 18 rows that looked wrong were exactly the 18 x.5 cells:
+  //
+  //     job 1118 ME Gen — exact 40 − 1.5 = 38.5
+  //     printed          — 40 − 2 = 39      (both halves rounded UP)
+  //
+  // So the derived cells are printed from the printed inputs, not rounded
+  // independently. Because Prior is whole, that makes every row satisfy both
+  // formulas exactly, as a reader checking the arithmetic expects.
+  //
+  // The EXACT values above are untouched and are what gets published to the
+  // totals, submitted, and reconciled against Power BI — only these three
+  // strings change. A column total is therefore still the rounded exact sum
+  // rather than the sum of the rounded cells, which can differ by a few hours
+  // (measured: 4h Engineering, 1h Shop for July). That is deliberate: the totals
+  // are what reconcile to the model, and normal practice for rounded reporting.
+  // Both figures remain exact in the cell tooltips.
+  const workedRounded = Math.round(worked);
+  const hoursLeftShown = Math.round(priorEtc) - workedRounded;
+  const diffShown = hoursLeftShown - Math.round(effective);
+
+  // An existing row is addressed by its entry id; one that does not exist yet is
+  // addressed by job + section, and saveAllNewEtcDrafts/submitMonth create it.
+  // Two prefixes rather than one overloaded name, so a malformed id can never be
+  // mistaken for a create instruction.
+  const fieldName = entryId != null ? `newEtcOverride__${entryId}` : `newEtcCreate__${jobId}__${sectionCode}`;
+  // Stable key for the live-totals store, which cannot use an id that has not
+  // been assigned yet.
+  const cellKey = entryId != null ? String(entryId) : `${jobId}:${sectionCode}`;
 
   // Register the value this cell LOADED with, so the unsaved-changes guards
   // can tell an actual edit from a keystroke that was undone. Unregistering on
@@ -142,6 +211,29 @@ export function EtcSectionCells({
     return () => forgetEtcField(fieldName);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldName]);
+
+  // Publish this cell's live figures for the totals that sum it — the row's
+  // TOTAL (NEW ETC) block, the grand-total row, and the Standard Sheet's
+  // Total ETC $ / % Total / Standard Fees chain.
+  //
+  // The values published are the ones computed ABOVE for this cell's own
+  // display, so a total can never show something the cell it sums doesn't. That
+  // is the whole safety argument: this page is what Submit ETC freezes, and a
+  // live total derived by some second formula would be worse than a stale one.
+  //
+  // In an effect rather than during render: publishing mutates a module store,
+  // and a render React discards must not be allowed to change what other
+  // components read.
+  useEffect(() => {
+    publishEtcCell(cellKey, { jobId, billingGroup, prior: priorEtc, worked, hoursLeft, effective, diff, decided: hasNewEtcValue });
+  }, [cellKey, jobId, billingGroup, priorEtc, worked, hoursLeft, effective, diff, hasNewEtcValue]);
+
+  // Unmount is what makes a month switch or a column filter self-cleaning: the
+  // grid is keyed on the month, so every cell tears down and takes its
+  // contribution to the totals with it.
+  useEffect(() => {
+    return () => forgetEtcCell(cellKey);
+  }, [cellKey]);
 
   function handleNewEtcChange(e: React.ChangeEvent<HTMLInputElement>) {
     setNewEtcText(e.target.value);
@@ -165,7 +257,10 @@ export function EtcSectionCells({
         {/* Read-only — auto-synced from Power BI, not manager-editable. The
             hidden input still carries the value into the form submission,
             since submitMonth reads it by `name` unchanged. */}
-        <input type="hidden" name={`hoursWorked__${entryId}`} value={String(worked)} />
+        {/* Only a real row has hours to submit back. A not-yet-created cell has
+            no hours by definition, and posting a hoursWorked field for an id that
+            does not exist would be meaningless. */}
+        {entryId != null && <input type="hidden" name={`hoursWorked__${entryId}`} value={String(worked)} />}
         {workedDisplay}
       </td>
       <td
@@ -195,14 +290,15 @@ export function EtcSectionCells({
         />
       </td>
       <td
-        className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diff)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+        className={`border-l border-sdc-border ${ETC_COL_W} ${diffBg(diffShown)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
         // The tooltip still distinguishes the two cases even though the number
         // no longer does — whether that New ETC is a manager's figure or the
         // suggestion standing in for one is worth being able to check.
         title={
           hasNewEtcValue
             ? `${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(effective)})`
-            : `${round2(diff)} = Hours Left (${round2(hoursLeft)}) − the suggested New ETC (${round2(suggested)}). No New ETC typed here yet.`
+            : `${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (0). Nothing planned here yet, so all of it is unaccounted for. ` +
+              `Submitting as-is would use the suggestion, ${round2(suggested)}.`
         }
       >
         {wholeNum(diff)}

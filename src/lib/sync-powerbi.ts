@@ -13,23 +13,29 @@ import {
   type HoursImportIssue,
   type JobHoursRow,
   type PoolHoursByMonth,
-} from "@/lib/sharepoint-hours";
+} from "@/lib/job-hours-source";
 
-// One parse of the Paylocity export, shared by the two syncs that read it.
-// Exported so a caller running both (auto-sync's pass, the ETC Refresh Data
-// button) can fetch once and hand the same object to each.
+// One read of the hours feed, shared by the two syncs that use it. Exported so a
+// caller running both (auto-sync's pass, the ETC Refresh Data button) can fetch
+// once and hand the same object to each.
 export type HoursExport = { rows: JobHoursRow[]; issues: HoursImportIssue[]; poolHours: PoolHoursByMonth };
 
 // Actual hours worked per job per month, upserted into JobMonthlyActualHours
-// (the job-level rollup the dashboard / job detail use). Now summed directly
-// from the SharePoint Paylocity export (all tracked sections per job per
-// month) instead of Power BI — same underlying data, no dataset dependency.
+// (the job-level rollup the dashboard / job detail use), summed across every
+// tracked section.
+//
+// Sourced from Power BI's `Hours Actual` since 2026-08-03 (job-hours-source.ts);
+// before that it was the OneDrive-synced Paylocity workbook, and before that Power
+// BI again. The two were proven identical on 1,127 of 1,127 job/section/month
+// cells before the switch.
+//
+// Covers EVERY job the hours were booked to, Complete and Active alike — the job
+// lookup below filters on nothing but the job ids present in the feed.
+//
 // `prefetched` lets a caller that also runs syncHoursWorked hand both functions
-// the SAME parse of the export. Reading and parsing that ~12,600-row workbook
-// costs ~900ms (measured 2026-07-31), and every pass ran it twice — visible as
-// the doubled "[sharepoint-hours] 12603 rows imported" log line. Passing it in
-// halves that. Omit it and this fetches its own copy exactly as before, so no
-// caller is obliged to care.
+// the SAME read. That read is now ~18 DAX round-trips (one per month), so sharing
+// it matters more than it did when it was one workbook parse. Omit it and this
+// fetches its own copy, so no caller is obliged to care.
 export async function syncActualHours(prefetched?: HoursExport): Promise<{
   rowsUpserted: number;
   jobsNotFound: number;
@@ -51,7 +57,7 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
   let rowsSkippedOverridden = 0;
 
   // Prefetch the whole working set in two queries instead of two per key: this
-  // loop spans EVERY job × EVERY month in the SharePoint export (a full year of
+  // loop spans EVERY job × EVERY month the feed holds (18 months of
   // history), so the old per-key job.findUnique + overridden findUnique meant
   // thousands of serial round-trips per Refresh — multi-minute, timeout-prone.
   const jobIdStrs = [...new Set([...byJobMonth.keys()].map((k) => k.split("::")[0]))];
@@ -80,7 +86,7 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
     await prisma.jobMonthlyActualHours.upsert({
       where: { jobId_month: { jobId: job.id, month: monthStr } },
       update: { actualHours: hours, syncedAt: new Date() },
-      create: { jobId: job.id, month: monthStr, actualHours: hours, source: "sharepoint" },
+      create: { jobId: job.id, month: monthStr, actualHours: hours, source: "power_bi" },
     });
     rowsUpserted++;
   }
@@ -98,13 +104,16 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
 // disagree with the total you clicked to open it.
 //
 // Replace-by-(job, month) rather than upsert-per-row: at ~13k rows an upsert
-// apiece is thousands of round-trips, and a month present in the export is
-// wholly described by it, so deleting and re-inserting that month is both faster
-// and self-healing (a punch deleted upstream disappears here too, which an
+// apiece is thousands of round-trips, and a month present in the feed is wholly
+// described by it, so deleting and re-inserting that month is both faster and
+// self-healing (a punch deleted upstream disappears here too, which an
 // upsert-only pass would leave behind forever).
 //
-// Months NOT in the export are left untouched — the file is a rolling window,
-// and treating absence as deletion would erase history the rollups still carry.
+// Months absent from the feed are left untouched. That mattered more when the
+// source was a rolling-window file reaching back only to 2026-01; the Power BI
+// feed returns its whole span (2025-02 onward), so in practice every month is
+// rewritten each pass. The rule stays because "absent" must never mean "delete" —
+// a failed or partial read would otherwise erase history.
 async function syncJobHoursDetail(
   rows: JobHoursRow[],
   jobByJobId: Map<string, { id: number; jobId: string }>,
@@ -145,7 +154,7 @@ async function syncJobHoursDetail(
           workDate: m.workDate,
           employeeId: m.employeeId,
           hours: round2(m.hours),
-          source: "sharepoint",
+          source: "power_bi",
         })),
       }),
     ]);
@@ -159,9 +168,10 @@ async function syncJobHoursDetail(
 // needs. Always overwrites on refresh; "Hours Worked" is meant to always
 // reflect the source, not be independently typed in.
 //
-// Source is now the Paylocity hours export read straight from SharePoint
-// (sharepoint-hours.ts) — no Power BI. Verified 2026-07-19 to reproduce
-// PBI's [Hours Actual] by job/section to the hundredth (May 2026, 127/127).
+// Source is Power BI's `Hours Actual` (job-hours-source.ts). It was the
+// OneDrive-synced Paylocity workbook from 2026-07-19 until 2026-08-03; the two
+// were verified to agree by job/section to the hundredth (May 2026, 127/127, and
+// again across all of 2026 before the switch back).
 //
 // When there are hours in a tracked section the job has no entry for (work
 // charged to a section that was never quoted, so startMonth didn't seed it),
@@ -374,11 +384,22 @@ export async function syncPartsCost(month: string): Promise<{ rowsUpserted: numb
   const monthEndExclusive = new Date(Date.UTC(year, monthNum, 1));
   const spentByJobId = await getPartsCostSpentByJob(monthStart, monthEndExclusive);
 
-  const jobs = await prisma.job.findMany({ where: etcActiveJobFilter, select: { id: true, jobId: true } });
+  // costQuoted comes along now: it is the Parts Cost Quoted column on the
+  // Projects tab, and it is what a job's FIRST parts month opens at.
+  const jobs = await prisma.job.findMany({ where: etcActiveJobFilter, select: { id: true, jobId: true, costQuoted: true, startDate: true } });
 
   // Prior ETC = the app's own prior-month confirmed Parts New ETC (same chain
-  // rule as hours and pools). No prior entry -> opens at 0 (a brand-new job's
-  // Parts New ETC is manager-entered anyway).
+  // rule as hours and pools). NO prior entry -> the job's Parts Cost Quoted from
+  // the Projects tab, which is the parts equivalent of what seeding already does
+  // for hours (quoted hours when there is no ETC history — see seedMonth).
+  //
+  // It used to open at 0, on the reasoning that "a brand-new job's Parts New ETC
+  // is manager-entered anyway". That was wrong twice over (found 2026-08-03):
+  // Parts Cost Quoted IS the manager's entry, typed on the Projects tab; and
+  // because the loop below skips any job with no balance and no spend, a job
+  // starting this month got NO PARTS ROW AT ALL — nothing to plan, nothing to
+  // review. Measured on July: 1164 ($1,336,100 quoted), 1165 ($50,000) and 1166
+  // ($101,220) all had a quote on Projects and no parts row here.
   const priorMonthParts = await prisma.etcEntry.findMany({
     where: { month: previousMonth(month), section: PARTS_COST_SECTION },
     select: { jobId: true, newEtc: true },
@@ -391,7 +412,18 @@ export async function syncPartsCost(month: string): Promise<{ rowsUpserted: numb
   // money spent this month — skip the all-zero jobs (nothing to show), same
   // spirit as the history backfill's skip rule.
   for (const job of jobs) {
-    const priorEtc = priorAppByJobPk.get(job.id) ?? 0;
+    // A job whose Start Date falls IN this month opens at its quote, whatever the
+    // chain says — the same rule seedMonth applies to hours, so both halves of a
+    // job's first month agree. See the note there (jobs 1159/1160).
+    const startsThisMonth =
+      job.startDate != null &&
+      `${job.startDate.getUTCFullYear()}-${String(job.startDate.getUTCMonth() + 1).padStart(2, "0")}` === month;
+    // `.has`, not `?? 0`: a job whose prior month genuinely confirmed 0 has
+    // finished buying, and must NOT be reopened at its original quote.
+    const priorEtc =
+      !startsThisMonth && priorAppByJobPk.has(job.id)
+        ? priorAppByJobPk.get(job.id)!
+        : Number(job.costQuoted ?? 0);
     const moneySpent = spentByJobId.get(job.jobId) ?? 0;
 
     const existing = await prisma.etcEntry.findUnique({
@@ -650,7 +682,7 @@ async function recordImportIssues(issues: HoursImportIssue[]): Promise<void> {
 // instead of only in a console log nobody reads. Without this, a broken feed
 // leaves the last good "Hours Refreshed Thru" date sitting in the ETC header
 // looking authoritative while the numbers behind it quietly age (exactly what
-// happened 2026-07-24..29 — see sharepoint-hours.ts).
+// happened 2026-07-24..29 — see job-hours-source.ts).
 //
 // Deliberately update-only, never create: refreshedThrough is required and a
 // failed pull has no date to put there. If the row doesn't exist yet the feed
@@ -729,7 +761,7 @@ export async function syncQuotedFromPowerBi(): Promise<{
 
   const validJobs = await prisma.job.findMany({
     where: { type: { in: [...VALID_JOB_TYPES] } },
-    select: { id: true, jobId: true, costQuotedManuallyEdited: true },
+    select: { id: true, jobId: true, costQuoted: true },
   });
   const jobByJobId = new Map(validJobs.map((j) => [j.jobId, j]));
 
@@ -761,11 +793,22 @@ export async function syncQuotedFromPowerBi(): Promise<{
     }
     if ((quotedHours ?? 0) === 0 && (estimateToCompleteHours ?? 0) === 0) continue;
 
-    const isManuallyEdited = manuallyEditedKeys.has(`${job.id}::${section}`);
+    // Quoted hours are ENTERED, not synced (policy 2026-08-03: Jessica enters new
+    // projects and their quoted hours). So this seeds a section row that doesn't
+    // exist yet — useful for a job arriving from TotalETO — and never updates the
+    // figure on one that does.
+    //
+    // The quotedHoursManuallyEdited flag is no longer what protects a manager's
+    // number; not writing it at all is. The flag is kept because the Projects grid
+    // still sets it and it records who owns a row, but this sync no longer needs
+    // to consult it. Left in the query above rather than deleted so the intent is
+    // visible in one place if quoted hours ever become synced again.
+    void manuallyEditedKeys;
     await prisma.estimatedHours.upsert({
       where: { jobId_section: { jobId: job.id, section } },
       update: {
-        ...(isManuallyEdited ? {} : { quotedHours: quotedHours ?? 0 }),
+        // estimateToCompleteHours only — nobody types this one, and it is not one
+        // of the four figures the policy assigns to a person.
         estimateToCompleteHours: estimateToCompleteHours ?? 0,
       },
       create: {
@@ -779,6 +822,11 @@ export async function syncQuotedFromPowerBi(): Promise<{
     sectionsUpdated++;
   }
 
+  // Parts Cost Quoted (Job.costQuoted) is ENTERED, not synced — same policy
+  // (2026-08-03). It used to be written from 'Cost Estimated'[Cost Quoted] here
+  // unless costQuotedManuallyEdited was set; now it is seeded only where the app
+  // has no figure at all, so a job arriving from TotalETO starts with the quote
+  // rather than a blank, and Jessica's number is never overwritten.
   let jobsUpdated = 0;
   for (const row of costRows) {
     const rawJobId = row["Cost Estimated[Job Id]"];
@@ -792,7 +840,9 @@ export async function syncQuotedFromPowerBi(): Promise<{
       continue;
     }
 
-    if (job.costQuotedManuallyEdited) continue;
+    // Seed-only. `null` means nobody has said anything about this job's parts
+    // quote yet; a stored 0 is a statement and is left alone.
+    if (job.costQuoted != null) continue;
     await prisma.job.update({ where: { id: job.id }, data: { costQuoted } });
     jobsUpdated++;
   }

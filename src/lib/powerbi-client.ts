@@ -94,7 +94,7 @@ async function getAccount(pca: PublicClientApplication): Promise<AccountInfo> {
 // Preferred when the PBI_* service-principal vars are set. No user, no session,
 // no DPAPI cache on disk: the token is fetched per process and held in memory,
 // so this survives Windows session 0, running as a service, and reboots — none
-// of which the delegated cache above can (see sharepoint-hours.ts for the same
+// of which the delegated cache above can (see job-hours-source.ts for the same
 // treatment and the outage it caused).
 //
 // Verified live 2026-07-29 with the "SDC Sheet" registration
