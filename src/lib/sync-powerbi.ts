@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { VALID_JOB_TYPES, etcActiveJobFilter } from "@/lib/job-filters";
 import { runDax } from "@/lib/powerbi-client";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
-import { calcHoursLeft, round2, isMonthLocked } from "@/lib/etc";
+import { calcHoursLeft, round2, isMonthLocked, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft } from "@/lib/etc";
 import { getPartsCostSpentByJob } from "@/lib/sync-totaleto";
 import { resolveEtcPeriodName } from "@/lib/etc-period";
 import {
@@ -400,11 +400,23 @@ export async function syncPartsCost(month: string): Promise<{ rowsUpserted: numb
   // starting this month got NO PARTS ROW AT ALL — nothing to plan, nothing to
   // review. Measured on July: 1164 ($1,336,100 quoted), 1165 ($50,000) and 1166
   // ($101,220) all had a quote on Projects and no parts row here.
+  // EVERY earlier month, not just previousMonth (fixed 2026-08-04) — the same
+  // correction latestPriorEtcByKey already made for hours, still outstanding
+  // here. A job with no parts row in the immediately preceding month fell
+  // through to `costQuoted` and REOPENED AT ITS FULL ORIGINAL QUOTE, wiping out
+  // however far its parts balance had actually been worked down.
+  //
+  // Measured on July 2026: job 1105 had spent its parts budget down to a
+  // confirmed 0 by May and had no June row, so July opened it at $636,234 —
+  // a phantom balance larger than any real figure on the page. Job 979 was the
+  // same at $8,600 (April confirmed 0). The `.has` check below reads as "a job
+  // that confirmed 0 has finished buying and must not be reopened at its
+  // quote", which was exactly right and exactly one month too short-sighted.
   const priorMonthParts = await prisma.etcEntry.findMany({
-    where: { month: previousMonth(month), section: PARTS_COST_SECTION },
-    select: { jobId: true, newEtc: true },
+    where: { month: { lt: month }, section: PARTS_COST_SECTION },
+    select: { jobId: true, section: true, month: true, newEtc: true },
   });
-  const priorAppByJobPk = new Map(priorMonthParts.map((e) => [e.jobId, Number(e.newEtc)]));
+  const latestPartsByKey = latestPriorEtcByKey(priorMonthParts);
 
   let rowsUpserted = 0;
 
@@ -418,17 +430,19 @@ export async function syncPartsCost(month: string): Promise<{ rowsUpserted: numb
     const startsThisMonth =
       job.startDate != null &&
       `${job.startDate.getUTCFullYear()}-${String(job.startDate.getUTCMonth() + 1).padStart(2, "0")}` === month;
-    // `.has`, not `?? 0`: a job whose prior month genuinely confirmed 0 has
-    // finished buying, and must NOT be reopened at its original quote.
-    const priorEtc =
-      !startsThisMonth && priorAppByJobPk.has(job.id)
-        ? priorAppByJobPk.get(job.id)!
-        : Number(job.costQuoted ?? 0);
+    // `undefined`, not `?? 0`: a job whose latest parts month genuinely
+    // confirmed 0 has finished buying, and must NOT be reopened at its original
+    // quote. Same precedence as hours — priorEtcForMonth in lib/etc.ts.
+    const priorEtc = priorEtcForMonth({
+      startsThisMonth,
+      carried: latestPartsByKey.get(`${job.id}-${PARTS_COST_SECTION}`),
+      quoted: Number(job.costQuoted ?? 0),
+    });
     const moneySpent = spentByJobId.get(job.jobId) ?? 0;
 
     const existing = await prisma.etcEntry.findUnique({
       where: { jobId_section_month: { jobId: job.id, section: PARTS_COST_SECTION, month } },
-      select: { needsReview: true },
+      select: { needsReview: true, priorEtc: true, newEtcDraft: true },
     });
 
     if (existing) {
@@ -450,6 +464,25 @@ export async function syncPartsCost(month: string): Promise<{ rowsUpserted: numb
         priorEtc,
         hoursWorked: moneySpent,
         hoursLeftCalc: round2(calcHoursLeft(priorEtc, moneySpent)),
+        // A draft that merely echoed the suggestion from the OLD Prior ETC moves
+        // with it (see redrivenDraft). This is where the stale zeros came from:
+        // July's parts cells were saved while their Prior was still 0, and the
+        // 0 outlived the figure it was derived from.
+        //
+        // Only written when this run actually read the row. If `existing` is null
+        // the update branch can still fire — a concurrent writer created the row
+        // between the read and here — and touching a draft this run never saw
+        // would be guessing.
+        ...(existing
+          ? {
+              newEtcDraft: redrivenDraft({
+                draft: existing.newEtcDraft != null ? Number(existing.newEtcDraft) : null,
+                oldPriorEtc: Number(existing.priorEtc),
+                newPriorEtc: priorEtc,
+                hoursWorked: moneySpent,
+              }),
+            }
+          : {}),
       },
       create: {
         jobId: job.id,

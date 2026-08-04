@@ -270,6 +270,58 @@ export function latestPriorEtcByKey<T extends { jobId: number; section: string; 
   return out;
 }
 
+// The ONE rule for what a month's Prior ETC opens at, extracted so that every
+// path that writes the column answers it identically: seedMonth (Refresh Data),
+// cascadePriorEtcForward (a corrected month pushed forward), reopenMonth, and
+// syncPartsCost.
+//
+// Two inputs and a precedence:
+//   * `carried` — the New ETC of the LATEST earlier month holding this
+//     job/section (latestPriorEtcByKey). NOT prevMonth: a job that skips a
+//     period must resume where its balance left off. `undefined` means no ETC
+//     history at all.
+//   * `quoted` — the job's quote for this section (hours) or its Parts Cost
+//     Quoted (money). Used when there is no history, and when the job STARTS
+//     this month.
+//
+// startsThisMonth WINS over a carried balance: a job whose Start Date falls in
+// the month opens at its quote whatever the chain says. This is Power BI's own
+// rule ([ETC Historical Hours Prior Month] uses [Hours Quoted] there), and it is
+// why jobs 1159/1160 stopped inheriting the 0 their pre-quote rows carried.
+export function priorEtcForMonth(opts: { startsThisMonth: boolean; carried: number | undefined; quoted: number }): number {
+  return round2(!opts.startsThisMonth && opts.carried !== undefined ? opts.carried : opts.quoted);
+}
+
+// Does a saved draft merely ECHO the suggestion computed from the Prior ETC that
+// was in place when it was written? If so it is not a decision, and it must move
+// when that Prior ETC moves.
+//
+// Why this exists (found 2026-08-04, three of July 2026's Parts Cost cells):
+// Save persists whatever the New ETC box CONTAINS, and on a zero-spend cell the
+// box arrives pre-filled with the carry-forward. Job 979's parts cell was saved
+// at 11:02 while its Prior ETC was still 0 — a draft of 0, correct at the time.
+// A later Refresh moved that Prior to $8,600 and the stale 0 stayed, so the cell
+// read "spend nothing, plan nothing" over a live $8,600 balance, and Submit would
+// have written the 0 into history. 1159 was the same at $25,000 and 1105 at
+// $636,234: $669,834 of parts balance about to be zeroed by a figure nobody typed.
+//
+// Deliberately exact-match only. A draft that differs from the old suggestion by
+// even a cent is a manager's own number and is never touched. And a manager who
+// typed the suggestion because they agreed with it wants the suggestion — which is
+// what they get, recomputed from the figure that changed.
+export function redrivenDraft(opts: {
+  draft: number | null;
+  oldPriorEtc: number;
+  newPriorEtc: number;
+  hoursWorked: number;
+}): number | null {
+  const { draft, oldPriorEtc, newPriorEtc, hoursWorked } = opts;
+  if (draft === null) return null;
+  if (round2(oldPriorEtc) === round2(newPriorEtc)) return round2(draft);
+  if (round2(draft) !== round2(suggestNewEtc(oldPriorEtc, hoursWorked))) return round2(draft);
+  return round2(suggestNewEtc(newPriorEtc, hoursWorked));
+}
+
 // Weekday (Mon–Fri) count for a "YYYY-MM" month — the same rule as the
 // report's [ETC Historical Working Days] measure (COUNTROWS of 'Date' where
 // Is Weekend = FALSE for the work month). No holiday calendar on either

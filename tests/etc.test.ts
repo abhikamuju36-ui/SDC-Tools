@@ -16,6 +16,8 @@ import {
   effectiveNewEtc,
   newEtcDiff,
   latestPriorEtcByKey,
+  priorEtcForMonth,
+  redrivenDraft,
 } from "../src/lib/etc";
 
 test("calcHoursLeft: prior minus worked, may go negative", () => {
@@ -353,4 +355,59 @@ test("a carried balance of 0 is a real value, not 'missing'", () => {
   const m = latestPriorEtcByKey([{ jobId: 5, section: "10-211", month: "2026-05", newEtc: 0 }]);
   assert.ok(m.has("5-10-211"));
   assert.equal(m.get("5-10-211"), 0);
+});
+
+// ── priorEtcForMonth / redrivenDraft ──────────────────────────────────────────
+// The two rules extracted on 2026-08-04 so that seedMonth, the cascade,
+// reopenMonth and syncPartsCost cannot answer "what does this month open at"
+// differently. See the June-2026/July-2026 carry-forward incident.
+
+test("priorEtcForMonth: a carried balance wins over the quote", () => {
+  assert.equal(priorEtcForMonth({ startsThisMonth: false, carried: 40, quoted: 1420 }), 40);
+});
+
+test("priorEtcForMonth: a carried ZERO still wins — the job finished, it did not restart", () => {
+  // The parts-cost bug in one assertion (jobs 979 / 1105): falling back to the
+  // quote here reopened a spent-down balance at its full original figure.
+  assert.equal(priorEtcForMonth({ startsThisMonth: false, carried: 0, quoted: 636234 }), 0);
+});
+
+test("priorEtcForMonth: no history at all falls back to the quote", () => {
+  assert.equal(priorEtcForMonth({ startsThisMonth: false, carried: undefined, quoted: 700 }), 700);
+});
+
+test("priorEtcForMonth: a job STARTING this month opens at its quote regardless", () => {
+  // Jobs 1159/1160: rows existed from before anyone typed their quote, carrying 0.
+  assert.equal(priorEtcForMonth({ startsThisMonth: true, carried: 0, quoted: 260 }), 260);
+  assert.equal(priorEtcForMonth({ startsThisMonth: true, carried: 999, quoted: 260 }), 260);
+});
+
+test("redrivenDraft: leaves a manager's own figure alone", () => {
+  // 12 is not suggestNewEtc(100, 40) = 60, so somebody typed it. Never touched.
+  assert.equal(redrivenDraft({ draft: 12, oldPriorEtc: 100, newPriorEtc: 150, hoursWorked: 40 }), 12);
+});
+
+test("redrivenDraft: moves a draft that merely echoed the old suggestion", () => {
+  // Prior 100 − worked 40 = 60 was in the box; the Prior then became 150.
+  assert.equal(redrivenDraft({ draft: 60, oldPriorEtc: 100, newPriorEtc: 150, hoursWorked: 40 }), 110);
+});
+
+test("redrivenDraft: the zero-spend carry-forward moves too", () => {
+  // Job 979's parts cell exactly: draft 0 saved while the Prior was still 0,
+  // then the Prior became 8600. A stale 0 there would zero a live balance.
+  assert.equal(redrivenDraft({ draft: 0, oldPriorEtc: 0, newPriorEtc: 8600, hoursWorked: 0 }), 8600);
+});
+
+test("redrivenDraft: an unchanged Prior never rewrites the draft", () => {
+  assert.equal(redrivenDraft({ draft: 60, oldPriorEtc: 100, newPriorEtc: 100, hoursWorked: 40 }), 60);
+});
+
+test("redrivenDraft: no draft stays no draft", () => {
+  assert.equal(redrivenDraft({ draft: null, oldPriorEtc: 0, newPriorEtc: 8600, hoursWorked: 0 }), null);
+});
+
+test("redrivenDraft: an overspent cell's clamped zero follows the new Prior", () => {
+  // suggestNewEtc clamps at 0, so a draft of 0 on an overspent cell is the
+  // suggestion. Prior 800 − spent 7481 → 0; a corrected Prior of 9000 → 1519.
+  assert.equal(redrivenDraft({ draft: 0, oldPriorEtc: 800, newPriorEtc: 9000, hoursWorked: 7481 }), 1519);
 });

@@ -3,7 +3,8 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { calcHoursLeft, suggestNewEtc, isMonthLocked, round2, nextMonth, isValidMonth, isSafeForLiveEtcSync, latestPriorEtcByKey, isNewEtcClearable, type NewEtcCellState } from "@/lib/etc";
+import { calcHoursLeft, suggestNewEtc, isMonthLocked, round2, nextMonth, isValidMonth, isSafeForLiveEtcSync, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, isNewEtcClearable, type NewEtcCellState } from "@/lib/etc";
+import { derivePriorEtcForMonth, cascadePriorEtcForward } from "@/lib/etc-prior-etc";
 import { etcActiveJobFilter } from "@/lib/job-filters";
 import { syncActualHours, syncHoursWorked, syncPartsCost } from "@/lib/sync-powerbi";
 import { fetchJobHoursRowsWithIssues } from "@/lib/job-hours-source";
@@ -191,7 +192,7 @@ async function seedMonth(month: string) {
         newEtc: number;
         needsReview: boolean;
       }[] = [];
-      const toUpdate: { id: number; priorEtc: number; hoursLeftCalc: number }[] = [];
+      const toUpdate: { id: number; priorEtc: number; hoursLeftCalc: number; newEtcDraft: number | null }[] = [];
 
       // Sections that carry a balance forward but have no QUOTE behind them.
       //
@@ -262,7 +263,10 @@ async function seedMonth(month: string) {
           // is always defined for it by construction, so the fallback is never
           // reached there. The ?? 0 is belt-and-braces, not a real branch.
           // startsThisMonth WINS over the carried balance — see the note above.
-          const priorEtc = !startsThisMonth && carried !== undefined ? carried : (quotedBySection.get(section) ?? 0);
+          //
+          // Now the shared rule (lib/etc.ts) rather than this expression, so
+          // cascadePriorEtcForward and reopenMonth cannot answer it differently.
+          const priorEtc = priorEtcForMonth({ startsThisMonth, carried, quoted: quotedBySection.get(section) ?? 0 });
           const hoursWorked = existing ? Number(existing.hoursWorked) : 0;
 
           // newEtc is deliberately NOT written for an existing row — it's a
@@ -293,7 +297,16 @@ async function seedMonth(month: string) {
             round2(Number(existing.priorEtc)) === round2(priorEtc) &&
             round2(Number(existing.hoursLeftCalc)) === hoursLeftCalc;
           if (unchanged) continue;
-          toUpdate.push({ id: existing.id, priorEtc, hoursLeftCalc });
+          // A draft that merely echoed the suggestion from the OLD Prior ETC moves
+          // with it — see redrivenDraft. Without this, a Save taken before the
+          // Prior settled froze that moment's figure into the cell for good.
+          const newEtcDraft = redrivenDraft({
+            draft: existing.newEtcDraft != null ? Number(existing.newEtcDraft) : null,
+            oldPriorEtc: Number(existing.priorEtc),
+            newPriorEtc: priorEtc,
+            hoursWorked,
+          });
+          toUpdate.push({ id: existing.id, priorEtc, hoursLeftCalc, newEtcDraft });
         }
       }
 
@@ -309,7 +322,7 @@ async function seedMonth(month: string) {
       for (const u of toUpdate) {
         await tx.etcEntry.update({
           where: { id: u.id },
-          data: { priorEtc: u.priorEtc, hoursLeftCalc: u.hoursLeftCalc },
+          data: { priorEtc: u.priorEtc, hoursLeftCalc: u.hoursLeftCalc, newEtcDraft: u.newEtcDraft },
         });
       }
       console.log(
@@ -818,95 +831,38 @@ export async function reopenMonth(month: string, formData: FormData) {
     await tx.etcEntry.updateMany({ where: { month }, data: { needsReview: true } });
   });
 
-  await logAudit({ action: "etc.reopenMonth", entityType: "EtcMonth", entityId: month, summary: `Reopened ETC month ${month}` });
+  // ── Re-derive Prior ETC on the way back in (2026-08-04) ───────────────────
+  //
+  // A month that was locked is a month cascadePriorEtcForward REFUSED to write
+  // to, deliberately — confirmed rows are not its to revise. So a correction
+  // made upstream while this month was frozen never reached it, and reopening it
+  // used to hand the manager the stale opening balance to plan against.
+  //
+  // Proven from the audit log for July 2026: July was submitted at 16:32, June
+  // was corrected and re-submitted at 16:37 (logged "carry-forward stopped at
+  // locked month 2026-07"), and July was reopened at 16:38 still holding the
+  // Prior ETC it had been seeded with before June moved — 16 hours cells wrong,
+  // reported the next morning as "June isn't saved correctly, the Prior ETC for
+  // July still isn't right".
+  //
+  // Reopening is exactly the moment this becomes safe: every row is needsReview
+  // again, so the same rule that guards the cascade guards this. Then walk
+  // forward, since months after this one may have been stranded the same way.
+  const rederived = await derivePriorEtcForMonth(month);
+  const cascade = await cascadePriorEtcForward(month);
+
+  await logAudit({
+    action: "etc.reopenMonth",
+    entityType: "EtcMonth",
+    entityId: month,
+    summary:
+      `Reopened ETC month ${month}` +
+      (rederived.entriesUpdated > 0 ? ` — re-derived ${rederived.entriesUpdated} Prior ETC from the months before it` : "") +
+      (cascade.entriesUpdated > 0 ? ` — carried forward into ${cascade.monthsUpdated.join(", ")} (${cascade.entriesUpdated} Prior ETC updated)` : ""),
+    metadata: { rederived, cascade },
+  });
 
   revalidatePath("/etc");
-}
-
-// Pushes a corrected month's New ETC forward into the months that derive from
-// it. Prior ETC of month N+1 IS the New ETC of month N (seedMonth, above), so
-// re-submitting a corrected historical month leaves every later month holding
-// a Prior ETC computed from the value that just changed — and Hours Left,
-// the suggested New ETC, and every dollar figure downstream with it.
-//
-// Nothing else does this. seedMonth refreshes Prior ETC the same way, but it
-// only runs from startMonth and Refresh Data, and Refresh Data is refused on
-// anything but the current month (isSafeForLiveEtcSync) — so before this, a
-// June correction sat in June until somebody happened to refresh July.
-//
-// Two rules, both about not repeating the July 2026 history-corruption bug:
-//
-//   • Only `needsReview` rows are rewritten. A submitted row is a decision
-//     somebody made and locked; it is not this function's to revise.
-//   • The walk STOPS at the first locked month rather than skipping past it.
-//     If July is frozen, July's New ETC hasn't moved, so August's Prior ETC
-//     is still correct — there is nothing downstream to fix, and continuing
-//     would only risk touching months this correction never reached. The
-//     stopped-at month is returned so the caller can say so out loud.
-async function cascadePriorEtcForward(fromMonth: string): Promise<{
-  monthsUpdated: string[];
-  entriesUpdated: number;
-  stoppedAtLockedMonth: string | null;
-}> {
-  const monthsUpdated: string[] = [];
-  let entriesUpdated = 0;
-  let stoppedAtLockedMonth: string | null = null;
-
-  let prev = fromMonth;
-  let current = nextMonth(fromMonth);
-
-  // Bounded by the number of months that actually exist — a runaway here
-  // would walk the calendar forever.
-  for (;;) {
-    const entries = await prisma.etcEntry.findMany({ where: { month: current } });
-    if (entries.length === 0) break; // no such month — end of the chain
-
-    if (isMonthLocked(entries)) {
-      stoppedAtLockedMonth = current;
-      break;
-    }
-
-    // Same rule as seeding: the carry-forward source is the latest month with
-    // an entry, not strictly the month before. A job that skipped a period must
-    // not have its balance reset here either.
-    const priorEntries = await prisma.etcEntry.findMany({
-      where: { month: { lte: prev } },
-      select: { jobId: true, section: true, month: true, newEtc: true },
-    });
-    const priorByKey = latestPriorEtcByKey(priorEntries);
-
-    const writes: { id: number; priorEtc: number; hoursLeftCalc: number }[] = [];
-    for (const entry of entries) {
-      if (!entry.needsReview) continue; // confirmed history — never revised here
-      const priorEtc = priorByKey.get(`${entry.jobId}-${entry.section}`);
-      // No ETC history at all upstream: this job/section starts from quoted
-      // hours (see seedMonth) and has nothing to do with what just changed.
-      if (priorEtc === undefined) continue;
-
-      const rounded = round2(priorEtc);
-      const hoursLeftCalc = round2(calcHoursLeft(rounded, Number(entry.hoursWorked)));
-      if (round2(Number(entry.priorEtc)) === rounded && round2(Number(entry.hoursLeftCalc)) === hoursLeftCalc) continue;
-      writes.push({ id: entry.id, priorEtc: rounded, hoursLeftCalc });
-    }
-
-    if (writes.length > 0) {
-      // Array form (like saveAllNewEtcDrafts) rather than the interactive one:
-      // every write is known up front, so there's no need to hold a callback
-      // transaction open while this loop thinks.
-      await prisma.$transaction(
-        writes.map((w) =>
-          prisma.etcEntry.update({ where: { id: w.id }, data: { priorEtc: w.priorEtc, hoursLeftCalc: w.hoursLeftCalc } }),
-        ),
-      );
-      monthsUpdated.push(current);
-      entriesUpdated += writes.length;
-    }
-
-    prev = current;
-    current = nextMonth(current);
-  }
-
-  return { monthsUpdated, entriesUpdated, stoppedAtLockedMonth };
 }
 
 // Parity with the original sheet's "Refresh Data" button, which did everything

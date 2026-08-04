@@ -667,3 +667,102 @@ wholesale each sync, so a label corrected upstream disappears here too.
   drill and leave the headline numbers frozen.
 - `scripts/_recon_kpi_vs_truth.ts` — compares both tables behind the KPI cards
   against a freshly fetched source. This is what produced the table above.
+
+---
+
+## 13. The Prior ETC carry-forward, and the drafts derived from it (2026-08-04)
+
+Reported as two complaints one morning: *"why is the New ETC filled out for
+parts for July?"* and *"June isn't saved correctly, the Prior ETC for July isn't
+correct still."* One cause underneath both — **July's Prior ETC was frozen at
+figures that later moved, and the New ETC drafts derived from those figures were
+frozen with it.**
+
+### What actually happened, from the audit log
+
+```
+16:32  etc.submitMonth 2026-07   Submitted 457 entries      -> July LOCKS
+16:37  etc.submitMonth 2026-06   "carry-forward stopped at locked month 2026-07"
+16:38  etc.reopenMonth 2026-07   Reopened
+```
+
+`cascadePriorEtcForward` was right to stop: rewriting a submitted row is the
+July-2026 history-corruption bug (§10). But stopping is only half an answer. The
+month it stopped at was left holding a Prior ETC derived from a June that had
+just changed underneath it, and **reopening did not re-derive anything** — so the
+manager was handed the stale opening balance to plan against. 16 hours cells were
+wrong, in both directions (1122's three sections were 120 short, 1104's were
+carrying 40/8/8/80 that June had since confirmed to 0).
+
+### And a second, independent balance reset in the parts column
+
+`syncPartsCost` looked only at `previousMonth(month)` for a job's parts balance,
+falling back to the job's Parts Cost Quoted when it found nothing. That is the
+exact bug `latestPriorEtcByKey` was written to fix for hours (see the note on
+job 1104 there) — still live on the money side. A job with **no parts row in the
+immediately preceding month reopened at its full original quote:**
+
+| Job | Parts balance actually worked down to | July opened at |
+|-----|---------------------------------------|----------------|
+| 1105 | 0, confirmed May 2026 | **$636,234** |
+| 979  | 0, confirmed April 2026 | **$8,600** |
+
+$644,834 of phantom parts budget, on the page, in the totals, and in the
+Standard Fees dollars downstream of it.
+
+### Why the New ETC column was filled with figures nobody typed
+
+`saveAllNewEtcDrafts` persists whatever the New ETC box *contains*, and on a
+zero-spend cell the box arrives pre-filled with the carry-forward. Job 979's
+parts cell was saved at 11:02 while its Prior ETC was still 0 — a draft of 0,
+correct at that moment. A later Refresh moved the Prior to $8,600 and the stale 0
+stayed, so the cell read "spend nothing, plan nothing" over a live balance, and
+Submit would have written the 0 into history. 1159 was the same at $25,000.
+
+A draft is supposed to record a manager's judgement. A figure the server put in
+the box is not a judgement, and it must not outlive the number it came from.
+
+### The fixes
+
+- **`priorEtcForMonth`** (lib/etc.ts) — the one rule for what a month opens at:
+  a carried balance from the LATEST earlier month wins over the quote, a carried
+  **zero** still wins (the job finished; it did not restart), no history at all
+  falls back to the quote, and a job whose Start Date is in the month opens at
+  its quote regardless. `seedMonth`, the cascade, `reopenMonth` and
+  `syncPartsCost` all call it now, so the four cannot disagree.
+- **`redrivenDraft`** (lib/etc.ts) — a draft that merely echoes the suggestion
+  computed from the OLD Prior ETC moves when that Prior moves. Exact-match only:
+  a draft off by a cent is a manager's own number and is never touched.
+- **`lib/etc-prior-etc.ts`** — `derivePriorEtcForMonth` extracted as the single
+  writer of the column, and `cascadePriorEtcForward` reduced to a walk over it.
+  This is also what gave the cascade the starts-this-month rule it never had:
+  it would have walked jobs 1159/1160 back down to the 0 their pre-quote June
+  rows carried, undoing `repair-july-start-prior-etc.ts`.
+- **`reopenMonth` re-derives on the way back in.** Reopening is precisely the
+  moment those rows become unsubmitted and therefore safe to touch, which closes
+  the gap the cascade's stop-at-locked rule leaves open. Then it walks forward,
+  since later months can be stranded the same way.
+
+### The data repair
+
+`scripts/repair-july-2026-carryforward.ts` (dry-run by default) applied the same
+result to the rows that were already wrong, through the shared writer so the
+script cannot drift from what a reopen does: 22 Prior ETC re-derived, 2
+carry-forward drafts restored. July's 458 rows now agree with the rule on every
+one, and a second run is a no-op.
+
+Worth recording: 13 of July's zero drafts were left alone deliberately. They had
+been flagged as suspicious ("an explicit 0 over a non-zero Prior"), and they
+turn out to have been **right all along** — it was the Prior ETC above them that
+was stale-high. Fixing the Prior made the 0s correct rather than the other way
+round.
+
+### Still open
+- **Parts Cost New ETC always shows a figure** on a reopened month, and Clear ETC
+  skips the column (both by request, 2026-08-03). That is why the column reads as
+  filled while every hours cell beside it is blank. It is a decision, not a bug,
+  but it is the thing that makes the column look wrong at a glance.
+- **Save still hardens an untouched seed into a draft.** `redrivenDraft` now
+  keeps such a draft honest as its inputs move, which removes the damage; not
+  writing it at all would be better still, but the server would have to
+  reconstruct the exact seed the page rendered to know the box was untouched.
