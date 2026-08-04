@@ -1,7 +1,14 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState } from "react";
-import { AUTOSAVE_DELAY_MS, needsFollowUpSave, shouldAutosave, type AutosaveStatus } from "@/lib/autosave";
+import {
+  AUTOSAVE_DELAY_MS,
+  beginSaveTracking,
+  endSaveTracking,
+  needsFollowUpSave,
+  shouldAutosave,
+  type AutosaveStatus,
+} from "@/lib/autosave";
 
 // Debounce + coalesce + status for the two grids' autosave. The RULES live in
 // lib/autosave.ts (pure, tested); this is the timer and the React state around
@@ -61,11 +68,18 @@ export function useAutosave({
       inFlight.current = true;
       changedDuringSave.current = false;
       setStatus("saving");
+      // Tab-wide, so LiveRefresh doesn't re-render the route out from under a
+      // write that hasn't committed yet. In a finally, because a save that throws
+      // must not leave the counter raised and background refreshes off for the
+      // rest of the session.
+      beginSaveTracking();
       let ok = false;
       try {
         ok = await doSave();
       } catch {
         ok = false;
+      } finally {
+        endSaveTracking();
       }
       inFlight.current = false;
       setStatus(ok ? "saved" : "error");

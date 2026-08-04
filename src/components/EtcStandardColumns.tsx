@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
 import {
   calcTotalEtcDollars,
   calcPercentOfTotal,
@@ -153,6 +153,40 @@ export function StandardRatesProvider({
   const [rate, setRateState] = useState<Record<string, string>>(() =>
     Object.fromEntries(poolRows.map((p) => [p.category, String(p.rate)]))
   );
+
+  // ── Adopt pool figures another user saved (2026-08-04) ──────────────────────
+  //
+  // Per category, and only where this user has not diverged: a category they have
+  // edited keeps their value, every other one follows the server. Without this the
+  // pool panel stays frozen at page-load values while the grid beside it updates,
+  // and the Standard Fee dollars derived from these two would disagree with what is
+  // stored. Same clean/dirty rule as EtcSectionCells and MoneyCell.
+  const serverPool = useMemo(
+    () => ({
+      pulled: Object.fromEntries(poolRows.map((p) => [p.category, String(pulledBaseline(p))])),
+      rate: Object.fromEntries(poolRows.map((p) => [p.category, String(p.rate)])),
+    }),
+    [poolRows],
+  );
+  const [seenPool, setSeenPool] = useState(serverPool);
+  if (seenPool !== serverPool) {
+    const adopt = (current: Record<string, string>, seen: Record<string, string>, next: Record<string, string>) => {
+      let changed = false;
+      const out = { ...current };
+      for (const key of Object.keys(next)) {
+        if (seen[key] === next[key]) continue; // this figure did not move on the server
+        if (current[key] !== seen[key]) continue; // this user diverged — keep their edit
+        out[key] = next[key];
+        changed = true;
+      }
+      return changed ? out : current;
+    };
+    const nextPulled = adopt(pulled, seenPool.pulled, serverPool.pulled);
+    const nextRate = adopt(rate, seenPool.rate, serverPool.rate);
+    setSeenPool(serverPool);
+    if (nextPulled !== pulled) setPulledState(nextPulled);
+    if (nextRate !== rate) setRateState(nextRate);
+  }
 
   // Standard Fee per category = (Hours Available − Pulled) × Rate (Excel D77/D79),
   // recomputed live — this is the % Total → job Standard Fee driver.
@@ -373,6 +407,29 @@ function ContingencyNotesInputs({
   const [value, setValue] = useState(initial);
   const [focused, setFocused] = useState(false);
   const lastSaved = useRef(initial);
+
+  // Adopt a value another user saved, unless this user has typed their own or has
+  // the caret in the box (2026-08-04). Same rule as EtcSectionCells / MoneyCell —
+  // this block was missed in the first pass, which would have left the Standard
+  // Fees columns as the one stale patch on a page where everything else converges.
+  const [serverValue, setServerValue] = useState(initial);
+  if (serverValue !== initial) {
+    const wasClean = value === serverValue;
+    setServerValue(initial);
+    if (wasClean && !focused) setValue(initial);
+  }
+
+  // `lastSaved` is what save() compares against to decide "nothing to write". It has
+  // to move with an adopted value, or the next blur would re-post a figure this user
+  // never touched, straight back over the person who did.
+  //
+  // In an effect because a ref must not be written during render. Keyed on the box
+  // agreeing with the server, which is true both after an adoption and after this
+  // user types the server's value back by hand — in either case there is nothing to
+  // save, which is exactly what lastSaved is claiming.
+  useEffect(() => {
+    if (value === initial) lastSaved.current = initial;
+  }, [value, initial]);
 
   async function save() {
     if (value === lastSaved.current) return;

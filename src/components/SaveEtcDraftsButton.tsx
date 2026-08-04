@@ -2,8 +2,9 @@
 
 import { useEffect, useTransition } from "react";
 import { saveAllNewEtcDrafts } from "@/lib/etc-actions";
-import { isEtcDirty, rebaselineEtcFields } from "@/lib/etc-dirty-tracker";
+import { changedEtcFormData, isEtcDirty, markEtcFieldsRefused, rebaselineEtcFields } from "@/lib/etc-dirty-tracker";
 import { useToast } from "@/components/ui/Toast";
+import { requestLiveRefresh } from "@/components/LiveRefresh";
 
 // Batch-saves every currently-typed New ETC override across the grid in one click. The
 // whole grid already lives in one <form> (formId), so this reads its current values via
@@ -54,16 +55,31 @@ export function SaveEtcDraftsButton({
   function run() {
     const form = document.getElementById(formId);
     if (!(form instanceof HTMLFormElement)) return;
-    const fd = new FormData(form);
+    // Only the cells this user edited — same rule as autosave, same reason
+    // (changedEtcFormData). Posting the whole form is what let one manager's tab
+    // revert another's saved values.
+    const fd = changedEtcFormData(form);
     startTransition(async () => {
       const result = await saveAllNewEtcDrafts(month, fd);
+      if (result.conflicts > 0) {
+        // Said out loud rather than folded into the success count: the manager's
+        // keystroke did NOT land, and they need to know before they walk away.
+        toast(
+          `${result.conflicts} cell${result.conflicts === 1 ? " was" : "s were"} changed by another user — your value for ${
+            result.conflicts === 1 ? "it" : "those"
+          } was not saved. Refreshing to show what is stored now.`,
+          "error",
+        );
+        markEtcFieldsRefused(result.conflictFields);
+        requestLiveRefresh();
+      }
       if (result.ok) {
         // Re-baseline rather than just clearing a flag: the values that were just
         // persisted become what "unchanged" means from here on. Clearing alone would
         // leave each cell compared against what the PAGE loaded with, so typing a cell
         // back to its pre-save value would read as clean when it's now a real unsaved
         // edit. `fd` is exactly what was posted, so it is exactly the right new baseline.
-        rebaselineEtcFields(fd);
+        rebaselineEtcFields(fd, result.conflictFields);
         // Say what happened. This action deliberately doesn't revalidate (it runs on
         // every autosave pass and re-rendering the whole month is what made saving feel
         // slow), so without this the button went "Saving…" and then back to "Save" with

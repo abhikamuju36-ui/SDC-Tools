@@ -30,6 +30,32 @@ export function MoneyCell({
   const [raw, setRaw] = useState(defaultValue);
   const [editing, setEditing] = useState(false);
 
+  // ── Adopt a new SERVER value, but never overwrite the user's own edit ───────
+  //
+  // This cell held two versions of the truth and they disagreed after a
+  // re-render: `raw` came from useState, whose initializer runs ONCE, while
+  // data-baseline below is the live `defaultValue` prop and re-states itself every
+  // render. So when the server sent a newer figure — because another user saved
+  // this cell — the baseline moved and `raw` did not, and dirty-form.ts read
+  // `value !== baseline` as "this user edited it" and submitted the STALE value,
+  // overwriting the other user's save. The cell was not just showing an old
+  // number, it was actively reverting a colleague's work on the next autosave.
+  //
+  // The rule: if this cell was clean (still showing what the server last sent),
+  // adopt the new value. If the user had typed something different, keep their
+  // text — it is a genuine unsaved edit, and it stays dirty and gets submitted,
+  // which is correct.
+  //
+  // Adjusting state during render, rather than in an effect: React supports this
+  // for exactly this "derive from a changed prop" case, and it avoids rendering
+  // one frame of the wrong figure.
+  const [serverValue, setServerValue] = useState(defaultValue);
+  if (serverValue !== defaultValue) {
+    const wasClean = raw === serverValue;
+    setServerValue(defaultValue);
+    if (wasClean && !editing) setRaw(defaultValue);
+  }
+
   // Grouping only — no currency symbol (the cell already prints a "$" beside
   // this) and no forced decimals, so a whole-dollar quote stays whole.
   const display = (() => {

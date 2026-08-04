@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { registerEtcField, forgetEtcField, updateEtcField } from "@/lib/etc-dirty-tracker";
+import { registerEtcField, forgetEtcField, updateEtcField, adoptEtcFieldBaseline } from "@/lib/etc-dirty-tracker";
 import { publishPartsCell, forgetPartsCell } from "@/lib/etc-live-totals";
 import { isNewEtcCellDecided, type NewEtcCellState } from "@/lib/etc";
 
@@ -72,6 +72,17 @@ export function PartsCostNewEtcCell({
   const [value, setValue] = useState(initialValue);
   const [focused, setFocused] = useState(false);
 
+  // Adopt a figure another user saved, unless this user has typed their own.
+  // Identical rule to EtcSectionCells and MoneyCell — see the long note in
+  // EtcSectionCells for why mount-time state was half of the multi-user bug.
+  // `focused` is respected too: never move a value under an active caret.
+  const [serverValue, setServerValue] = useState(initialValue);
+  if (serverValue !== initialValue) {
+    const wasClean = value === serverValue;
+    setServerValue(initialValue);
+    if (wasClean && !focused) setValue(initialValue);
+  }
+
   // Baseline for the unsaved-changes guards, and the unmount cleanup that lets
   // a month switch reset them. See EtcSectionCells for the full rationale —
   // this cell posts into the same `newEtcOverride__<id>` namespace, so it has
@@ -82,6 +93,14 @@ export function PartsCostNewEtcCell({
     // initialValue is the mount-time baseline by design; see EtcSectionCells.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [name]);
+
+  // When the box and the server agree, that agreement IS the baseline. Without
+  // this, adopting a colleague's saved figure would leave the cell reading as
+  // dirty and autosave would post it, only to have the stale-write guard reject it
+  // as a conflict on a cell nobody touched. See adoptEtcFieldBaseline.
+  useEffect(() => {
+    if (value === initialValue) adoptEtcFieldBaseline(name, initialValue);
+  }, [name, initialValue, value]);
 
   // Publish the live dollars for the totals downstream of this cell. Same rule as
   // EtcSectionCells: an empty or unparseable box means "not decided", which is the
@@ -120,6 +139,14 @@ export function PartsCostNewEtcCell({
         type="text"
         inputMode="decimal"
         value={displayValue}
+        // EtcAutosave's delegated listener matches on the field NAME, and this
+        // visible input deliberately has none (the name is on the hidden input
+        // beside it, which React updates without dispatching an input event). So
+        // typing here scheduled no autosave at all and the status chip stayed idle
+        // — found by review 2026-08-04. Not data loss (the visibilitychange flush
+        // and the Save button both cover it), but the debounce is the thing that
+        // makes a Parts Cost edit safe within a second like every other cell.
+        data-etc-autosave="1"
         onFocus={() => setFocused(true)}
         onChange={(e) => {
           const next = e.target.value.replace(/[^0-9.]/g, "");

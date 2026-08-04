@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { calcHoursLeft, suggestNewEtc, round2, newEtcSeedText, isNewEtcCellDecided, type NewEtcCellState } from "@/lib/etc";
-import { registerEtcField, forgetEtcField, updateEtcField } from "@/lib/etc-dirty-tracker";
+import { registerEtcField, forgetEtcField, updateEtcField, adoptEtcFieldBaseline } from "@/lib/etc-dirty-tracker";
 import { publishEtcCell, forgetEtcCell } from "@/lib/etc-live-totals";
 import { hours as formatHours } from "@/components/ui/format";
 import { ETC_COL_W } from "@/components/ui/classnames";
@@ -138,6 +138,26 @@ export function EtcSectionCells({
   const initialText = newEtcSeedText(cellState);
   const [newEtcText, setNewEtcText] = useState(initialText);
 
+  // ── Adopt what another user saved, without touching this user's typing ──────
+  //
+  // Half of the multi-user bug fixed on 2026-08-04: even once the server was
+  // re-queried (LiveRefresh) and the payload arrived with a colleague's new
+  // figure, this cell would not show it. `useState` runs its initializer once, so
+  // the mount-time value was permanent until the component unmounted — and the
+  // only thing that unmounts these is the month switch (key={month} on the grid).
+  // router.refresh() deliberately preserves state, so it could not help either.
+  //
+  // The rule is the same one MoneyCell uses: if the box still holds exactly what
+  // the server last sent, take the new value. If the user has typed something
+  // else, that is an unsaved edit and it wins — it stays on screen, stays dirty,
+  // and autosave still tries to persist it.
+  const [serverText, setServerText] = useState(initialText);
+  if (serverText !== initialText) {
+    const wasClean = newEtcText === serverText;
+    setServerText(initialText);
+    if (wasClean) setNewEtcText(initialText);
+  }
+
   const hoursLeft = calcHoursLeft(priorEtc, worked);
   const suggested = suggestNewEtc(priorEtc, worked);
   // A cell only needs manager attention (yellow) when this section actually
@@ -259,6 +279,20 @@ export function EtcSectionCells({
     return () => forgetEtcField(fieldName);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [fieldName]);
+
+  // Keep the baseline honest when the box and the server agree.
+  //
+  // Two ways to get here: the cell adopted a value another user saved (see the
+  // clean/dirty rule above), or the user typed the server's value back by hand.
+  // Either way the cell is genuinely unchanged, and saying so is what stops
+  // autosave posting it — which would otherwise be rejected by the stale-write
+  // guard and reported as a conflict on a cell nobody edited.
+  //
+  // Safe to run on every render: adoptEtcFieldBaseline is idempotent, and while
+  // the user has an unsaved edit the two are unequal so nothing happens.
+  useEffect(() => {
+    if (newEtcText === initialText) adoptEtcFieldBaseline(fieldName, initialText);
+  }, [fieldName, initialText, newEtcText]);
 
   // Publish this cell's live figures for the totals that sum it — the row's
   // TOTAL (NEW ETC) block, the grand-total row, and the Standard Sheet's

@@ -6,6 +6,7 @@ import { useSaveState } from "@/components/QuotedSaveForm";
 import { useAutosave } from "@/components/useAutosave";
 import { SaveStatusChip } from "@/components/SaveStatusChip";
 import { countChanged } from "@/lib/dirty-form";
+import { registerRefreshBlocker } from "@/components/LiveRefresh";
 
 // Autosave for the Projects grid.
 //
@@ -71,6 +72,18 @@ export function ProjectsAutosave() {
     window.addEventListener("beforeunload", onBeforeUnload);
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, [editing]);
+
+  // Same as the Monthly ETC grid: don't let the background refresh re-render the
+  // matrix while there is unsaved typing in it. MoneyCell keeps a diverged value
+  // regardless, so this is about not disturbing someone mid-edit.
+  useEffect(
+    () =>
+      registerRefreshBlocker(() => {
+        const form = formRef.current;
+        return !!form && countChanged(form) > 0;
+      }),
+    [],
+  );
 
   // Find the enclosing form once and attach the delegated listeners.
   useEffect(() => {

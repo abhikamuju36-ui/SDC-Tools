@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { rebaselineEtcFields } from "@/lib/etc-dirty-tracker";
+import { rebaselineEtcFields, injectEtcBaselineFields } from "@/lib/etc-dirty-tracker";
 
 // Submit ETC freezes a month's ETC ENTRIES — Hours Worked and New ETC
 // on every row. NOT the same thing as the Standard Fees panel's "Submit
@@ -51,6 +51,12 @@ export function SubmitAndLockButton({ formId, className }: { formId: string; cla
       form.appendChild(input);
     }
     input.value = password;
+    // Declare what this page BELIEVED was stored, so submitMonth can tell a value
+    // this manager typed from one that is merely what their page loaded with — and
+    // prefer a colleague's newer draft for the latter. Submit writes CONFIRMED
+    // history, so a stale snapshot frozen here is not something a later save can
+    // put right. See injectEtcBaselineFields.
+    injectEtcBaselineFields(form);
     // Submitting persists every typed New ETC too (submitMonth reads the same
     // `newEtcOverride__<id>` fields Save does), so the grid is no longer
     // "unsaved" afterwards. Without this the unsaved-changes guards kept

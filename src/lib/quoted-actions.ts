@@ -7,6 +7,7 @@ import { VALID_JOB_TYPES, JOB_STATUSES, isSdcCustomer } from "@/lib/job-filters"
 import { assertProjectsEditable } from "@/lib/projects-edit-mode";
 
 const HOURS_PREFIX = "quoted__";
+
 const FIELD_PREFIX = "jobField__";
 const NEW_ROW_FIELD_PREFIX = "newRow__";
 const NEW_ROW_HOURS_PREFIX = "newRowHours__";
@@ -20,13 +21,66 @@ type PlainField = (typeof PLAIN_FIELDS)[number];
 type DateField = (typeof DATE_FIELDS)[number];
 type MoneyField = (typeof MONEY_FIELDS)[number];
 
+// ── Refusing a write that would revert another user ─────────────────────────
+//
+// The Projects grid's write helpers below decide what to save by comparing the
+// POSTED value against the DATABASE. That is fine for one user and wrong for two:
+// a page working from stale data posts its old value, the comparison reads it as a
+// deliberate edit, and a colleague's saved cell is silently reverted. Exactly the
+// defect found on the Monthly ETC grid on 2026-08-04, present here too.
+//
+// So every changed control also declares the value it BELIEVED was stored
+// (`__base__<name>`, see lib/dirty-form.ts). If that belief no longer matches what
+// is in the database, this client was not looking at current data and its write is
+// refused rather than applied.
+//
+// Both sides are parsed by the SAME parser as the posted value, so a belief and a
+// stored figure are compared as values rather than as strings — "40" and 40.0 are
+// not a conflict, and neither is a date typed in a different notation.
+//
+// A control that declared no baseline is allowed through unchanged: that is the
+// pre-existing behaviour for cells whose render site never stated one, and
+// refusing them would break saving rather than protect anything.
+function believedBase(formData: FormData, fieldName: string): string | null {
+  const raw = formData.get(`__base__${fieldName}`);
+  return raw === null ? null : String(raw);
+}
+
+// True when the client's belief about the stored value disagrees with the stored
+// value. `parse` maps a raw string to the comparable form; `stored` is already in
+// it. Deliberately conservative: an unparseable belief counts as a disagreement,
+// since we cannot show the client was up to date.
+function beliefIsStale<T>(believed: string | null, stored: T, parse: (raw: string) => T): boolean {
+  if (believed === null) return false;
+  let parsed: T;
+  try {
+    parsed = parse(believed.trim());
+  } catch {
+    return true;
+  }
+  return parsed !== stored;
+}
+
 // What the Save button gets back. Returned rather than thrown, deliberately:
 // this action used to only throw, which handed every validation slip to the
 // route's error boundary — replacing the entire grid, and with it any unsaved
 // edits in the other cells, over one mistyped number. A returned error keeps the
 // user's work on screen next to the message about it.
 export type SaveQuotedResult =
-  | { ok: true; cells: number; jobs: number; created: number }
+  | {
+      ok: true;
+      cells: number;
+      jobs: number;
+      created: number;
+      // Writes REFUSED because another user had already changed those cells
+      // (2026-08-04). Surfaced so the manager is told their value did not land and
+      // the grid can pull the current figures in — a silent refusal would be worse
+      // than the revert it prevents.
+      conflicts: number;
+      conflictDetail: string[];
+      // Control names, for the client's re-baseline skip list.
+      conflictFields: string[];
+    }
   | { ok: false; error: string };
 
 // Saves every edited cell from the Projects grid — quoted hours by section
@@ -56,6 +110,8 @@ export async function saveQuotedHours(_prev: SaveQuotedResult | null, formData: 
     const created = await saveNewRows(formData);
     const cells = await saveHoursCells(formData);
     const jobs = await saveJobFields(formData);
+    const conflictDetail = [...cells.conflicts, ...jobs.conflicts];
+    const conflictFields = [...cells.conflictFields, ...jobs.conflictFields];
     // Revalidate ONLY when a row was created (2026-08-03). This is why saving
     // felt slow: the writes themselves measure ~10ms for a one-cell edit, but
     // revalidatePath makes the action's response carry a fresh render of the
@@ -72,7 +128,15 @@ export async function saveQuotedHours(_prev: SaveQuotedResult | null, formData: 
     // only the server can render it as a real row with an id. That one keeps the
     // round trip, and it is the rare case.
     if (created > 0) revalidatePath("/quoted");
-    return { ok: true, cells, jobs, created };
+    return {
+      ok: true,
+      cells: cells.written,
+      jobs: jobs.written,
+      created,
+      conflicts: conflictDetail.length,
+      conflictDetail,
+      conflictFields,
+    };
   } catch (err) {
     // Every message these helpers throw is written for a manager to read, so it
     // goes straight to the UI. Logged as well because this catch also swallows
@@ -86,8 +150,8 @@ export async function saveQuotedHours(_prev: SaveQuotedResult | null, formData: 
 // Returns the number of cells actually WRITTEN, not the number submitted — the
 // whole grid is one form, so every visible cell resubmits on every save and a
 // submitted count would report thousands for a one-cell edit.
-async function saveHoursCells(formData: FormData): Promise<number> {
-  const edits: { jobId: number; section: string; quotedHours: number }[] = [];
+async function saveHoursCells(formData: FormData): Promise<{ written: number; conflicts: string[]; conflictFields: string[] }> {
+  const edits: { jobId: number; section: string; quotedHours: number; believed: string | null }[] = [];
 
   for (const [key, rawValue] of formData.entries()) {
     if (!key.startsWith(HOURS_PREFIX)) continue;
@@ -103,10 +167,10 @@ async function saveHoursCells(formData: FormData): Promise<number> {
     if (!Number.isInteger(quotedHours) || quotedHours < 0) {
       throw new Error(`Quoted hours must be a whole number — got "${raw}" for job ${jobId}, section ${section}.`);
     }
-    edits.push({ jobId, section, quotedHours });
+    edits.push({ jobId, section, quotedHours, believed: believedBase(formData, key) });
   }
 
-  if (edits.length === 0) return 0;
+  if (edits.length === 0) return { written: 0, conflicts: [], conflictFields: [] };
 
   // Fetch by the (bounded) set of distinct job ids, not a giant OR-of-pairs:
   // the whole Projects grid is one <form>, so `edits` is jobs × sections
@@ -129,12 +193,39 @@ async function saveHoursCells(formData: FormData): Promise<number> {
   // rendered value regardless of which one the manager actually edited),
   // silently truncating its precision and permanently locking it out of
   // future syncs via quotedHoursManuallyEdited.
-  const changed = edits.filter((e) => {
+  const candidates = edits.filter((e) => {
     const current = existingByKey.get(`${e.jobId}::${e.section}`) ?? 0;
     return Math.round(current) !== e.quotedHours;
   });
 
-  if (changed.length === 0) return 0;
+  // Refuse the ones whose page was out of date — see beliefIsStale. The grid
+  // renders whole hours, so the belief is compared as a whole number too.
+  const conflicts: string[] = [];
+  // The control NAMES, so the client can leave exactly those cells dirty instead of
+  // re-baselining a value the server never wrote.
+  const conflictFields: string[] = [];
+  const changed: typeof candidates = [];
+  for (const e of candidates) {
+    const current = Math.round(existingByKey.get(`${e.jobId}::${e.section}`) ?? 0);
+    if (beliefIsStale(e.believed, current, (raw) => (raw === "" ? 0 : Math.round(Number(raw))))) {
+      conflicts.push(`job ${e.jobId} ${e.section}: stored ${current}, this page believed ${e.believed}`);
+      conflictFields.push(`${HOURS_PREFIX}${e.jobId}__${e.section}`);
+      continue;
+    }
+    changed.push(e);
+  }
+
+  if (changed.length === 0) {
+    if (conflicts.length > 0) {
+      await logAudit({
+        action: "quoted.saveQuotedHours",
+        entityType: "EstimatedHours",
+        summary: `REFUSED ${conflicts.length} stale quoted-hours write(s) already changed by another user`,
+        metadata: { conflicts },
+      });
+    }
+    return { written: 0, conflicts, conflictFields };
+  }
 
   await prisma.$transaction(
     changed.map((e) =>
@@ -156,11 +247,13 @@ async function saveHoursCells(formData: FormData): Promise<number> {
   await logAudit({
     action: "quoted.saveQuotedHours",
     entityType: "EstimatedHours",
-    summary: `Updated quoted hours for ${changed.length} job/section cell${changed.length === 1 ? "" : "s"}`,
-    metadata: { changed },
+    summary:
+      `Updated quoted hours for ${changed.length} job/section cell${changed.length === 1 ? "" : "s"}` +
+      (conflicts.length > 0 ? ` — REFUSED ${conflicts.length} stale write(s) already changed by another user` : ""),
+    metadata: { changed, conflicts },
   });
 
-  return changed.length;
+  return { written: changed.length, conflicts, conflictFields };
 }
 
 function parseDate(raw: string): Date | null {
@@ -186,9 +279,12 @@ function parseMoney(raw: string, field: string, label: number | string): number 
   return n;
 }
 
-async function saveJobFields(formData: FormData): Promise<number> {
+async function saveJobFields(formData: FormData): Promise<{ written: number; conflicts: string[]; conflictFields: string[] }> {
   // jobId -> field -> raw string value, collected from every jobField__ input present.
   const byJob = new Map<number, Map<string, string>>();
+  // The same shape for the `__base__` tokens: what the posting page believed was
+  // already stored in each of those fields.
+  const baseByJob = new Map<number, Map<string, string>>();
   for (const [key, rawValue] of formData.entries()) {
     if (!key.startsWith(FIELD_PREFIX)) continue;
     const rest = key.slice(FIELD_PREFIX.length);
@@ -199,8 +295,12 @@ async function saveJobFields(formData: FormData): Promise<number> {
     if (!Number.isInteger(jobId)) continue;
     if (!byJob.has(jobId)) byJob.set(jobId, new Map());
     byJob.get(jobId)!.set(field, String(rawValue));
+    // What this page believed was stored, keyed the same way — see beliefIsStale.
+    if (!baseByJob.has(jobId)) baseByJob.set(jobId, new Map());
+    const believed = believedBase(formData, key);
+    if (believed !== null) baseByJob.get(jobId)!.set(field, believed);
   }
-  if (byJob.size === 0) return 0;
+  if (byJob.size === 0) return { written: 0, conflicts: [], conflictFields: [] };
 
   const jobIds = [...byJob.keys()];
   const currentJobs = await prisma.job.findMany({
@@ -223,17 +323,35 @@ async function saveJobFields(formData: FormData): Promise<number> {
   const updates: { id: number; data: Record<string, unknown> }[] = [];
   const changedFieldSummaries: string[] = [];
 
+  const conflicts: string[] = [];
+  const conflictFields: string[] = [];
+
   for (const [jobId, fields] of byJob) {
     const current = currentById.get(jobId);
     if (!current) continue;
     const data: Record<string, unknown> = {};
+    const bases = baseByJob.get(jobId);
+    // One gate for every field below: does this page's belief about the STORED
+    // value still hold? If not, it was editing against data somebody has since
+    // changed, and applying its value would revert them. Refused and reported
+    // rather than written. `parse` is the same normalisation the field's own
+    // comparison uses, so a belief and a stored value are compared as values.
+    const stale = <T,>(field: string, stored: T, parse: (raw: string) => T): boolean => {
+      const believed = bases?.get(field) ?? null;
+      if (!beliefIsStale(believed, stored, parse)) return false;
+      conflicts.push(`job ${jobId} ${field}: stored ${String(stored)}, this page believed ${believed}`);
+      conflictFields.push(`${FIELD_PREFIX}${jobId}__${field}`);
+      return true;
+    };
 
     for (const field of PLAIN_FIELDS) {
       if (!fields.has(field)) continue;
       const raw = fields.get(field)!.trim();
       if (field === "jobName" && raw === "") throw new Error(`Job Name cannot be blank for job ${jobId}.`);
       const nextValue: string | null = field === "jobName" ? raw : raw === "" ? null : raw;
-      if (nextValue !== (current[field as PlainField] ?? null)) {
+      const storedPlain = current[field as PlainField] ?? null;
+      if (stale(field, storedPlain, (r) => (field === "jobName" ? r : r === "" ? null : r))) continue;
+      if (nextValue !== storedPlain) {
         data[field] = nextValue;
         if (field === "customer") data.customerManuallyEdited = true;
       }
@@ -248,7 +366,7 @@ async function saveJobFields(formData: FormData): Promise<number> {
       if (!JOB_STATUSES.includes(raw as (typeof JOB_STATUSES)[number])) {
         throw new Error(`Invalid Status "${raw}" for job ${jobId} — must be one of ${JOB_STATUSES.join(", ")}.`);
       }
-      if (raw !== current.status) data.status = raw;
+      if (!stale("status", current.status, (r) => r) && raw !== current.status) data.status = raw;
     }
 
     if (fields.has("type")) {
@@ -256,7 +374,7 @@ async function saveJobFields(formData: FormData): Promise<number> {
       if (!VALID_JOB_TYPES.includes(raw as (typeof VALID_JOB_TYPES)[number])) {
         throw new Error(`Invalid Type "${raw}" for job ${jobId} — must be one of ${VALID_JOB_TYPES.join(", ")}.`);
       }
-      if (raw !== current.type) data.type = raw;
+      if (!stale("type", current.type, (r) => r) && raw !== current.type) data.type = raw;
     }
 
     const effectiveCustomer = "customer" in data ? (data.customer as string | null) : current.customer;
@@ -270,7 +388,9 @@ async function saveJobFields(formData: FormData): Promise<number> {
         throw new Error(`Invalid Billable value "${raw}" for job ${jobId} — must be "Billable" or "Non-Billable".`);
       }
       const nextValue = raw === "Billable";
-      if (nextValue !== current.billable) data.billable = nextValue;
+      if (!stale("billable", current.billable, (r) => r === "Billable") && nextValue !== current.billable) {
+        data.billable = nextValue;
+      }
     }
 
     for (const field of DATE_FIELDS) {
@@ -279,6 +399,8 @@ async function saveJobFields(formData: FormData): Promise<number> {
       const currentValue = current[field as DateField];
       const currentIso = currentValue ? currentValue.toISOString().slice(0, 10) : null;
       const nextIso = nextValue ? nextValue.toISOString().slice(0, 10) : null;
+      // Compared as ISO day strings, which is exactly what the date input renders.
+      if (stale(field, currentIso, (r) => (r === "" ? null : (parseDate(r)?.toISOString().slice(0, 10) ?? null)))) continue;
       if (nextIso !== currentIso) data[field] = nextValue;
     }
 
@@ -286,6 +408,7 @@ async function saveJobFields(formData: FormData): Promise<number> {
       if (!fields.has(field)) continue;
       const nextValue = parseMoney(fields.get(field)!.trim(), field, jobId);
       const currentValue = current[field as MoneyField] != null ? Number(current[field as MoneyField]) : null;
+      if (stale(field, currentValue, (r) => parseMoney(r, field, jobId))) continue;
       if (nextValue !== currentValue) {
         data[field] = nextValue;
         if (field === "costQuoted") data.costQuotedManuallyEdited = true;
@@ -298,18 +421,30 @@ async function saveJobFields(formData: FormData): Promise<number> {
     }
   }
 
-  if (updates.length === 0) return 0;
+  if (updates.length === 0) {
+    if (conflicts.length > 0) {
+      await logAudit({
+        action: "quoted.saveJobFields",
+        entityType: "Job",
+        summary: `REFUSED ${conflicts.length} stale job-field write(s) already changed by another user`,
+        metadata: { conflicts },
+      });
+    }
+    return { written: 0, conflicts, conflictFields };
+  }
 
   await prisma.$transaction(updates.map((u) => prisma.job.update({ where: { id: u.id }, data: u.data })));
 
   await logAudit({
     action: "quoted.saveJobFields",
     entityType: "Job",
-    summary: `Updated fields on ${updates.length} job${updates.length === 1 ? "" : "s"}`,
-    metadata: { changed: changedFieldSummaries },
+    summary:
+      `Updated fields on ${updates.length} job${updates.length === 1 ? "" : "s"}` +
+      (conflicts.length > 0 ? ` — REFUSED ${conflicts.length} stale write(s) already changed by another user` : ""),
+    metadata: { changed: changedFieldSummaries, conflicts },
   });
 
-  return updates.length;
+  return { written: updates.length, conflicts, conflictFields };
 }
 
 // Creates every "+ Add Project" blank row the manager filled in. Job Id is

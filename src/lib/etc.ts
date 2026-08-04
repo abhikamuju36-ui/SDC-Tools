@@ -216,6 +216,57 @@ export function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
 
+// ── Would this write revert another user? ────────────────────────────────────
+//
+// Optimistic concurrency for the New ETC draft save, and the rule that makes the
+// 2026-08-04 multi-user bug unrepeatable. The client sends the value it BELIEVED
+// was stored beside the value it wants to write; if the stored draft has moved
+// since, somebody else saved this cell in between and this write would silently
+// undo them.
+//
+// Pure and tested rather than inline in the action, because it is the one rule
+// standing between two managers and a lost afternoon.
+//
+// Three deliberate decisions:
+//
+//   * `believedStored` null — the client said nothing (an older bundle, a
+//     hand-posted request). NOT treated as stale: refusing every such write would
+//     break saving for anyone on a cached page, which is a worse failure than the
+//     one being prevented. The client-side payload trimming is what covers that
+//     case; this is the second line.
+//   * `storedDraft` null — nothing is stored, so there is nothing to revert. This
+//     action never touches the CONFIRMED value (`newEtc`), only the draft, so a
+//     cell with no draft is free to take one.
+//   * Compared as NUMBERS, not as strings. "5819.03" and "5819.030" are the same
+//     stored figure, and a formatting difference must not read as a conflict —
+//     that would reject a legitimate save and tell the manager a colleague had
+//     edited a cell nobody had touched.
+//   * Compared at the precision the CELL DISPLAYS, which is what `precision` is
+//     for. This is not a nicety: the hours cells seed from
+//     `String(Math.round(n))` (see fmt), so a stored draft of 93.75 puts "94" in
+//     the box. Comparing the client's "94" against 93.75 at 2dp would call every
+//     such cell a conflict — refused, left dirty, blamed on a colleague who did
+//     nothing, and never recoverable because the seed would keep rounding.
+//     Parts Cost passes "exact" and keeps its cents. Same expression the grid uses
+//     to seed the cell, so the two cannot disagree.
+export function isStaleDraftWrite(opts: {
+  believedStored: string | null;
+  storedDraft: number | null;
+  precision?: "whole" | "exact";
+}): boolean {
+  const { believedStored, storedDraft, precision } = opts;
+  if (believedStored === null) return false;
+  if (storedDraft === null) return false;
+  const trimmed = believedStored.trim();
+  if (trimmed === "") return true; // "I believe nothing is stored" — but something is.
+  const believed = Number(trimmed);
+  // Unparseable belief: cannot prove the client was up to date, so treat as stale
+  // rather than write over a figure on the strength of a value we can't read.
+  if (!Number.isFinite(believed)) return true;
+  const at = (n: number) => (precision === "exact" ? round2(n) : Math.round(n));
+  return at(believed) !== at(storedDraft);
+}
+
 // "YYYY-MM" month arithmetic, shared by seeding (carry-forward source), the
 // in-order start guard, and the month picker's "next startable month" option.
 export function prevMonth(month: string): string {

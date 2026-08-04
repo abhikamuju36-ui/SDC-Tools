@@ -3,7 +3,7 @@
 import { createHmac, timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
-import { calcHoursLeft, suggestNewEtc, isMonthLocked, round2, nextMonth, isValidMonth, isSafeForLiveEtcSync, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, isNewEtcClearable, type NewEtcCellState } from "@/lib/etc";
+import { calcHoursLeft, suggestNewEtc, isMonthLocked, round2, nextMonth, isValidMonth, isSafeForLiveEtcSync, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, isNewEtcClearable, isStaleDraftWrite, type NewEtcCellState } from "@/lib/etc";
 import { derivePriorEtcForMonth, cascadePriorEtcForward } from "@/lib/etc-prior-etc";
 import { etcActiveJobFilter } from "@/lib/job-filters";
 import { syncActualHours, syncHoursWorked, syncPartsCost } from "@/lib/sync-powerbi";
@@ -430,7 +430,7 @@ export async function submitMonth(month: string, formData: FormData) {
     throw new Error(`Nothing to submit for ${month} — no entries on currently active jobs.`);
   }
 
-  const inputs: { id: number; hoursWorked: number; override: number | null }[] = [];
+  const inputs: { id: number; hoursWorked: number; override: number | null; untouched: boolean }[] = [];
 
   for (const entry of entries) {
     const rawHours = formData.get(`hoursWorked__${entry.id}`);
@@ -440,14 +440,28 @@ export async function submitMonth(month: string, formData: FormData) {
       // the "Missing Hours Worked" guard below keeps its full strength for the
       // case it exists for — an entry that SHOULD have been rendered and wasn't.
       if (createdKeys.has(`${entry.jobId}::${entry.section}`)) {
-        inputs.push({ id: entry.id, hoursWorked: 0, override: entry.newEtcDraft != null ? round2(Number(entry.newEtcDraft)) : null });
+        // `untouched` false: the override here IS the stored draft already, so
+        // there is nothing fresher to defer to.
+        inputs.push({
+          id: entry.id,
+          hoursWorked: 0,
+          override: entry.newEtcDraft != null ? round2(Number(entry.newEtcDraft)) : null,
+          untouched: false,
+        });
         continue;
       }
       // On a historical correction pass, an entry hidden from the grid (e.g.
       // its job is type-gated out of rendering) simply keeps its stored Hours
       // Worked AND its stored New ETC instead of failing the whole submission.
       if (isHistorical) {
-        inputs.push({ id: entry.id, hoursWorked: Number(entry.hoursWorked), override: round2(Number(entry.newEtc)) });
+        // Not rendered at all on this pass, so there is no posted value to
+        // second-guess — its stored confirmed figure is being kept deliberately.
+        inputs.push({
+          id: entry.id,
+          hoursWorked: Number(entry.hoursWorked),
+          override: round2(Number(entry.newEtc)),
+          untouched: false,
+        });
         continue;
       }
       throw new Error(`Missing Hours Worked for entry ${entry.id} (section ${entry.section}).`);
@@ -489,7 +503,36 @@ export async function submitMonth(month: string, formData: FormData) {
       override = round2(Number(entry.newEtc));
     }
 
-    inputs.push({ id: entry.id, hoursWorked, override });
+    // ── Did THIS manager type this cell, or is it just what their page loaded
+    //    with? (2026-08-04) ────────────────────────────────────────────────────
+    //
+    // Submit writes `newEtc` — CONFIRMED history, frozen for the month — so a tab
+    // whose grid had gone stale would freeze its own snapshot over whatever
+    // colleagues saved since, and no later save can put that right. The draft save
+    // refuses such a write outright; Submit cannot, because refusing would leave
+    // the month half-locked. So it does the other safe thing: for a cell this user
+    // did NOT touch, prefer the stored draft, which is by definition at least as
+    // fresh as their page.
+    //
+    // "Did not touch" = the posted value still equals the baseline the page
+    // declared (injectEtcBaselineFields). Compared at the precision the cell
+    // displays, for the same reason isStaleDraftWrite is.
+    const believedRaw = formData.get(`newEtcBase__${entry.id}`);
+    let untouched = false;
+    if (believedRaw !== null) {
+      const at = (n: number) => (entry.section === PARTS_COST_SECTION ? round2(n) : Math.round(n));
+      const believedStr = String(believedRaw).trim();
+      const postedStr = rawOverride === null ? "" : String(rawOverride).trim();
+      if (believedStr === "" || postedStr === "") {
+        untouched = believedStr === postedStr;
+      } else {
+        const b = Number(believedStr);
+        const p = Number(postedStr);
+        untouched = Number.isFinite(b) && Number.isFinite(p) && at(b) === at(p);
+      }
+    }
+
+    inputs.push({ id: entry.id, hoursWorked, override, untouched });
   }
 
   // Prior ETC is re-read INSIDE the transaction: a concurrent Run Report can
@@ -508,7 +551,12 @@ export async function submitMonth(month: string, formData: FormData) {
         const entry = freshById.get(u.id);
         if (!entry) continue; // deleted since validation — nothing to lock
         const priorEtc = Number(entry.priorEtc);
-        const newEtc = u.override ?? round2(suggestNewEtc(priorEtc, u.hoursWorked));
+        // A cell this manager did not touch defers to the stored draft, which is
+        // read here INSIDE the transaction and so is the freshest value there is.
+        // Without this, a stale tab's snapshot became confirmed history — see the
+        // `untouched` note in the validation loop above.
+        const storedDraft = u.untouched && entry.newEtcDraft != null ? round2(Number(entry.newEtcDraft)) : null;
+        const newEtc = storedDraft ?? u.override ?? round2(suggestNewEtc(priorEtc, u.hoursWorked));
         await tx.etcEntry.update({
           where: { id: u.id },
           data: {
@@ -581,7 +629,10 @@ export async function submitMonth(month: string, formData: FormData) {
 // save. There is deliberately no revalidatePath here (see the note at the end),
 // so a save that wrote 11 drafts looked exactly like one that wrote none, and
 // like one that failed. A count makes the three distinguishable.
-export async function saveAllNewEtcDrafts(month: string, formData: FormData): Promise<{ ok: boolean; saved: number }> {
+export async function saveAllNewEtcDrafts(
+  month: string,
+  formData: FormData,
+): Promise<{ ok: boolean; saved: number; conflicts: number; conflictFields: string[] }> {
   // ── No password gate on the DRAFT save (2026-08-04) ───────────────────────
   //
   // This used to require an unlock cookie, with `newEtcSavePassword` as the fallback.
@@ -603,10 +654,17 @@ export async function saveAllNewEtcDrafts(month: string, formData: FormData): Pr
   // what turns it into history.
   const entries = await prisma.etcEntry.findMany({
     where: { month },
-    select: { id: true, needsReview: true, newEtcDraft: true },
+    // `section` is read for the stale-write guard's precision: Parts Cost keeps its
+    // cents, hours cells are compared as whole numbers because that is how they seed.
+    select: { id: true, section: true, needsReview: true, newEtcDraft: true },
   });
 
   const changes: { entryId: number; from: number | null; to: number | null }[] = [];
+  // Cells this save REFUSED because somebody else wrote them first — see the
+  // stale-write guard below. Reported back so the client can say so and reload.
+  // `field` is the posted form-field name, so the client can keep exactly those
+  // cells dirty instead of re-baselining a value that was never written.
+  const conflicts: { field: string; entryId: number; believedStored: string; actuallyStored: string; wanted: string }[] = [];
   const writes = [];
   for (const entry of entries) {
     // Already submitted (a reopened month's untouched entries) — Save only
@@ -615,8 +673,10 @@ export async function saveAllNewEtcDrafts(month: string, formData: FormData): Pr
 
     const raw = formData.get(`newEtcOverride__${entry.id}`);
     // Not present at all means this entry wasn't rendered in the current
-    // view (a department Columns filter hid it) — leave it untouched rather
-    // than reading its absence as "clear the draft".
+    // view (a department Columns filter hid it), OR — since 2026-08-04 — that
+    // this user never touched the cell, because the client now posts only the
+    // cells it edited (changedEtcFormData). Either way, leave it untouched
+    // rather than reading its absence as "clear the draft".
     if (raw === null) continue;
 
     const trimmed = String(raw).trim();
@@ -626,6 +686,46 @@ export async function saveAllNewEtcDrafts(month: string, formData: FormData): Pr
     const nextDraft = nextValue === null ? null : round2(nextValue);
     const currentDraft = entry.newEtcDraft != null ? round2(Number(entry.newEtcDraft)) : null;
     if (nextDraft === currentDraft) continue; // unchanged — skip the write and the audit noise
+
+    // ── Stale-write guard (2026-08-04) ────────────────────────────────────────
+    //
+    // Optimistic concurrency, and the reason this bug cannot come back. The
+    // client sends the value it believed was stored (`newEtcBase__<id>`) beside
+    // the value it wants to write. If the stored draft has MOVED since, another
+    // user saved this cell in between and this write would silently revert them.
+    //
+    // Refuse it. The client is told and reloads; the manager retypes against the
+    // figure that is actually there. Losing one deliberate keystroke to a visible
+    // conflict is categorically better than overwriting a colleague's saved work
+    // without either of them knowing — which is what happened all morning.
+    //
+    // "" means "I believe nothing is stored". A stored draft of NULL is therefore
+    // consistent with "", and only a real stored figure can conflict: this action
+    // never touches `newEtc`, so a cell with no draft has nothing to clobber.
+    //
+    // The client trims its payload to touched cells, which prevents almost all of
+    // this on its own. This guard is what holds when the client is a tab left open
+    // since before that change shipped, or a hand-posted request.
+    const believed = formData.get(`newEtcBase__${entry.id}`);
+    const believedStored = believed === null ? null : String(believed);
+    if (
+      isStaleDraftWrite({
+        believedStored,
+        storedDraft: currentDraft,
+        // Same precision the cell seeds at, or a rounded hours seed would read as
+        // a conflict against its own fractional stored value.
+        precision: entry.section === PARTS_COST_SECTION ? "exact" : "whole",
+      })
+    ) {
+      conflicts.push({
+        field: `newEtcOverride__${entry.id}`,
+        entryId: entry.id,
+        believedStored: believedStored ?? "",
+        actuallyStored: String(currentDraft),
+        wanted: trimmed,
+      });
+      continue;
+    }
 
     changes.push({ entryId: entry.id, from: currentDraft, to: nextDraft });
     writes.push(
@@ -654,7 +754,42 @@ export async function saveAllNewEtcDrafts(month: string, formData: FormData): Pr
   // of most of the grid — creating a row for each would add ~350 empty entries a
   // month, move nothing, and quietly widen what the month contains.
   const created = parseNewEtcCreateFields(formData);
+  // Same stale-write guard as above, for the cells that have no row yet. The
+  // upsert's `update` branch fires when a row DOES exist by the time it runs —
+  // which is exactly the case where another user typed into this cell first — so
+  // without this it is the one remaining way one manager could revert another.
+  const existingForCreates =
+    created.length > 0
+      ? await prisma.etcEntry.findMany({
+          where: { month, OR: created.map((c) => ({ jobId: c.jobId, section: c.section })) },
+          select: { id: true, jobId: true, section: true, newEtcDraft: true, needsReview: true },
+        })
+      : [];
+  const existingCreateByKey = new Map(existingForCreates.map((e) => [`${e.jobId}__${e.section}`, e]));
+
   for (const { jobId: jobPk, section, value: rounded } of created) {
+    const key = `${jobPk}__${section}`;
+    const already = existingCreateByKey.get(key);
+    if (already) {
+      // A submitted row is confirmed history — never a draft target.
+      if (!already.needsReview) continue;
+      const storedDraft = already.newEtcDraft != null ? round2(Number(already.newEtcDraft)) : null;
+      const believed = formData.get(`newEtcBase__${key}`);
+      const believedStored = believed === null ? null : String(believed);
+      // Create-cells are hours sections only (parseNewEtcCreateFields filters on
+      // ETC_TRACKED_CODES, which excludes PARTS_COST), so whole precision is right.
+      if (isStaleDraftWrite({ believedStored, storedDraft, precision: "whole" })) {
+        conflicts.push({
+          field: `newEtcCreate__${key}`,
+          entryId: already.id,
+          believedStored: believedStored ?? "",
+          actuallyStored: String(storedDraft),
+          wanted: String(rounded),
+        });
+        continue;
+      }
+      if (storedDraft === rounded) continue; // already what we would write
+    }
     // Prior ETC and Hours Worked are 0 by definition here: no prior estimate was
     // ever carried into this cell and no time has been booked to it this month.
     // needsReview stays true — this is a draft, exactly like any other unsubmitted
@@ -678,16 +813,19 @@ export async function saveAllNewEtcDrafts(month: string, formData: FormData): Pr
     );
   }
 
-  if (writes.length > 0) {
-    await prisma.$transaction(writes);
+  if (writes.length > 0 || conflicts.length > 0) {
+    if (writes.length > 0) await prisma.$transaction(writes);
     await logAudit({
       action: "etc.saveAllNewEtcDrafts",
       entityType: "EtcEntry",
       entityId: month,
       summary:
         `Batch-saved ${changes.length} New ETC draft(s) for ${month}` +
-        (created.length > 0 ? `, creating ${created.length} entry(ies) for previously unquoted sections` : ""),
-      metadata: { changes, created },
+        (created.length > 0 ? `, creating ${created.length} entry(ies) for previously unquoted sections` : "") +
+        // Logged, not swallowed: a refused write is the one event where two people
+        // were editing the same cell, and that is worth being able to look up.
+        (conflicts.length > 0 ? ` — REFUSED ${conflicts.length} stale write(s) already changed by another user` : ""),
+      metadata: { changes, created, conflicts },
     });
   }
 
@@ -705,7 +843,15 @@ export async function saveAllNewEtcDrafts(month: string, formData: FormData): Pr
   // The paths that DO change what the server would render still revalidate:
   // submitMonth, startMonth, reopenMonth, clearMonth, the sync steps, and the
   // wrong-password branch above.
-  return { ok: true, saved: writes.length };
+  //
+  // Worth recording, since it was the leading theory when the multi-user bug was
+  // reported: adding revalidatePath back here would NOT have made another user's
+  // page fresh. Every route in this app is dynamically rendered — the (app) layout
+  // awaits auth() — and nothing uses a Next server-side cache, so revalidatePath
+  // has nothing to invalidate for anybody. Its only effect is to make THIS
+  // action's response carry a fresh render for the caller. Cross-user freshness
+  // comes from LiveRefresh (components/LiveRefresh.tsx) instead.
+  return { ok: true, saved: writes.length, conflicts: conflicts.length, conflictFields: conflicts.map((c) => c.field) };
 }
 
 // ── Clear ETC ───────────────────────────────────────────────────────────────

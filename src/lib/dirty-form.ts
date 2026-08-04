@@ -21,6 +21,20 @@
 
 export const BASELINE_ATTR = "data-baseline";
 
+// ── Declaring what the client believed was stored ───────────────────────────
+//
+// Sent alongside every changed field as `__base__<name>`, so the server can tell
+// "this manager edited this cell" from "this page was working from stale data".
+//
+// Why (2026-08-04, the multi-user save bug): the write helpers in
+// quoted-actions.ts decide what to save by comparing the POSTED value against the
+// DATABASE. That reads a stale page's value as a deliberate edit, so one manager's
+// tab could revert another's saved cell — the same defect as the Monthly ETC grid,
+// which is fixed by the matching `newEtcBase__*` token. `value !== baseline` alone
+// cannot distinguish the two cases, because a server change moves the baseline
+// while the displayed value stays put.
+export const BASE_FIELD_PREFIX = "__base__";
+
 // New-project rows exist only in the browser until they're saved, so they have no
 // server-rendered baseline to compare against and must always go. Prefix-matched
 // against the field names in quoted-actions.ts.
@@ -69,6 +83,10 @@ export function changedFormData(form: HTMLFormElement): FormData {
   for (const el of controlsOf(form)) {
     const state = stateOf(el);
     if (!shouldSend(state)) continue;
+    // The value this client believed was stored, so the action can refuse a write
+    // that would revert somebody else. Only when the control actually declared one
+    // — an unknown baseline stays unknown rather than becoming a false claim.
+    if (state.baseline !== null) fd.append(`${BASE_FIELD_PREFIX}${el.name}`, state.baseline);
     // Unchecked boxes are omitted, matching what a native submit would send.
     if (el instanceof HTMLInputElement && (el.type === "checkbox" || el.type === "radio")) {
       if (el.checked) fd.append(el.name, el.value || "on");

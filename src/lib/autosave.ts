@@ -22,6 +22,35 @@ export const AUTOSAVE_DELAY_MS = 800;
 
 // Should a scheduled autosave actually run right now?
 //
+// ── Is a save in flight anywhere on the page? ───────────────────────────────
+//
+// A process-wide (well, tab-wide) count rather than a per-hook ref, because the
+// thing that needs to know is not a grid — it is LiveRefresh, which must not
+// re-render the route while a write is still landing. A refresh that races a save
+// can deliver a payload rendered a moment before the commit, putting the OLD
+// figure back on screen; the next pass corrects it, but "my save was undone" is
+// precisely the complaint this whole change is fixing, so don't manufacture it.
+//
+// A counter, not a boolean: two grids can be mounted at once (the Monthly ETC page
+// carries the Standard Fees block), and a boolean would clear on the first one to
+// finish while the second was still writing.
+let savesInFlight = 0;
+
+export function beginSaveTracking(): void {
+  savesInFlight++;
+}
+
+// Guarded against going negative: a double-call would otherwise leave the counter
+// permanently below zero and isSavingSomewhere() stuck false, silently disabling
+// the protection this exists for.
+export function endSaveTracking(): void {
+  savesInFlight = Math.max(0, savesInFlight - 1);
+}
+
+export function isSavingSomewhere(): boolean {
+  return savesInFlight > 0;
+}
+
 // Deliberately conservative — every "no" here means the user's edit stays on
 // screen and unsaved, which the status chip then says out loud. A wrong "yes"
 // writes something nobody asked to write.

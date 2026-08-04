@@ -28,9 +28,18 @@ function describe(r: Extract<SaveQuotedResult, { ok: true }>): string {
   if (r.created > 0) parts.push(`${r.created} new project${r.created === 1 ? "" : "s"}`);
   if (r.cells > 0) parts.push(`${r.cells} cell${r.cells === 1 ? "" : "s"}`);
   if (r.jobs > 0) parts.push(`${r.jobs} job${r.jobs === 1 ? "" : "s"}`);
-  if (parts.length === 0) return "No changes to save";
+  // Refused writes are named FIRST and never folded into the saved counts: the
+  // manager's value did not land, and a banner that led with "Saved 3 cells" would
+  // bury the one thing they have to act on (2026-08-04).
+  const refused =
+    r.conflicts > 0
+      ? `${r.conflicts} cell${r.conflicts === 1 ? " was" : "s were"} changed by another user and ${
+          r.conflicts === 1 ? "was" : "were"
+        } NOT saved — showing the current values`
+      : null;
+  if (parts.length === 0) return refused ?? "No changes to save";
   const list = parts.length === 1 ? parts[0] : `${parts.slice(0, -1).join(", ")} and ${parts[parts.length - 1]}`;
-  return `Saved ${list}`;
+  return refused ? `Saved ${list}. ${refused}.` : `Saved ${list}`;
 }
 
 export function SaveQuotedHoursButton() {
@@ -58,11 +67,16 @@ export function SaveQuotedHoursButton() {
   // message that names the cell to fix is no use once it has vanished.
   useEffect(() => {
     if (!shown || !shown.result.ok) return;
+    // A refusal stays up until dismissed: it is asking the manager to re-enter a
+    // value, which is not something to flash for five seconds.
+    if (shown.result.conflicts > 0) return;
     const t = window.setTimeout(() => setShown(null), 5000);
     return () => window.clearTimeout(t);
   }, [shown]);
 
-  const ok = shown?.result.ok === true;
+  // A save that refused a write is NOT a success as far as the banner's colour is
+  // concerned — something the manager typed was rejected.
+  const ok = shown?.result.ok === true && shown.result.conflicts === 0;
 
   return (
     <>

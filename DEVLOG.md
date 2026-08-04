@@ -803,3 +803,114 @@ cells left carrying forward, 0 decisions touched. Column-scoped rather than a
 click of Clear ETC, because that button would also have swept the hours cells
 holding today's in-progress work. Same rule, same fields, same audit trail, so any
 figure can be read back out of the log.
+
+---
+
+## 14. Saved values invisible to other users (2026-08-04)
+
+Reported as *"When I change a value in any cell, other users are not seeing the
+updated value — the issue appears across all tabs."* Two independent causes, and
+the dangerous one was not a display problem at all.
+
+### The leading theory was wrong, and it is worth recording why
+
+The obvious suspect was the `revalidatePath` calls removed from the hot save paths
+on 2026-08-03 for speed. **Re-adding them would have fixed nothing.**
+
+- Every route in this app is DYNAMICALLY rendered. `app/(app)/layout.tsx` awaits
+  next-auth's `auth()`, which reads cookies, forcing the whole `(app)` group
+  dynamic. The production build agrees: only `/login` and `/_not-found` are static.
+- Nothing uses a Next server-side cache — no `unstable_cache`, no `"use cache"`, no
+  route-segment `revalidate`, and `fetch` is uncached by default in this version.
+  Every page reads through Prisma, which is outside Next's caching entirely.
+
+So there was never a stale server cache to invalidate. Every `revalidatePath` call
+in the codebase is, server-side, a no-op; its only real effect is to make the
+calling action's own response carry a fresh render **for the caller** — which is
+exactly why the person saving always saw their own change and nobody else did.
+
+### Cause 1 — one tab silently reverted another (the data loss)
+
+The Monthly ETC grid is one `<form>`, autosave posted `new FormData(form)` — all
+~450 New ETC cells — and the server decided what had changed by comparing each
+posted value against the **database**. A second manager's page-load values
+therefore read as deliberate edits and were written. The next time they typed
+anywhere in the grid, their snapshot went back over every cell the first manager
+had saved since. And their client re-baselined from its own posted FormData, so
+that tab never self-corrected.
+
+The colleague's value was not stale on screen. **It was deleted from the database.**
+That is why it looked permanent rather than like a refresh problem.
+
+`/quoted` had the same shape via `MoneyCell`: `raw` came from `useState` (mount-time,
+frozen) while `data-baseline` re-stated the live server prop every render, so a
+colleague's change moved the baseline, the cell read as "edited", and the stale
+value was posted back over them.
+
+### Cause 2 — nothing ever asked the server again
+
+No polling, no websocket, no refetch-on-focus, and no save path calling
+`router.refresh()`. A page was a photograph taken when it loaded. This is the "all
+tabs" half, and it is uniform across all eight pages.
+
+### Cause 3 — the cells could not have shown a fresh value anyway
+
+Every editable cell held its value in `useState(initialValue)` and never re-synced.
+`router.refresh()` is documented to preserve `useState`, so even a perfectly fresh
+payload left the box showing its birth value. The only remount trigger in the app
+was `key={month}`.
+
+### The fix — three rules, one mechanism
+
+1. **Post only what this user touched.** `changedEtcFormData` (etc-dirty-tracker)
+   sends the dirty cells and nothing else. The server already treated an absent
+   field as "leave it alone" — that was always the contract; the client was ignoring
+   it. This mirrors what `/quoted` had done since 2026-08-03 for performance; same
+   rule, now for correctness.
+2. **Refuse a stale write.** Every changed cell also declares the value it believed
+   was stored (`newEtcBase__*` on ETC, `__base__*` on Projects). If the database has
+   moved since, the write is refused, audited, reported to the manager, and NOT
+   re-baselined — so the cell stays dirty and the chip cannot claim it saved.
+   `isStaleDraftWrite` (lib/etc.ts) and `beliefIsStale` (quoted-actions) are the
+   shared rules. This is what holds even against a tab running an older bundle.
+   `submitMonth` gets the same treatment: for a cell the manager did not touch it
+   prefers the stored draft, because Submit writes *confirmed history* and a stale
+   snapshot frozen there is not something a later save can put right.
+3. **Converge.** `components/LiveRefresh.tsx`, mounted once in the `(app)` layout,
+   calls `router.refresh()` on focus/visibility and on a 45s interval while visible
+   (hidden tabs do nothing; suppressed while a save is in flight or a grid has
+   unsaved typing). The cells then **adopt** a changed server value only when the
+   box still holds exactly what the server last sent — so a colleague's figure
+   appears, and this user's own unsaved edit is never touched. Adopting also moves
+   the dirty-tracker baseline, or the adopted cell would read dirty, get posted, be
+   refused, and report a phantom conflict on a cell nobody edited.
+
+### Performance
+
+The property the 2026-08-03 work bought is kept: the draft save still does no
+`revalidatePath`, so a keystroke is ~10ms of writes and no render. The full-month
+render now happens at most once per 45s per *visible* tab.
+
+### Also fixed, found by the review pass
+
+- Comparing the stale-write guard at 2dp while the hours cells seed from
+  `Math.round(n)` would have called a fractional stored draft a conflict — refused,
+  blamed on a colleague, unrecoverable. It now compares at the precision the cell
+  displays. (0 fractional drafts in the data today; reachable by typing 93.5.)
+- The Standard Fees block (pool Hours Pulled / Rate, Contingency, Notes) was missed
+  in the first pass and would have been the one stale patch on the page.
+- Typing in a Parts Cost cell scheduled **no autosave at all** — the delegated
+  listener matched on field name and that input has none (the name is on the hidden
+  input beside it). It opts in by `data-etc-autosave` now.
+- A refused cell stays dirty by design, which would have deadlocked that tab's
+  background refresh forever. Refusals are tracked separately and excluded from the
+  refresh interlock (`hasUnrefusedEtcEdits`) while still counting as unsaved work.
+
+### Still open
+
+- `/quoted`'s plain text/date/enum cells are uncontrolled inputs: once a user has
+  typed in one, the DOM's dirty-value flag stops it tracking the server prop, so the
+  display cannot adopt in place. The server-side `__base__` token is what protects
+  the data there, and it is in place — but the *display* of such a cell stays stale
+  until reload.
+- Verification with two real signed-in users is still outstanding.

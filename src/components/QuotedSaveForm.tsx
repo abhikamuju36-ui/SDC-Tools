@@ -2,6 +2,7 @@
 
 import { createContext, useActionState, useContext, useEffect, useRef } from "react";
 import { BASELINE_ATTR, changedFormData, countChanged } from "@/lib/dirty-form";
+import { requestLiveRefresh } from "@/components/LiveRefresh";
 import type { SaveQuotedResult } from "@/lib/quoted-actions";
 
 // The Projects grid's <form>. Two jobs, both of which need a client component:
@@ -77,14 +78,23 @@ export function QuotedSaveForm({
     // (still triggered for that case) is what replaces the temp row, so leave
     // those alone entirely.
     if (result.created > 0) return;
+    // Cells the server REFUSED because another user had already changed them
+    // (2026-08-04). Re-baselining one would be a lie in the worst place: the cell
+    // would stop reading as dirty, the chip would say saved, and a value the server
+    // rejected would sit on screen looking persisted. Left dirty on purpose.
+    const refused = new Set(result.conflictFields);
     for (const el of Array.from(form.elements)) {
       if (!(el instanceof HTMLInputElement || el instanceof HTMLSelectElement || el instanceof HTMLTextAreaElement)) continue;
       if (!el.name) continue;
+      if (refused.has(el.name)) continue;
       const value = sent.get(el.name);
       if (value === undefined) continue;
       if (el.value !== value) continue; // edited again mid-flight — still dirty, correctly
       el.setAttribute(BASELINE_ATTR, value);
     }
+    // Pull the real figures in so the manager is reconciling against what is
+    // actually stored rather than retyping over a colleague a second time.
+    if (result.conflicts > 0) requestLiveRefresh();
   }, [pending, result]);
 
   function onSubmit(e: React.FormEvent<HTMLFormElement>) {
