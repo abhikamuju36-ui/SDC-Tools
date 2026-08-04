@@ -439,21 +439,25 @@ export default async function MonthlyEtcPage({
     return "border-l border-sdc-border";
   }
 
-  const distinctMonths = await prisma.etcEntry.findMany({
-    distinct: ["month"],
-    select: { month: true },
-    orderBy: { month: "desc" },
-  });
+  // Both in one round trip: `inProgressMonths` asks about every month with a pending
+  // entry, so it does not depend on which month this render settles on. Awaiting them in
+  // sequence just added one query's latency for nothing.
+  const [distinctMonths, inProgressMonths] = await Promise.all([
+    prisma.etcEntry.findMany({
+      distinct: ["month"],
+      select: { month: true },
+      orderBy: { month: "desc" },
+    }),
+    // A month is locked when it has entries and none still need review — months with any
+    // pending entry are "in progress"; the rest of the history is locked.
+    prisma.etcEntry.groupBy({
+      by: ["month"],
+      where: { needsReview: true },
+    }),
+  ]);
   // A malformed ?month= (typo'd URL) must not flow into queries/date math —
   // fall back to the default month instead of rendering a nonsense view.
   const month = (monthParam && isValidMonth(monthParam) ? monthParam : undefined) || distinctMonths[0]?.month || currentMonth();
-
-  // A month is locked when it has entries and none still need review — months
-  // with any pending entry are "in progress"; the rest of the history is locked.
-  const inProgressMonths = await prisma.etcEntry.groupBy({
-    by: ["month"],
-    where: { needsReview: true },
-  });
   const inProgressSet = new Set(inProgressMonths.map((m) => m.month));
   const lockedMonthList = distinctMonths.map((m) => m.month).filter((m) => !inProgressSet.has(m));
 
@@ -650,19 +654,19 @@ export default async function MonthlyEtcPage({
 
   // "Open in Scheduler" icon target + which of these jobs actually have a
   // Scheduler project (fail-soft empty set when its DB isn't configured).
-  const { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers, ssoEmail: schedulerSsoEmail } = await getSchedulerLinkContext();
-
-  // Standard Sheet columns, shown inline only once the password gate is
-  // unlocked (same cookie the /standard-sheet tab uses). Numbers mirror that
-  // page exactly for this month, scoped to the jobs this grid renders — the
-  // % Total denominator is the grand Total ETC $ across those same rows.
-  const showStandards = await isStandardSheetUnlocked();
-  const standardWrongPassword = showStandards ? false : await hadWrongPassword();
-  // Toolbar Save button's edit gate for the hour-based New ETC cells — see
-  // etc-edit-gate.ts. Separate cookie/password from the Standard Sheet gate
-  // above, even though both currently use the same "sdcautomation" phrase.
-  const etcEditUnlocked = await isEtcEditUnlocked();
-  const etcEditWrongPassword = etcEditUnlocked ? false : await hadEtcEditWrongPassword();
+  // Three independent reads — a Scheduler DB lookup and two cookie gates — that were
+  // awaited one after another. Nothing here feeds anything else here, so they go in one
+  // round trip. Both "Standard Sheet columns" and the toolbar Save gate keep their own
+  // separate cookie/password; only the sequencing changed.
+  //
+  // The two wrong-password reads stay conditional (they are only meaningful when the
+  // matching gate is locked), but they no longer wait for each other either.
+  const [{ baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers, ssoEmail: schedulerSsoEmail }, showStandards, etcEditUnlocked] =
+    await Promise.all([getSchedulerLinkContext(), isStandardSheetUnlocked(), isEtcEditUnlocked()]);
+  const [standardWrongPassword, etcEditWrongPassword] = await Promise.all([
+    showStandards ? Promise.resolve(false) : hadWrongPassword(),
+    etcEditUnlocked ? Promise.resolve(false) : hadEtcEditWrongPassword(),
+  ]);
   // Rates are shared with /standard-sheet's own ExecutionRate rows — once
   // that tab has submitted+frozen this month's snapshot, rates must stop
   // changing here too (matches that tab's own editable/frozen rule).
