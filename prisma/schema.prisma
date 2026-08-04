@@ -44,9 +44,37 @@ model AuditLog {
   metadata   Json? // structured before/after values or extra detail
   createdAt  DateTime @default(now())
 
+  // ── Per-CELL change history (added 2026-08-04) ─────────────────────────────
+  //
+  // These used to live inside `metadata` as JSON. That was fine for reading a log
+  // line and useless for the thing actually asked for — "review the history of a
+  // specific cell or project" — because you cannot index or filter a JSON blob by
+  // column name in MySQL without a generated column per field. They are real
+  // columns now, and the composite index below is what makes a cell's history a
+  // single indexed lookup.
+  //
+  // All nullable: most audit rows are not cell edits (a sync ran, a month was
+  // reopened, somebody signed in) and must not be forced to invent values. A row
+  // with `columnName` set is a cell change; one without is an event.
+  userName    String? // display name at the time of the change — users get renamed
+  tab         String? // "Monthly ETC", "Projects", "Standard Sheet", …
+  rowRef      String? // the project/row a human would name: job number, employee name
+  columnName  String? // "New ETC", "Parts Cost Quoted", "Hours Pulled", …
+  previousValue String? // stringified, so one column holds hours, money and text
+  newValue      String?
+  changeType    String? // "added" | "edited" | "removed" | "recalculated" | "rejected"
+  appVersion    String? // which build produced the change
+  // Groups every row written by one user action — a batch save of 40 cells shares
+  // one id, so "what did that save actually do" is one query. Also what makes a
+  // duplicate submission detectable after the fact.
+  changeId      String?
+
   @@index([entityType, entityId])
   @@index([userId])
   @@index([createdAt])
+  // The per-cell history lookup: "show me every change to this column on this row".
+  @@index([tab, rowRef, columnName, createdAt])
+  @@index([changeId])
 }
 
 // Synced from Paylocity (Phase 2). Manually maintained for now.

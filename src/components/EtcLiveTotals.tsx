@@ -31,7 +31,15 @@ import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc
 // It never invents a number: it only sums what the cells published, and the cells
 // publish what they themselves computed with lib/etc.ts. A live total therefore
 // cannot disagree with the figures above it, or with what Submit persists.
-export function EtcLiveTotals({ monthComplete }: { monthComplete: boolean }) {
+//
+// ── No monthComplete prop any more (2026-08-04) ─────────────────────────────
+// It used to take one, and used it to render "—" instead of the Total New ETC
+// figure until the month's actuals were complete. That is why the bottom totals
+// "were not updating": on an in-progress month every New ETC total was a dash, and
+// no amount of typing could move a dash. The gate belongs on the CELLS (where it
+// stops a partial figure looking final — see newEtcSeedText) and never on a total,
+// whose whole contract is to equal the sum of what is displayed above it.
+export function EtcLiveTotals() {
   useEffect(() => {
     const paint = () => {
       const totals = readEtcLiveTotals();
@@ -98,10 +106,12 @@ export function EtcLiveTotals({ monthComplete }: { monthComplete: boolean }) {
     const write = (job: string, group: string, kind: "newEtc" | "diff", value: number) => {
       const cell = document.querySelector<HTMLElement>(`[data-live="${kind}"][data-group="${group}"][data-job="${job}"]`);
       if (!cell) return; // row filtered out, or this group's columns hidden
-      // Total New ETC renders "—" until the month's actuals are complete, exactly
-      // as the server does — blanking it is a deliberate statement that the figure
-      // isn't final yet, and a live value must not quietly override it.
-      cell.textContent = kind === "newEtc" && !monthComplete ? "—" : formatHours(value);
+      // A TOTAL always shows its sum (2026-08-04). It used to render "—" until the
+      // month's actuals were complete, which is why the bottom totals "were not
+      // updating": on any in-progress month the New ETC totals were a dash that no
+      // amount of typing could move. A total's contract is to equal the sum of the
+      // values displayed above it — see the note in etc/page.tsx.
+      cell.textContent = formatHours(value);
       cell.setAttribute("title", String(Math.round(value * 100) / 100));
       // Body rows colour the cell background; the footer row (data-job="all") is dark
       // and colours the text instead. Both are hours rollups, so both scale against
@@ -116,7 +126,7 @@ export function EtcLiveTotals({ monthComplete }: { monthComplete: boolean }) {
     const writeSection = (sectionCode: string, kind: "newEtc" | "diff", value: number) => {
       const cell = document.querySelector<HTMLElement>(`[data-live="${kind}"][data-section="${sectionCode}"]`);
       if (!cell) return; // column hidden by the Columns filter
-      cell.textContent = kind === "newEtc" && !monthComplete ? "—" : formatHours(value);
+      cell.textContent = formatHours(value);
       cell.setAttribute("title", String(Math.round(value * 100) / 100));
       // Always in the dark <tfoot> — there is only one footer row.
       if (kind === "diff") paintDiffColor(cell, value, true, DIFF_CEILING.hoursTotal);
@@ -145,14 +155,14 @@ export function EtcLiveTotals({ monthComplete }: { monthComplete: boolean }) {
     const writeParts = (kind: "partsNewEtc" | "partsDiff", value: number) => {
       const cell = document.querySelector<HTMLElement>(`[data-live="${kind}"]`);
       if (!cell) return;
-      cell.textContent = kind === "partsNewEtc" && !monthComplete ? "—" : formatUsd(value);
+      cell.textContent = formatUsd(value);
       cell.setAttribute("title", value.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }));
       if (kind === "partsDiff") paintDiffColor(cell, value, true, DIFF_CEILING.moneyTotal);
     };
 
     paint();
     return subscribeEtcLiveTotals(paint);
-  }, [monthComplete]);
+  }, []);
 
   return null;
 }

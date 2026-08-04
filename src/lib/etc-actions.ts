@@ -8,9 +8,10 @@ import { etcActiveJobFilter } from "@/lib/job-filters";
 import { syncActualHours, syncHoursWorked, syncPartsCost } from "@/lib/sync-powerbi";
 import { fetchJobHoursRowsWithIssues } from "@/lib/job-hours-source";
 import { syncEtcHistoryFromPowerBi } from "@/lib/sync-etc-history";
-import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
+import { ETC_TRACKED_CODES, PARTS_COST_SECTION, SECTIONS } from "@/lib/sections";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
+import { recordChanges, type CellChange } from "@/lib/change-log";
 import { matchesConfirmPassword } from "@/lib/confirm-password";
 import { matchesButtonPassword } from "@/lib/button-password";
 
@@ -814,6 +815,65 @@ export async function saveAllNewEtcDrafts(
 
   if (writes.length > 0 || conflicts.length > 0) {
     if (writes.length > 0) await prisma.$transaction(writes);
+
+    // ── Per-cell change history + the live notification (2026-08-04) ──────────
+    //
+    // One record per cell, with the row and column a human would name, so a change
+    // is queryable ("every change to New ETC on job 1148") and announceable ("John
+    // changed New ETC from 120 to 110 for 1148 in Monthly ETC"). See lib/change-log.ts.
+    //
+    // Read AFTER the writes so the job number and section are resolved from the
+    // rows that actually exist, and outside the transaction so a slow audit write
+    // cannot hold locks on the grid.
+    const changedIds = changes.map((c) => c.entryId);
+    if (changedIds.length > 0 || conflicts.length > 0) {
+      const rows = await prisma.etcEntry.findMany({
+        where: { id: { in: [...changedIds, ...conflicts.map((c) => c.entryId)] } },
+        select: { id: true, section: true, job: { select: { jobId: true } } },
+      });
+      const rowById = new Map(rows.map((r) => [r.id, r]));
+      const columnFor = (section: string) =>
+        section === PARTS_COST_SECTION
+          ? "Parts Cost New ETC"
+          : `New ETC (${SECTIONS.find((s) => s.code === section)?.name ?? section})`;
+      const asText = (v: number | null) => (v === null ? null : String(v));
+
+      const cellChanges: CellChange[] = [];
+      for (const c of changes) {
+        const row = rowById.get(c.entryId);
+        if (!row) continue;
+        cellChanges.push({
+          tab: "Monthly ETC",
+          rowRef: row.job.jobId,
+          columnName: columnFor(row.section),
+          previousValue: asText(c.from),
+          newValue: asText(c.to),
+          // The three verbs the notification banner distinguishes. A draft going to
+          // null is a REMOVAL, not an edit to nothing.
+          changeType: c.from === null ? "added" : c.to === null ? "removed" : "edited",
+          entityType: "EtcEntry",
+          entityId: c.entryId,
+        });
+      }
+      // A refused write is recorded too — spec 6 asks for rejected updates to be
+      // captured, and this is the one event where two people wanted the same cell.
+      for (const c of conflicts) {
+        const row = rowById.get(c.entryId);
+        if (!row) continue;
+        cellChanges.push({
+          tab: "Monthly ETC",
+          rowRef: row.job.jobId,
+          columnName: columnFor(row.section),
+          previousValue: c.wanted,
+          newValue: c.actuallyStored,
+          changeType: "rejected",
+          entityType: "EtcEntry",
+          entityId: c.entryId,
+        });
+      }
+      await recordChanges(cellChanges, { action: "etc.saveAllNewEtcDrafts" });
+    }
+
     await logAudit({
       action: "etc.saveAllNewEtcDrafts",
       entityType: "EtcEntry",

@@ -914,3 +914,99 @@ render now happens at most once per 45s per *visible* tab.
   the data there, and it is in place — but the *display* of such a cell stays stale
   until reload.
 - Verification with two real signed-in users is still outstanding.
+
+---
+
+## 15. Realtime collaboration: presence, change feed, cell history (2026-08-04)
+
+Four items from the enhancement spec, in dependency order.
+
+### §13 — why the bottom totals were not updating
+
+Not the live-totals store, which was working. `Total New ETC` in the footer was
+wrapped in `monthComplete ? … : "—"` in four places, and `EtcLiveTotals` reproduced
+the same gate — so on any month whose Paylocity actuals were not yet through
+month-end, every New ETC total rendered a dash, **and no amount of typing could
+move a dash.**
+
+The gate is right on a CELL (it stops a partial figure looking final — see
+`newEtcSeedText`) and wrong on a TOTAL, whose whole contract is to equal the sum of
+what is displayed above it. Removed from the four total cells and from the repaint;
+`EtcLiveTotals` no longer takes the prop at all.
+
+### §6 — cell-level change history
+
+`AuditLog` gained nine columns (`userName`, `tab`, `rowRef`, `columnName`,
+`previousValue`, `newValue`, `changeType`, `appVersion`, `changeId`) plus a
+composite index on `(tab, rowRef, columnName, createdAt)`. They were in `metadata`
+JSON before, which reads fine in a log viewer and is useless for the thing actually
+asked for — "review the history of a specific cell" — because you cannot index a
+JSON blob by column name in MySQL without a generated column per field.
+
+Migration `20260804134505_audit_cell_change_fields`, additive only (nullable columns
++ indexes), applied online. **`prisma generate` could not run** — the production
+process holds `node_modules/.prisma/client` open (EPERM), which is the documented
+deploy dance for this app. So `lib/change-log.ts` writes through a parameter-bound
+`$executeRaw` rather than the typed client: it works against the schema as it
+actually is, does not wait for a deploy window, and is a reasonable permanent shape
+for an append-only log. Verified end to end against the live table.
+
+`recordChanges()` is the ONE place a cell change is recorded. It writes the audit
+rows AND publishes to the realtime hub, deliberately in one function — a change
+that is announced but not recorded (or the reverse) is what makes an audit trail
+untrustworthy. Wired into `saveAllNewEtcDrafts`, including the REJECTED writes, so
+a refused stale write is in the history too.
+
+### §3 + §5 — presence and the change banner
+
+A new subsystem, not a change. Architecture:
+
+```
+browser ──POST /api/realtime/presence──▶ realtime-hub (in-process)
+browser ◀─SSE /api/realtime/stream──── realtime-hub
+                                            ▲
+                          recordChanges() ──┘   (publishChanges)
+```
+
+- **`lib/realtime-hub.ts`** — one in-process fan-out. Presence is a map keyed
+  `session::cell` with a 30s TTL swept lazily; change events broadcast to every
+  subscriber. Presence is sent as a WHOLE SET rather than deltas, because a client
+  that missed a delta would show a colleague editing a cell they left ten minutes
+  ago, and a stale "someone is here" is worse than none.
+- **`app/api/realtime/stream/route.ts`** — SSE. 20s comment pings (this network's
+  proxies close idle connections), `X-Accel-Buffering: no`, and `cancel()` releases
+  the session's cells immediately rather than waiting out the TTL.
+- **`app/api/realtime/presence/route.ts`** — `enter` / `leave` / `leaveAll`. The
+  display name comes from the SESSION, never the request body, so a client cannot
+  claim to be somebody else.
+- **`components/RealtimeProvider.tsx`** — one EventSource per tab, module-scope
+  stores read through `useSyncExternalStore`, exponential-backoff reconnect, and
+  `sendBeacon` on `pagehide` so a closed tab releases its cells. Identity is
+  per-TAB (`sessionStorage`), so one manager with two windows is two editors.
+- **`components/CellPresence.tsx`** — the marker, absolutely positioned so it cannot
+  resize a 64px cell. Initials + count, full sentence in the tooltip.
+- **`components/ChangeNotifications.tsx`** — the banner. A stack (queued, not
+  replaced), capped at 4 on screen with a "+N more", `pointer-events-none` on the
+  container so it cannot swallow clicks meant for the grid, and an offline notice
+  that is careful to say edits are still being saved.
+
+Spec 3 lists five ways an indicator must clear — left the cell, saved, cancelled,
+disconnected, went inactive. The first three are one `leave` signal, the fourth is
+the subscription ending, the fifth is the TTL plus the client not beating while the
+tab is hidden. All five have tests.
+
+**The load-bearing assumption, stated loudly:** the hub is in-process, which is only
+correct because `ecosystem.config.js` runs ONE non-cluster instance. Add
+`instances: 2` and presence silently partitions — users would see only the
+colleagues who landed on the same worker. `realtime-hub.ts` logs a hard error if
+`NODE_APP_INSTANCE` is anything but 0, and the interface is narrow so the swap to
+Redis pub/sub touches that one file.
+
+`import "server-only"` is deliberately NOT used on the hub: it is a Next build-time
+alias with no package behind it, so it makes a module untestable with this repo's
+`tsx --test` runner (which is why the gate modules have no tests). A runtime
+`typeof window` throw is stronger for our purposes — it fails just as loudly if the
+module is ever bundled to the browser, and it let the 14 concurrency tests exist.
+One of them immediately found a real gap: `subscribe()`'s two initial frames were
+not guarded the way `broadcast()`'s are, so subscribing over an already-closed
+stream would throw into the route handler.

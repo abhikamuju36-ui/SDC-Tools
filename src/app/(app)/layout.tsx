@@ -1,6 +1,8 @@
 import { auth, signOut } from "@/lib/auth";
 import AppShell from "@/components/AppShell";
 import { LiveRefresh } from "@/components/LiveRefresh";
+import { RealtimeProvider } from "@/components/RealtimeProvider";
+import { ChangeNotifications } from "@/components/ChangeNotifications";
 import { getSchedulerBaseUrl } from "@/lib/scheduler-link";
 import { withSchedulerSso } from "@/lib/scheduler-sso";
 
@@ -36,6 +38,13 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
           people have saved instead of staying the snapshot it loaded with. See
           LiveRefresh for why revalidatePath was not the answer. */}
       <LiveRefresh />
+      {/* The realtime layer, also once for the whole app: one SSE connection per
+          tab carrying presence ("who is editing this cell") and change events
+          ("what did somebody just save"). RealtimeProvider renders nothing —
+          it owns the connection; ChangeNotifications renders the banner. Both are
+          here rather than per-page so every tab behaves identically. */}
+      <RealtimeProvider />
+      <ChangeNotifications />
       {children}
     </AppShell>
   );

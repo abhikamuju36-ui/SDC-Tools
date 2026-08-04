@@ -2,8 +2,11 @@
 
 import { useEffect, useState } from "react";
 import { registerEtcField, forgetEtcField, updateEtcField, adoptEtcFieldBaseline } from "@/lib/etc-dirty-tracker";
+import { PARTS_COL_W } from "@/components/ui/classnames";
 import { publishPartsCell, forgetPartsCell } from "@/lib/etc-live-totals";
 import { isNewEtcCellDecided, type NewEtcCellState } from "@/lib/etc";
+import { CellPresence } from "@/components/CellPresence";
+import { beginEditingCell, endEditingCell } from "@/components/RealtimeProvider";
 
 const NEUTRAL_BG = "bg-[#F2F2F2]";
 const ATTENTION_BG = "bg-[#FAFAC4]";
@@ -140,7 +143,9 @@ export function PartsCostNewEtcCell({
   const displayValue = focused ? value : value.trim() === "" ? "" : currency(Number(value));
 
   return (
-    <td className={`border-l border-sdc-border ${decided ? NEUTRAL_BG : ATTENTION_BG} px-1 py-1 text-center`}>
+    // `relative` so the presence marker sits in the corner without resizing the cell.
+    <td className={`relative border-l border-sdc-border ${decided ? NEUTRAL_BG : ATTENTION_BG} ${PARTS_COL_W} px-1 py-1 text-center`}>
+      <CellPresence cellKey={name} />
       <input type="hidden" name={name} value={value} disabled={locked} />
       <input
         type="text"
@@ -154,7 +159,11 @@ export function PartsCostNewEtcCell({
         // and the Save button both cover it), but the debounce is the thing that
         // makes a Parts Cost edit safe within a second like every other cell.
         data-etc-autosave="1"
-        onFocus={() => setFocused(true)}
+        onFocus={() => {
+          setFocused(true);
+          // Claim the cell so other users see the indicator before they type.
+          beginEditingCell({ tab: "Monthly ETC", rowRef: jobName, columnName: "Parts Cost New ETC", cellKey: name });
+        }}
         onChange={(e) => {
           const next = e.target.value.replace(/[^0-9.]/g, "");
           setValue(next);
@@ -165,11 +174,14 @@ export function PartsCostNewEtcCell({
           // input posts, so it's what the baseline has to be compared with.
           updateEtcField(name, next);
         }}
-        onBlur={() => setFocused(false)}
+        onBlur={() => {
+          setFocused(false);
+          endEditingCell(name);
+        }}
         title={hint}
         disabled={locked}
         aria-label={`New ETC cost override, ${jobName}, Parts Cost`}
-        className="w-16 [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-[10px] font-bold leading-none text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"
+        className="w-full [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-[10px] font-bold leading-none text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"
       />
     </td>
   );

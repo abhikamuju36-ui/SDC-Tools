@@ -4,6 +4,8 @@ import { useEffect, useState } from "react";
 import { calcHoursLeft, suggestNewEtc, round2, newEtcSeedText, isNewEtcCellDecided, type NewEtcCellState } from "@/lib/etc";
 import { registerEtcField, forgetEtcField, updateEtcField, adoptEtcFieldBaseline } from "@/lib/etc-dirty-tracker";
 import { publishEtcCell, forgetEtcCell } from "@/lib/etc-live-totals";
+import { CellPresence } from "@/components/CellPresence";
+import { beginEditingCell, endEditingCell } from "@/components/RealtimeProvider";
 import { hours as formatHours } from "@/components/ui/format";
 import { ETC_COL_W } from "@/components/ui/classnames";
 import { diffCellStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
@@ -351,14 +353,16 @@ export function EtcSectionCells({
       >
         {wholeNum(hoursLeftShown)}
       </td>
-      <td className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(decided)} px-1 py-1 text-center align-middle whitespace-nowrap`}>
+      {/* `relative` so the presence marker can sit in the corner without changing
+          the cell's size — see CellPresence. */}
+      <td className={`relative border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(decided)} px-1 py-1 text-center align-middle whitespace-nowrap`}>
+        <CellPresence cellKey={fieldName} />
         {/* No hours worked -> carry-forward is deterministic, safe to auto-fill.
             Hours worked > 0 -> a manager's judgment call, not auto-filled;
             flagged yellow so it's obviously not done yet — left with no
             placeholder hint (rather than showing the suggestion) so the cell
-            reads as genuinely blank until the manager types a value. Typing
-            does NOT autosave — nothing persists until the toolbar's Save
-            button (password-gated) batch-saves the whole grid at once. */}
+            reads as genuinely blank until the manager types a value.
+            Typing autosaves 800ms after the last keystroke (EtcAutosave). */}
         <input
           type="number"
           // Whole hours — the column displays and submits integers (see
@@ -368,6 +372,18 @@ export function EtcSectionCells({
           name={fieldName}
           value={newEtcText}
           onChange={handleNewEtcChange}
+          // Presence: focus claims the cell, blur releases it. Other users see the
+          // marker from the moment the caret lands here, which is the point — they
+          // need it BEFORE they type, not after a conflict.
+          onFocus={() =>
+            beginEditingCell({
+              tab: "Monthly ETC",
+              rowRef: jobName,
+              columnName: sectionName,
+              cellKey: fieldName,
+            })
+          }
+          onBlur={() => endEditingCell(fieldName)}
           disabled={locked}
           aria-label={`New ETC override, ${jobName}, ${sectionName}`}
           className="w-full [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-[10px] font-bold leading-none text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"

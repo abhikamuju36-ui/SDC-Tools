@@ -907,7 +907,7 @@ export default async function MonthlyEtcPage({
         {/* Keeps the row TOTAL (NEW ETC) block and the grand-total row in step
             with the section cells as they are typed. Both are summed on the
             server, so nothing else moves them until a save. Renders nothing. */}
-        <EtcLiveTotals monthComplete={monthComplete} />
+        <EtcLiveTotals />
         {/* ONE right-click menu for the whole grid — see JobCellMenuHost. */}
         <JobCellMenuHost />
         {/* "Lock Editing" removed 2026-08-04: it relocked the Save gate, and with that
@@ -1540,7 +1540,7 @@ export default async function MonthlyEtcPage({
                               className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`}
                               title={String(round2(totals[group].newEtc))}
                             >
-                              {monthComplete ? wholeNum(totals[group].newEtc) : "—"}
+                              {wholeNum(totals[group].newEtc)}
                             </td>
                             <td
                               data-live="diff"
@@ -1812,14 +1812,23 @@ export default async function MonthlyEtcPage({
                               watched pair of numbers on the page. EtcLiveTotals
                               repaints them through these hooks; without them the
                               column total sat frozen until a save, which read as
-                              the edit (and then Save itself) not working at all. */}
+                              the edit (and then Save itself) not working at all.
+
+                              ── Total New ETC is no longer gated on monthComplete
+                              (2026-08-04). It used to print "—" until the month's
+                              actuals were complete, which is the answer to "why are
+                              the bottom totals not updating": on an in-progress
+                              month it WAS a dash, and no amount of typing could move
+                              a dash. That gate belongs on the CELLS, where it stops a
+                              partial figure looking final; a total's contract is to
+                              equal the sum of the values displayed above it. */}
                           <td
                             data-live="newEtc"
                             data-section={s.code}
                             className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`}
                             title={String(round2(t.newEtc))}
                           >
-                            {monthComplete ? wholeNum(t.newEtc) : "—"}
+                            {wholeNum(t.newEtc)}
                           </td>
                           <td
                             data-live="diff"
@@ -1858,7 +1867,7 @@ export default async function MonthlyEtcPage({
                             className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-blue-dark`}
                             title={String(round2(t.newEtc))}
                           >
-                            {monthComplete ? wholeNum(t.newEtc) : "—"}
+                            {wholeNum(t.newEtc)}
                           </td>
                           <td
                             data-live="diff"
@@ -1898,7 +1907,7 @@ export default async function MonthlyEtcPage({
                             className={`border-l border-sdc-border ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`}
                             title={currencyExact(t.newEtc)}
                           >
-                            {monthComplete ? currency(t.newEtc) : "—"}
+                            {currency(t.newEtc)}
                           </td>
                           <td
                             data-live="partsDiff"
