@@ -34,7 +34,6 @@ import { ClearEtcButton } from "@/components/ClearEtcButton";
 import { EtcAutosave } from "@/components/EtcAutosave";
 import { EtcLiveTotals } from "@/components/EtcLiveTotals";
 import { isStandardSheetUnlocked, hadWrongPassword, unlockStandardSheet, lockStandardSheet } from "@/lib/standard-sheet-gate";
-import { isEtcEditUnlocked, hadEtcEditWrongPassword, lockEtcEdit } from "@/lib/etc-edit-gate";
 import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/execution-etc";
 import { PageTitle } from "@/components/ui/Typography";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -659,14 +658,13 @@ export default async function MonthlyEtcPage({
   // round trip. Both "Standard Sheet columns" and the toolbar Save gate keep their own
   // separate cookie/password; only the sequencing changed.
   //
-  // The two wrong-password reads stay conditional (they are only meaningful when the
-  // matching gate is locked), but they no longer wait for each other either.
-  const [{ baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers, ssoEmail: schedulerSsoEmail }, showStandards, etcEditUnlocked] =
-    await Promise.all([getSchedulerLinkContext(), isStandardSheetUnlocked(), isEtcEditUnlocked()]);
-  const [standardWrongPassword, etcEditWrongPassword] = await Promise.all([
-    showStandards ? Promise.resolve(false) : hadWrongPassword(),
-    etcEditUnlocked ? Promise.resolve(false) : hadEtcEditWrongPassword(),
+  // The Save gate is gone (2026-08-04) — see saveAllNewEtcDrafts. Only the Standard
+  // Sheet gate is read here now, and its wrong-password flag only matters while locked.
+  const [{ baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers, ssoEmail: schedulerSsoEmail }, showStandards] = await Promise.all([
+    getSchedulerLinkContext(),
+    isStandardSheetUnlocked(),
   ]);
+  const standardWrongPassword = showStandards ? false : await hadWrongPassword();
   // Rates are shared with /standard-sheet's own ExecutionRate rows — once
   // that tab has submitted+frozen this month's snapshot, rates must stop
   // changing here too (matches that tab's own editable/frozen rule).
@@ -886,15 +884,12 @@ export default async function MonthlyEtcPage({
           )}
           <SyncHistoryButton className={`${BUTTON_SECONDARY} w-full`} />
         </EtcSyncMenu>
-        {/* Batch-saves every currently-typed New ETC override on the grid —
-            typing alone doesn't persist anything (see EtcSectionCells).
-            Password-gated the first time each session (a separate cookie/
-            gate from the Standard Sheet one below, though both currently
-            share the "sdcautomation" confirmation phrase with Submit and
-            Lock); later Save clicks this session skip the prompt. */}
-        {!locked && (
-          <SaveEtcDraftsButton formId="etc-month-form" month={month} unlocked={etcEditUnlocked} wrongPassword={etcEditWrongPassword} className={BUTTON_PRIMARY} />
-        )}
+        {/* "Save now" for every currently-typed New ETC override on the grid.
+            NOT password-gated any more (2026-08-04) — that gate is what lost
+            people's typing; see saveAllNewEtcDrafts. Autosave below covers the
+            same ground ~1.5s after typing stops, so this is the impatient path
+            rather than the only one that persists anything. */}
+        {!locked && <SaveEtcDraftsButton formId="etc-month-form" month={month} className={BUTTON_PRIMARY} />}
         {/* Empties every New ETC cell still awaiting a decision (the yellow ones),
             leaving them yellow so the grid reads as a checklist of what to
             re-enter. Confirmation phrase every time — it erases entered values in
@@ -903,23 +898,19 @@ export default async function MonthlyEtcPage({
         {!locked && (
           <ClearEtcButton month={month} clearableCount={clearableCount} className={BUTTON_DANGER} />
         )}
-        {/* Autosaves New ETC cells ~1.5s after typing stops — but only once
-            Save has been clicked with the password this session, so autosave
-            can never be the thing that gets past the gate. */}
-        <EtcAutosave formId="etc-month-form" month={month} unlocked={etcEditUnlocked} locked={locked} />
+        {/* Autosaves New ETC cells ~1.5s after typing stops. Unconditional on an
+            unlocked month as of 2026-08-04: it used to require the Save gate, which
+            meant no safety net at all on a fresh browser session. A submitted month
+            is still untouchable. */}
+        <EtcAutosave formId="etc-month-form" month={month} locked={locked} />
         {/* Keeps the row TOTAL (NEW ETC) block and the grand-total row in step
             with the section cells as they are typed. Both are summed on the
             server, so nothing else moves them until a save. Renders nothing. */}
         <EtcLiveTotals monthComplete={monthComplete} />
         {/* ONE right-click menu for the whole grid — see JobCellMenuHost. */}
         <JobCellMenuHost />
-        {!locked && etcEditUnlocked && (
-          <form action={lockEtcEdit}>
-            <button type="submit" className={BUTTON_SECONDARY} title="Relock Save for this session.">
-              Lock Editing
-            </button>
-          </form>
-        )}
+        {/* "Lock Editing" removed 2026-08-04: it relocked the Save gate, and with that
+            gate gone it would have been a button that does nothing. */}
         {/* Submitting is only offered on the FULL grid: with a department
             column filter active, the hidden sections' hoursWorked inputs
             aren't in the form at all — on the current month submitMonth

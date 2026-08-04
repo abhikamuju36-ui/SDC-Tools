@@ -11,7 +11,6 @@ import { syncEtcHistoryFromPowerBi } from "@/lib/sync-etc-history";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
-import { isEtcEditUnlocked, trySetEtcEditUnlocked } from "@/lib/etc-edit-gate";
 import { matchesConfirmPassword } from "@/lib/confirm-password";
 
 // Submit and Lock's confirmation gate — an "are you sure" step before
@@ -561,10 +560,8 @@ export async function submitMonth(month: string, formData: FormData) {
 // every `newEtcOverride__<id>` field the manager has touched (or left alone)
 // already lives in `formData` — this just reads them back.
 //
-// Password-gated the first time each session (see etc-edit-gate.ts): if the
-// unlock cookie isn't already set, `newEtcSavePassword` must match, and a
-// correct one sets the cookie so later clicks this session skip straight to
-// saving. A wrong password saves nothing at all, not even the other fields.
+// NOT password-gated — see the note inside. It was, and that gate lost people's work.
+//
 // `saved` is how many rows the click actually wrote, so the caller can SAY so.
 // Reported 2026-08-03 as "Save isn't working": it was working — the audit log had
 // 15 successful batches that afternoon — but nothing on screen acknowledged a
@@ -572,14 +569,25 @@ export async function submitMonth(month: string, formData: FormData) {
 // so a save that wrote 11 drafts looked exactly like one that wrote none, and
 // like one that failed. A count makes the three distinguishable.
 export async function saveAllNewEtcDrafts(month: string, formData: FormData): Promise<{ ok: boolean; saved: number }> {
-  if (!(await isEtcEditUnlocked())) {
-    const attempt = String(formData.get("newEtcSavePassword") ?? "");
-    if (!(await trySetEtcEditUnlocked(attempt))) {
-      revalidatePath("/etc");
-      return { ok: false, saved: 0 };
-    }
-  }
-
+  // ── No password gate on the DRAFT save (2026-08-04) ───────────────────────
+  //
+  // This used to require an unlock cookie, with `newEtcSavePassword` as the fallback.
+  // That gate was the direct cause of silent data loss, reported twice as "Save is not
+  // working": the cookie is session-scoped on purpose ("closing the browser relocks the
+  // tab"), so every new browser session re-locked it. A manager would type values, click
+  // Save, get a password popover instead of a save, and lose everything on the next
+  // refresh. EtcAutosave was gated on the same flag, so there was no safety net either.
+  // Confirmed against the audit log: ZERO draft saves in the three hours the loss was
+  // being reported.
+  //
+  // Gating a SAVE is backwards. A gate belongs on actions that freeze or destroy —
+  // Submit ETC, Clear ETC, Reopen Month, Sync History all keep theirs, re-entered every
+  // time. A draft is the opposite: it commits nothing, it is what Submit later reads,
+  // and refusing to store it protects nothing while risking the manager's work.
+  //
+  // Nothing is weakened by removing it. A draft is not a confirmed figure: needsReview
+  // stays true, the value shows as a draft, and Submit ETC — still password-gated — is
+  // what turns it into history.
   const entries = await prisma.etcEntry.findMany({
     where: { month },
     select: { id: true, needsReview: true, newEtcDraft: true },

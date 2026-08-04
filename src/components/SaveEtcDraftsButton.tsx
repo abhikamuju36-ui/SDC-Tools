@@ -1,62 +1,46 @@
 "use client";
 
-import { useEffect, useRef, useState, useTransition } from "react";
+import { useEffect, useTransition } from "react";
 import { saveAllNewEtcDrafts } from "@/lib/etc-actions";
 import { isEtcDirty, rebaselineEtcFields } from "@/lib/etc-dirty-tracker";
 import { useToast } from "@/components/ui/Toast";
 
-// Batch-saves every currently-typed New ETC override across the grid in one
-// click — nothing in EtcSectionCells autosaves on its own (see its comment),
-// so this is the only thing that persists a manager's typed values. The
-// whole grid already lives in one <form> (formId), so this just reads its
-// current values via FormData rather than tracking them itself.
+// Batch-saves every currently-typed New ETC override across the grid in one click. The
+// whole grid already lives in one <form> (formId), so this reads its current values via
+// FormData rather than tracking them itself.
 //
-// Password-gated the first time each session — a popover like
-// SubmitAndLockButton's; `unlocked` (from isEtcEditUnlocked() server-side)
-// decides whether Save needs the popover at all this time. A beforeunload
-// listener warns (native browser dialog, same as Word/Excel) if anything's
-// been typed since the last successful Save.
+// ── No password popover any more (2026-08-04) ────────────────────────────────
+// This button used to open a password prompt the first time each browser session, and
+// that is what lost people's work. Reported twice as "Save is not working": a manager
+// would type values, click Save, get a popover instead of a save, and the values were
+// gone on the next refresh. The audit log confirmed it — zero draft saves across the
+// hours it was being reported.
+//
+// The gate protected nothing. A draft commits nothing: needsReview stays true and
+// Submit ETC — still password-gated, still confirmed every single time — is what turns
+// a draft into history. Refusing to STORE a manager's typing only risked losing it.
+//
+// EtcAutosave now also runs unconditionally on an unlocked month, so this button is a
+// "save now" rather than the only thing that persists anything.
+//
+// A beforeunload listener still warns (native browser dialog, same as Word/Excel) if
+// anything has been typed since the last successful save — kept as the last line of
+// defence even though autosave should mean it rarely fires.
 export function SaveEtcDraftsButton({
   formId,
   month,
-  unlocked,
-  wrongPassword,
   className,
 }: {
   formId: string;
   month: string;
-  unlocked: boolean;
-  wrongPassword: boolean;
   className?: string;
 }) {
-  const [open, setOpen] = useState(false);
-  const [password, setPassword] = useState("");
   const [pending, startTransition] = useTransition();
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const inputRef = useRef<HTMLInputElement>(null);
   const { toast } = useToast();
 
-  useEffect(() => {
-    if (!open) return;
-    inputRef.current?.focus();
-    function onDown(e: MouseEvent) {
-      if (wrapRef.current && !wrapRef.current.contains(e.target as Node)) setOpen(false);
-    }
-    function onKey(e: KeyboardEvent) {
-      if (e.key === "Escape") setOpen(false);
-    }
-    document.addEventListener("mousedown", onDown);
-    document.addEventListener("keydown", onKey);
-    return () => {
-      document.removeEventListener("mousedown", onDown);
-      document.removeEventListener("keydown", onKey);
-    };
-  }, [open]);
-
-  // Warn on a real browser-level unload (tab close, refresh, typed URL) if
-  // anything typed hasn't gone through Save yet — same "leave without
-  // saving?" prompt as Word/Excel. Client-side app navigation (e.g. the
-  // month picker) doesn't fire this — only actual document unloads do.
+  // Warn on a real browser-level unload (tab close, refresh, typed URL) if anything
+  // typed hasn't gone through a save yet. Client-side app navigation (e.g. the month
+  // picker) doesn't fire this — only actual document unloads do.
   useEffect(() => {
     function onBeforeUnload(e: BeforeUnloadEvent) {
       if (!isEtcDirty()) return;
@@ -67,91 +51,43 @@ export function SaveEtcDraftsButton({
     return () => window.removeEventListener("beforeunload", onBeforeUnload);
   }, []);
 
-  function run(passwordAttempt?: string) {
+  function run() {
     const form = document.getElementById(formId);
     if (!(form instanceof HTMLFormElement)) return;
     const fd = new FormData(form);
-    if (passwordAttempt != null) fd.set("newEtcSavePassword", passwordAttempt);
     startTransition(async () => {
       const result = await saveAllNewEtcDrafts(month, fd);
       if (result.ok) {
-        // Re-baseline rather than just clearing a flag: the values that were
-        // just persisted become what "unchanged" means from here on. Clearing
-        // alone would leave each cell compared against what the PAGE loaded
-        // with, so typing a cell back to its pre-save value would read as
-        // clean when it's now a real unsaved edit. `fd` is exactly what was
-        // posted, so it is exactly the right new baseline.
+        // Re-baseline rather than just clearing a flag: the values that were just
+        // persisted become what "unchanged" means from here on. Clearing alone would
+        // leave each cell compared against what the PAGE loaded with, so typing a cell
+        // back to its pre-save value would read as clean when it's now a real unsaved
+        // edit. `fd` is exactly what was posted, so it is exactly the right new baseline.
         rebaselineEtcFields(fd);
-        setOpen(false);
-        setPassword("");
-        // Say what happened. This action deliberately doesn't revalidate (it runs
-        // on every autosave pass and re-rendering the whole month is what made
-        // saving feel slow), so without this the button went "Saving…" and then
-        // back to "Save" with nothing else on screen changing — which is why a
-        // save that wrote 11 drafts got reported as Save being broken.
-        // "No changes" is stated out loud rather than shown as a success, because
-        // a manager who expected to save something needs to know the difference.
+        // Say what happened. This action deliberately doesn't revalidate (it runs on
+        // every autosave pass and re-rendering the whole month is what made saving feel
+        // slow), so without this the button went "Saving…" and then back to "Save" with
+        // nothing else on screen changing. "No changes" is stated out loud rather than
+        // shown as a success, because a manager who expected to save something needs to
+        // know the difference.
         toast(
           result.saved > 0
             ? `Saved ${result.saved} New ETC value${result.saved === 1 ? "" : "s"}.`
             : "Nothing to save — no New ETC values have changed.",
           result.saved > 0 ? "success" : "info",
         );
+      } else {
+        // The action no longer has a password to reject, so a false here means it
+        // genuinely could not write. Say so rather than failing silently — the whole
+        // point of this change is that typed work is never lost quietly.
+        toast("Could not save — nothing was written. Please try again.", "error");
       }
-      // Wrong password: leave the popover open so "Wrong password" (from the
-      // refreshed wrongPassword prop) is visible, and don't touch dirty —
-      // nothing was actually saved.
     });
   }
 
   return (
-    <div ref={wrapRef} className="relative">
-      <button
-        type="button"
-        className={className}
-        disabled={pending}
-        onClick={() => {
-          if (unlocked) {
-            run();
-          } else {
-            setPassword("");
-            setOpen((v) => !v);
-          }
-        }}
-      >
-        {pending ? "Saving…" : "Save"}
-      </button>
-      {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-64 rounded-lg border border-sdc-border bg-white p-3 shadow-lg">
-          <p className="mb-2 text-xs font-semibold text-sdc-navy">Enter password to Save</p>
-          <input
-            ref={inputRef}
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") run(password);
-            }}
-            placeholder="Password"
-            aria-label="Save password"
-            className="w-full rounded-md border border-sdc-border px-2 py-1.5 text-sm outline-none focus:border-sdc-blue"
-          />
-          {wrongPassword && <p className="mt-2 text-xs text-red-600">Wrong password</p>}
-          <div className="mt-3 flex justify-end gap-2">
-            <button type="button" className="rounded-md px-3 py-1.5 text-sm text-sdc-gray-600 hover:bg-sdc-gray-100" onClick={() => setOpen(false)}>
-              Cancel
-            </button>
-            <button
-              type="button"
-              onClick={() => run(password)}
-              disabled={password.length === 0 || pending}
-              className="rounded-md bg-sdc-blue px-3 py-1.5 text-sm font-semibold text-white hover:bg-sdc-blue-dark disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {pending ? "Saving…" : "Confirm"}
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
+    <button type="button" className={className} disabled={pending} onClick={run}>
+      {pending ? "Saving…" : "Save"}
+    </button>
   );
 }

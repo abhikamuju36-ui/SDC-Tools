@@ -8,21 +8,26 @@ import { SaveStatusChip } from "@/components/SaveStatusChip";
 
 // Autosave for the Monthly ETC grid's New ETC cells.
 //
-// ── Only once the gate is already open ──────────────────────────────────────
-// `unlocked` is isEtcEditUnlocked() from the server — the session cookie the
-// manual Save sets after the password is entered once. Autosave never opens
-// that gate and never carries a password: until someone has clicked Save once
-// this session, nothing here writes.
+// ── Always on, on any unlocked month (2026-08-04) ────────────────────────────
+// This used to require `unlocked` — the session cookie the manual Save set once a
+// password had been entered. That made autosave the opposite of a safety net: on a
+// fresh browser session it wrote nothing, so a manager could fill in the grid, hit a
+// password popover, and lose the lot on the next refresh. Reported twice as "Save is
+// not working"; the audit log showed zero draft saves while it was happening.
 //
-// That is deliberate and it is the whole reason the old Parts Cost blur-save
-// was removed (see PartsCostNewEtcCell) — it persisted on blur and skipped the
-// password entirely, which made the gate decorative for one column. Autosave
-// that bypasses a gate the Save button respects is a bug, not a feature.
+// The old argument for gating it was consistency — an autosave that bypassed a gate the
+// Save button respected would make the gate decorative. That argument is now moot in
+// the right direction: the DRAFT save has no gate at all (see saveAllNewEtcDrafts), so
+// there is nothing to bypass. The gates that matter still stand on the actions that
+// freeze or destroy: Submit ETC, Clear ETC, Reopen Month, Sync History.
+//
+// `locked` is still respected: a submitted month is frozen history and nothing here
+// may touch it.
 //
 // ── Drafts, not submissions ─────────────────────────────────────────────────
 // This writes newEtcDraft, exactly as the Save button does. It never submits or
 // locks a month: Submit ETC stays a deliberate, separately-confirmed act.
-export function EtcAutosave({ formId, month, unlocked, locked }: { formId: string; month: string; unlocked: boolean; locked: boolean }) {
+export function EtcAutosave({ formId, month, locked }: { formId: string; month: string; locked: boolean }) {
   const formRef = useRef<HTMLFormElement | null>(null);
   // The toolbar sits OUTSIDE this form (the grid form opens further down the
   // page), so it is reached by id — the same way SaveEtcDraftsButton does it.
@@ -31,7 +36,7 @@ export function EtcAutosave({ formId, month, unlocked, locked }: { formId: strin
     formRef.current = el instanceof HTMLFormElement ? el : null;
   }, [formId]);
 
-  const enabled = unlocked && !locked;
+  const enabled = !locked;
 
   const { status, schedule, retry } = useAutosave({
     enabled,
