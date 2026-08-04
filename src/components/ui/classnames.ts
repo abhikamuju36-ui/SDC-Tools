@@ -69,6 +69,20 @@ export const TABLE_HEADER_ROW =
 // resize; never solve it by letting words break.
 export const ETC_COL_W = "w-[64px] min-w-[64px]";
 
+// Parts Cost columns are MONEY, and money on this page runs to seven figures — so
+// they get their own, wider width. 64px (ETC_COL_W, sized for hours) clipped them:
+// "$1,065,713" rendered as "$1,065,7…" on job 1142 and "$1,336,100" on 1164, which
+// is a figure nobody could read without clicking into the cell (reported 2026-08-04).
+//
+// 96px fits "-$1,336,100" — eleven glyphs including a minus and a currency symbol,
+// which is the widest thing this column can hold at the current data volumes — with
+// a little headroom. Applied to every Parts Cost cell: Prior ETC, Money Spent Month,
+// Money Left, New ETC and Diff, plus their footer totals, so the block stays aligned.
+//
+// The grid already scrolls horizontally inside its own container, so widening a
+// column costs scroll distance rather than breaking the layout on a small screen.
+export const PARTS_COL_W = "w-[96px] min-w-[96px]";
+
 export const TABLE_ROW_HOVER = "transition-colors hover:bg-sdc-blue-light/40";
 
 // Full gridlines + tabular-width numerals — makes data tables read like a

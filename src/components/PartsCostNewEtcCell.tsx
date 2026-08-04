@@ -109,16 +109,23 @@ export function PartsCostNewEtcCell({
     const typed = Number(value);
     const effective = value.trim() === "" || !Number.isFinite(typed) ? suggested : typed;
     const left = priorEtc - spent;
-    // `decided` published too, so the row's own Diff cell can be repainted: undecided
-    // prints "—" rather than $0. It is recomputed here rather than read from `decided`
-    // below to keep this effect's dependency list honest.
+    // Diff counts a BLANK box as 0, so it reads as the money nobody has planned yet
+    // (2026-08-04, by request). `effective` above still falls back to the suggestion
+    // because Total ETC $ and the carry-forward depend on it — the two quantities
+    // genuinely differ for an unanswered cell. Must match the server's own
+    // expression in etc/page.tsx or the figure would jump on hydration.
+    const decidedNow = isNewEtcCellDecided(cellState, value);
+    const diffNow = left - (decidedNow ? effective : 0);
+    // `decided` is published too, but the row Diff no longer prints "—" for an
+    // undecided cell — it prints the figure (see diffNow above). The flag is still
+    // carried because the yellow/neutral background reads from it.
     publishPartsCell(jobId, {
       prior: priorEtc,
       spent,
       left,
       newEtc: effective,
-      diff: left - effective,
-      decided: isNewEtcCellDecided(cellState, value),
+      diff: diffNow,
+      decided: decidedNow,
     });
   }, [jobId, priorEtc, spent, suggested, value, cellState]);
 

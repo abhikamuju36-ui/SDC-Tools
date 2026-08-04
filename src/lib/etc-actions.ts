@@ -1,6 +1,5 @@
 "use server";
 
-import { createHmac, timingSafeEqual } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { auth } from "@/lib/auth";
 import { calcHoursLeft, suggestNewEtc, isMonthLocked, round2, nextMonth, isValidMonth, isSafeForLiveEtcSync, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, isNewEtcClearable, isStaleDraftWrite, type NewEtcCellState } from "@/lib/etc";
@@ -13,18 +12,18 @@ import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
 import { matchesConfirmPassword } from "@/lib/confirm-password";
+import { matchesButtonPassword } from "@/lib/button-password";
 
-// Submit and Lock's confirmation gate — an "are you sure" step before
-// freezing a month's numbers, not a real access boundary, so the password is
-// fixed rather than env-configurable. Checked here (not client-side) so it
-// can't be read out of the page JS bundle.
-const SUBMIT_LOCK_PASSWORD = "sdcautomation";
-
-function safeEqual(a: string, b: string): boolean {
-  const da = createHmac("sha256", "cmp").update(a).digest();
-  const db = createHmac("sha256", "cmp").update(b).digest();
-  return timingSafeEqual(da, db);
-}
+// The confirmation gate in front of the actions that freeze or unfreeze a month's
+// numbers — an "are you sure" step, not a real access boundary (the whole app is
+// already behind sign-in). Checked here rather than client-side so the phrase can't
+// be read out of the page JS bundle.
+//
+// The phrase itself now comes from lib/button-password.ts, shared with every other
+// protected button. It used to be a local constant here, which is how "change the
+// password" became a seven-file search (2026-08-04).
+// (no local helper — callers use matchesButtonPassword directly, so there is
+// exactly one comparison implementation in the app.)
 
 // The sheet physically had one working month; the app must not let an
 // arbitrary past/future month be seeded out of order — Prior ETC carries
@@ -340,7 +339,7 @@ async function seedMonth(month: string) {
 // rather than leaving the month half-confirmed.
 export async function submitMonth(month: string, formData: FormData) {
   const submittedPassword = String(formData.get("submitLockPassword") ?? "");
-  if (!safeEqual(submittedPassword, SUBMIT_LOCK_PASSWORD)) {
+  if (!matchesButtonPassword(submittedPassword, "submit")) {
     throw new Error("Incorrect password — Submit and Lock was not run.");
   }
 
@@ -892,7 +891,7 @@ export async function clearYellowNewEtc(
   if (!isValidMonth(month)) return { ok: false, cleared: 0, reason: "month" };
 
   const attempt = String(formData.get("clearEtcPassword") ?? "");
-  if (!safeEqual(attempt, SUBMIT_LOCK_PASSWORD)) {
+  if (!matchesButtonPassword(attempt, "submit")) {
     return { ok: false, cleared: 0, reason: "password" };
   }
 
@@ -972,7 +971,7 @@ export async function clearYellowNewEtc(
 // — an "are you sure" gesture, not a real access boundary.
 export async function reopenMonth(month: string, formData: FormData) {
   const submittedPassword = String(formData.get("reopenPassword") ?? "");
-  if (!safeEqual(submittedPassword, SUBMIT_LOCK_PASSWORD)) {
+  if (!matchesButtonPassword(submittedPassword, "submit")) {
     throw new Error("Incorrect password — the month was not reopened.");
   }
 

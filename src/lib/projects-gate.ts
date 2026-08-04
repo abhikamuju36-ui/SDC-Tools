@@ -2,6 +2,7 @@ import "server-only";
 
 import { createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
+import { expectedButtonPassword } from "@/lib/button-password";
 import { PROJECTS_EDIT_COOKIE } from "@/lib/projects-edit-cookie";
 
 // The password gate on the Projects grid (/quoted). Two things sit behind it,
@@ -29,16 +30,13 @@ import { PROJECTS_EDIT_COOKIE } from "@/lib/projects-edit-cookie";
 // password never reaches the client bundle, and the cookie holds an HMAC rather
 // than a "1" flag so it can't be hand-forged in dev tools.
 //
-// The password is "sdcautomation" by default, matching the Monthly ETC gates
-// (etc-edit-gate.ts, SUBMIT_LOCK_PASSWORD). Unlike standard-sheet-gate.ts this
-// does NOT refuse to start without an env override — that gate guards frozen
-// financial history, this one guards a grid every manager uses daily, and
-// failing the page closed on a missing env var would be the worse outcome. Set
-// PROJECTS_PASSWORD to override.
+// The phrase comes from lib/button-password.ts, shared with every other protected
+// button in the app, so changing it is one edit rather than seven.
+// PROJECTS_PASSWORD still overrides it for this gate alone.
 const COOKIE_NAME = "projects-unlocked";
 
 function expectedPassword(): string {
-  return process.env.PROJECTS_PASSWORD || "sdcautomation";
+  return expectedButtonPassword("projects");
 }
 
 function cookieToken(): string {

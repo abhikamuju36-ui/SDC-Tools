@@ -42,7 +42,7 @@ import { MonthYearSelect } from "@/components/MonthYearSelect";
 import { JobCellMenuHost } from "@/components/JobCellMenuHost";
 import { jobCellMenuProps } from "@/lib/job-cell-menu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
-import { BUTTON_PRIMARY, BUTTON_SECONDARY, BUTTON_DANGER, TABLE_HEADER_ROW, TABLE_GRID, ETC_COL_W } from "@/components/ui/classnames";
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, BUTTON_DANGER, TABLE_HEADER_ROW, TABLE_GRID, ETC_COL_W, PARTS_COL_W } from "@/components/ui/classnames";
 import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
@@ -1580,7 +1580,6 @@ export default async function MonthlyEtcPage({
                         const suggestedCost = suggestNewEtc(prior, spent);
                         const draftCost = partsCostEntry.newEtcDraft != null ? Number(partsCostEntry.newEtcDraft) : null;
                         const effectiveNewEtcCost = effectiveNewEtc(partsCostEntry);
-                        const diffCost = moneyLeft - effectiveNewEtcCost;
                         // The SAME rule as the per-section-hours cells, with no
                         // exceptions left (lib/etc.ts): Parts Cost New ETC needs manager
                         // attention (yellow) exactly when money was spent this month
@@ -1620,6 +1619,16 @@ export default async function MonthlyEtcPage({
                         } satisfies NewEtcCellState;
                         const partsCostSeed = newEtcSeedText(partsCostState);
                         const decidedCost = isNewEtcCellDecided(partsCostState, partsCostSeed);
+                        // Diff = Money Left − New ETC, where New ETC is the figure IN THE CELL:
+                        // a blank box counts as 0, so Diff reads as the money nobody has planned
+                        // yet (2026-08-04, by request — see the Diff cell below).
+                        //
+                        // Deliberately NOT effectiveNewEtc, which returns the SUGGESTION for an
+                        // undecided cell and would make Diff 0 on every unplanned row. That
+                        // function answers a different question — "what will this month be if
+                        // submitted as-is" — and next month's Prior ETC depends on its answer, so
+                        // it stays as it is. Only Diff reads a blank as zero.
+                        const diffCost = moneyLeft - (decidedCost ? effectiveNewEtcCost : 0);
 
                         partsCostGrandTotal.prior += prior;
                         partsCostGrandTotal.worked += spent;
@@ -1627,19 +1636,25 @@ export default async function MonthlyEtcPage({
 
                         return (
                           <Fragment key="parts-cost">
-                            <td className={`${PHASE_EDGE} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={currencyExact(prior)}>
+                            {/* PARTS_COL_W on every cell in this block: these are seven-figure
+                                money columns and the hours width clipped them ("$1,065,7…").
+                                See components/ui/classnames.ts. */}
+                            <td className={`${PHASE_EDGE} ${PARTS_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={currencyExact(prior)}>
                               {currency(prior)}
                             </td>
-                            <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle whitespace-nowrap`}>
+                            <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle whitespace-nowrap`}>
                               {/* Not manager-editable — always Power BI's actual, passed through as a
                                   hidden field so submitMonth's generic per-entry loop still works. */}
                               <input type="hidden" name={`hoursWorked__${partsCostEntry.id}`} value={spent} />
-                              <span className="block w-16 truncate text-center text-[10px] text-sdc-gray-600" title={currencyExact(spent)}>
+                              {/* w-full, not a fixed w-16 with `truncate`: the cell now sizes the
+                                  column, so the figure should use all of it rather than being cut
+                                  to 64px inside a wider box. */}
+                              <span className="block w-full text-center text-[10px] text-sdc-gray-600" title={currencyExact(spent)}>
                                 {currency(spent)}
                               </span>
                             </td>
                             <td
-                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-500`}
+                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-500`}
                               title={`${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(prior)}) − Money Spent (${currencyExact(spent)})`}
                             >
                               {currency(moneyLeft)}
@@ -1701,21 +1716,25 @@ export default async function MonthlyEtcPage({
                               // $3,600.
                               data-live="partsRowDiff"
                               data-job={job.id}
-                              className={`border-l border-sdc-border overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
-                              // Dollars, so its own ceiling. Uncoloured when nothing
-                              // is decided — there is no variance to report, which is
-                              // also why the cell prints "—" rather than $0.
-                              style={decidedCost ? diffCellStyle(diffCost, DIFF_CEILING.moneyCell) : undefined}
-                              title={
-                                decidedCost
-                                  ? `${currencyExact(diffCost)} = Money Left (${currencyExact(moneyLeft)}) − New ETC (${currencyExact(effectiveNewEtcCost)})`
-                                  : "No New ETC decided yet, so there is no variance to report."
-                              }
+                              className={`border-l border-sdc-border ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                              // ── ALWAYS a figure (2026-08-04, by request) ──────────────
+                              //
+                              // "Diff must always be calculated as Hours Left − New ETC."
+                              // This cell used to print "—" while no New ETC was decided, on
+                              // the reasoning that an unanswered cell has no variance to
+                              // report. That reasoning is withdrawn: the hours columns have
+                              // treated a blank New ETC as 0 since 2026-08-03 (see newEtcDiff
+                              // in lib/etc.ts), so Diff there reads as Money Left until
+                              // somebody plans the row — and Parts Cost printing a dash beside
+                              // them made one column of the block unreadable against the rest.
+                              //
+                              // Now uniform: blank New ETC ⇒ Diff = Money Left, which is a fair
+                              // thing to be told (this much money is unaccounted for), and the
+                              // colouring applies on the same terms as every other Diff cell.
+                              style={diffCellStyle(diffCost, DIFF_CEILING.moneyCell)}
+                              title={`${currencyExact(diffCost)} = Money Left (${currencyExact(moneyLeft)}) − New ETC (${currencyExact(effectiveNewEtcCost)})`}
                             >
-                              {/* "—" not $0, the same rule the section-hours DIFF
-                                  follows: with nothing decided there is no
-                                  variance, and printing $0 reads as "on plan". */}
-                              {decidedCost ? currency(diffCost) : "—"}
+                              {currency(diffCost)}
                             </td>
                           </Fragment>
                         );

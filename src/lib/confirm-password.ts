@@ -1,25 +1,23 @@
 import "server-only";
-import { createHmac, timingSafeEqual } from "crypto";
+import { expectedButtonPassword, matchesButtonPassword } from "@/lib/button-password";
 
 // The app's shared "are you sure" confirmation phrase.
 //
-// Not an access boundary — the whole app already sits behind sign-in
-// (proxy.ts). This is the deliberate keystroke in front of an action that
-// freezes or unfreezes live figures, so nobody does it by brushing a button.
+// Not an access boundary — the whole app already sits behind sign-in (proxy.ts).
+// This is the deliberate keystroke in front of an action that freezes or unfreezes
+// live figures, so nobody does it by brushing a button.
 //
-// Checked server-side so the phrase never reaches the client bundle. Override
-// with CONFIRM_PASSWORD; the default matches the phrase already used by Submit
-// and Lock, the ETC edit gate, the Standard Sheet gate and the Projects gate.
-//
-// Those four each grew their own copy of this check before it was worth
-// sharing. New gates should use this one rather than adding a fifth; the
-// existing copies are left alone deliberately — quietly re-pointing a gate at a
-// different constant is not the kind of change to make in passing.
+// ── Now a thin wrapper (2026-08-04) ─────────────────────────────────────────
+// The note that used to live here said the five gates each grew their own copy of
+// this check, and that re-pointing them at one constant was "not the kind of change
+// to make in passing". Changing the shared phrase on 2026-08-04 was the
+// occasion to do it deliberately: all five now resolve through
+// lib/button-password.ts, so there is one place to change and no way for a gate to
+// be left behind on the old phrase. CONFIRM_PASSWORD still overrides this one.
 export function matchesConfirmPassword(attempt: string): boolean {
-  const expected = process.env.CONFIRM_PASSWORD || "sdcautomation";
-  // Constant-time over same-length digests — a plain `===` on the raw strings
-  // leaks match-length through timing.
-  const a = createHmac("sha256", "cmp").update(attempt).digest();
-  const b = createHmac("sha256", "cmp").update(expected).digest();
-  return timingSafeEqual(a, b);
+  return matchesButtonPassword(attempt, "confirm");
 }
+
+// Exported for the gates that need the phrase itself rather than a comparison —
+// they key an HMAC cookie with it. Server-only, like everything in this file.
+export { expectedButtonPassword };

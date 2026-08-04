@@ -126,18 +126,19 @@ export function EtcLiveTotals({ monthComplete }: { monthComplete: boolean }) {
     // hours cells rather than text like the footer. Prints "—" when nothing is decided,
     // matching the server render: with no New ETC chosen there is no variance, and "$0"
     // would read as "on plan".
-    const writePartsRowDiff = (job: string, value: number, decided: boolean) => {
+    // ALWAYS a figure (2026-08-04, by request): Diff = Money Left − New ETC, with a
+    // blank New ETC counting as 0. It used to print "—" while nothing was decided;
+    // `decided` now only affects nothing here, but is still received because the
+    // publisher carries it for the cell background.
+    const writePartsRowDiff = (job: string, value: number, _decided: boolean) => {
       const cell = document.querySelector<HTMLElement>(`[data-live="partsRowDiff"][data-job="${job}"]`);
       if (!cell) return; // Parts Cost column hidden, or this job has no parts row
-      cell.textContent = decided ? formatUsd(value) : "—";
+      cell.textContent = formatUsd(value);
       cell.setAttribute(
         "title",
-        decided
-          ? value.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 })
-          : "No New ETC decided yet, so there is no variance to report.",
+        value.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }),
       );
-      // Undecided carries no colour at all, so the style is cleared rather than set.
-      paintDiffColor(cell, decided ? value : 0, false, DIFF_CEILING.moneyCell);
+      paintDiffColor(cell, value, false, DIFF_CEILING.moneyCell);
     };
 
     // Parts Cost footer — dollars, not hours, and one cell each.

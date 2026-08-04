@@ -2,6 +2,7 @@
 
 import { createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
+import { expectedButtonPassword } from "@/lib/button-password";
 import { revalidatePath } from "next/cache";
 
 const COOKIE_NAME = "audit-log-unlocked";
@@ -12,13 +13,12 @@ const ERROR_COOKIE = "audit-log-error";
 // The dev fallback is refused in production: shipping with the well-known
 // default would make the gate decorative (found 2026-07-14 — this gate had
 // lagged behind its standard-sheet sibling on both hardening points below).
+// One shared source for every protected button (lib/button-password.ts), with
+// AUDIT_LOG_PASSWORD still able to override this gate specifically. The old
+// throw-in-production-when-unset behaviour is gone with it: a missing env var used
+// to take this page down entirely rather than fall back to a working gate.
 function expectedPassword(): string {
-  const configured = process.env.AUDIT_LOG_PASSWORD;
-  if (configured) return configured;
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("AUDIT_LOG_PASSWORD must be set in production — the Audit Log gate has no password configured.");
-  }
-  return "sdcautomation";
+  return expectedButtonPassword("auditLog");
 }
 
 // The unlock cookie holds an HMAC over a fixed message, keyed by the password

@@ -12,6 +12,7 @@ import {
   clearNavOrder,
   NO_NAV_ORDER,
 } from "@/lib/nav-order";
+import { appVersionLabel } from "@/lib/app-version";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isEtcDirty } from "@/lib/etc-dirty-tracker";
 import { AppTextSize } from "@/components/AppTextSize";
@@ -655,6 +656,21 @@ export default function Sidebar({
             </div>
           )}
         </div>
+
+        {/* The running application version. In the sidebar, so it is on every tab
+            without each page having to render it, and sourced from
+            lib/app-version.ts — which reads the ONE value in package.json — so no
+            component can ever report a different number. Hidden when collapsed:
+            the rail is 26px of icons there and a version string would not fit.
+            `title` keeps it reachable for a bug report either way. */}
+        {!collapsed && (
+          <div
+            className="border-t border-[#12314F] px-[10px] pt-2 text-[10.5px] text-[#5A7391]"
+            title={`SDC Projects Reports ${appVersionLabel()}`}
+          >
+            {appVersionLabel()}
+          </div>
+        )}
       </div>
     </aside>
   );

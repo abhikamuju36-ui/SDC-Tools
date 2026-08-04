@@ -2,6 +2,7 @@
 
 import { createHmac, timingSafeEqual } from "crypto";
 import { cookies } from "next/headers";
+import { expectedButtonPassword } from "@/lib/button-password";
 import { revalidatePath } from "next/cache";
 
 const COOKIE_NAME = "standard-sheet-unlocked";
@@ -12,13 +13,11 @@ const ERROR_COOKIE = "standard-sheet-error";
 // manager via dev tools). Override via STANDARD_SHEET_PASSWORD in .env.
 // The dev fallback is refused in production: shipping with the well-known
 // default would make the gate decorative.
+// One shared source for every protected button (lib/button-password.ts).
+// STANDARD_SHEET_PASSWORD still overrides this gate specifically, since it guards
+// confidential figures and its owners may want a distinct phrase.
 function expectedPassword(): string {
-  const configured = process.env.STANDARD_SHEET_PASSWORD;
-  if (configured) return configured;
-  if (process.env.NODE_ENV === "production") {
-    throw new Error("STANDARD_SHEET_PASSWORD must be set in production — the Standard Sheet gate has no password configured.");
-  }
-  return "sdcautomation";
+  return expectedButtonPassword("standardSheet");
 }
 
 // The unlock cookie holds an HMAC over a fixed message, keyed by the password
