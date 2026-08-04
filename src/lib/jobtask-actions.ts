@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
+import { CELL_SPECS, parseCell } from "@/lib/cell-rules";
 
 // Task assignments mirror the sheet's "ME Name" columns (slots 1-11).
 
@@ -11,9 +12,11 @@ export async function saveJobTask(jobId: number, slot: number | null, formData: 
   const taskName = String(formData.get("taskName") ?? "").trim();
   if (!taskName) throw new Error("Task name is required.");
 
-  const rawHours = String(formData.get("hours") ?? "").trim();
-  const hours = rawHours === "" ? 0 : Number(rawHours);
-  if (!Number.isFinite(hours) || hours < 0) throw new Error(`Invalid hours "${rawHours}".`);
+  // §27.15 — the shared parser, so a pasted "1,200" works here exactly as it does in
+  // every other hours cell. Blank still means 0, which is this column's documented rule.
+  const parsedHours = parseCell(formData.get("hours"), CELL_SPECS["jobtask.hours"]);
+  if (parsedHours.kind === "invalid") throw new Error(parsedHours.message);
+  const hours = parsedHours.kind === "value" ? (parsedHours.value as number) : 0;
 
   if (slot === null) {
     // New task: next free slot (the sheet had 11 columns; the app doesn't cap).

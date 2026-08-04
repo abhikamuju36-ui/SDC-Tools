@@ -16,9 +16,10 @@
 // formulas.
 
 import { useState } from "react";
-import { BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/ui/classnames";
-import { ReopenMonthButton } from "@/components/ReopenMonthButton";
 import { useStandardPoolCell, useStandardPoolTotals, useStandardPoolDirty } from "@/components/EtcStandardColumns";
+import { PoolAutosave } from "@/components/PoolAutosave";
+import { SubmitReportAction } from "@/components/SubmitReportAction";
+import type { MonthlyReportStatus } from "@/lib/monthly-report-actions";
 
 export type PoolPanelRow = {
   category: string;
@@ -106,9 +107,8 @@ export function StandardPoolPanel({
   isSubmitted,
   poolsEditable,
   savePoolsAction,
-  refreshPoolsAction,
-  submitMonthAction,
-  reopenMonthAction,
+  monthName,
+  initialStatus,
 }: {
   month: string;
   carriedFrom: string | null;
@@ -119,14 +119,19 @@ export function StandardPoolPanel({
   rows: PoolPanelRow[];
   // The jobs behind this month's "New Hours Added" — see NewProjects below.
   newProjects: NewProjectRow[];
+  // The whole month is frozen (there is no Standard-Sheet-only submitted state any
+  // more — §16 consolidated the two into one).
   isSubmitted: boolean;
-  // No isAdmin any more — Reopen is password-gated, not role-gated. See the
-  // footer.
   poolsEditable: boolean;
   savePoolsAction: (formData: FormData) => Promise<void>;
-  refreshPoolsAction: () => Promise<void>;
-  submitMonthAction: () => Promise<void>;
-  reopenMonthAction: (formData: FormData) => Promise<void>;
+  // "July" — the submission button's dynamic label (§26.1), formatted on the server so
+  // the first paint is right.
+  monthName: string;
+  // The server's readiness check, so the status line is right before the client's own
+  // re-check lands. Null when the page could not compute it.
+  // Readiness, permission and the month's data fingerprint, read on the server so the
+  // card's first paint already knows whether the month can be submitted (§26.4).
+  initialStatus: MonthlyReportStatus | null;
 }) {
   const groups = [...new Set(rows.map((r) => r.group))];
   const [open, setOpen] = useState(true);
@@ -168,12 +173,18 @@ export function StandardPoolPanel({
         {isSubmitted ? (
           <span className="rounded bg-sdc-navy px-2 py-0.5 text-[10px] font-semibold text-white">Locked</span>
         ) : (
-          <form action={refreshPoolsAction}>
-            <button type="submit" className="rounded border border-sdc-border bg-white px-2 py-0.5 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light" title="Recompute this month's category pools now. Your pulled-hours and rate edits are kept.">
-
-              Refresh
-            </button>
-          </form>
+          // The panel's own "Refresh" button is gone (§26.11, 2026-08-04). It recomputed
+          // only these four pools — precisely the partial refresh that the one
+          // application-wide `Refresh Data` button replaced, since `standard_pools` is
+          // one of the seven sources that pass covers. Keeping a second, narrower button
+          // would put the pools back in the state §25 was written to end: refreshed on
+          // their own clock, beside figures on another.
+          <span
+            className="text-[10px] text-sdc-gray-500"
+            title="These pools refresh with the rest of the app — use Refresh Data in the sidebar."
+          >
+            Refreshed with the app
+          </span>
         )}
       </div>
 
@@ -182,20 +193,24 @@ export function StandardPoolPanel({
           {carriedFrom && !isSubmitted && (
             <p className="border-b border-sdc-border bg-sdc-yellow-bg/60 px-3 py-2 text-[11px] text-sdc-gray-600">
               No pool figures computed for {month} yet — showing {carriedFrom}&apos;s as an estimate.{" "}
-              {/* Refresh is worth offering again now that the drivers are computed
-                  from the app's own data. It used to be the opposite: the figures
-                  came from a Power BI ETC period published roughly two months
-                  behind, so for the in-progress month Refresh could only report
-                  success having written nothing. When the sync has recorded a
-                  reason of its own, that wins over this generic line. */}
-              {upstreamNote ?? `Refresh computes ${month} now; the 6-hour sync does the same on its own.`}
+              {/* Points at "Refresh Data", not at a panel button that no longer exists
+                  (§26.11). The pools ARE computed by that pass — standard_pools is one
+                  of its sources — so the instruction is the same one, just named for the
+                  control that is actually on screen. When the sync has recorded a reason
+                  of its own, that wins over this generic line. */}
+              {upstreamNote ?? `"Refresh Data" computes ${month} now; the hourly schedule does the same on its own.`}
             </p>
           )}
 
           {rows.length === 0 ? (
-            <p className="px-3 py-4 text-xs text-sdc-gray-400">No department pool data available. Click Refresh to compute this month.</p>
+            <p className="px-3 py-4 text-xs text-sdc-gray-400">
+              No department pool data available. Click &ldquo;Refresh Data&rdquo; in the toolbar to compute this month.
+            </p>
           ) : (
-            <form action={savePoolsAction}>
+            // Not a submitting form any more (§17): the two manual cells autosave. It
+            // stays a <form> so PoolAutosave can read the named inputs with FormData,
+            // exactly as the Save button used to.
+            <form id="standard-pool-form">
               <div className="max-h-[calc(100vh-330px)] overflow-auto styled-scrollbar">
                 {groups.map((group) => (
                   <div key={group}>
@@ -218,53 +233,39 @@ export function StandardPoolPanel({
                 />
               </div>
               {poolsEditable && (
-                <div className="border-t border-sdc-border px-3 py-2">
-                  <button type="submit" className="w-full rounded-md border border-sdc-border bg-white px-3 py-1.5 text-xs font-semibold text-sdc-navy hover:bg-sdc-blue-light">
-                    Save Pool Cells
-                  </button>
-                  <p className="mt-1 text-center text-[10px] text-sdc-gray-400">Grid Standard Fees update live; Save persists them.</p>
+                <div className="border-t border-sdc-border">
+                  {/* Replaces "Save Pool Cells" (§17). These were the last manual-save
+                      cells in the app, and the figures the whole grid's Standard Fees
+                      are computed from — so an unsaved pool was both a data-loss risk
+                      and the thing that used to block submitting the month. */}
+                  <PoolAutosave formId="standard-pool-form" saveAction={savePoolsAction} />
+                  <p className="pb-2 text-center text-[10px] text-sdc-gray-400">
+                    Grid Standard Fees update live; these cells save on their own.
+                  </p>
                 </div>
               )}
             </form>
           )}
 
-          <div className="flex flex-col gap-2 border-t border-sdc-border bg-sdc-gray-50 px-3 py-3">
-            {isSubmitted ? (
-              <>
-                <p className="text-[11px] text-sdc-gray-600">
-                  This month&apos;s Standard Sheet is submitted and frozen. Reopen it to refresh the pools or re-submit.
-                </p>
-                {/* Password-gated, not admin-only (2026-08-02). The button used
-                    to render only for role === "ADMIN", so the manager who owns
-                    the sheet couldn't see it — which is why June 2026's pools
-                    sat 36h out of date until it was corrected by hand. */}
-                <ReopenMonthButton
-                  action={reopenMonthAction}
-                  month={month}
-                  label="Reopen Month"
-                  align="right"
-                  hint="Unfreezes this month's Standard Sheet so its pools can be refreshed and the sheet re-submitted. Per-job Standard Fees are recalculated when you submit again."
-                  className={`${BUTTON_SECONDARY} w-full !py-1.5 !text-xs`}
-                />
-              </>
-            ) : (
-              <form action={submitMonthAction}>
-                <button
-                  type="submit"
-                  disabled={poolsDirty}
-                  className={`${BUTTON_PRIMARY} w-full !py-2 !text-xs disabled:cursor-not-allowed disabled:opacity-50`}
-                  title={poolsDirty ? "Save Pool Cells first — the freeze uses the saved pool values." : "Freeze this month's Standard Sheet."}
-                >
-                  Submit Standard Sheet
-                </button>
-                {poolsDirty && (
-                  <p className="mt-1 text-center text-[10px] font-medium text-sdc-yellow-text">
-                    Unsaved pool edits — click “Save Pool Cells” first so the frozen fees match the grid.
-                  </p>
-                )}
-              </form>
-            )}
-          </div>
+          {/* ── The month's ONE submission, at the bottom of this card (§26) ────
+              Moved here from the Monthly ETC toolbar, where it sat between the filters
+              and Refresh Data — beside the controls people press dozens of times an
+              hour, which is the wrong neighbourhood for the one irreversible action on
+              the page. It now sits under the figures it finalises, after the totals and
+              the New Projects list, with a readiness line above it and a confirmation
+              dialog in front of it.
+
+              Note what the placement means for WHO can submit: this panel renders only
+              for a session that has unlocked the Standard view, so submission is now
+              scoped to those people. That follows from where §26.1 asks for the button
+              and matches §26.14's "only authorized users"; the server action enforces it
+              independently either way. */}
+          <SubmitReportAction month={month} monthName={monthName} initialStatus={initialStatus} locked={isSubmitted} />
+          {poolsDirty && !isSubmitted && (
+            <p className="border-t border-sdc-border bg-sdc-gray-50 px-3 pb-3 text-center text-[10px] font-medium text-sdc-yellow-text">
+              Unsaved pool edits — they save on their own within a second, and the submission waits for them.
+            </p>
+          )}
         </>
       )}
     </aside>

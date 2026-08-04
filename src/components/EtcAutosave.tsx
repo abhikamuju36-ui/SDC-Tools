@@ -8,8 +8,10 @@ import {
   isEtcDirty,
   markEtcFieldsRefused,
   rebaselineEtcFields,
+  registerEtcAutosaveFlush,
 } from "@/lib/etc-dirty-tracker";
 import { useAutosave } from "@/components/useAutosave";
+import { setCellSaveState } from "@/lib/etc-save-state";
 import { SaveStatusChip } from "@/components/SaveStatusChip";
 import { requestLiveRefresh, registerRefreshBlocker } from "@/components/LiveRefresh";
 
@@ -26,7 +28,7 @@ import { requestLiveRefresh, registerRefreshBlocker } from "@/components/LiveRef
 // Save button respected would make the gate decorative. That argument is now moot in
 // the right direction: the DRAFT save has no gate at all (see saveAllNewEtcDrafts), so
 // there is nothing to bypass. The gates that matter still stand on the actions that
-// freeze or destroy: Submit ETC, Clear ETC, Reopen Month, Sync History.
+// freeze or destroy: the monthly report submission, Reopen Month, Sync History.
 //
 // `locked` is still respected: a submitted month is frozen history and nothing here
 // may touch it.
@@ -37,7 +39,7 @@ import { requestLiveRefresh, registerRefreshBlocker } from "@/components/LiveRef
 export function EtcAutosave({ formId, month, locked }: { formId: string; month: string; locked: boolean }) {
   const formRef = useRef<HTMLFormElement | null>(null);
   // The toolbar sits OUTSIDE this form (the grid form opens further down the
-  // page), so it is reached by id — the same way SaveEtcDraftsButton does it.
+  // page), so it is reached by id.
   useEffect(() => {
     const el = document.getElementById(formId);
     formRef.current = el instanceof HTMLFormElement ? el : null;
@@ -73,13 +75,33 @@ export function EtcAutosave({ formId, month, locked }: { formId: string; month: 
       // written — so a second manager's open tab wrote its page-load values back
       // over everything the first had saved. See changedEtcFormData.
       const fd = changedEtcFormData(form);
+      // Per-cell states (§17), so "did MY cell save" is answerable on a grid with 1,180
+      // inputs. The names posted are exactly the cells this request carries.
+      const posted = [...fd.keys()].filter((k) => k.startsWith("newEtcOverride__") || k.startsWith("newEtcCreate__"));
+      setCellSaveState(posted, "saving");
       const result = await saveAllNewEtcDrafts(month, fd);
       // Re-baseline from exactly what was posted, so the next edit is compared
       // against the saved values rather than what the page first loaded with.
-      if (result.ok) rebaselineEtcFields(fd, result.conflictFields);
+      // Refused (another user got there first) and INVALID (not a number this column
+      // takes) values are both excluded: neither was written, so neither may become
+      // what "unchanged" means. They stay dirty, which keeps the unsaved-changes
+      // guards honest about them.
+      if (result.ok) rebaselineEtcFields(fd, [...result.conflictFields, ...result.invalidFields]);
+      // Marked the same way as a refusal so the background refresh isn't held off
+      // forever by a cell that can never save as typed — the refresh interlock
+      // deliberately ignores fields it knows the server rejected. No toast here:
+      // an autosave pass is silent by design, and the Save button says it out loud.
+      if (result.invalidFields.length > 0) markEtcFieldsRefused(result.invalidFields);
       // A refused write means somebody else changed that cell first. Pull the
       // real values in so the manager is looking at what is actually stored
       // rather than retyping against a figure that is already gone.
+      // Confirmed, refused and invalid are three different things and the cell says
+      // which. `posted` minus the two refusal sets is what actually landed.
+      const refused = new Set([...result.conflictFields, ...result.invalidFields]);
+      if (result.ok) setCellSaveState(posted.filter((n) => !refused.has(n)), "saved");
+      else setCellSaveState(posted, "failed");
+      setCellSaveState(result.conflictFields, "conflict");
+      setCellSaveState(result.invalidFields, "failed");
       if (result.conflicts > 0) {
         markEtcFieldsRefused(result.conflictFields);
         requestLiveRefresh();
@@ -87,6 +109,13 @@ export function EtcAutosave({ formId, month, locked }: { formId: string; month: 
       return result.ok;
     },
   });
+
+  // Let `Submit {Month} Report` wait for a pending save before it reads the month out
+  // of the database. Registered here because this component owns the debounce.
+  useEffect(() => {
+    if (!enabled) return;
+    return registerEtcAutosaveFlush(() => retry());
+  }, [enabled, retry]);
 
   useEffect(() => {
     if (!enabled) return;
@@ -125,5 +154,7 @@ export function EtcAutosave({ formId, month, locked }: { formId: string; month: 
   }, [enabled, schedule]);
 
   if (!enabled) return null;
-  return <SaveStatusChip status={status} onRetry={retry} />;
+  // The one chip that speaks for the grid's cells — so it, and only it, reports a cell
+  // holding a value the column will not accept (§27.9).
+  return <SaveStatusChip status={status} onRetry={retry} watchesGridCells />;
 }

@@ -1,8 +1,7 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
-import { useRouter, useSearchParams, usePathname } from "next/navigation";
-import { nextParams, notePendingParams } from "@/lib/url-params";
+import { useEffect, useState } from "react";
+import { useDraftParamsMenu } from "@/components/useDraftParamMenu";
 
 // Consolidated "View" dropdown for the Monthly ETC toolbar — merges what used
 // to be three separate buttons (Columns, Billable, Grid Size) into one menu:
@@ -81,16 +80,48 @@ export function EtcViewMenu({
   showJobName: boolean;
   selectedBillables: string[];
 }) {
-  const router = useRouter();
-  const searchParams = useSearchParams();
-  const pathname = usePathname();
-  const detailsRef = useRef<HTMLDetailsElement>(null);
+  // ── Why this menu keeps a local draft (2026-08-04, performance pass) ────────
+  //
+  // It used to navigate on EVERY tick, with `checked` read straight from a server
+  // prop. Measured on the live grid: the checkbox did not visibly change for
+  // ~800ms — a full server re-render of 49 jobs x 13 sections had to complete and
+  // ship back before the tick appeared. Five ticks were five of those. That is the
+  // "filter selections respond slowly" report, and it also explains "the menu
+  // closes on me": every tick re-rendered the toolbar under the open panel.
+  //
+  // useDraftParamsMenu is the pattern the Projects toolbar already used for exactly
+  // this reason: the tick lands in local state on the same frame (~7ms), and the URL
+  // follows once, 250ms after the last change. The panel stays open throughout —
+  // closing it just flushes anything still on the timer.
+  const { draft, toggleValue, setValues, pending, detailsRef, detailsProps } = useDraftParamsMenu({
+    committed: {
+      dept: selectedGroups.length ? selectedGroups : [...GROUPS],
+      billables: selectedBillables,
+      // A single-value param modelled as a list, so all three live in one draft and
+      // one navigation. "0" means the Job Name column is hidden.
+      jobname: showJobName ? [] : ["0"],
+    },
+    buildParams: (d, qs) => {
+      // Both (or none) selected is the default full grid — never collapse to zero.
+      if (d.dept.length === 0 || d.dept.length === GROUPS.length) qs.delete("dept");
+      else qs.set("dept", GROUPS.filter((g) => d.dept.includes(g)).join(","));
+      // Deliberately NOT deleted when both are selected: `billables` absent means
+      // "both", which is the same thing, but the Projects tab writes it explicitly
+      // and the two pages should produce identical URLs for identical views.
+      qs.set("billables", d.billables.join(","));
+      if (d.jobname.includes("0")) qs.set("jobname", "0");
+      else qs.delete("jobname");
+    },
+  });
 
-  const groupSet = new Set(selectedGroups.length ? selectedGroups : GROUPS);
-  const billableSet = new Set(selectedBillables);
+  // Read from the DRAFT, so every tick and every "(filtered)" label reflects the
+  // click immediately rather than the last server render.
+  const groupSet = new Set(draft.dept);
+  const billableSet = new Set(draft.billables);
+  const jobNameShown = !draft.jobname.includes("0");
   const groupsFiltered = GROUPS.some((g) => !groupSet.has(g));
   const billableFiltered = BILLABLE.some((b) => !billableSet.has(b));
-  const anyFilterActive = groupsFiltered || billableFiltered || !showJobName;
+  const anyFilterActive = groupsFiltered || billableFiltered || !jobNameShown;
 
   // Restore saved text size + density once on mount (same as GridZoomControls).
   useEffect(() => {
@@ -102,63 +133,16 @@ export function EtcViewMenu({
     if (savedCol != null) document.documentElement.style.setProperty(COL_VAR, `${clamp(Number(savedCol))}px`);
   }, []);
 
-  useEffect(() => {
-    function onClick(e: MouseEvent) {
-      if (detailsRef.current?.open && !detailsRef.current.contains(e.target as Node)) detailsRef.current.open = false;
-    }
-    document.addEventListener("click", onClick);
-    return () => document.removeEventListener("click", onClick);
-  }, []);
-
-  // One writer for all three toggles, so the in-flight handling can't be right
-  // in two of them and missing in the third.
-  //
-  // This menu navigates on EVERY tick, so the second tick reliably lands while
-  // the first is still rendering — and until that commits, useSearchParams
-  // still reports the query string from before it. Building straight from the
-  // hook would rebuild the URL without the first tick and silently undo it,
-  // which is what made these checkboxes feel like they don't stay ticked.
-  // See lib/url-params.ts.
-  function apply(mutate: (qs: URLSearchParams) => void) {
-    const currentQs = searchParams.toString();
-    const qs = nextParams(currentQs);
-    mutate(qs);
-    const q = qs.toString();
-    notePendingParams(currentQs, q);
-    router.push(`${pathname}?${q}`, { scroll: false });
-  }
-
-  function toggleGroup(group: string) {
-    const next = new Set(groupSet);
-    if (next.has(group)) next.delete(group);
-    else next.add(group);
-    apply((qs) => {
-      // Both (or none) selected is the default full grid — never collapse to zero.
-      if (next.size === 0 || next.size === GROUPS.length) qs.delete("dept");
-      else qs.set("dept", GROUPS.filter((g) => next.has(g)).join(","));
-    });
-  }
-
-  function toggleJobName() {
-    apply((qs) => {
-      if (showJobName) qs.set("jobname", "0");
-      else qs.delete("jobname");
-    });
-  }
-
-  function toggleBillable(value: string) {
-    const next = new Set(billableSet);
-    if (next.has(value)) next.delete(value);
-    else next.add(value);
-    apply((qs) => qs.set("billables", Array.from(next).join(",")));
-  }
+  // Click-outside closing and the debounce flush both live in useDraftParamsMenu
+  // now, so there is one implementation of "the menu closed, apply what's pending"
+  // rather than one per menu.
 
   // Uncontrolled native <details>: the browser adds/removes `open` on the DOM
   // element as the user toggles it. If React hydrates while it's already open,
   // its VDOM (no `open`) mismatches the DOM (`open=""`) — a benign dev warning.
   // suppressHydrationWarning silences just that attribute check.
   return (
-    <details ref={detailsRef} suppressHydrationWarning className="group relative inline-block">
+    <details ref={detailsRef} {...detailsProps} suppressHydrationWarning className="group relative inline-block">
       <summary
         className={`flex list-none cursor-pointer select-none items-center gap-1.5 rounded-md border px-3.5 py-1.5 text-sm font-medium shadow-sm ${
           anyFilterActive ? "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark" : "border-sdc-border bg-white text-sdc-navy hover:bg-sdc-blue-light"
@@ -166,6 +150,10 @@ export function EtcViewMenu({
       >
         View
         {anyFilterActive && " (filtered)"}
+        {/* The tick is instant and the grid follows ~250ms later, so this is the one
+            thing that has to say "the table is catching up" — without it a fast
+            ticker would wonder whether the click registered. */}
+        {pending && <span className="text-[10px] font-normal opacity-70">updating…</span>}
         <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" className="shrink-0 opacity-70 transition-transform duration-150 group-open:rotate-180">
           <path d="M3.5 6 L8 10.5 L12.5 6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -174,19 +162,33 @@ export function EtcViewMenu({
         <p className="px-1.5 pb-1 text-[11px] font-semibold uppercase tracking-wide text-sdc-gray-400">Section columns</p>
         {GROUPS.map((g) => (
           <label key={g} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-sdc-gray-100">
-            <input type="checkbox" checked={groupSet.has(g)} onChange={() => toggleGroup(g)} className="h-3.5 w-3.5 shrink-0" />
+            {/* Unticking the LAST group restores both, rather than leaving an empty
+                selection. The grid can never render zero section columns — the URL
+                treats "no dept" as "both" — and with a local draft the box would
+                otherwise sit unticked while the grid showed the column anyway. The
+                old server-driven checkbox snapped back on the next render; this does
+                the same thing, immediately and on purpose. */}
+            <input
+              type="checkbox"
+              checked={groupSet.has(g)}
+              onChange={() => {
+                const next = groupSet.has(g) ? draft.dept.filter((x) => x !== g) : [...draft.dept, g];
+                setValues("dept", next.length === 0 ? [...GROUPS] : next);
+              }}
+              className="h-3.5 w-3.5 shrink-0"
+            />
             <span className="flex-1">{g}</span>
           </label>
         ))}
         <label className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-sdc-gray-100">
-          <input type="checkbox" checked={showJobName} onChange={toggleJobName} className="h-3.5 w-3.5 shrink-0" />
+          <input type="checkbox" checked={jobNameShown} onChange={() => setValues("jobname", jobNameShown ? ["0"] : [])} className="h-3.5 w-3.5 shrink-0" />
           <span className="flex-1">Job Name column</span>
         </label>
 
         <p className="mt-1 border-t border-sdc-border px-1.5 pb-1 pt-2 text-[11px] font-semibold uppercase tracking-wide text-sdc-gray-400">Rows</p>
         {BILLABLE.map((b) => (
           <label key={b} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-sdc-gray-100">
-            <input type="checkbox" checked={billableSet.has(b)} onChange={() => toggleBillable(b)} className="h-3.5 w-3.5 shrink-0" />
+            <input type="checkbox" checked={billableSet.has(b)} onChange={() => toggleValue("billables", b)} className="h-3.5 w-3.5 shrink-0" />
             <span className="flex-1">{b}</span>
           </label>
         ))}

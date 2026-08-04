@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
-import { requestLiveRefresh } from "@/components/LiveRefresh";
+import { requestLiveRefresh, requestThrottledLiveRefresh } from "@/components/LiveRefresh";
+import { applyRemoteEtcValues } from "@/lib/etc-remote-values";
 
 // The client half of the realtime layer, mounted once for the whole app.
 //
@@ -36,6 +37,13 @@ export type ChangeEvent = {
   changeType: string;
   at: string;
   message: string;
+  // The cell this change belongs to, when it is one cell: the affected input's
+  // form-field name. Lets a browser update that single cell instead of refetching
+  // the whole route — see lib/etc-remote-values.ts. `altCellKey` is the same cell's
+  // other legitimate name (entry-id form vs job+section form), because two browsers
+  // can be holding different ones. Optional on purpose: a bulk change has no cell.
+  cellKey?: string;
+  altCellKey?: string;
 };
 
 // ── This tab's identity ─────────────────────────────────────────────────────
@@ -246,10 +254,26 @@ export function RealtimeProvider() {
           if (data.type === "presence") setPresence(data.entries);
           else if (data.type === "changes") {
             pushChanges(data.events);
-            // Somebody else's value landed: pull the fresh render so the figures
-            // update, not just the banner. This is what removes the "refresh to
-            // see it" requirement (spec 2, 4, 8).
-            requestLiveRefresh();
+            // ── Incremental first, refetch only if we must (2026-08-04) ────────
+            //
+            // This used to be an unconditional requestLiveRefresh(), which is the
+            // single most expensive thing this app can do — on Monthly ETC, an
+            // 854 KB payload and a ~600ms server render of 4,150 cells — fired on
+            // the most frequent event there is. One colleague autosaving eight
+            // cells was eight full re-renders of the page, in every open tab,
+            // while people were typing in it. That is where "the app feels laggy"
+            // came from.
+            //
+            // A New ETC change is one number in one cell, and the event now says
+            // which cell (CellChange.cellKey). So it is applied straight to that
+            // cell — no network, no refetch, one component re-rendered.
+            const applied = applyRemoteEtcValues(data.events);
+            // Anything NOT addressable to a cell still needs the server: a change on
+            // another tab, a bulk sync, or an event from a server build that predates
+            // cellKey. Throttled rather than immediate, because the case that hurt was
+            // always a BURST — twenty cells saved in one pass should cost one refresh,
+            // not twenty.
+            if (applied < data.events.length) requestThrottledLiveRefresh();
           }
         } catch {
           // A malformed frame must not kill the stream.

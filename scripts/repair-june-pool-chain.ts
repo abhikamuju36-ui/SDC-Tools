@@ -13,7 +13,7 @@ import { round2 } from "../src/lib/etc";
 // the UI's "Reopen Month" does), recomputes June's pools from live job data,
 // then recomputes July's so the corrected balance flows forward.
 //
-// It does NOT re-freeze June — submitStandardSheetMonth needs a signed-in
+// It does NOT re-freeze June — the report submission needs a signed-in
 // session and the unlock cookie, and the freeze should carry the real user in
 // its audit trail. Re-lock June from the UI afterwards.
 //

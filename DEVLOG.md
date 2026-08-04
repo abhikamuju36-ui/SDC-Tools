@@ -1010,3 +1010,452 @@ module is ever bundled to the browser, and it let the 14 concurrency tests exist
 One of them immediately found a real gap: `subscribe()`'s two initial frames were
 not guarded the way `broadcast()`'s are, so subscribing over an already-closed
 stream would throw into the route handler.
+
+---
+
+## 16. The yellow cell, and clearing a value (2026-08-04)
+
+Two reports, one root cause each, both about the same column — the New ETC cells on
+Monthly ETC (hours) and Parts Cost (dollars).
+
+### 16.1 "Cells stay yellow even when they already contain a value"
+
+Yellow means "somebody has to type something here". It was computed by
+`isNewEtcCellDecided`, and that function was answering TWO questions at once,
+because Clear ETC had been scoped off it:
+
+```
+decided = hasValue && !(reopened month && the value equals what was submitted)
+```
+
+The second clause is right for Clear ETC — that button exists to empty exactly the
+cells still carrying last submission's figure — but as a COLOUR rule it means every
+cell on a reopened month renders yellow with a number sitting in it. Which is what
+was reported, and it is a fair complaint: yellow is an instruction, and those cells
+were not asking for anything.
+
+Split into two predicates in `lib/etc.ts`:
+
+- **`isNewEtcCellDecided`** — the colour, and nothing else:
+  `yellow ⇔ isNewEtcDecisionRequired(state) && !hasNewEtcValue(text)`. A decision is
+  required when hours (or money) were booked this month; blank is null/undefined/
+  empty/whitespace. **0 and "0" are values** — a section planned at zero has been
+  answered, and `hasNewEtcValue` is now the one place in the app that draws that
+  line.
+- **`isNewEtcCarriedFromSubmission`** — what Clear ETC acts on. Identical logic to
+  the old second clause, so the SET of cells the button empties is unchanged; it
+  just no longer picks a background colour. `isNewEtcClearable` is built on it.
+
+Both read the LIVE input text, which is what makes the colour honest with no save,
+refresh or remount: it clears on the keystroke that fills the cell and returns on
+the keystroke that empties it. Clear ETC's own copy stopped describing its targets
+as "the yellow cells", because they are not yellow until it has run.
+
+### 16.2 "I cleared a value, saved, refreshed, and it came back"
+
+Three bugs wearing one coat, all of them the same missing distinction: a New ETC
+that is empty because nobody filled it in, versus one that is empty because
+somebody emptied it.
+
+1. **An empty posted field had no agreed meaning.** `saveAllNewEtcDrafts` compared
+   the posted value against the stored DRAFT and skipped when they matched. A
+   cleared cell posts `""` → next draft `null`; and on the two cases that matter
+   most the stored draft was ALREADY null:
+   - a reopened month (the box seeds from `newEtc`, the confirmed value)
+   - a zero-hours cell (the box seeds from `priorEtc`, the carry-forward)
+
+   `null === null` → `continue`. **The save wrote nothing at all.** Not a caching
+   problem, not a refresh problem: the clear never left the browser.
+2. **Even when the draft WAS nulled, the seed put the figure back.**
+   `newEtcSeedText` falls through draft → confirmed → carry-forward, so nulling the
+   draft alone re-rendered the removed number from the row's other columns.
+   `newEtcClearedAt` already existed for exactly this (Clear ETC needed it), but a
+   manual clear never set it.
+3. **Create-cells dropped empties outright.** A cell for a section the job was never
+   quoted for posts `newEtcCreate__<job>__<section>`, and keeps posting under that
+   name until the page re-renders with the new entry id. `parseNewEtcCreateFields`
+   skipped empty fields, so clearing a cell you had just filled in, in the same page
+   session, wrote nothing.
+
+The fix is one idea in three places:
+
+- **`parseNewEtcField(raw)`** in `lib/etc.ts` — the single parse for every New ETC
+  value arriving from a browser. Four outcomes, deliberately distinct:
+  `absent` (not in the request — no opinion, leave the stored value alone),
+  `clear` (present and empty — a real edit), `value` (a number, **0 included**),
+  `invalid` (not a number this column takes — refused, never coerced to 0 and never
+  silently replaced by the previous value). This is the rule that makes
+  `if (value) save(value)` impossible to write here.
+- **A clear writes both fields:** `newEtcDraft: null, newEtcClearedAt: now()`, with
+  no condition on the draft having been non-null. The cell was showing a figure —
+  that is why the user emptied it and why the field is in the payload — and where
+  that figure came from is not something the save needs to know.
+- **Create-cells get the same treatment** once a row exists behind them, including
+  storing a typed `0`. A 0 still never CREATES a row (that is the backstop that
+  stopped Submit timing out on ~350 empty cells on 2026-08-03).
+
+Around the fix:
+
+- **A clear is defended from an older save.** `isStaleDraftWrite` takes
+  `storedCleared`: if a client believed a figure was stored and the stored null is a
+  deliberate clear, that client predates the clear and its write is refused. Two
+  users both clearing the same cell is NOT a conflict — they agree.
+- **Removals are recorded and announced** like any other change, now for both field
+  namespaces (create-cells were never in the change log before). The previous value
+  named in the audit row is the stored draft, or — when there wasn't one — the figure
+  the client declared as its baseline, i.e. what was actually on the manager's
+  screen: `Abhi removed New ETC (Mech Gen) value 60 for 1165 in Monthly ETC`.
+- **Invalid values are reported instead of vanishing.** `invalidFields` comes back to
+  the client, which keeps those cells dirty (excluded from the re-baseline, so every
+  unsaved-changes guard still covers them) and says so in a toast. Autosave marks
+  them the way it marks refusals, so one uncorrectable cell cannot deadlock the
+  background refresh.
+- **Escape cancels an edit** (`ExcelCellFocus`), restoring the last value the SERVER
+  sent. Cells declare it in `data-baseline` — the same attribute `lib/dirty-form.ts`
+  already used — so this needed no per-grid wiring. Written through the native value
+  setter plus an `input` event, or React would paint its own state back over it.
+
+Delete/Backspace already cleared a cell (focus selects the whole value, so either
+key empties the box) — what was missing was everything after the keystroke.
+
+### What did NOT change, on purpose
+
+- **Submit still resolves a blank cell to the suggestion.** `newEtc` is the confirmed
+  figure for the month and cannot be null, so an empty box submits as
+  `suggestNewEtc(prior, worked)` — which is what the cell's own tooltip has always
+  said. On a zero-hours cell that is the carry-forward, so submitting a deliberately
+  cleared zero-hours cell does re-confirm the prior balance. Clearing is a
+  draft-state operation; the submitted column has to hold a number.
+- **`effectiveNewEtc` still falls back to the suggestion**, so Total New ETC / Total
+  ETC $ / Standard Fees answer "what would this month be if submitted as-is". Only
+  DIFF reads a blank as zero. The totals do move the instant a cell is cleared —
+  they just move to the suggestion, not to nothing.
+- **`savePools` still treats a blanked Rate / Hours-Pulled cell as "keep the stored
+  value".** Blank is not a valid state for those two (the schema is non-null, and a 0
+  Rate collapses a department's Standard Fee to $0), so "cleared" has no meaning
+  there. An explicit 0 is still saveable by typing it.
+
+---
+
+## 17. Performance: measured, then fixed (2026-08-04)
+
+Reported as "the application feels slow and laggy — tabs take too long, filter
+selections respond slowly, filter menus close unexpectedly, buttons do not react".
+
+### 17.1 The baseline, before anything was changed
+
+Two instruments, because the app has two very different halves.
+
+**Database** — `scripts/perf-baseline.ts` (committed, re-runnable) times the actual
+queries each tab performs, grouped into the *waves* the page awaits them in. A wave
+costs its slowest member; waves are serial.
+
+| Tab | queries | serial waves | critical path |
+|---|---|---|---|
+| Monthly ETC | 18 | 9 | 135ms |
+| Projects | 5 | 3 | 144ms |
+| Employees | 1 | 1 | 5ms |
+| Audit Log | 2 | 1 | 57ms |
+| Dashboard | 9 | 1 | 11ms |
+
+**The database was not the bottleneck anywhere.** Nothing exceeded 144ms.
+
+**Browser** (dev build, in-app browser, live data — 49 jobs / 438 entries):
+
+| Measure | Before |
+|---|---|
+| Monthly ETC route render + payload | **613ms / 854 KB** |
+| ETC DOM | 6,827 nodes · 4,150 cells · 1,180 inputs |
+| Filter tick — checkbox visibly changes | **~800ms** |
+| Tab switch, first visit (dev, includes compile) | / 103ms · employees 771ms · projects 1,502ms |
+| Tab switch, revisit | ~101ms |
+| Duplicate requests per navigation | none found |
+
+So the slowness was never SQL and never (mostly) navigation. It was **how much work
+one user action caused**, in three specific places.
+
+### 17.2 Root cause 1 — a colleague's keystroke re-rendered your whole page
+
+`RealtimeProvider` called `requestLiveRefresh()` on **every** change event. On Monthly
+ETC that is an 854 KB payload and a ~600ms server render of 4,150 cells. One colleague
+autosaving a column of eight cells was eight of those, in every open tab, while people
+were typing in them. The app's response to its most frequent event was its most
+expensive operation.
+
+Fixed by making the update incremental:
+
+- `CellChange` / `ChangeEvent` now carry `cellKey` (+ `altCellKey`, because a New ETC
+  cell is addressed by entry id once a row exists and by job+section before that, and
+  two browsers can legitimately hold different names for the same cell).
+- **`lib/etc-remote-values.ts`** — a module store keyed by cell name. Each cell reads
+  its OWN key through `useSyncExternalStore`, so a value arriving for one cell
+  re-renders one cell; the other 1,179 run a Map lookup, get the same string, and React
+  skips them. A whole batch is one notification.
+- The cells apply it through the SAME clean/dirty rule they already used for a server
+  render, so it can never overwrite typing in progress.
+- **A full render always wins.** A remote value is a patch on top of the last render,
+  so the cell drops it the moment its server-rendered value moves — a payload is newer
+  and more complete than any single event (it can carry changes whose events this tab
+  never saw). That is what stops a cached event reinstating a value the database no
+  longer holds, cleared values included.
+- The route refetch survives only as a fallback for events that name no cell (a bulk
+  sync, another tab), and it is now throttled: leading edge, then one trailing refresh
+  per 5s window, so a burst costs one refresh instead of twenty.
+
+### 17.3 Root cause 2 — the page loaded a panel nobody had opened
+
+The punch drill-through under the KPI cards was fetched with the page, every time:
+**1,092 rows + the whole employee roster, 46ms — the slowest query on the page** —
+serialised into the payload of a panel that starts closed. Paid on every one of those
+realtime refetches, every 45s interval, and every filter change.
+
+Now fetched when a drill is opened (`lib/hours-detail-actions.ts`), which is what the
+unattributed-hours drill beside it already did. The card gets 49 job IDs instead of
+1,092 rows.
+
+### 17.4 Root cause 3 — the filter checkbox waited for the whole grid
+
+`EtcViewMenu` navigated on every tick with `checked` read from a server prop, so the
+tick could not appear until the server had re-rendered 49 jobs × 13 sections and
+shipped it back: **~800ms of nothing, then the box moved**. Five ticks were five full
+re-renders, and each one re-rendered the toolbar under the open panel.
+
+Converted to `useDraftParamsMenu` — the hook the Projects toolbar has used since
+2026-07-30 for exactly this. The tick lands in local state on the same frame; the URL
+follows once, 250ms after the last change; the panel stays open and closing it flushes
+anything still pending. Unticking the last section group restores both rather than
+leaving a selection the grid cannot render.
+
+### 17.5 Also fixed
+
+- **Nine serial query waves → seven** on Monthly ETC: four independent reads (hidden-job
+  punches, HeadStart jobs, the Scheduler lookup, the Standard gate) were awaited one
+  after another. Critical path 135ms → 97ms.
+- **One click, one action** on the two irreversible buttons. `Submit ETC` and
+  `Reopen month` called `requestSubmit()` with nothing to stop a second click; both now
+  disable and say "Submitting…" / "Reopening…" until the navigation lands. Nothing was
+  ever corrupted (the server's `isMonthLocked` guard rejected the second one) but the
+  manager got a thrown error page for a double-click they were entitled to make.
+- **A reverted edit stops claiming to be unsaved.** `useAutosave` set `pending` on the
+  keystroke and only cleared it by saving, so typing a value and undoing it (or pressing
+  Escape) left "Unsaved changes" on screen forever. Found live while verifying §16.
+
+### 17.6 After
+
+| Measure | Before | After |
+|---|---|---|
+| ETC route render + payload | 613ms / 854 KB | **~565ms / 656 KB** (−23% payload) |
+| ETC database critical path | 135ms (18 q, 9 waves) | **97ms** (17 q, 7 waves) |
+| Colleague's save → your grid | full refetch: 854 KB + ~600ms | **one cell, 0 bytes** |
+| Burst of 20 colleague saves | 20 full refetches | 1 cell update each, 0 refetches |
+| Filter tick (checkbox moves) | ~800ms | **2.7ms**, menu stays open |
+| Filter ticks → navigations | 1 each | 1 per burst (250ms debounce) |
+| One cell edit (main thread) | — | **22ms** across 4,150 cells |
+| Opening the punch drill | (paid on every page load) | 49ms, only when opened |
+
+### 17.7 What was NOT done, and what is not proven
+
+- **The 565ms is a DEV build.** No production timing was taken — that needs a
+  `next start` process with its own `AUTH_URL` and a login. Treat the dev figures as
+  upper bounds and as before/after comparisons on identical footing, not as what users
+  see.
+- **No virtualization.** 4,150 cells still render. Row/column virtualization of this
+  grid means rebuilding a sticky, frozen-column, rowSpan'd table whose totals sum cells
+  that would no longer be mounted — a project, not a pass, and the remaining cost is
+  server render time rather than scroll jank (one cell edit is 22ms).
+- **The incremental realtime path was verified end-to-end once** (a second tab picked
+  up "77" with zero network requests) and by unit tests, but not repeatedly: this dev
+  server stopped fanning out SSE frames entirely part-way through — presence included,
+  which no change here touches — after a long run of Fast Refresh rebuilds. The hub
+  holds module-scope state, and HMR duplicating that module is the known hazard
+  documented in §15. It cannot happen in production (one build, one process).
+- **Audit Log still loads 1,000 rows** for client-side AG Grid paging (57ms). Left
+  alone: it was not part of the report and the grid's filtering depends on having them.
+- **The Scheduler tab is a separate app** (`SDC_Scheduler`, port 4003) and is not
+  touched by any of this.
+
+---
+
+## 18. One month, one submission; no manual saves (2026-08-04)
+
+Four requirements landed together, and they are one change: the month had two
+submissions and three save buttons, and every one of them was a way for the figures on
+screen to differ from the figures in the database.
+
+### 18.1 Clear ETC is gone (§14)
+
+Removed outright: the toolbar button, `clearYellowNewEtc`, the two predicates that
+existed only to scope it (`isNewEtcClearable`, `isNewEtcCarriedFromSubmission`), the
+`reopenAsksAgain` flag, the confirmation popover, the `clearableCount` computation on
+the page, the two one-off scripts written against it, and the dead `clearMonth` action
+(the original sheet's "Clear ETC" script parity, which no UI had called for months).
+
+**`EtcEntry.newEtcClearedAt` STAYS, and is load-bearing.** It is not part of the button
+— it is what makes clearing an INDIVIDUAL cell survive a reload, because a null draft
+otherwise falls through `newEtcSeedText` to the confirmed value or the carry-forward.
+See §16. Individual clearing, its autosave and its audit trail are untouched; verified
+live afterwards (cell cleared → reload → still cleared).
+
+The yellow rule kept its simplification from §16 and now has exactly one job.
+
+### 18.2 One submission, one transaction (§15, §16)
+
+Before, a month was finalised by two independent buttons:
+
+```
+Submit ETC             -> EtcEntry            (etc-actions.ts, read from the FORM)
+Submit Standard Sheet  -> StandardSheetSnapshot (standard-sheet-actions.ts)
+```
+
+Nothing tied them together, so **half-submitted was the normal state of a month**: the
+ETC figures could be frozen while the fees derived FROM them were still live and
+moving, or the reverse. July 2026 was exactly that when somebody asked why the same
+button existed twice.
+
+Now: **`Submit {Month} Report`** — one button, label following the month picker
+("Submit July Report"), in the toolbar. `lib/monthly-report.ts` + `lib/monthly-report-actions.ts`:
+
+- **Validated first, in detail.** Every issue names section · job · department · column ·
+  reason. The required New ETC values are defined by the SAME rule that paints the cell
+  yellow, so the checklist on screen and the thing blocking submission cannot be two
+  different sets. Measured on July 2026 the day it shipped: 180 outstanding values, the
+  first 25 listed with "…and 155 more", the Submit button disabled behind them.
+- **Atomic.** ETC entries and the fee snapshot are written in ONE transaction. A failure
+  anywhere leaves the month exactly as it was.
+- **Idempotent.** The client generates a submission id; a double-click or a retried
+  request returns the first outcome instead of finalising twice.
+- **Recorded.** `MonthlyReportSubmission` (new table, new migration) holds month, year,
+  user, timestamp, app version, status, submission id, the validation result, the
+  sections included and the failure reason — for refused attempts as well, because "why
+  could I not submit at 4pm" cannot be reconstructed later.
+- **Announced** to every connected browser (recordChanges → the change banner + a
+  throttled route refresh, which is the right instrument here: a submission moves every
+  figure on the page, not one cell).
+- **Reopen is unified too.** One Reopen unfreezes both tables and re-derives Prior ETC.
+  Leaving two would have recreated by hand the half-submitted month this removes.
+
+**It reads the DATABASE, not the form.** That is the structural half of the fix and it
+retires two long-standing hazards: a stale tab could no longer freeze its own DOM
+snapshot over colleagues' saved work (so `injectEtcBaselineFields` is gone), and a
+Columns/Billable filter no longer makes the month unsubmittable — those inputs simply
+are not part of the submission any more.
+
+### 18.3 No manual Save anywhere (§17)
+
+- The grid's **Save** button is gone. Every edit — new value, edit, replace, clear, 0,
+  paste — autosaves ~0.8s after the last keystroke, which has been true since §16; the
+  button was the last thing telling managers their work needed a click.
+- The Standard panel's **Save Pool Cells** is gone (`PoolAutosave`, same
+  `useAutosave` machinery as the grid). These were the last manual-save cells in the
+  app, and the figures the whole grid's Standard Fees are computed from — so an unsaved
+  pool was both a data-loss risk and the thing that used to disable the old submission.
+- **Per-cell save state** (`lib/etc-save-state.ts`): saving / saved / failed / conflict,
+  as a ring on the cell with a tooltip that says what happened to *that* value. One
+  toolbar chip could say "All changes saved" while a single refused cell sat on screen
+  looking exactly like its saved neighbours — unusable on a grid with 1,180 inputs.
+  Verified live: a typed value shows the saving ring, then "Saved", then fades.
+- **Ordering** was already safe and is now stated: saves are serialised (one in flight,
+  at most one follow-up), each request reads the CURRENT DOM value rather than a
+  captured one, and the server refuses a write whose believed baseline has moved. So the
+  100→90→80 case cannot end at 90 — there is no in-flight "90" request to lose a race.
+
+### 18.4 The one behaviour change to know about
+
+**A month can no longer be submitted with outstanding New ETC values.** That is what
+§16.5 asks for ("prevent submission when required information is incomplete") and it is
+a real workflow gate: July 2026 has 180 such cells today, and every one of them must be
+filled (or the month reopened later) before the report can be submitted. The old
+behaviour — silently submitting the machine's suggestion for a cell nobody had answered
+— is what made the yellow checklist advisory rather than meaningful.
+
+---
+
+## 19. Exporting the two grids (2026-08-04)
+
+Requested: Excel and CSV export from the Projects page and the Monthly ETC page, matching
+whatever the table is currently showing (§24).
+
+### 19.1 What was there before
+
+One route — `/api/jobs/export` — linked from the Jobs page as "Export CSV". Seven columns,
+no XLSX, it ignored the Projects grid's filters entirely, and **it had no authentication
+check of its own**: the whole job list was one unauthenticated URL away. It is now a 410
+with a pointer to the replacement (rather than a 404, because that URL has been shipping
+in the UI for months).
+
+### 19.2 Shape
+
+```
+lib/export/sheet.ts      the SheetSpec both formats render, + filename/sheet-name rules
+lib/export/csv.ts        RFC 4180 + BOM + CRLF + the formula-injection guard
+lib/export/xlsx.ts       exceljs: number formats, merged group headers, freeze panes, widths
+lib/export/projects-export.ts   65 columns  (identity, totals, costs, per-section Q/A/Remaining)
+lib/export/etc-export.ts        76 columns  (6 identity + 14 × 5 for 13 sections + Parts Cost)
+api/export/[report]/route.ts    auth + audit + Content-Disposition
+components/ExportMenu.tsx       Export ▾ on both pages
+```
+
+**One spec, two writers** is the load-bearing decision: the CSV and the XLSX cannot
+disagree about what the month contains, because they render the same rows, in the same
+order, with the same blanks. `null`, `0` and `""` stay three different things all the way
+into the file — which is the §16 clearing distinction carried through to Excel.
+
+**The export matches the view because the page and the export build the same query.** The
+Projects filter rules moved out of `quoted/page.tsx` into `lib/projects-query.ts`, which
+both now call. Two copies reading the same query string would have agreed on the day they
+were written and drifted the first time a default changed.
+
+### 19.3 Details worth recording
+
+- **Monthly ETC exports every column**, including the ~60 the on-screen table only reaches
+  by scrolling sideways, and adds a "Needs New ETC" column — the export's stand-in for the
+  yellow highlight, since a colour cannot survive a CSV ("7 cells awaiting New ETC").
+- **CSV headers are flattened** exactly as the requirement asked:
+  `ME Gen (Engineering) - Prior ETC`.
+- **New ETC exports what the CELL SHOWS** (`newEtcSeedText`) — so a cleared cell is blank —
+  while the New ETC TOTAL sums `effectiveNewEtc`, i.e. what the month would submit as. That
+  is the one column whose total deliberately does not equal the sum of the visible cells,
+  for the same reason the grid's own total row doesn't; the smoke test skips it explicitly
+  rather than fudging it.
+- **Totals are rounded on the way out.** Summing 49 rows of Decimal-derived floats printed
+  `1572.6299999999999` in the totals row, which makes a reader distrust the whole file.
+- **Formula injection**: a text cell starting `= + - @` is prefixed with `'`. These files
+  are opened by people who did not create them, and job/customer names come from upstream
+  systems.
+- **Auth + audit on the server.** Every download writes an `export.download` audit row with
+  the user, report, format, row count, app version and the full query string, so "which
+  view was this file" is answerable exactly.
+- **The ETC export flushes autosave first** (`flushEtcAutosave`), because it reads the
+  database — the same step the monthly submission takes, for the same reason.
+- **fetch + blob rather than a plain `<a download>`**: a link cannot show progress, cannot
+  tell a 500 from a success, and cannot wait for the flush. The page never navigates.
+
+### 19.4 Verified
+
+`scripts/export-smoke.ts` (committed, re-runnable) builds both exports against the real
+database and asserts the things unit tests cannot:
+
+```
+Projects: 51 rows × 65 columns, 57 numeric totals all equal their column
+ETC 2026-07: 49 rows × 76 columns, 56 numeric totals all equal their column
+             15 of 49 first-section New ETC cells blank (null, never 0)
+both: xlsx re-parses with exceljs, frozen panes present, numeric cells hold numbers
+```
+
+Live through the running app: `.xlsx` arrives as a real ZIP (PK header, correct MIME,
+`Monthly_ETC_July_2026_2026-08-04.xlsx`), the CSV carries the UTF-8 BOM at byte level
+(EF BB BF), and the Projects CSV names its own filters in the subtitle
+(`Projects_Active_Billable_2026-08-04.csv`).
+
+### 19.5 Not done
+
+- **`exceljs` is a new dependency** (4.4.0, +~1 MB). `npm audit` reports one MODERATE
+  advisory reachable through it (`uuid` v3/v5 buffer bounds, which exceljs does not use
+  that way); the app's other advisories are pre-existing. A hand-rolled XLSX writer would
+  avoid the dependency but would mean owning number formats, merged cells and freeze panes.
+- **No "Export All Records" option** (§24.7 says "where useful"). The default —
+  the filtered view — is implemented; a second scope selector on a grid whose filters are
+  already one click away seemed like a way to hand somebody the wrong file.
+- **Large exports are not streamed.** 51 and 49 rows build in ~90ms and ~55ms; the sheet is
+  assembled in memory. If a month ever needs tens of thousands of rows this becomes a
+  streaming job, and exceljs supports that when it does.

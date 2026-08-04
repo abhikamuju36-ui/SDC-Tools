@@ -4,6 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
 import { assertStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
+import { CELL_SPECS, parseCell } from "@/lib/cell-rules";
 
 // Global execution rates for the Monthly ETC grid's inline Standard Sheet view.
 // Entered once via the "ETC Rates" button and applied to every job on that page
@@ -12,9 +13,22 @@ import { assertStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
 // ExecutionRate rows, which this does not touch.
 export async function saveStandardRates(engrRate: number, shopRate: number, partsMarkup: number, contingencyRate: number) {
   await assertStandardSheetUnlocked();
-  for (const [name, v] of [["engrRate", engrRate], ["shopRate", shopRate], ["partsMarkup", partsMarkup], ["contingencyRate", contingencyRate]] as const) {
-    if (!Number.isFinite(v) || v < 0) throw new Error(`Invalid ${name} value "${v}".`);
+  // §27.15 — one definition per cell, checked here as well as in the browser. This
+  // replaces a loop that applied ONE rule to four fields that do not share one: a 0
+  // Engineering Rate collapses every fee on the sheet to $0 and must be refused,
+  // while a 0 Contingency Rate is ordinary. The registry says so per field.
+  const checked = { engrRate, shopRate, partsMarkup, contingencyRate };
+  for (const [name, spec] of [
+    ["engrRate", CELL_SPECS["standard.engrRate"]],
+    ["shopRate", CELL_SPECS["standard.shopRate"]],
+    ["partsMarkup", CELL_SPECS["standard.partsMarkup"]],
+    ["contingencyRate", CELL_SPECS["standard.contingencyRate"]],
+  ] as const) {
+    const out = parseCell(checked[name], spec);
+    if (out.kind !== "value") throw new Error(out.kind === "invalid" ? out.message : `${spec.label} is required.`);
+    checked[name] = out.value as number;
   }
+  ({ engrRate, shopRate, partsMarkup, contingencyRate } = checked);
 
   await prisma.standardSheetSetting.upsert({
     where: { id: 1 },

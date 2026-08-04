@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { validJobTypeFilter, compareJobIds } from "@/lib/job-filters";
 import { PageTitle } from "@/components/ui/Typography";
-import { card, BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/ui/classnames";
+import { card, BUTTON_PRIMARY } from "@/components/ui/classnames";
 
 const STATUS_FILTERS = [
   { key: "all", label: "All", status: undefined },
@@ -34,10 +34,6 @@ export default async function JobsPage({
   });
   jobs.sort((a, b) => compareJobIds(a.jobId, b.jobId)); // numeric, not lexicographic
 
-  const exportQs = new URLSearchParams();
-  if (q) exportQs.set("q", q);
-  if (status) exportQs.set("status", status);
-
   const statusLinks = STATUS_FILTERS.map((f) => {
     const qs = new URLSearchParams();
     if (q) qs.set("q", q);
@@ -58,11 +54,12 @@ export default async function JobsPage({
           <PageTitle>Jobs</PageTitle>
           <p className="text-sm text-sdc-gray-600">{jobs.length} job{jobs.length === 1 ? "" : "s"}</p>
         </div>
-        <div className="flex shrink-0 gap-2.5">
-          <a href={`/api/jobs/export?${exportQs.toString()}`} className={BUTTON_SECONDARY}>
-            Export CSV
-          </a>
-        </div>
+        {/* The old /api/jobs/export CSV link is gone (§24, 2026-08-04). It was seven
+            columns, it ignored this page's filters, and — the reason it had to go rather
+            than be extended — it had NO authentication check of its own, so the whole
+            job list was one unauthenticated URL away. Exporting now lives on the two
+            grids people actually work in (Projects, Monthly ETC) behind
+            /api/export/<report>, which checks the session and writes an audit row. */}
       </div>
 
       <div className="mb-5 flex flex-wrap gap-2.5">

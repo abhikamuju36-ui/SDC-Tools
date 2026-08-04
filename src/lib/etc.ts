@@ -1,3 +1,5 @@
+import { CELL_SPECS, parseCell, roundTo, type FieldSpec } from "@/lib/cell-rules";
+
 // Core ETC math, ported from "Managers Fill Out" as confirmed by Dan:
 // - suggested hours left = prior ETC - hours worked this month
 // - if zero hours worked, assume no progress: new ETC carries forward = prior ETC
@@ -92,16 +94,24 @@ export function newEtcDiff(entry: {
 
 // ── The yellow "needs attention" New ETC cell ───────────────────────────────
 //
-// Yellow means one thing: somebody still has to make a judgement call here. It
-// used to be computed inline inside EtcSectionCells only, which was fine while
-// the colour was the only consumer. Clear ETC changed that — it acts on exactly
-// the yellow cells, so a server action now has to answer the same question the
-// cell answers, and two copies of this rule would mean a button that clears a
-// different set than the one the manager can see.
+// Yellow means one thing: somebody still has to make a judgement call here, and
+// the box is EMPTY. Lives here rather than inline in the cell so that the client
+// (which knows the LIVE input text) and the server (which knows what would seed)
+// give identical answers from identical inputs.
 //
-// Both functions are pure and take the cell's whole state, so the client cell
-// (which knows the LIVE text) and the server (which only knows what would seed)
-// get identical answers from identical inputs.
+// History worth keeping, because the rule has been wrong in both directions. It
+// used to answer two questions at once — the colour AND which cells the Clear ETC
+// button emptied — and that forced the colour to call a reopened month's
+// carried-over figure "undecided", so cells with values in them rendered yellow.
+// That was reported as a bug and fixed by splitting the two apart; the Clear ETC
+// button has since been removed outright (2026-08-04, §14), so only the colour
+// question remains:
+//
+//     yellow  <=>  a decision is required here  AND  the cell is blank
+//
+// Blank means null, undefined or empty/whitespace text. NOT 0, and not "0": zero
+// is a real, valid, entered figure ("plan nothing further for this section") and a
+// cell holding it is answered. See hasNewEtcValue.
 export type NewEtcCellState = {
   priorEtc: number;
   hoursWorked: number;
@@ -110,7 +120,11 @@ export type NewEtcCellState = {
   // The submitted value — non-null ONLY on a submitted or historical month. This
   // is what makes a reopened cell arrive pre-filled.
   confirmed: number | null;
-  // Clear ETC blanked this cell deliberately (EtcEntry.newEtcClearedAt).
+  // The cell was emptied DELIBERATELY (EtcEntry.newEtcClearedAt), as opposed to
+  // never having been filled in. Kept — and load-bearing — after the Clear ETC
+  // button's removal: it is what makes clearing an individual cell survive a
+  // reload, because a null draft otherwise falls through to the confirmed value or
+  // the carry-forward. See newEtcSeedText and DEVLOG §16.
   cleared: boolean;
   // A fully-submitted month nobody has reopened.
   locked: boolean;
@@ -129,25 +143,29 @@ export type NewEtcCellState = {
   //     dollar seed to whole would quietly drop cents from what a no-changes
   //     resubmit writes.
   precision?: "whole" | "exact";
-  // Does a REOPENED month ask this cell's question again?
-  //
-  // True (the default) for EVERY column, Parts Cost included: on a reopen a cell
-  // arrives carrying the figure it was submitted with, and re-opening a month is
-  // re-reviewing it, so holding the old number counts as unanswered.
-  //
-  // Parts Cost was the one exception between 2026-08-03 and 2026-08-04 (its New
-  // ETC had to ALWAYS show a figure). That was withdrawn: money spent means the
-  // next figure is a judgement call, in dollars exactly as in hours, so the
-  // column now goes yellow, is clearable, and is counted by Clear ETC like the
-  // rest. No caller sets this false today — the parameter survives because the
-  // question ("is a carried-over figure an answer?") is a real one that has now
-  // been answered both ways inside 24 hours, and a flag is cheaper than
-  // rewriting the rule the next time it flips.
-  reopenAsksAgain?: boolean;
 };
 
 function fmt(n: number, precision: "whole" | "exact" | undefined): string {
   return precision === "exact" ? String(round2(n)) : String(Math.round(n));
+}
+
+// A stored/announced New ETC value, as the CELL would print it.
+//
+// Same formatting the seed uses, exposed because a value can now reach a cell by a
+// second route: a realtime change event naming that cell (lib/etc-remote-values.ts).
+// It must land formatted identically to the seed or the two paths would disagree —
+// an hours cell would show "93.75" where a page render shows "94", and the dirty
+// tracker would then read the difference as an unsaved edit and try to save it back.
+//
+// null / "" / unparseable all mean "the cell is empty", which for a cleared cell is
+// exactly what is being announced.
+export function formatNewEtcText(value: string | null | undefined, precision?: "whole" | "exact"): string {
+  if (value === null || value === undefined) return "";
+  const trimmed = String(value).trim();
+  if (trimmed === "") return "";
+  const n = Number(trimmed);
+  if (!Number.isFinite(n)) return "";
+  return fmt(n, precision);
 }
 
 // What the New ETC box holds on arrival.
@@ -181,39 +199,131 @@ export function newEtcSeedText(s: NewEtcCellState): string {
   return "";
 }
 
-// Has this cell been decided? `text` is the CURRENT contents — the live input
-// value on the client, the seed text on the server. Yellow is !decided.
+// Does this New ETC cell hold a value at all? THE one place that question is
+// answered, so every consumer — the colour, the Diff, the live totals, the save
+// action, the tests — draws the same line between "nothing entered" and "a figure
+// entered".
 //
-// Two ways to be decided:
-//   * no hours worked this month — New ETC carries the prior forward, nothing to
-//     decide, so the cell stays neutral even mid-month
-//   * a value is present AND it isn't just last submission's figure sitting
-//     untouched in a reopened month (see below)
+// The distinctions that matter, stated once:
+//   * null / undefined  -> no value (a cell that has never been filled in)
+//   * ""  / "   "       -> no value (a cell somebody emptied)
+//   * 0   / "0"         -> A VALUE. Zero hours to complete is a real plan, and
+//                          treating it as blank was the bug this rule is written
+//                          against. Same for "0.00" and "-0".
+//   * any finite number -> a value, negative included where the column allows it
 //
-// A REOPENED month asks its questions again: every cell arrives carrying the
-// value it was submitted with, so judging on presence alone painted the whole
-// grid as decided and lost the manager's checklist. Holding the old figure is a
-// valid answer — retype it, or just submit — but it is an answer nobody has
-// given yet, so it reads as yellow until the value CHANGES.
+// Non-numeric junk ("abc") counts as a value here on purpose: the cell is not
+// empty, the manager can see that it is not empty, and painting it as "nothing
+// entered" would contradict the screen. Validation rejects it separately, at the
+// point where it would be written (parseNewEtcField).
+export function hasNewEtcValue(text: string | number | null | undefined): boolean {
+  if (text === null || text === undefined) return false;
+  return String(text).trim() !== "";
+}
+
+// Is a decision being asked for in this cell at all?
+//
+// Only when hours (or, for Parts Cost, money) were actually booked to it this
+// month. With nothing spent, New ETC just carries the prior forward — there is
+// nothing to judge, so the cell is never yellow, even mid-month.
+export function isNewEtcDecisionRequired(s: NewEtcCellState): boolean {
+  return s.hoursWorked !== 0;
+}
+
+// Has this cell been answered? `text` is the CURRENT contents — the live input
+// value on the client, the seed text on the server. Yellow is !decided, so:
+//
+//     yellow  <=>  isNewEtcDecisionRequired(s)  &&  !hasNewEtcValue(text)
+//
+// Judged from the text the cell holds RIGHT NOW, which is what makes the colour
+// live: it clears on the keystroke that fills the cell and comes straight back on
+// the keystroke that empties it, with no save, refresh or remount involved.
+//
+// What is NOT considered any more (2026-08-04): whether the figure is merely the
+// one last submission left behind. A reopened month's cells arrive pre-filled and
+// that used to render the whole grid yellow — "still yellow with a value in it",
+// which is what was reported. The rule is now purely about the colour.
 export function isNewEtcCellDecided(s: NewEtcCellState, text: string): boolean {
-  if (s.hoursWorked === 0) return true;
-  const hasValue = text.trim() !== "";
-  const reopenedUntouched =
-    s.reopenAsksAgain !== false && !s.locked && s.confirmed != null && text === fmt(s.confirmed, s.precision);
-  return hasValue && !reopenedUntouched;
+  if (!isNewEtcDecisionRequired(s)) return true;
+  return hasNewEtcValue(text);
 }
 
-// The set Clear ETC acts on: yellow AND actually holding something to remove.
-// A yellow-but-empty cell is the normal state of an in-progress month and there
-// is nothing to clear in it.
-export function isNewEtcClearable(s: NewEtcCellState): boolean {
-  const text = newEtcSeedText(s);
-  if (text.trim() === "") return false;
-  return !isNewEtcCellDecided(s, text);
+// ── What a posted New ETC field MEANS ───────────────────────────────────────
+//
+// The single parse for every New ETC value that arrives from a browser, shared by
+// the draft save and (through parseNewEtcCreateFields) the create path, so no
+// caller can invent its own reading of an empty box.
+//
+// It exists because "clearing a value did not stick" was reported, and the reason
+// was that a blank had no agreed meaning on the way in: `if (value) save(value)`
+// logic — in various shapes — dropped it, so an empty box was indistinguishable
+// from a field nobody sent. Four outcomes, and they are genuinely different
+// things:
+//
+//   absent  — the field is not in the request at all. This save has NO OPINION
+//             about the cell: it was filtered out of the view, or this user never
+//             touched it. Leave the stored value exactly as it is.
+//   clear   — the field IS present and empty. The user deliberately emptied a box.
+//             That is an edit, and it must be persisted as one.
+//   value   — a finite number, INCLUDING 0. "0" is not empty.
+//   invalid — present, non-empty, and not a number this column accepts. Never
+//             written, and never silently coerced to 0 or to the previous value.
+export type NewEtcWriteIntent =
+  | { kind: "absent" }
+  | { kind: "clear" }
+  | { kind: "value"; value: number }
+  // `message` says what the cell wanted, so a refusal can be shown IN the cell
+  // rather than swallowed (§27.9). Optional so older callers still typecheck.
+  | { kind: "invalid"; raw: string; message?: string };
+
+// ── Now a thin wrapper over the shared parser (§27, 2026-08-04) ─────────────
+//
+// The four outcomes above, and everything documented about them, are unchanged —
+// they were the model for lib/cell-rules.ts, which now states them once for every
+// editable cell in the app. What this delegation BUYS is the normalisation half,
+// which this function did not have and which the Projects grid's money cells did:
+//
+//     "1,234"      was refused here, accepted on Projects
+//     "$1,234.50"  was refused here, accepted on Projects
+//     " 1 234 "    was refused here, accepted on Projects
+//     "(1,234)"    refused in both — Excel's accounting negative
+//
+// A manager pasting one column out of one spreadsheet got two different answers
+// depending on which grid the cell was in. That is the §27.3 complaint, and it is
+// fixed by there being one parser rather than by patching this one.
+//
+// The numeric POLICY is deliberately unchanged: still 2 decimal places, still
+// negatives-only-on-request. Tightening hours to whole numbers would be a
+// behaviour change for people who type them, and belongs in its own decision
+// rather than riding along with a parser swap.
+export function parseNewEtcField(
+  raw: FormDataEntryValue | string | null | undefined,
+  opts: { allowNegative?: boolean } = {},
+): NewEtcWriteIntent {
+  const spec: FieldSpec = {
+    ...CELL_SPECS["etc.newEtc.parts"],
+    // 2dp and the same min/negative policy this function has always applied.
+    decimals: 2,
+    allowNegative: opts.allowNegative === true,
+    min: opts.allowNegative ? undefined : 0,
+  };
+  const out = parseCell(raw, spec);
+  switch (out.kind) {
+    case "absent":
+    case "clear":
+      return out;
+    case "invalid":
+      return { kind: "invalid", raw: out.raw.trim(), message: out.message };
+    default:
+      return { kind: "value", value: out.value as number };
+  }
 }
 
+// The app's 2-decimal rounding, now delegating to the one implementation that does
+// not lose a cent to floating point — `Math.round(1.005 * 100) / 100` was 1.00,
+// because 1.005 is stored as 1.00499999999999989. See roundTo in lib/cell-rules.ts.
 export function round2(n: number): number {
-  return Math.round(n * 100) / 100;
+  return roundTo(n, 2);
 }
 
 // ── Would this write revert another user? ────────────────────────────────────
@@ -236,7 +346,15 @@ export function round2(n: number): number {
 //     case; this is the second line.
 //   * `storedDraft` null — nothing is stored, so there is nothing to revert. This
 //     action never touches the CONFIRMED value (`newEtc`), only the draft, so a
-//     cell with no draft is free to take one.
+//     cell with no draft is free to take one. UNLESS that null is a deliberate
+//     clear (`storedCleared`) — see below.
+//   * `storedCleared` — somebody emptied this cell on purpose, and the client
+//     believed a figure was stored. That client is working from a page rendered
+//     before the clear, so its write would restore the value that was just
+//     removed. Refused, exactly like any other stale write: the requirement is
+//     that "an older save request cannot restore the deleted value", and a clear
+//     is the one edit whose stored form (null) is indistinguishable from "never
+//     set" without this flag.
 //   * Compared as NUMBERS, not as strings. "5819.03" and "5819.030" are the same
 //     stored figure, and a formatting difference must not read as a conflict —
 //     that would reject a legitimate save and tell the manager a colleague had
@@ -252,11 +370,18 @@ export function round2(n: number): number {
 export function isStaleDraftWrite(opts: {
   believedStored: string | null;
   storedDraft: number | null;
+  // Was the stored null written by a deliberate clear (EtcEntry.newEtcClearedAt)?
+  storedCleared?: boolean;
   precision?: "whole" | "exact";
 }): boolean {
-  const { believedStored, storedDraft, precision } = opts;
+  const { believedStored, storedDraft, storedCleared, precision } = opts;
   if (believedStored === null) return false;
-  if (storedDraft === null) return false;
+  if (storedDraft === null) {
+    // A deliberate clear is a value in its own right: "" is the only belief that
+    // agrees with it, and anything else is a page that predates the clear.
+    if (storedCleared) return believedStored.trim() !== "";
+    return false;
+  }
   const trimmed = believedStored.trim();
   if (trimmed === "") return true; // "I believe nothing is stored" — but something is.
   const believed = Number(trimmed);

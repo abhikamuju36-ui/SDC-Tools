@@ -58,9 +58,43 @@ export type LiveCell = {
   decided: boolean;
 };
 
+// ── The two operands that actually produce `diff` (§28, 2026-08-04) ─────────
+//
+// `diff` is summed PER CELL, and a cell nobody has decided contributes exactly 0
+// (newEtcDiff) — while its Hours Left and its effective New ETC still land in
+// `hoursLeft` and `newEtc` above. So the group's `hoursLeft − newEtc` is NOT the
+// group's `diff`, and a tooltip that says "Hours Left (X) − New ETC (Y)" prints a
+// subtraction that does not produce the number beside it. Reported on the Parts card:
+//
+//     Money Left ($2,996,607) − New ETC ($4,038,388)   shown: $1,085,685 under
+//
+// These two are the same sums restricted to the cells that DO contribute — decided,
+// and clamped the same way the per-cell formula clamps. By construction:
+//
+//     plannedHoursLeft − plannedNewEtc === diff
+//
+// term for term. (In floating point the two sums are rounded independently on the way
+// out, so the subtraction can land an epsilon off — 0.7 − 0.4 is 0.29999999999999993.
+// The guarantee is therefore "foots at the precision it is displayed at", which for a
+// strip showing whole dollars and whole hours is comfortably met.)
+//
+// so the tooltip can quote figures that foot. Kept as sums rather than derived later
+// because the clamp and the decided-test are per cell and cannot be reconstructed
+// from any group total — which is the whole reason the old sentence was wrong.
+type GroupTotals = {
+  prior: number;
+  worked: number;
+  hoursLeft: number;
+  newEtc: number;
+  diff: number;
+  diffUnplanned: number;
+  plannedHoursLeft: number;
+  plannedNewEtc: number;
+};
+
 export type JobTotals = {
-  engineering: { prior: number; worked: number; hoursLeft: number; newEtc: number; diff: number; diffUnplanned: number };
-  shop: { prior: number; worked: number; hoursLeft: number; newEtc: number; diff: number; diffUnplanned: number };
+  engineering: GroupTotals;
+  shop: GroupTotals;
   // Parts Cost is dollars, not hours, and has one cell per job rather than one
   // per section — so it is published separately and carries no group.
   // `decided` rides along so the row's own Diff cell can be repainted correctly: an
@@ -132,7 +166,9 @@ export function forgetPartsCell(jobId: number): void {
   if (parts.delete(jobId)) emit();
 }
 
-const EMPTY_GROUP = () => ({ prior: 0, worked: 0, hoursLeft: 0, newEtc: 0, diff: 0, diffUnplanned: 0 });
+const EMPTY_GROUP = (): GroupTotals => ({
+  prior: 0, worked: 0, hoursLeft: 0, newEtc: 0, diff: 0, diffUnplanned: 0, plannedHoursLeft: 0, plannedNewEtc: 0,
+});
 
 // Recomputed from scratch on demand rather than maintained incrementally: the
 // grid is at most ~800 cells, summing them is microseconds, and an incremental
@@ -156,6 +192,13 @@ function computeTotals(): Map<number, JobTotals> {
     // cell, and that clamp cannot be reproduced from the group's sums.
     g.diff += c.diff;
     if (!c.decided) g.diffUnplanned += c.diff;
+    // The two operands that produce `diff`, restricted to the cells that produce it.
+    // An undecided cell contributes 0 to diff (newEtcDiff), so it must contribute 0 to
+    // BOTH of these or the identity breaks. The clamp mirrors the per-cell formula.
+    if (c.decided) {
+      g.plannedHoursLeft += c.hoursLeft;
+      g.plannedNewEtc += Math.max(c.effective, 0);
+    }
   }
   for (const [jobId, p] of parts) ensure(jobId).parts = p;
   return byJob;

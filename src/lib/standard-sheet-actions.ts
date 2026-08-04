@@ -1,23 +1,12 @@
 "use server";
 
 import { prisma } from "@/lib/prisma";
-import { auth } from "@/lib/auth";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
 import { assertStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
-import { getEtcMonthJobWhere } from "@/lib/etc-month-jobs";
-import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/execution-etc";
 import { round2 } from "@/lib/etc";
-import { computeCategoryPoolsLocally } from "@/lib/standard-pool-local";
+import { CELL_SPECS, parseCell, type FieldSpec } from "@/lib/cell-rules";
 import { poolRefreshBlockedBy } from "@/lib/standard-pool-eligibility";
-import { matchesConfirmPassword } from "@/lib/confirm-password";
-import {
-  calcTotalEtcDollars,
-  calcPercentOfTotal,
-  calcStandardFeeEngineering,
-  calcStandardFeeShop,
-  calcTotalStandardFees,
-} from "@/lib/standard-fees";
 
 // The Standard Sheet workflow — pool refresh/editing, the month freeze, and
 // per-job Contingency/Notes editing — used to live only on the /standard-sheet
@@ -66,31 +55,22 @@ async function assertMonthNotSubmitted(month: string) {
   }
 }
 
-function globalRates(setting: { engrRate: unknown; shopRate: unknown; partsMarkup: unknown } | null) {
-  return {
-    engrRate: setting ? Number(setting.engrRate) : 170,
-    shopRate: setting ? Number(setting.shopRate) : 140,
-    partsMarkup: setting ? Number(setting.partsMarkup) : 1.2,
-  };
-}
 
-// Recompute the month's category-pool drivers (the app's version of the
-// sheet's GETPIVOTDATA refresh). Local now, not Power BI — see
-// standard-pool-local.ts for why and for the verification behind it. The 6-hour
-// pass runs the identical computation, so this button is a "don't wait" rather
-// than the only way to get current figures.
-export async function refreshPools(month: string) {
-  await assertStandardSheetUnlocked();
-  await assertMonthNotSubmitted(month);
-  const r = await computeCategoryPoolsLocally(month);
-  await logAudit({
-    action: "standardSheet.refreshPools",
-    entityType: "CategoryPool",
-    entityId: month,
-    summary: `Recomputed ${r.poolsUpserted} category pools for ${month}`,
-  });
-  revalidatePath("/etc");
-}
+// ── `refreshPools` is GONE (§26.11, 2026-08-04) ─────────────────────────────
+//
+// It recomputed this month's four category-pool rows and nothing else, behind a
+// "Refresh" button in the Standard Fees card's header. That is precisely the
+// partial refresh §25 was written to end: `standard_pools` is one of the sources
+// the application-wide "Refresh Data" pass covers (auto-sync.ts, which calls the
+// same computeCategoryPoolsLocally with the same poolRefreshBlockedBy rule), so
+// the button's only remaining effect was to refresh four figures on a different
+// clock from every figure beside them — and to give the pools a second way to
+// move that the refresh log did not record.
+//
+// Nothing is lost. "Refresh Data" recomputes the pools for the working month, and
+// the hourly schedule does it unattended. What WAS unique to this action —
+// assertMonthNotSubmitted, the frozen/archived ledger guard — is not lost either:
+// it lives in standard-pool-eligibility.ts and both remaining callers apply it.
 
 // Saves the two manual cells of each "Standard Fees By Department" block —
 // Hours being pulled this month and Rate — and recomputes the derived cells:
@@ -101,16 +81,18 @@ export async function savePools(month: string, formData: FormData) {
   const categories = ["ENGINEERING_PM", "ENGINEERING_WARRANTY", "SHOP_MANUFACTURING", "SHOP_WARRANTY"] as const;
   const changes: Record<string, unknown>[] = [];
 
-  const manualCell = (name: string, stored: number): number => {
-    const raw = formData.get(name);
-    // Absent AND cleared both mean "keep the stored value" — a field wiped
-    // mid-edit must not silently save 0 (a 0 Rate collapses that whole
-    // department's Standard Fee to $0). An explicit zero is still saveable
-    // by typing 0.
-    if (raw === null || raw === "") return stored;
-    const n = Number(raw);
-    if (!Number.isFinite(n) || n < 0) throw new Error(`Invalid value "${raw}" for ${name}.`);
-    return n;
+  // One parser, from lib/cell-rules.ts (§27.15). What this replaces is a local
+  // `Number.isFinite(n) || n < 0` that was the fourth different spelling of the same
+  // check in the codebase — and the only one that refused a pasted "1,234".
+  //
+  // The "absent AND cleared both keep the stored value" rule is preserved exactly: a
+  // field wiped mid-edit must not silently save 0, because a 0 Rate collapses that
+  // whole department's Standard Fee to $0. An explicit zero is still saveable.
+  const manualCell = (name: string, spec: FieldSpec, stored: number): number => {
+    const intent = parseCell(formData.get(name), spec);
+    if (intent.kind === "absent" || intent.kind === "clear") return stored;
+    if (intent.kind === "invalid") throw new Error(intent.message);
+    return intent.value as number;
   };
 
   const writes: { id: number; data: Record<string, number> }[] = [];
@@ -124,8 +106,16 @@ export async function savePools(month: string, formData: FormData) {
     // story. Applied to the fallback too, so a save that doesn't touch this
     // field still normalises a legacy decimal. Rate is NOT rounded — that one
     // legitimately carries cents.
-    const hoursPulledThisMonth = Math.round(manualCell(`pulled__${category}`, Number(pool.hoursPulledThisMonth)));
-    const rate = manualCell(`rate__${category}`, Number(pool.rate));
+    // The spec already rounds to whole (pool.hoursPulled has decimals: 0), so the
+    // Math.round that used to sit here is gone: one rounding, in one place (§27.18).
+    // The fallback is rounded too, so a save that doesn't touch this field still
+    // normalises a legacy decimal — which is what the old Math.round also did.
+    const hoursPulledThisMonth = manualCell(
+      `pulled__${category}`,
+      CELL_SPECS["pool.hoursPulled"],
+      Math.round(Number(pool.hoursPulledThisMonth)),
+    );
+    const rate = manualCell(`rate__${category}`, CELL_SPECS["pool.rate"], Number(pool.rate));
     const newEtcHours = round2(Number(pool.hoursAvailable) - hoursPulledThisMonth);
     const standardFee = round2(newEtcHours * rate);
     writes.push({ id: pool.id, data: { hoursPulledThisMonth, rate, newEtcHours, standardFee } });
@@ -149,11 +139,16 @@ export async function savePools(month: string, formData: FormData) {
 export async function saveContingencyAmount(jobId: number, contingencyAmount: number) {
   await assertStandardSheetUnlocked();
   if (!Number.isInteger(jobId)) throw new Error(`Invalid job id "${jobId}".`);
-  if (!Number.isFinite(contingencyAmount) || contingencyAmount < 0) throw new Error(`Invalid contingency "${contingencyAmount}".`);
+  // §27.15 — the same spec the cell validates against, re-checked here, because a
+  // server action is an HTTP endpoint and "the input had min=0" is not a check.
+  const amount = parseCell(contingencyAmount, CELL_SPECS["standard.contingencyAmount"]);
+  if (amount.kind === "invalid") throw new Error(amount.message);
+  if (amount.kind === "absent") throw new Error("Contingency is required.");
+  const contingency = amount.kind === "clear" ? 0 : (amount.value as number);
   await prisma.executionRate.upsert({
     where: { jobId },
-    update: { contingencyAmount },
-    create: { jobId, contingencyAmount },
+    update: { contingencyAmount: contingency },
+    create: { jobId, contingencyAmount: contingency },
   });
   await logAudit({ action: "standardSheet.saveContingency", entityType: "ExecutionRate", entityId: String(jobId), summary: `Saved contingency ${contingencyAmount} for job ${jobId}` });
   revalidatePath("/etc");
@@ -174,7 +169,9 @@ export async function saveJobNotes(jobId: number, notes: string) {
 // The global contingency multiplier (StandardSheetSetting.contingencyRate).
 export async function saveContingencyRate(contingencyRate: number) {
   await assertStandardSheetUnlocked();
-  if (!Number.isFinite(contingencyRate) || contingencyRate < 0) throw new Error(`Invalid contingency rate "${contingencyRate}".`);
+  const rate = parseCell(contingencyRate, CELL_SPECS["standard.contingencyRate"]);
+  if (rate.kind !== "value") throw new Error(rate.kind === "invalid" ? rate.message : "Contingency Rate is required.");
+  contingencyRate = rate.value as number;
   const before = await prisma.standardSheetSetting.findUnique({ where: { id: 1 } });
   await prisma.standardSheetSetting.upsert({
     where: { id: 1 },
@@ -190,107 +187,19 @@ export async function saveContingencyRate(contingencyRate: number) {
   revalidatePath("/etc");
 }
 
-// Freezes the month: recomputes every job's row exactly as the live /etc view
-// does — now with the GLOBAL execution rates — then writes all rows in one
-// transaction. A submitted month always renders from these rows afterward.
-export async function submitStandardSheetMonth(month: string) {
-  await assertStandardSheetUnlocked();
-  await assertMonthNotSubmitted(month);
-  const session = await auth();
-  const user = session?.user?.email ? await prisma.user.findUnique({ where: { email: session.user.email } }) : null;
-
-  const jobs = (
-    await prisma.job.findMany({
-      where: (await getEtcMonthJobWhere(month)).where,
-      select: { id: true, executionRate: true, billable: true, excludedFromStandardFees: true },
-    })
-  ).filter(isInStandardFeesAllocation); // same membership rule as the live /etc Standard block
-  const [etcByJob, effective, setting] = await Promise.all([
-    getExecutionEtcByJob(jobs.map((j) => j.id), month),
-    loadEffectivePools(month),
-    prisma.standardSheetSetting.findUnique({ where: { id: 1 } }),
-  ]);
-  // Never freeze a month against a carried-forward ESTIMATE. loadEffectivePools
-  // falls back to a prior month's pools (labeled `carriedFrom`) when this month
-  // was never refreshed — fine for a live preview, but freezing that would
-  // permanently stamp last month's pool balances as if they were this month's.
-  // The manager must Refresh Pools for this month first.
-  if (effective.carriedFrom) {
-    throw new Error(
-      `${month}'s department pools were never refreshed — the sheet is showing ${effective.carriedFrom}'s figures as an estimate. Click "Refresh Pools" for ${month} before submitting, so the freeze uses this month's real balances.`,
-    );
-  }
-  const rate = globalRates(setting);
-  const contingencyRate = setting ? Number(setting.contingencyRate) : 1.2;
-  const pools = effective.pools;
-  const poolTotals = {
-    engineeringPM: Number(pools.find((p) => p.category === "ENGINEERING_PM")?.standardFee ?? 0),
-    engineeringWarranty: Number(pools.find((p) => p.category === "ENGINEERING_WARRANTY")?.standardFee ?? 0),
-    shopManufacturing: Number(pools.find((p) => p.category === "SHOP_MANUFACTURING")?.standardFee ?? 0),
-    shopWarranty: Number(pools.find((p) => p.category === "SHOP_WARRANTY")?.standardFee ?? 0),
-  };
-
-  const rows = jobs.map((job) => {
-    const etc = etcByJob.get(job.id) ?? { engineering: 0, shop: 0, parts: 0 };
-    return { job, etc, totalEtcDollars: calcTotalEtcDollars(etc, rate) };
-  });
-  const grandTotal = rows.reduce((sum, r) => sum + r.totalEtcDollars, 0);
-
-  await prisma.$transaction([
-    prisma.standardSheetSnapshot.deleteMany({ where: { month } }),
-    prisma.standardSheetSnapshot.createMany({
-      data: rows.map(({ job, etc, totalEtcDollars }) => {
-        const percentOfTotal = calcPercentOfTotal(totalEtcDollars, grandTotal);
-        const standardFeeEngineering = calcStandardFeeEngineering(percentOfTotal, poolTotals);
-        const standardFeeShop = calcStandardFeeShop(percentOfTotal, poolTotals);
-        const contingencyAmount = job.executionRate ? Number(job.executionRate.contingencyAmount) : 0;
-        return {
-          jobId: job.id,
-          month,
-          engrRate: rate.engrRate,
-          shopRate: rate.shopRate,
-          partsMarkup: rate.partsMarkup,
-          etcEngineering: etc.engineering,
-          etcShop: etc.shop,
-          etcParts: etc.parts,
-          totalEtcDollars,
-          percentOfTotal,
-          standardFeeEngineering,
-          standardFeeShop,
-          contingencyAmount,
-          contingencyRate,
-          totalStandardFees: calcTotalStandardFees(totalEtcDollars, standardFeeEngineering, standardFeeShop, contingencyAmount, contingencyRate),
-          notes: job.executionRate?.notes ?? null,
-          submittedById: user?.id ?? null,
-        };
-      }),
-    }),
-  ]);
-
-  await logAudit({
-    action: "standardSheet.submitMonth",
-    entityType: "StandardSheetSnapshot",
-    entityId: month,
-    summary: `Submitted Standard Sheet for ${month} (${rows.length} jobs, grand total ${grandTotal.toFixed(2)})`,
-  });
-  revalidatePath("/etc");
-}
-
-// Unfreezes a submitted Standard Sheet month by dropping its snapshot rows,
-// which is what lets its pools be refreshed and the sheet re-submitted.
+// ── Submitting and reopening moved out of this file (§15/§16, 2026-08-04) ────
 //
-// Password-gated rather than admin-only (changed 2026-08-02, matching
-// reopenMonth in etc-actions.ts). The person who needs to correct a closed
-// month is the manager who filled it in, and requiring an ADMIN account meant
-// the button was invisible to them and corrections simply didn't happen — June
-// 2026's 36 stranded hours sat there for that reason. Entered every time, no
-// session cookie: unfreezing signed-off figures should cost a keystroke each
-// time, unlike Save.
-export async function reopenStandardSheetMonth(month: string, formData?: FormData) {
-  if (!matchesConfirmPassword(String(formData?.get("reopenPassword") ?? ""))) {
-    throw new Error("Incorrect password — the Standard Sheet month was not reopened.");
-  }
-  await prisma.standardSheetSnapshot.deleteMany({ where: { month } });
-  await logAudit({ action: "standardSheet.reopenMonth", entityType: "StandardSheetSnapshot", entityId: month, summary: `Reopened Standard Sheet month ${month}` });
-  revalidatePath("/etc");
-}
+// `submitStandardSheetMonth` and `reopenStandardSheetMonth` are gone. They were the
+// second half of a two-button month: this file froze StandardSheetSnapshot while
+// etc-actions.ts froze EtcEntry, independently, so the normal state of a month was
+// HALF-submitted — the ETC figures locked while the fees derived from them were still
+// live and moving. July 2026 was exactly that when somebody asked why the same button
+// existed twice.
+//
+// Both tables are now written by ONE action inside ONE transaction:
+// lib/monthly-report-actions.ts (submitMonthlyReport / reopenMonthlyReport), with the
+// fee-row computation in lib/monthly-report.ts (loadStandardSheetRows) so the live
+// Standard view and the frozen snapshot still come from the same arithmetic.
+//
+// What stays in this file is what belongs to the POOLS themselves: Refresh Pools, the
+// two manual pool cells, and the per-job Contingency/Notes.

@@ -1,6 +1,8 @@
 "use client";
 
+import { useSyncExternalStore } from "react";
 import { autosaveLabel, type AutosaveStatus } from "@/lib/autosave";
+import { subscribeCellSaveStates, invalidCellNames } from "@/lib/etc-save-state";
 
 // The autosave read-out for both grids. It replaces nothing — the manual Save
 // button stays — but with edits committing on their own, "did that save?"
@@ -11,7 +13,48 @@ import { autosaveLabel, type AutosaveStatus } from "@/lib/autosave";
 // was built after a manager lost 1,148 meeting notes to an autosave everyone
 // assumed was working. The lesson there was that the failure state needs to be
 // loud and needs a way out, hence the Retry.
-export function SaveStatusChip({ status, onRetry }: { status: AutosaveStatus; onRetry?: () => void }) {
+export function SaveStatusChip({
+  status,
+  onRetry,
+  // Does this chip speak for the ETC GRID's cells? Only one of the three chips on the
+  // page does. lib/etc-save-state.ts is a store about grid cells, so the pool panel's
+  // chip and the Projects chip must not read from it — before this prop existed, an
+  // invalid New ETC cell made the Standard Fees panel's own chip claim something in
+  // IT needed fixing, and the banner rendered twice.
+  watchesGridCells = false,
+}: {
+  status: AutosaveStatus;
+  onRetry?: () => void;
+  watchesGridCells?: boolean;
+}) {
+  // ── An invalid cell outranks everything this chip could otherwise say (§27.9) ──
+  //
+  // "Do not display 'All changes saved'" is the requirement, and it is the right one:
+  // a cell holding text this column will not accept is never sent, so the autosave
+  // genuinely has nothing pending and would sit there — truthfully, and completely
+  // misleadingly — on a green "All changes saved" while a red cell sat on screen.
+  //
+  // Counted rather than merely flagged, because on a grid of ~1,180 inputs "one of
+  // them is wrong" is not something a person can act on.
+  const invalidCount = useSyncExternalStore(
+    subscribeCellSaveStates,
+    () => invalidCellNames().length,
+    () => 0, // server render: nothing has been typed yet, so nothing can be invalid
+  );
+  if (watchesGridCells && invalidCount > 0) {
+    return (
+      <span
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-1.5 rounded-md border border-sdc-red-border bg-sdc-red-bg px-2 py-1 text-[11px] font-medium text-sdc-red-text"
+        title="A cell holds a value this column does not accept. It has not been saved and is not counted in any total — hover the red cell to see what it expects."
+      >
+        <WarnIcon />
+        {invalidCount === 1 ? "1 cell needs fixing" : `${invalidCount} cells need fixing`}
+      </span>
+    );
+  }
+
   if (status === "idle") return null;
   const label = autosaveLabel(status);
 

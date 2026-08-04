@@ -3,11 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { compareJobIds, isSdcCustomer, validJobTypeFilter } from "@/lib/job-filters";
 import { compareSections } from "@/lib/off-grid-hours";
 import { EtcViewMenu } from "@/components/EtcViewMenu";
-import { EtcSyncMenu } from "@/components/EtcSyncMenu";
-import { SyncHistoryButton } from "@/components/SyncHistoryButton";
+import { ExportMenu } from "@/components/ExportMenu";
+import { RefreshDataButton } from "@/components/RefreshDataButton";
 import { getEtcMonthJobWhere } from "@/lib/etc-month-jobs";
 import { getEtcMonthKpis } from "@/lib/etc-month-kpis";
-import { getEtcMonthHoursDetail } from "@/lib/job-hours-detail";
 import { EtcMonthKpiCards } from "@/components/EtcMonthKpiCards";
 import { PartsCostNewEtcCell } from "@/components/PartsCostNewEtcCell";
 import { EtcSectionCells } from "@/components/EtcSectionCells";
@@ -17,20 +16,12 @@ import { EtcRatesButton } from "@/components/EtcRatesButton";
 import { StandardPoolPanel } from "@/components/StandardPoolPanel";
 import type { PoolPanelRow, NewProjectRow } from "@/components/StandardPoolPanel";
 import { newProjectsEnteringMonth } from "@/lib/standard-pool-local";
-import {
-  refreshPools,
-  savePools,
-  submitStandardSheetMonth,
-  reopenStandardSheetMonth,
-} from "@/lib/standard-sheet-actions";
+import { savePools } from "@/lib/standard-sheet-actions";
+// ONE submission and ONE reopen for the whole month — see lib/monthly-report.ts.
+import { reopenMonthlyReport, checkMonthlyReport } from "@/lib/monthly-report-actions";
 import { ETC_SECTIONS, PARTS_COST_SECTION } from "@/lib/sections";
-import { calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, round2, workingDaysInMonth, effectiveNewEtc, newEtcDiff, isNewEtcClearable, newEtcSeedText, isNewEtcCellDecided, type NewEtcCellState } from "@/lib/etc";
-import { submitMonth, reopenMonth, syncPowerBiForEtc } from "@/lib/etc-actions";
-import { RunReportButton } from "@/components/RunReportButton";
-import { SubmitAndLockButton } from "@/components/SubmitAndLockButton";
+import { calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, round2, workingDaysInMonth, effectiveNewEtc, newEtcDiff, newEtcSeedText, isNewEtcCellDecided, type NewEtcCellState } from "@/lib/etc";
 import { ReopenMonthButton } from "@/components/ReopenMonthButton";
-import { SaveEtcDraftsButton } from "@/components/SaveEtcDraftsButton";
-import { ClearEtcButton } from "@/components/ClearEtcButton";
 import { EtcAutosave } from "@/components/EtcAutosave";
 import { EtcLiveTotals } from "@/components/EtcLiveTotals";
 import { isStandardSheetUnlocked, hadWrongPassword, unlockStandardSheet, lockStandardSheet } from "@/lib/standard-sheet-gate";
@@ -42,7 +33,7 @@ import { MonthYearSelect } from "@/components/MonthYearSelect";
 import { JobCellMenuHost } from "@/components/JobCellMenuHost";
 import { jobCellMenuProps } from "@/lib/job-cell-menu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
-import { BUTTON_PRIMARY, BUTTON_SECONDARY, BUTTON_DANGER, TABLE_HEADER_ROW, TABLE_GRID, ETC_COL_W, PARTS_COL_W } from "@/components/ui/classnames";
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, TABLE_HEADER_ROW, TABLE_GRID, ETC_COL_W, PARTS_COL_W } from "@/components/ui/classnames";
 import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
@@ -545,15 +536,42 @@ export default async function MonthlyEtcPage({
   // billable, whereas a finished job is finished — a stray hour booked to it is a
   // timesheet matter, not an ETC planning gap. Those hours remain visible on Job Hour
   // Details and the Projects grid, which is where they belong.
-  const hiddenJobEntries = await prisma.jobHoursDetail.findMany({
-    where: {
-      month,
-      hours: { gt: 0 },
-      jobId: { notIn: renderedJobIds },
-      job: { ...validJobTypeFilter, status: { not: "Complete" } },
-    },
-    select: { hours: true, section: true, job: { select: { jobId: true, jobName: true, status: true } } },
-  });
+  // ── One wave, not four (2026-08-04, performance pass) ─────────────────────
+  //
+  // These four reads are independent of each other: two of them need `month` and
+  // `renderedJobIds`, the other two need nothing at all. They were awaited one after
+  // another, so the page paid four serial round trips for work that fits in one — and
+  // this route is re-rendered far more often than it is navigated to (a timer, focus,
+  // every filter change, every colleague's save), so the latency was being paid over
+  // and over. Measured with scripts/perf-baseline.ts: the ETC page had NINE serial
+  // waves for 18 queries.
+  //
+  // The Scheduler lookup crosses to a different MySQL server and the two gates read
+  // cookies, so they are the ones most worth not queueing behind a punch query.
+  const [hiddenJobEntries, headStartJobs, { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers, ssoEmail: schedulerSsoEmail }, showStandards] =
+    await Promise.all([
+      prisma.jobHoursDetail.findMany({
+        where: {
+          month,
+          hours: { gt: 0 },
+          jobId: { notIn: renderedJobIds },
+          job: { ...validJobTypeFilter, status: { not: "Complete" } },
+        },
+        select: { hours: true, section: true, job: { select: { jobId: true, jobName: true, status: true } } },
+      }),
+      // Type-gated like every other job query (non-negotiable). No need to exclude the
+      // rendered set: etcActiveJobFilter is status "Active", so a HeadStart job can
+      // never be in it.
+      prisma.job.findMany({
+        where: { status: "HeadStart", ...validJobTypeFilter },
+        select: { jobId: true, jobName: true, status: true },
+      }),
+      // "Open in Scheduler" icon target + which of these jobs actually have a
+      // Scheduler project (fail-soft empty set when its DB isn't configured).
+      getSchedulerLinkContext(),
+      // Whether the hidden Standard Sheet view is unlocked for this session.
+      isStandardSheetUnlocked(),
+    ]);
   // ── HeadStart jobs are ALWAYS listed here ─────────────────────────────────
   //
   // 2026-08-03, by request. The query above only finds a job that has EtcEntry rows
@@ -573,13 +591,7 @@ export default async function MonthlyEtcPage({
   // signs off are untouched, but a HeadStart job booking time is now visible instead of
   // silently dropped.
   //
-  // Type-gated like every other job query (non-negotiable). No need to exclude the
-  // rendered set: etcActiveJobFilter is status "Active", so a HeadStart job can never
-  // be in it.
-  const headStartJobs = await prisma.job.findMany({
-    where: { status: "HeadStart", ...validJobTypeFilter },
-    select: { jobId: true, jobName: true, status: true },
-  });
+  // (the query itself now runs in the single wave above.)
 
   // Punch rows are one per employee/day/section, so sections are ACCUMULATED into a map
   // rather than pushed. Pushing (which was right for EtcEntry, one row per section) would
@@ -640,30 +652,24 @@ export default async function MonthlyEtcPage({
 
   // KPI cards above the grid, built from `visibleJobs` — the same rows the grid
   // renders and the same rows its grand-total row sums, so the strip at the top
-  // and the total at the bottom can never disagree. The punch detail behind the
-  // drill is scoped to those jobs for the same reason. Cheap: the KPIs reuse the
-  // etcEntries already loaded above, and the detail is one indexed query.
-  const [monthKpis, monthHoursDetail] = await Promise.all([
-    getEtcMonthKpis(month, visibleJobs),
-    getEtcMonthHoursDetail(
-      month,
-      visibleJobs.map((j) => j.id),
-    ),
-  ]);
-
-  // "Open in Scheduler" icon target + which of these jobs actually have a
-  // Scheduler project (fail-soft empty set when its DB isn't configured).
-  // Three independent reads — a Scheduler DB lookup and two cookie gates — that were
-  // awaited one after another. Nothing here feeds anything else here, so they go in one
-  // round trip. Both "Standard Sheet columns" and the toolbar Save gate keep their own
-  // separate cookie/password; only the sequencing changed.
+  // and the total at the bottom can never disagree. Free: it sums the etcEntries
+  // already loaded above and runs no query of its own.
   //
-  // The Save gate is gone (2026-08-04) — see saveAllNewEtcDrafts. Only the Standard
-  // Sheet gate is read here now, and its wrong-password flag only matters while locked.
-  const [{ baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers, ssoEmail: schedulerSsoEmail }, showStandards] = await Promise.all([
-    getSchedulerLinkContext(),
-    isStandardSheetUnlocked(),
-  ]);
+  // The punch detail behind the drill is NOT loaded here any more (2026-08-04,
+  // performance pass). It was 1,092 rows and 46ms — the slowest query on the page —
+  // shipped in the RSC payload of every render for a panel that starts closed, and
+  // this route re-renders on a timer, on focus, on every filter change and on every
+  // colleague's save. The card now gets the job IDs and fetches the rows when a
+  // drill is opened (lib/hours-detail-actions.ts). Scope is unchanged: the same
+  // `visibleJobs`, so the drill still matches the card that opened it.
+  const monthKpis = await getEtcMonthKpis(month, visibleJobs);
+  const detailJobIds = visibleJobs.map((j) => j.id);
+
+  // Both moved into the single wave above (schedulerBaseUrl / showStandards).
+  //
+  // The wrong-password flag stays separate and sequential on purpose: it is only read
+  // when the gate is LOCKED, so folding it into the wave would turn a conditional
+  // cookie read into an unconditional one on every render of the page.
   const standardWrongPassword = showStandards ? false : await hadWrongPassword();
   // Rates are shared with /standard-sheet's own ExecutionRate rows — once
   // that tab has submitted+frozen this month's snapshot, rates must stop
@@ -798,6 +804,16 @@ export default async function MonthlyEtcPage({
   const allEntries = jobs.flatMap((j) => j.etcEntries);
   const started = allEntries.length > 0;
   const locked = isMonthLocked(allEntries);
+  // Submission readiness, permission and the month's data fingerprint, for the Standard
+  // Fees card's status line (§26.4). Computed here so the card's first paint already says
+  // whether the month can be submitted; the client re-checks on mount and whenever a
+  // realtime change lands. Only when the card is actually rendered — it is a real query
+  // and nobody else needs it.
+  //
+  // Fetched for a LOCKED month too, unlike the first cut: that is where the submission
+  // receipt comes from (who submitted it, when, under which id — §26.8), and a frozen
+  // month would otherwise show a bare "Submitted" with none of it.
+  const reportReadiness = showStandards ? await checkMonthlyReport(month) : null;
   const needsReviewCount = allEntries.filter((e) => e.needsReview).length;
 
   // A month's live actuals are only "complete" once the Paylocity hours are
@@ -806,40 +822,17 @@ export default async function MonthlyEtcPage({
   // stay blank, so partial mid-month figures don't masquerade as final. Locked
   // (submitted) and historical months are always complete. This is display-only:
   // stored values and the submit path are untouched.
+  // "July" — the month name the ONE submit button carries (`Submit July Report`), so
+  // the label always names what it will freeze. Computed here rather than in the
+  // client component: the button then renders correctly in the very first paint, and
+  // the app has one place that turns "2026-07" into a human month.
+  const monthNameOnly = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1, 1).toLocaleString("en-US", { month: "long" });
+
   const [completeYear, completeMonthNum] = month.split("-").map(Number);
   const monthEndDate = new Date(Date.UTC(completeYear, completeMonthNum, 0)); // last day of the month
   const hoursRefreshedThrough = hoursActualFreshness?.refreshedThrough ?? null;
   const monthComplete =
     locked || isHistoricalMonth || (hoursRefreshedThrough != null && hoursRefreshedThrough >= monthEndDate);
-
-  // How many New ETC cells Clear ETC would empty: the YELLOW ones that actually
-  // hold a figure. Computed with the same rule that colours the cells
-  // (isNewEtcClearable in lib/etc.ts), so the count in the confirmation prompt is
-  // the count that will actually go — the action recomputes it server-side before
-  // writing, and the two agree because they call the same function.
-  //
-  // On a first-pass month this is 0: yellow cells are blank there, and there is
-  // nothing to clear. It is a reopened month that fills this up, where every cell
-  // arrives carrying the figure it was submitted with.
-  const clearableCount = allEntries.filter(
-    (e) =>
-      e.needsReview &&
-      isNewEtcClearable({
-        priorEtc: Number(e.priorEtc),
-        hoursWorked: round2(Number(e.hoursWorked)),
-        draft: e.newEtcDraft != null ? Number(e.newEtcDraft) : null,
-        confirmed: isHistoricalMonth || e.submittedAt != null ? round2(Number(e.newEtc)) : null,
-        cleared: e.newEtcClearedAt != null,
-        locked,
-        monthComplete,
-        // Parts Cost is INCLUDED now (2026-08-04): it goes yellow on the same
-        // terms as an hours cell, so it is clearable on the same terms too. Only
-        // `precision` still distinguishes it — dollars keep their cents. Leaving
-        // it out here while the cell itself turns yellow would put a number on
-        // the button that disagreed with what the manager can see.
-        precision: e.section === PARTS_COST_SECTION ? "exact" : "whole",
-      } satisfies NewEtcCellState),
-  ).length;
 
   // Grand totals footer, matching the real sheet's row 63 — accumulated as
   // each job row below computes its own values, then rendered once after.
@@ -873,32 +866,39 @@ export default async function MonthlyEtcPage({
           nextStartable={nextStartable}
         />
         <EtcViewMenu selectedGroups={visibleGroups} showJobName={showJobName} selectedBillables={selectedBillables} />
-        {/* Sync menu merges the two upstream data-pull actions: Refresh Data
-            (current month) and Sync History (past months, password-gated).
-            Always rendered now — Sync History is no longer admin-only, so the
-            menu always has at least one thing in it. */}
-        <EtcSyncMenu>
-          {!locked && (
-            <form action={syncPowerBiForEtc.bind(null, month)}>
-              <RunReportButton className={`${BUTTON_PRIMARY} w-full`}>Refresh Data (this month)</RunReportButton>
-            </form>
-          )}
-          <SyncHistoryButton className={`${BUTTON_SECONDARY} w-full`} />
-        </EtcSyncMenu>
-        {/* "Save now" for every currently-typed New ETC override on the grid.
-            NOT password-gated any more (2026-08-04) — that gate is what lost
-            people's typing; see saveAllNewEtcDrafts. Autosave below covers the
-            same ground ~1.5s after typing stops, so this is the impatient path
-            rather than the only one that persists anything. */}
-        {!locked && <SaveEtcDraftsButton formId="etc-month-form" month={month} className={BUTTON_PRIMARY} />}
-        {/* Empties every New ETC cell still awaiting a decision (the yellow ones),
-            leaving them yellow so the grid reads as a checklist of what to
-            re-enter. Confirmation phrase every time — it erases entered values in
-            bulk, so it is gated like Reopen Month rather than like Save. Hidden on
-            a locked month: there is nothing unconfirmed left to clear. */}
-        {!locked && (
-          <ClearEtcButton month={month} clearableCount={clearableCount} className={BUTTON_DANGER} />
-        )}
+        {/* ── Refresh Data, back in this toolbar (§29, 2026-08-04) ───────────
+            It had been moved to the sidebar on the reasoning that one button on every
+            page beats one per page. True in the abstract, wrong in practice: this is
+            the grid people refresh, the sidebar collapses to a rail, and a control
+            nobody can find is not a control. It is back where the work happens.
+
+            Still the ONE application-wide refresh, and still the only user-facing
+            one: `RefreshDataButton` is a single component with a single action
+            (lib/refresh-actions -> lib/refresh-service -> runAllSyncs), which is the
+            identical pass the hourly schedule runs. Rendering it twice would put a
+            second BUTTON on screen, not a second refresh path — but two buttons for
+            one action is exactly the confusion §25 removed, so the sidebar's copy is
+            hidden on this route (see Sidebar).
+
+            What it deliberately does NOT do: save, submit, or touch a manager's
+            entered values. The pass writes only the columns it pulls from upstream
+            (hours, parts cost, jobs, pools); New ETC drafts, cleared cells, notes and
+            Standard Sheet figures are not in its scope. Autosave and
+            `Submit {Month} Report` remain entirely separate. */}
+        <RefreshDataButton className={BUTTON_PRIMARY} />
+        {/* Downloads the month exactly as filtered, every department column included —
+            the ones the on-screen table only reaches by scrolling. Flushes any pending
+            autosave first, because the export reads the database (§24.8). */}
+        <ExportMenu
+          report="etc"
+          fixedParams={{ month }}
+          flushBeforeExport
+          className={BUTTON_SECONDARY}
+        />
+        {/* No Save button (2026-08-04, §17). Every edit autosaves ~0.8s after the last
+            keystroke — clearing a cell included — and the status chip below says where the
+            save is up to. A manual Save was the last thing on this page that let a manager
+            believe their work needed a click to survive. */}
         {/* Autosaves New ETC cells ~1.5s after typing stops. Unconditional on an
             unlocked month as of 2026-08-04: it used to require the Save gate, which
             meant no safety net at all on a fresh browser session. A submitted month
@@ -912,32 +912,17 @@ export default async function MonthlyEtcPage({
         <JobCellMenuHost />
         {/* "Lock Editing" removed 2026-08-04: it relocked the Save gate, and with that
             gate gone it would have been a button that does nothing. */}
-        {/* Submitting is only offered on the FULL grid: with a department
-            column filter active, the hidden sections' hoursWorked inputs
-            aren't in the form at all — on the current month submitMonth
-            rejects the post ("Missing Hours Worked"), and on a reopened
-            month it would lock in a sheet the manager only half-saw. */}
-        {started && !locked && jobs.length > 0 &&
-          (selectedGroups.size === DEPT_GROUPS.length && !billableFilterActive ? (
-            <SubmitAndLockButton formId="etc-month-form" className={BUTTON_SECONDARY} />
-          ) : (
-            // Keep the control in place but disabled with a reason, instead of
-            // replacing it with loose text (a control vanishing reads as a bug).
-            <button
-              type="button"
-              disabled
-              title="Clear the Columns and Billable filters first — a filtered view doesn't show every entry that Submit ETC would freeze."
-              className={`${BUTTON_SECONDARY} disabled:cursor-not-allowed disabled:opacity-50`}
-            >
-              Submit ETC
-            </button>
-          ))}
+        {/* The submission button is NOT here any more (§26.2, 2026-08-04). It moved to
+            the bottom of the Standard Fees card, under the figures it finalises — beside
+            the filters and Refresh Data it was one mis-click from the controls people
+            press dozens of times an hour. There is exactly one submission button in the
+            app, and it is in StandardPoolPanel via SubmitReportAction. */}
         {/* Password-gated rather than admin-only (changed 2026-08-02): the
             person who needs to correct a closed month is the manager who
             filled it in, and requiring an ADMIN account for that just meant
             corrections didn't happen. Same confirmation phrase as Submit and
             Lock; the check itself is server-side in reopenMonth. */}
-        {locked && <ReopenMonthButton action={reopenMonth.bind(null, month)} month={month} className={BUTTON_SECONDARY} />}
+        {locked && <ReopenMonthButton action={reopenMonthlyReport.bind(null, month)} month={month} className={BUTTON_SECONDARY} />}
         {/* Sync History now lives inside the merged "Sync Data" menu above. */}
         {/* Password-gated Standard Sheet columns (Dan/Lisa only) — same
             unlock cookie as the /standard-sheet tab. */}
@@ -1065,7 +1050,11 @@ export default async function MonthlyEtcPage({
           ? `"Refresh Data" starts ${month}: it seeds the job rows and pulls the latest hours (Paylocity) and parts costs (TotalETO), just like the sheet.`
           : locked
             ? `${month} is submitted and locked — these numbers are frozen exactly as submitted. Pick a month above to view any past submission, or "Reopen for editing" to correct this one (the corrected New ETC carries forward into the next month's Prior ETC when you re-submit).`
-            : `"Refresh Data" pulls the latest hours (Paylocity) and parts costs (TotalETO) for the selected month. Enter Hours Worked, confirm or override each New ETC (suggestion shown in yellow), then Submit ETC. That freezes the hours; the Standard Fees panel submits its Standard Sheet separately.`}
+            // Rewritten 2026-08-04. It described an app that no longer exists on two
+            // counts: "Refresh Data" is application-wide, not month-scoped (§29), and
+            // "Submit ETC ... the Standard Fees panel submits its Standard Sheet
+            // separately" is the pair of half-submissions §26 replaced with one button.
+            : `"Refresh Data" pulls the latest hours (Paylocity), parts costs (TotalETO), jobs and pool figures for the whole application — the same pass the hourly schedule runs. It never touches what you have entered. Yellow New ETC cells are the ones still waiting on a figure — they turn plain as soon as you enter one (0 counts), and yellow again if you clear it. When every yellow cell is answered, "Submit ${monthNameOnly} Report" at the bottom of the Standard Fees panel freezes the whole month in one go.`}
       </p>
 
       {/* KPI strip. Computed from the same rows the grid's grand-total row sums
@@ -1076,7 +1065,7 @@ export default async function MonthlyEtcPage({
         <EtcMonthKpiCards
           month={month}
           kpis={monthKpis}
-          detail={monthHoursDetail}
+          detailJobIds={detailJobIds}
           // Same rows the amber banner below is built from, so the card and the
           // banner state one number rather than two that could drift.
           importIssues={importIssues.map((i) => ({ label: i.label, rows: i.rows, hours: Number(i.hours) }))}
@@ -1106,7 +1095,11 @@ export default async function MonthlyEtcPage({
               Save/Refresh/Submit forms and must not be nested inside it. The
               provider wraps both so the panel's live pulled/rate edits flow into
               the grid's job Standard Fees. */}
-          <form key={month} id="etc-month-form" action={submitMonth.bind(null, month)} className="min-w-0 flex-1">
+          {/* Not a submitting form any more (§15): it exists so the autosave can read
+              its fields by name (changedEtcFormData) and so the browser groups the
+              inputs. The month is finalised by SubmitMonthReportButton, which reads the
+              database rather than this DOM. */}
+          <form key={month} id="etc-month-form" className="min-w-0 flex-1">
           <DragScroll className="max-h-[calc(100vh-215px)] overflow-auto border border-sdc-border border-t-[#808080] bg-white shadow-sm select-none styled-scrollbar">
             <table className={`w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
               <thead className="sticky top-0 z-20 bg-sdc-gray-100">
@@ -1486,9 +1479,9 @@ export default async function MonthlyEtcPage({
                               initialWorked={round2(worked)}
                               initialDraft={draft}
                               initialConfirmed={isHistoricalMonth || entry.submittedAt != null ? round2(Number(entry.newEtc)) : null}
-                              // Clear ETC blanked this cell on purpose — without
-                              // this it would seed straight back from the confirmed
-                              // value above.
+                              // This cell was emptied on purpose — without this it
+                              // would seed straight back from the confirmed value
+                              // above. See newEtcSeedText / DEVLOG §16.
                               cleared={entry.newEtcClearedAt != null}
                               locked={locked}
                               monthComplete={monthComplete}
@@ -1599,23 +1592,10 @@ export default async function MonthlyEtcPage({
                           monthComplete,
                           // MONEY — keeps its cents. See NewEtcCellState.precision.
                           precision: "exact",
-                          // reopenAsksAgain LEFT AT THE DEFAULT (true) as of 2026-08-04,
-                          // by request: "do not automatically fill the New ETC cells when
-                          // there is a value in Money Spent Month — highlight them yellow
-                          // so managers enter the values manually, just like the hours
-                          // cells."
-                          //
-                          // This reverses the 2026-08-03 request that the column ALWAYS
-                          // show a figure. The two are the same question asked from
-                          // opposite ends — is a dollar estimate carried over from last
-                          // submission an answer, or a starting point? — and the answer is
-                          // now the same one the hours columns give: money spent means the
-                          // next figure is a judgement call nobody has made yet.
-                          //
-                          // Nothing else here changes. A month with NO spend still
-                          // carries the balance forward automatically and reads as
-                          // neutral (isNewEtcCellDecided returns true on hoursWorked 0),
-                          // which is the half of the old behaviour worth keeping.
+                          // A month with NO spend still carries the balance forward
+                          // automatically and reads as neutral (isNewEtcCellDecided
+                          // returns true on hoursWorked 0). Money spent with an empty
+                          // box is yellow, exactly like an hours cell.
                         } satisfies NewEtcCellState;
                         const partsCostSeed = newEtcSeedText(partsCostState);
                         const decidedCost = isNewEtcCellDecided(partsCostState, partsCostSeed);
@@ -1672,7 +1652,7 @@ export default async function MonthlyEtcPage({
                               // value on a reopened month (so a no-changes resubmit
                               // can't replace it with the suggestion), else the
                               // carry-forward once actuals are complete — but via the
-                              // shared rule, which additionally honours a Clear ETC
+                              // shared rule, which additionally honours a deliberate
                               // blanking. Cents preserved (precision "exact").
                               initialValue={partsCostSeed}
                               // Deliberately NOT `!decidedCost`: that counts a
@@ -1941,9 +1921,8 @@ export default async function MonthlyEtcPage({
               isSubmitted={standardSheetSubmitted}
               poolsEditable={!standardSheetSubmitted && !poolsCarriedFrom}
               savePoolsAction={savePools.bind(null, month)}
-              refreshPoolsAction={refreshPools.bind(null, month)}
-              submitMonthAction={submitStandardSheetMonth.bind(null, month)}
-              reopenMonthAction={reopenStandardSheetMonth.bind(null, month)}
+              monthName={monthNameOnly}
+              initialStatus={reportReadiness}
             />
           )}
         </div>

@@ -49,6 +49,24 @@ export type CellChange = {
   // For joining back to the record, when there is one.
   entityType?: string;
   entityId?: string | number;
+  // ── The cell this change lands in, if it is one cell ──────────────────────
+  //
+  // The form-field name of the affected input (`newEtcOverride__123`), i.e. the
+  // same identifier the presence indicators already use as `cellKey`. Optional:
+  // plenty of changes are not a single addressable cell (a bulk sync, a month
+  // submit), and those simply don't set it.
+  //
+  // What it buys (2026-08-04, performance pass): a browser receiving this event can
+  // put the new value straight into the one cell it belongs to. Before, the only way
+  // to show a colleague's value was to re-render the whole route — 854 KB and ~600ms
+  // on Monthly ETC, per event. See lib/etc-remote-values.ts.
+  cellKey?: string;
+  // The SAME cell's other legitimate name. A New ETC cell posts under its entry id
+  // once a row exists and under `newEtcCreate__<jobPk>__<section>` before that, and
+  // two browsers can be holding different ones depending on when each page rendered.
+  // Sending both is what lets the incremental path reach the ~half of the grid that
+  // is sections nobody quoted.
+  altCellKey?: string;
 };
 
 // Who made the change. Resolved once per batch rather than per cell.
@@ -81,8 +99,12 @@ export function describeChange(c: CellChange, userName: string): string {
   switch (c.changeType) {
     case "added":
       return `${userName} set ${c.columnName} to ${to} for ${c.rowRef} in ${c.tab}`;
+    // Phrased to name the figure that went, because after a removal there is
+    // nothing left on screen to say what it was — this line is the only record a
+    // reader gets. Wording taken from the requirement: "Abhi removed New ETC value
+    // 60 for Job 1165 in the Monthly ETC tab."
     case "removed":
-      return `${userName} cleared ${c.columnName} (was ${from}) for ${c.rowRef} in ${c.tab}`;
+      return `${userName} removed ${c.columnName} value ${from} for ${c.rowRef} in ${c.tab}`;
     case "rejected":
       return `${userName}'s change to ${c.columnName} for ${c.rowRef} in ${c.tab} was refused — it is now ${to}`;
     case "recalculated":
@@ -143,6 +165,10 @@ export async function recordChanges(
         changeType: c.changeType,
         at: new Date().toISOString(),
         message: describeChange(c, actor.userName),
+        // Carried so the receiving browser can update the ONE cell instead of
+        // refetching the route. Omitted when the change isn't a single cell.
+        ...(c.cellKey ? { cellKey: c.cellKey } : {}),
+        ...(c.altCellKey ? { altCellKey: c.altCellKey } : {}),
       })),
     );
   } catch (err) {

@@ -4,7 +4,9 @@ import { useEffect, useState } from "react";
 import { registerEtcField, forgetEtcField, updateEtcField, adoptEtcFieldBaseline } from "@/lib/etc-dirty-tracker";
 import { PARTS_COL_W } from "@/components/ui/classnames";
 import { publishPartsCell, forgetPartsCell } from "@/lib/etc-live-totals";
-import { isNewEtcCellDecided, type NewEtcCellState } from "@/lib/etc";
+import { isNewEtcCellDecided, formatNewEtcText, type NewEtcCellState } from "@/lib/etc";
+import { useRemoteEtcValue, forgetRemoteEtcValue } from "@/lib/etc-remote-values";
+import { useCellSaveState, cellSaveStateStyle } from "@/lib/etc-save-state";
 import { CellPresence } from "@/components/CellPresence";
 import { beginEditingCell, endEditingCell } from "@/components/RealtimeProvider";
 
@@ -57,7 +59,7 @@ export function PartsCostNewEtcCell({
   jobName: string;
   initialValue: string;
   // This cell's whole state, so "is it decided" comes from the ONE rule in
-  // lib/etc.ts that also colours the section-hours cells and scopes Clear ETC —
+  // lib/etc.ts that also colours the section-hours cells —
   // rather than the private expression this cell used to carry. That expression
   // treated any submittedAt as decided, so on a reopened month every Parts Cost
   // cell read as settled while the hours cells beside it correctly went yellow.
@@ -75,16 +77,34 @@ export function PartsCostNewEtcCell({
   const [value, setValue] = useState(initialValue);
   const [focused, setFocused] = useState(false);
 
+  // What the server last said about this cell: the prop from the last full render,
+  // or a realtime change event naming this exact cell. One variable for both, so the
+  // adopt rule below cannot treat them differently. The event path is the 2026-08-04
+  // performance fix — the alternative was re-rendering all 4,150 cells of this page
+  // (854 KB, ~600ms) to deliver one dollar figure. See lib/etc-remote-values.ts.
+  const remoteRaw = useRemoteEtcValue(name);
+  // Per-cell save state, same store and same vocabulary as the hours cells (§17).
+  const saveState = cellSaveStateStyle(useCellSaveState(name));
+  // "exact": Parts Cost is MONEY and keeps its cents, so an announced value must be
+  // formatted the way this column seeds — 5819.03, not 5819.
+  const serverText = remoteRaw == null ? initialValue : formatNewEtcText(remoteRaw, "exact");
+
   // Adopt a figure another user saved, unless this user has typed their own.
   // Identical rule to EtcSectionCells and MoneyCell — see the long note in
   // EtcSectionCells for why mount-time state was half of the multi-user bug.
   // `focused` is respected too: never move a value under an active caret.
-  const [serverValue, setServerValue] = useState(initialValue);
-  if (serverValue !== initialValue) {
+  const [serverValue, setServerValue] = useState(serverText);
+  if (serverValue !== serverText) {
     const wasClean = value === serverValue;
-    setServerValue(initialValue);
-    if (wasClean && !focused) setValue(initialValue);
+    setServerValue(serverText);
+    if (wasClean && !focused) setValue(serverText);
   }
+
+  // A fresh server render retires the realtime patch — a full payload is newer and
+  // more complete than any single event. Same rule, same reason as EtcSectionCells.
+  useEffect(() => {
+    forgetRemoteEtcValue(name);
+  }, [name, initialValue]);
 
   // Baseline for the unsaved-changes guards, and the unmount cleanup that lets
   // a month switch reset them. See EtcSectionCells for the full rationale —
@@ -102,8 +122,12 @@ export function PartsCostNewEtcCell({
   // dirty and autosave would post it, only to have the stale-write guard reject it
   // as a conflict on a cell nobody touched. See adoptEtcFieldBaseline.
   useEffect(() => {
-    if (value === initialValue) adoptEtcFieldBaseline(name, initialValue);
-  }, [name, initialValue, value]);
+    // Compared against what the server last said — which is the prop, or a realtime
+    // value the cell has adopted since. Using the raw prop here would leave a cell
+    // that took a colleague's announced figure looking dirty, and autosave would post
+    // it straight back at them.
+    if (value === serverText) adoptEtcFieldBaseline(name, serverText);
+  }, [name, serverText, value]);
 
   // Publish the live dollars for the totals downstream of this cell. Same rule as
   // EtcSectionCells: an empty or unparseable box means "not decided", which is the
@@ -136,15 +160,20 @@ export function PartsCostNewEtcCell({
     return () => forgetPartsCell(jobId);
   }, [jobId]);
 
-  // Decided = judged from the value this cell holds RIGHT NOW. Not "was typed in
-  // at some point": a latching touched-flag left an emptied cell looking settled
-  // when it no longer was. Literally the same function as EtcSectionCells.
+  // Yellow iff money was spent this month AND the box is empty — judged from the
+  // value this cell holds RIGHT NOW, so it clears on the keystroke that fills it and
+  // returns on the one that empties it. "$0 more parts needed" is an answer, so a
+  // typed 0 is not yellow. Literally the same function as EtcSectionCells; see
+  // lib/etc.ts for the two rules that used to be one.
   const decided = isNewEtcCellDecided(cellState, value);
   const displayValue = focused ? value : value.trim() === "" ? "" : currency(Number(value));
 
   return (
     // `relative` so the presence marker sits in the corner without resizing the cell.
-    <td className={`relative border-l border-sdc-border ${decided ? NEUTRAL_BG : ATTENTION_BG} ${PARTS_COL_W} px-1 py-1 text-center`}>
+    <td
+      className={`relative border-l border-sdc-border ${decided ? NEUTRAL_BG : ATTENTION_BG} ${saveState?.ring ?? ""} ${PARTS_COL_W} px-1 py-1 text-center`}
+      title={saveState?.title}
+    >
       <CellPresence cellKey={name} />
       <input type="hidden" name={name} value={value} disabled={locked} />
       <input
@@ -159,6 +188,10 @@ export function PartsCostNewEtcCell({
         // and the Save button both cover it), but the debounce is the thing that
         // makes a Parts Cost edit safe within a second like every other cell.
         data-etc-autosave="1"
+        // The server's last value, for Escape-to-cancel (ExcelCellFocus). Raw
+        // digits, matching what the hidden input posts — restoring the formatted
+        // "$12,395" would put a string the save cannot parse into the box.
+        data-baseline={serverValue}
         onFocus={() => {
           setFocused(true);
           // Claim the cell so other users see the indicator before they type.

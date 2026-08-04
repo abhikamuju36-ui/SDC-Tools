@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useState, useSyncExternalStore, useTransition } from "react";
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { usd, hours as fmtHours } from "@/components/ui/format";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 import { ETC_SECTIONS } from "@/lib/sections";
@@ -9,8 +9,13 @@ import type { EtcMonthKpis } from "@/lib/etc-month-kpis";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
 import type { UnattributedDetail } from "@/lib/unattributed-hours";
 import { loadUnattributedDetail } from "@/lib/unattributed-actions";
+import { loadEtcMonthHoursDetail } from "@/lib/hours-detail-actions";
 import { readKpiStripOpen, writeKpiStripOpen, subscribeKpiStrip } from "@/lib/kpi-strip-pref";
 import { useEtcLiveTotals } from "@/lib/etc-live-totals";
+import { reconcileEtcKpis, rollupLiveTotals, varianceTooltip } from "@/lib/etc-kpi-live";
+// A completed refresh publishes through this feed, which is how the drill caches below
+// learn that their sources have moved — including when somebody else started it.
+import { useRealtimeChanges } from "@/components/RealtimeProvider";
 
 // Section code -> billing group, so the drill can be narrowed to the card that
 // opened it. Same mapping the grid's column bands and the KPI totals use, from
@@ -43,13 +48,20 @@ export type { OffGridJob };
 export function EtcMonthKpiCards({
   month,
   kpis,
-  detail,
+  detailJobIds,
   importIssues,
   offGridJobs,
 }: {
   month: string;
   kpis: EtcMonthKpis;
-  detail: JobHoursDetail;
+  // The jobs the grid is rendering, so the drill can be scoped to the card that
+  // opened it. IDs only, not the punch rows themselves (2026-08-04, performance
+  // pass): the rows are fetched when a drill is opened, by lib/hours-detail-actions.
+  // Shipping them with the page cost 1,092 rows and 46ms of database time on EVERY
+  // render of the heaviest route in the app — background refreshes, filter changes
+  // and colleagues' saves included — for a panel that starts closed. The
+  // undefined-hours drill beside it already worked this way.
+  detailJobIds: number[];
   // Time booked to something that isn't a job number. Passed in from the page,
   // which already loads it for the amber banner — one query, one number, so the
   // card and the banner cannot disagree.
@@ -76,32 +88,24 @@ export function EtcMonthKpiCards({
   // Falls back to the server figure when nothing has published yet (the strip can
   // be open on a month whose grid rows haven't mounted), rather than showing a
   // confident zero.
-  const liveTotals = useEtcLiveTotals();
-  const liveDiffs = (() => {
-    if (liveTotals.size === 0) return null;
-    let engineering = 0;
-    let shop = 0;
-    let parts = 0;
-    let sawParts = false;
-    let engUnplanned = 0;
-    let shopUnplanned = 0;
-    for (const t of liveTotals.values()) {
-      engineering += t.engineering.diff;
-      shop += t.shop.diff;
-      engUnplanned += t.engineering.diffUnplanned;
-      shopUnplanned += t.shop.diffUnplanned;
-      if (t.parts) {
-        parts += t.parts.diff;
-        sawParts = true;
-      }
-    }
-    return { engineering, shop, parts: sawParts ? parts : null, engUnplanned, shopUnplanned };
-  })();
-  const engDiff = liveDiffs ? liveDiffs.engineering : kpis.engineering.diff;
-  const shopDiff = liveDiffs ? liveDiffs.shop : kpis.shop.diff;
-  const partsDiff = liveDiffs?.parts != null ? liveDiffs.parts : kpis.parts.diff;
-  const engUnplanned = liveDiffs ? liveDiffs.engUnplanned : kpis.engineering.diffUnplanned;
-  const shopUnplanned = liveDiffs ? liveDiffs.shopUnplanned : kpis.shop.diffUnplanned;
+  // ── ONE reconciled set of figures (§28, 2026-08-04) ────────────────────────
+  //
+  // This used to sum only the three DIFFS out of the live store and leave everything
+  // else on the server's page-load values — including `newEtc`, which is what the
+  // diffs are computed FROM. So a card could show a live variance beside a stale New
+  // ETC, and the Parts tooltip printed both in one sentence: "Money Left (X) − New
+  // ETC (Y)" where X − Y was not the number above it.
+  //
+  // Now the whole strip comes from lib/etc-kpi-live.ts, which is the single place
+  // that says which fields are editable-derived (newEtc, diff, diffUnplanned) and
+  // which are synced (worked, spent, people, prior, hoursLeft). There is no arithmetic
+  // left in this component, so no card can pick a different vintage from its neighbour.
+  const live = reconcileEtcKpis(kpis, rollupLiveTotals(useEtcLiveTotals()));
+  const engDiff = live.engineering.diff;
+  const shopDiff = live.shop.diff;
+  const partsDiff = live.parts.diff;
+  const engUnplanned = live.engineering.diffUnplanned;
+  const shopUnplanned = live.shop.diffUnplanned;
 
   // Summed here rather than passed in, so the card and its drill can never
   // disagree about how much is off the grid.
@@ -120,6 +124,14 @@ export function EtcMonthKpiCards({
   const cardCount = 5 + (offGridJobs.length > 0 ? 1 : 0);
 
   const [drill, setDrill] = useState<DrillScope | null>(null); // null = closed
+  // The punch rows behind the Engineering / Shop / People cards, fetched on first
+  // open rather than shipped with the page — see the `detailJobIds` note above.
+  // Kept for the life of the component once loaded: the punches only change on a
+  // sync, and re-fetching on every open would make the panel feel slow for no
+  // fresher an answer. Exactly the treatment the unattributed drill already had.
+  const [detail, setDetail] = useState<JobHoursDetail | null>(null);
+  const [loadingDetail, startDetail] = useTransition();
+  const [detailError, setDetailError] = useState<string | null>(null);
   // Whether the summary strip is showing. Read through useSyncExternalStore for the
   // same reason as the other client prefs: reading localStorage during render
   // hydrates differently from the server.
@@ -140,7 +152,8 @@ export function EtcMonthKpiCards({
   // Narrowed here rather than in the panel: the panel's section dropdown and its
   // footer total both read off `detail`, so filtering the data is what keeps the
   // dropdown offering only this group's sections and the total matching the card.
-  const scopedDetail = useMemo<JobHoursDetail>(() => {
+  const scopedDetail = useMemo<JobHoursDetail | null>(() => {
+    if (!detail) return null;
     if (!drill || drill === "All") return detail;
     const rows = detail.rows.filter((r) => SECTION_GROUP.get(r.section) === drill);
     // Section totals recomputed from the kept rows, so the dropdown's per-section
@@ -163,9 +176,9 @@ export function EtcMonthKpiCards({
   // punches. Small, real, and guaranteed to look like a bug if left unexplained,
   // so say it out loud whenever the gap would be visible.
   const cardWorked = drill === "Engineering" ? kpis.engineering.worked : drill === "Shop" ? kpis.shop.worked : null;
-  const gap = cardWorked == null ? 0 : scopedDetail.total - cardWorked;
+  const gap = cardWorked == null || scopedDetail == null ? 0 : scopedDetail.total - cardWorked;
   const scopeNote =
-    Math.abs(gap) >= 1 && cardWorked != null
+    Math.abs(gap) >= 1 && cardWorked != null && scopedDetail != null
       ? `The card reads ${fmtHours(cardWorked)} — these punch rows total ${fmtHours(scopedDetail.total)}. ` +
         `The card comes from the ETC grid's Hours Worked; these rows are the Paylocity punches behind it, and the two were last synced at different times.`
       : undefined;
@@ -175,7 +188,91 @@ export function EtcMonthKpiCards({
   // rather than leaving the only exit at the panel's far corner. Clicking a
   // DIFFERENT card still switches scope instead of closing, which is what
   // someone comparing Engineering against Shop is actually asking for.
-  const toggleDrill = (scope: DrillScope) => setDrill((current) => (current === scope ? null : scope));
+  //
+  // Opening one of the punch drills also STARTS THE FETCH, if this is the first
+  // time. Deliberately not an effect keyed on `drill`: the click is the event that
+  // means "I want this data", and an effect would also fire on a re-render that
+  // merely happened to have a drill open, which is how duplicate requests start.
+  // `loadingDetail` and `detail` between them make a second click a no-op.
+  const toggleDrill = (scope: DrillScope) => {
+    setDrill((current) => (current === scope ? null : scope));
+    if (scope === "OffGrid" || scope === "Unattributed") return; // served from props / their own fetch
+    if (detail || loadingDetail) return;
+    setDetailError(null);
+    startDetail(async () => {
+      try {
+        setDetail(await loadEtcMonthHoursDetail(month, detailJobIds));
+      } catch (err) {
+        // Shown in the panel rather than thrown: losing the whole ETC page to an
+        // error boundary over an optional drill would be a bad trade. Same call as
+        // the unattributed drill beside it.
+        setDetailError(err instanceof Error ? err.message : "Could not load the punch detail.");
+      }
+    });
+  };
+
+  // ── Drill caches are dropped when the data underneath them moves (§30) ─────
+  //
+  // Both drills cache for the life of the component, on the reasoning that their
+  // sources "only change on a sync". Refresh Data IS a sync, and this component never
+  // unmounts across one — router.refresh() preserves state deliberately — so the cards
+  // updated from the fresh server props while their own detail panels kept serving
+  // rows from before the refresh. A card and its drill-through disagreeing is exactly
+  // what §28.15 forbids, and the drill is the thing people open to check the card.
+  //
+  // Keyed on the realtime change feed, which a completed refresh publishes (see
+  // recordChanges in lib/refresh-service.ts), so this also covers a refresh started by
+  // somebody else. Dropping the cache is enough for a closed drill; an OPEN one is
+  // refetched below, because leaving it blank would read as the data having vanished.
+  const changes = useRealtimeChanges();
+  const drillChangeSeen = useRef(changes.length);
+  useEffect(() => {
+    if (changes.length === drillChangeSeen.current) return;
+    drillChangeSeen.current = changes.length;
+    setDetail(null);
+    setUnattributed(null);
+  }, [changes.length]);
+
+  // Self-healing refetch: whenever a drill is open and its data is missing — first
+  // open, or the invalidation above — fetch it. Guarded on the loading flag so a
+  // re-render cannot start a second request, which is the duplicate-call hazard the
+  // click-driven fetch above was written to avoid.
+  useEffect(() => {
+    if (drill !== "Unattributed" || unattributed || loadingUnattributed) return;
+    let alive = true;
+    startUnattributed(async () => {
+      try {
+        const d = await loadUnattributedDetail(month);
+        if (alive) setUnattributed(d);
+      } catch (err) {
+        if (alive) setUnattributedError(err instanceof Error ? err.message : "Could not read the hours export.");
+      }
+    });
+    return () => {
+      alive = false;
+    };
+  }, [drill, unattributed, loadingUnattributed, month]);
+
+  useEffect(() => {
+    if (drill === null || drill === "OffGrid" || drill === "Unattributed") return;
+    if (detail || loadingDetail) return;
+    let alive = true;
+    startDetail(async () => {
+      try {
+        const d = await loadEtcMonthHoursDetail(month, detailJobIds);
+        if (alive) setDetail(d);
+      } catch (err) {
+        if (alive) setDetailError(err instanceof Error ? err.message : "Could not load the punch detail.");
+      }
+    });
+    return () => {
+      alive = false;
+    };
+    // detailJobIds is a fresh array every render; its CONTENT is what matters, and it
+    // only changes with the month or the Billable filter — both of which re-render the
+    // page and null the cache anyway.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drill, detail, loadingDetail, month]);
 
   const unattributedTotal = importIssues.reduce((s, i) => s + i.hours, 0);
   const unattributedEntries = importIssues.reduce((s, i) => s + i.rows, 0);
@@ -186,8 +283,11 @@ export function EtcMonthKpiCards({
       return;
     }
     setDrill("Unattributed");
-    // Fetched once per page visit — the underlying export only changes on a
-    // sync, and re-parsing it on every open would make the panel feel broken.
+    // Fetched once, then cached — re-parsing the export on every open would make the
+    // panel feel broken. The cache is dropped when a refresh lands (see the realtime
+    // effect below), which is the case this guard used to get wrong: its reasoning was
+    // "the export only changes on a sync", and Refresh Data IS a sync, so the card
+    // moved while its own detail kept serving pre-refresh rows.
     if (unattributed || loadingUnattributed) return;
     setUnattributedError(null);
     startUnattributed(async () => {
@@ -250,11 +350,21 @@ export function EtcMonthKpiCards({
           drillOpen={drill === "Shop"}
           onDrill={() => toggleDrill("Shop")}
         />
-        <Card label="Parts spent" value={usd(kpis.parts.spent)}>
+        {/* `live.parts`, not `kpis.parts`, for the New ETC in the tooltip — it is the
+            operand of the variance shown beside it, and reading it from the page-load
+            snapshot is exactly what made this sentence stop adding up (§28.15). */}
+        <Card label="Parts spent" value={usd(live.parts.spent)}>
           <Variance
             value={partsDiff}
             format={usd}
-            title={`Money Left (${usd(kpis.parts.moneyLeft)}) − New ETC (${usd(kpis.parts.newEtc)})`}
+            title={varianceTooltip({
+              leftLabel: "Money Left",
+              plannedLeft: live.parts.plannedMoneyLeft,
+              plannedNewEtc: live.parts.plannedNewEtc,
+              groupLeft: live.parts.moneyLeft,
+              groupNewEtc: live.parts.newEtc,
+              format: usd,
+            })}
           />
         </Card>
         <Card
@@ -488,7 +598,34 @@ export function EtcMonthKpiCards({
           />
         )
       ) : (
-        drill && (
+        drill &&
+        // Three states now that the rows arrive on demand. The panel keeps its own
+        // shape in all three so opening a drill never shifts the page under the
+        // cursor: a one-line box while loading, the same box with the error, then
+        // the table.
+        (detailError ? (
+          <p className="rounded-xl border border-sdc-red-border bg-sdc-red-bg p-4 text-xs font-medium text-sdc-red-text shadow-sm">
+            Could not load the punch detail — {detailError}{" "}
+            <button
+              type="button"
+              onClick={() => {
+                setDetailError(null);
+                setDetail(null);
+                const scope = drill;
+                setDrill(null);
+                // Re-open, which re-runs the fetch through the one path that owns it.
+                setTimeout(() => toggleDrill(scope), 0);
+              }}
+              className="underline underline-offset-2 hover:no-underline"
+            >
+              Try again
+            </button>
+          </p>
+        ) : scopedDetail == null ? (
+          <p className="rounded-xl border border-sdc-border bg-white p-4 text-xs text-sdc-gray-500 shadow-sm">
+            Loading the punch detail…
+          </p>
+        ) : (
           <HoursDetailPanel
             detail={scopedDetail}
             note={scopeNote}
@@ -498,7 +635,7 @@ export function EtcMonthKpiCards({
             title={drill === "All" ? `Hours Detail — ${month}` : `${drill} hours — ${month}`}
             onClose={() => setDrill(null)}
           />
-        )
+        ))
       )}
     </div>
   );

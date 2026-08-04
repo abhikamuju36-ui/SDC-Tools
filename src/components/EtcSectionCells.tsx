@@ -1,8 +1,32 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { calcHoursLeft, suggestNewEtc, round2, newEtcSeedText, isNewEtcCellDecided, type NewEtcCellState } from "@/lib/etc";
+import {
+  calcHoursLeft,
+  suggestNewEtc,
+  round2,
+  newEtcSeedText,
+  isNewEtcCellDecided,
+  hasNewEtcValue,
+  formatNewEtcText,
+  type NewEtcCellState,
+} from "@/lib/etc";
 import { registerEtcField, forgetEtcField, updateEtcField, adoptEtcFieldBaseline } from "@/lib/etc-dirty-tracker";
+import { useRemoteEtcValue, forgetRemoteEtcValue } from "@/lib/etc-remote-values";
+import { useCellSaveState, cellSaveStateStyle, setCellInvalid, clearCellSaveState, useCellInvalidMessage } from "@/lib/etc-save-state";
+import { CELL_SPECS, parseCell, type FieldSpec } from "@/lib/cell-rules";
+
+// What this column accepts, from the registry (§27.2). Deliberately the SAME effective
+// spec the server applies in parseNewEtcField — 2 decimal places, no negatives — rather
+// than the stricter whole-number rule the hours column displays with. Tightening hours
+// to integers is a real decision with a user-visible consequence (typing "93.75" would
+// start being refused), and it belongs in its own change rather than arriving as a side
+// effect of adding validation feedback. What matters here is that the cell and the write
+// agree, and they do.
+// `decimal`, not `currency`: same policy, but the refusal reads "New ETC must be a
+// number greater than or equal to 0" rather than "an amount", which is the wrong noun
+// for a column of hours.
+const NEW_ETC_SPEC: FieldSpec = { ...CELL_SPECS["etc.newEtc.parts"], label: "New ETC", kind: "decimal", decimals: 2, min: 0 };
 import { publishEtcCell, forgetEtcCell } from "@/lib/etc-live-totals";
 import { CellPresence } from "@/components/CellPresence";
 import { beginEditingCell, endEditingCell } from "@/components/RealtimeProvider";
@@ -85,9 +109,9 @@ export function EtcSectionCells({
   // of April's 366 cells had a worked==0 manager override != priorEtc that
   // a round-trip would have wiped.
   initialConfirmed: number | null;
-  // Clear ETC deliberately blanked this cell (EtcEntry.newEtcClearedAt). Without
-  // it, a cleared cell on a reopened month would seed straight back from
-  // initialConfirmed above and the clear would look like it never happened.
+  // This cell was emptied DELIBERATELY (EtcEntry.newEtcClearedAt). Without it, a
+  // cleared cell on a reopened month would seed straight back from initialConfirmed
+  // above and the clear would look like it never happened.
   cleared?: boolean;
   locked: boolean;
   // False while the month's actuals are still incomplete (Paylocity not yet
@@ -120,14 +144,11 @@ export function EtcSectionCells({
   // in (2026-08-03, by request) so what is displayed, what is submitted, and what
   // carries into next month's Prior ETC are all the same number.
   //
-  // The seeding rule itself moved to lib/etc.ts (newEtcSeedText) when Clear ETC
-  // arrived: that button acts on exactly the yellow cells, so a server action has
-  // to compute "is this cell yellow, and does it hold anything" from the same code
-  // that colours it here. Two copies would mean a button that clears a different
-  // set than the manager can see. The rule is unchanged — including that a cell
-  // with NO row yet stays blank rather than auto-filling (its Prior ETC is 0, so
-  // the zero-hours carry-forward would print a literal "0" in ~350 empty boxes and
-  // post a create for every unquoted section).
+  // The seeding rule itself lives in lib/etc.ts (newEtcSeedText) so the server can
+  // answer "what would this box hold" identically — a cell with NO row yet stays
+  // blank rather than auto-filling (its Prior ETC is 0, so the zero-hours
+  // carry-forward would print a literal "0" in ~350 empty boxes and post a create
+  // for every unquoted section).
   const cellState: NewEtcCellState = {
     priorEtc,
     hoursWorked: worked,
@@ -137,8 +158,47 @@ export function EtcSectionCells({
     locked,
     monthComplete: monthComplete !== false,
   };
-  const initialText = newEtcSeedText(cellState);
-  const [newEtcText, setNewEtcText] = useState(initialText);
+  // An existing row is addressed by its entry id; one that does not exist yet is
+  // addressed by job + section, and saveAllNewEtcDrafts/submitMonth create it.
+  // Two prefixes rather than one overloaded name, so a malformed id can never be
+  // mistaken for a create instruction.
+  //
+  // Declared here, above everything that uses it, because the realtime lookup below
+  // is keyed on it — a change event names the cell by this exact string.
+  const fieldName = entryId != null ? `newEtcOverride__${entryId}` : `newEtcCreate__${jobId}__${sectionCode}`;
+  // Stable key for the live-totals store, which cannot use an id that has not
+  // been assigned yet.
+  const cellKey = entryId != null ? String(entryId) : `${jobId}:${sectionCode}`;
+
+  const seedText = newEtcSeedText(cellState);
+  const [newEtcText, setNewEtcText] = useState(seedText);
+
+  // ── What the server last said about this cell ──────────────────────────────
+  //
+  // Two ways it can speak, and they are the same fact from this cell's point of
+  // view, so they go through ONE variable:
+  //
+  //   * a full route render — `seedText`, from the props above.
+  //   * a realtime change event naming this cell — the incremental path added in the
+  //     2026-08-04 performance pass. It exists because the alternative was asking the
+  //     server to re-render all 4,150 cells (854 KB, ~600ms) for one number; see
+  //     lib/etc-remote-values.ts.
+  //
+  // A remote value is a patch on TOP of the last render, so it must not outlive it: as
+  // soon as the props bring a new server value, the patch is dropped (the effect
+  // below). A full payload is newer and more complete than any single event — it may
+  // carry changes whose events this tab never received — so it always wins. That is
+  // what keeps an older response from replacing a newer result.
+  const remoteRaw = useRemoteEtcValue(fieldName);
+  // Where THIS cell's save got to (§17): saving / saved / failed / conflict. A ring on
+  // the cell, because a single toolbar chip cannot answer "did my cell save" on a grid
+  // this size. See lib/etc-save-state.ts.
+  const saveState = cellSaveStateStyle(useCellSaveState(fieldName));
+  // The rule this cell broke, in the words lib/cell-rules.ts produced — "New ETC must
+  // be a whole number greater than or equal to 0." (§27.9: identify the expected
+  // format or allowed range, rather than only marking the cell red).
+  const invalidMessage = useCellInvalidMessage(fieldName);
+  const initialText = remoteRaw == null ? seedText : formatNewEtcText(remoteRaw, cellState.precision);
 
   // ── Adopt what another user saved, without touching this user's typing ──────
   //
@@ -162,39 +222,31 @@ export function EtcSectionCells({
 
   const hoursLeft = calcHoursLeft(priorEtc, worked);
   const suggested = suggestNewEtc(priorEtc, worked);
-  // A cell only needs manager attention (yellow) when this section actually
-  // logged hours this month (worked > 0) and no value has been decided yet.
-  // With no hours worked, New ETC just carries the prior forward — no decision
-  // needed — so it stays neutral even while the month is still in progress.
-  // "Decided" is a property of what the cell CONTAINS, not of whether it was
-  // ever typed in. It used to latch on a `newEtcTouched` flag that never
-  // cleared, so filling a cell and then emptying it again left it neutral —
-  // a section with hours worked and no New ETC, looking done. Reading the
-  // current value instead means the yellow comes straight back when the value
-  // goes, which is the state the manager is actually in.
-  const hasNewEtcValue = newEtcText.trim() !== "";
-  // ── A REOPENED month asks the same questions again ─────────────────────────
+  // ── The yellow cell, in one line ───────────────────────────────────────────
   //
-  // On a reopen every cell arrives carrying the value it was submitted with
-  // (initialConfirmed), so `hasNewEtcValue` is true everywhere and the whole grid
-  // rendered as decided. The manager lost the one thing the yellow is for: which
-  // cells actually need a judgement call this pass.
+  //     yellow  <=>  a decision is required here  AND  the box is empty
   //
-  // So a previously-confirmed cell with hours worked goes yellow again — even
-  // though it is filled in, and even though a manager filled it (2026-08-03, by
-  // request). Re-opening a month is re-reviewing it; a cell that needed attention
-  // the first time needs it again.
+  // A decision is required when this section actually logged hours this month
+  // (worked > 0). With no hours worked, New ETC just carries the prior forward —
+  // nothing to decide — so the cell stays neutral even mid-month.
   //
-  // It clears the moment the value is CHANGED, not merely visited, so the colour
-  // works as a checklist: yellow means "still holding last submission's number",
-  // grey means "I have looked at this and moved it". Keeping the same figure is a
-  // valid answer — retype it, or just submit, since Submit takes what is in the
-  // box either way.
+  // Both halves read the LIVE input text (lib/etc.ts owns the rule; hasNewEtcValue
+  // owns what "empty" means). That is what makes the colour honest with no save,
+  // refresh, tab switch or remount involved: it clears on the keystroke that fills
+  // the cell and returns on the keystroke that empties it. 0 and "0" are VALUES —
+  // a section planned at zero has been answered.
   //
-  // `locked` excluded: a submitted month nobody has reopened is finished, and
-  // painting it all yellow would be shouting at a closed book.
-  // Judged against the LIVE text, so the yellow clears the moment the value is
-  // changed and comes straight back if it is emptied again.
+  // Two earlier versions of this rule are worth remembering, because both produced
+  // a cell whose colour disagreed with its contents:
+  //   * a latching `newEtcTouched` flag — filling a cell and emptying it again left
+  //     it neutral, i.e. a section with hours worked and no New ETC looking done.
+  //   * "a reopened month asks again" (2026-08-03 – 2026-08-04) — on a reopen every
+  //     cell arrives carrying the value it was submitted with, so the entire grid
+  //     rendered yellow WITH VALUES IN IT. That was reported as the bug it is:
+  //     yellow tells a manager to type something, and these cells were not asking
+  //     for anything. (The Clear ETC button that needed that question has since
+  //     been removed outright — §14.)
+  const filled = hasNewEtcValue(newEtcText);
   const decided = isNewEtcCellDecided(cellState, newEtcText);
   const newEtcNum = Number(newEtcText);
   const effective = newEtcText.trim() === "" || !Number.isFinite(newEtcNum) ? suggested : newEtcNum;
@@ -223,7 +275,7 @@ export function EtcSectionCells({
   // this cell, the row totals, the grand total and the KPI cards all count one
   // set. It used to subtract 0 here, which made Diff equal Hours Left and fed
   // that same figure into the "unplanned" KPI split.
-  const diff = hasNewEtcValue ? hoursLeft - Math.max(effective, 0) : 0;
+  const diff = filled ? hoursLeft - Math.max(effective, 0) : 0;
 
   // ── What the row PRINTS, as opposed to what it computes ────────────────────
   //
@@ -254,16 +306,8 @@ export function EtcSectionCells({
   const workedRounded = Math.round(worked);
   const hoursLeftShown = Math.round(priorEtc) - workedRounded;
   // Empty string, not a number, when nothing has been decided — see `diff` above.
-  const diffShown = hasNewEtcValue ? hoursLeftShown - Math.round(Math.max(effective, 0)) : null;
+  const diffShown = filled ? hoursLeftShown - Math.round(Math.max(effective, 0)) : null;
 
-  // An existing row is addressed by its entry id; one that does not exist yet is
-  // addressed by job + section, and saveAllNewEtcDrafts/submitMonth create it.
-  // Two prefixes rather than one overloaded name, so a malformed id can never be
-  // mistaken for a create instruction.
-  const fieldName = entryId != null ? `newEtcOverride__${entryId}` : `newEtcCreate__${jobId}__${sectionCode}`;
-  // Stable key for the live-totals store, which cannot use an id that has not
-  // been assigned yet.
-  const cellKey = entryId != null ? String(entryId) : `${jobId}:${sectionCode}`;
 
   // Register the value this cell LOADED with, so the unsaved-changes guards
   // can tell an actual edit from a keystroke that was undone. Unregistering on
@@ -296,6 +340,22 @@ export function EtcSectionCells({
     if (newEtcText === initialText) adoptEtcFieldBaseline(fieldName, initialText);
   }, [fieldName, initialText, newEtcText]);
 
+  // A fresh SERVER RENDER retires the realtime patch for this cell.
+  //
+  // The incremental path (lib/etc-remote-values.ts) exists so one colleague's value
+  // does not cost a full re-render of the page. But a full render, when one does
+  // happen, is strictly better information: it is a complete snapshot, and it may
+  // carry changes whose events this tab never received (a dropped SSE frame, a
+  // reconnect gap). So the moment `seedText` moves, the patch is dropped and the
+  // props win — which is what makes it impossible for a cached event to reinstate a
+  // value the database no longer holds, cleared values included.
+  //
+  // Keyed on seedText alone: an unchanged prop means the server has said nothing new
+  // and the patch is still the freshest thing this cell knows.
+  useEffect(() => {
+    forgetRemoteEtcValue(fieldName);
+  }, [fieldName, seedText]);
+
   // Publish this cell's live figures for the totals that sum it — the row's
   // TOTAL (NEW ETC) block, the grand-total row, and the Standard Sheet's
   // Total ETC $ / % Total / Standard Fees chain.
@@ -309,8 +369,8 @@ export function EtcSectionCells({
   // and a render React discards must not be allowed to change what other
   // components read.
   useEffect(() => {
-    publishEtcCell(cellKey, { jobId, billingGroup, sectionCode, prior: priorEtc, worked, hoursLeft, effective, diff, decided: hasNewEtcValue });
-  }, [cellKey, jobId, billingGroup, sectionCode, priorEtc, worked, hoursLeft, effective, diff, hasNewEtcValue]);
+    publishEtcCell(cellKey, { jobId, billingGroup, sectionCode, prior: priorEtc, worked, hoursLeft, effective, diff, decided: filled });
+  }, [cellKey, jobId, billingGroup, sectionCode, priorEtc, worked, hoursLeft, effective, diff, filled]);
 
   // Unmount is what makes a month switch or a column filter self-cleaning: the
   // grid is keyed on the month, so every cell tears down and takes its
@@ -320,13 +380,33 @@ export function EtcSectionCells({
   }, [cellKey]);
 
   function handleNewEtcChange(e: React.ChangeEvent<HTMLInputElement>) {
-    setNewEtcText(e.target.value);
-    // Nothing persists from typing alone — the toolbar's Save button batch-
-    // saves every currently-typed value across the grid at once. This just
-    // reports the current value so the "unsaved changes" guards know whether
-    // anything actually differs from what was loaded. Typing a value and then
-    // putting the cell back how it was leaves the grid clean.
-    updateEtcField(fieldName, e.target.value);
+    const raw = e.target.value;
+    setNewEtcText(raw);
+    // ── Validate on the keystroke, against the shared rule (§27.9) ──────────
+    //
+    // The SAME spec the server action re-checks (lib/cell-rules.ts), so the cell and
+    // the write cannot disagree about what this column accepts. Three things follow
+    // from a refusal, and all three are what §27.9 asks for:
+    //
+    //   * the typed text stays exactly where the user put it — this branch never
+    //     touches `raw`, so nothing is reset, coerced or blanked;
+    //   * the cell is not reported to the dirty tracker, so autosave never sends it
+    //     and the status chip cannot claim "All changes saved";
+    //   * and it does not reach the live totals, because the effect above publishes
+    //     the parsed figure, not this string — an invalid cell contributes nothing
+    //     rather than contributing a NaN.
+    const parsed = parseCell(raw, NEW_ETC_SPEC);
+    if (parsed.kind === "invalid") {
+      setCellInvalid(fieldName, parsed.message);
+      return;
+    }
+    clearCellSaveState(fieldName);
+    // Nothing persists from typing alone — autosave batches every currently-typed
+    // value across the grid ~0.8s after the last keystroke. This just reports the
+    // current value so the "unsaved changes" guards know whether anything actually
+    // differs from what was loaded. Typing a value and then putting the cell back how
+    // it was leaves the grid clean.
+    updateEtcField(fieldName, raw);
   }
 
   return (
@@ -355,22 +435,53 @@ export function EtcSectionCells({
       </td>
       {/* `relative` so the presence marker can sit in the corner without changing
           the cell's size — see CellPresence. */}
-      <td className={`relative border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(decided)} px-1 py-1 text-center align-middle whitespace-nowrap`}>
+      <td
+        className={`relative border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(decided)} ${saveState?.ring ?? ""} px-1 py-1 text-center align-middle whitespace-nowrap`}
+        title={invalidMessage ?? saveState?.title}
+        // Announced, not just coloured: a red ring is invisible to a screen reader and
+        // to anyone who cannot distinguish the shade from the yellow "needs attention"
+        // background two cells over.
+        aria-invalid={invalidMessage ? true : undefined}
+      >
         <CellPresence cellKey={fieldName} />
         {/* No hours worked -> carry-forward is deterministic, safe to auto-fill.
             Hours worked > 0 -> a manager's judgment call, not auto-filled;
             flagged yellow so it's obviously not done yet — left with no
             placeholder hint (rather than showing the suggestion) so the cell
             reads as genuinely blank until the manager types a value.
-            Typing autosaves 800ms after the last keystroke (EtcAutosave). */}
+            Typing autosaves 800ms after the last keystroke (EtcAutosave), and so
+            does EMPTYING it — Delete/Backspace on a focused cell (which arrives
+            fully selected, see ExcelCellFocus) is a save like any other edit. */}
         <input
-          type="number"
-          // Whole hours — the column displays and submits integers (see
-          // initialText). A 0.01 step invited the decimals this fixed.
-          step="1"
-          min="0"
+          // ── text, not number (§27.3, 2026-08-04) ─────────────────────────
+          //
+          // `type="number"` looks like the safe choice and is the reason the shared
+          // parser could not reach this cell at all. The browser DISCARDS anything it
+          // cannot read as a number before any handler runs: paste "$1,234" or "1,234"
+          // out of the spreadsheet this grid replaces and the box goes EMPTY — which
+          // this cell then reads, correctly, as a deliberate clear. So the one input
+          // people paste into was the one input that silently threw the paste away and
+          // wiped the cell instead. (Found by testing exactly that, live.)
+          //
+          // As text, the value arrives intact and lib/cell-rules.ts decides — accepting
+          // the separators and the currency symbol, refusing the genuinely ambiguous,
+          // and saying which it was. Same move MoneyCell already made for the Projects
+          // grid's money cells, and for the same reason.
+          //
+          // Nothing is lost visually: the spinners were already suppressed in CSS
+          // below, and `step`/`min` were never a real guard — a number input enforces
+          // them on arrow keys and on form validation, neither of which this cell uses.
+          // The rule now lives in NEW_ETC_SPEC, where the server reads it too.
+          type="text"
+          inputMode="decimal"
           name={fieldName}
           value={newEtcText}
+          // What the SERVER last sent for this cell. Read by ExcelCellFocus so
+          // Escape restores the last saved value (Excel's cancel-edit), and it is
+          // deliberately `serverText` rather than the mount-time seed: after a save
+          // or an adopted colleague's figure, THAT is what cancelling should return
+          // to.
+          data-baseline={serverText}
           onChange={handleNewEtcChange}
           // Presence: focus claims the cell, blur releases it. Other users see the
           // marker from the moment the caret lands here, which is the point — they
@@ -398,7 +509,7 @@ export function EtcSectionCells({
         // The tooltip is where an EMPTY cell explains itself — there is no number
         // to hover, so it says why, and what would happen on submit anyway.
         title={
-          hasNewEtcValue
+          filled
             ? `${round2(diff)} = Hours Left (${round2(hoursLeft)}) − New ETC (${round2(Math.max(effective, 0))})`
             : `No New ETC entered yet, so there is nothing to compare against and no variance to report. ` +
               `Hours Left is ${round2(hoursLeft)}; submitting as-is would use the suggestion, ${round2(suggested)}.`

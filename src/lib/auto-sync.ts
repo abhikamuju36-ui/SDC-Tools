@@ -37,7 +37,12 @@ import "server-only";
 //   freshness for a step it skipped for that reason: claiming currency because a
 //   month is frozen would be a lie by omission.
 
-export const SYNC_INTERVAL_MS = 6 * 60 * 60 * 1000;
+// EVERY HOUR (§25.4, 2026-08-04 — was every 6 hours). The pass measures in seconds
+// against sources that publish continuously, so six hours of spacing was six hours of
+// avoidable staleness; an hour keeps the figures close to live without turning the
+// upstream systems into a polling target. There is still no retry policy — the interval
+// IS the retry, which is now four times more forgiving of a single failed pass.
+export const SYNC_INTERVAL_MS = 1 * 60 * 60 * 1000;
 
 // Every source this pass refreshes, in the order it runs them. Declared once and
 // read by BOTH the runner below and the dashboard's Data Sync card, so a source
@@ -89,7 +94,12 @@ export type SyncRunResult = {
   steps: SyncStepResult[];
 };
 
-export async function runAllSyncs(trigger: SyncTrigger): Promise<SyncRunResult> {
+// Reports the stage now STARTING, plus every step finished so far. Called before each
+// source and once at the end. Optional, and never allowed to fail a refresh — the
+// hourly schedule passes nothing and behaves exactly as it did.
+export type SyncProgress = (stage: string | null, done: SyncStepResult[]) => void | Promise<void>;
+
+export async function runAllSyncs(trigger: SyncTrigger, onProgress?: SyncProgress): Promise<SyncRunResult> {
   // Imported lazily, inside the function: this module is loaded from
   // instrumentation.ts, which also runs under the Edge runtime, where the Node
   // built-ins these pull in (mssql, msal's native cache, fs) cannot load at all.
@@ -132,6 +142,14 @@ export async function runAllSyncs(trigger: SyncTrigger): Promise<SyncRunResult> 
     // row so the reason reaches the screen instead of only the log.
     run: () => Promise<string | null | { skip: string }>,
   ): Promise<void> {
+    // Announce the stage BEFORE the work (§30). Reporting it afterwards would show the
+    // step that just finished while the pass sat in the next one's external call —
+    // which is the state people read as "stuck".
+    try {
+      await onProgress?.(label, steps);
+    } catch {
+      /* progress reporting must never be able to fail a refresh */
+    }
     try {
       const detail = await run();
       if (detail === null) {

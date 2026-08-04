@@ -16,7 +16,7 @@
 # next.js
 /.next/
 /.next-preview*/
-/.next-verify/
+/.next-verify*/
 /.next-buildcheck/
 /out/
 

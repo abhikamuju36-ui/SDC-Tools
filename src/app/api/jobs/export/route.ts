@@ -1,41 +1,29 @@
-import { prisma } from "@/lib/prisma";
-import type { Prisma } from "@prisma/client";
-import { NextRequest } from "next/server";
-import { validJobTypeFilter, compareJobIds } from "@/lib/job-filters";
+import { auth } from "@/lib/auth";
 
-function csvEscape(value: unknown): string {
-  const s = String(value ?? "");
-  return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
-}
-
-export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const q = searchParams.get("q") ?? undefined;
-  const status = searchParams.get("status") ?? undefined;
-
-  const where: Prisma.JobWhereInput = { ...validJobTypeFilter };
-  if (q) where.OR = [{ jobName: { contains: q } }, { jobId: { contains: q } }];
-  if (status) where.status = status;
-
-  const jobs = await prisma.job.findMany({ where });
-  jobs.sort((a, b) => compareJobIds(a.jobId, b.jobId)); // numeric, not lexicographic
-
-  const header = ["Job Id", "Job Name", "Status", "Customer", "Type", "Source", "PO Start Date"];
-  const rows = jobs.map((j) => [
-    j.jobId,
-    j.jobName,
-    j.status,
-    j.customer ?? "",
-    j.type ?? "",
-    j.source,
-    j.poStartDate?.toISOString().slice(0, 10) ?? "",
-  ]);
-  const csv = [header, ...rows].map((r) => r.map(csvEscape).join(",")).join("\n");
-
-  return new Response(csv, {
-    headers: {
-      "Content-Type": "text/csv",
-      "Content-Disposition": `attachment; filename="sdc-jobs-${new Date().toISOString().slice(0, 10)}.csv"`,
-    },
-  });
+// ── Retired: use /api/export/projects instead (§24, 2026-08-04) ──────────────
+//
+// This URL used to return the whole job list as a seven-column CSV, and it had NO
+// authentication check of its own — the entire project list was one unauthenticated
+// request away, and it ignored the Projects page's filters entirely.
+//
+// It is a 410 rather than a deletion because the URL has been shipping in the Jobs
+// page's "Export CSV" link for months: a bookmark or a script pointed at it deserves a
+// sentence explaining where the data went, not a bare 404. (It is also what keeps the
+// generated route-type validator honest while a dev server holds its build output open.)
+//
+// The replacement exports the FILTERED view of either grid, as .xlsx or .csv, checks the
+// session, and writes an audit row:
+//
+//     /api/export/projects?format=xlsx&<the Projects page's query string>
+//     /api/export/etc?format=csv&month=2026-07
+export async function GET() {
+  // Authenticated even though it returns no data: an unauthenticated endpoint that
+  // answers questions about the app's shape is the habit worth not keeping.
+  const session = await auth();
+  if (!session?.user) return new Response("Not signed in.", { status: 401 });
+  return new Response(
+    "This export endpoint has been replaced. Use /api/export/projects?format=xlsx (or format=csv), " +
+      "which exports the Projects grid as currently filtered — the Export button on the Projects page does this for you.",
+    { status: 410, headers: { "Content-Type": "text/plain; charset=utf-8" } },
+  );
 }

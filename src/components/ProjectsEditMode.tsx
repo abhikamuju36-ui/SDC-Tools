@@ -177,7 +177,7 @@ export function WhenEditing({ children }: { children: ReactNode }) {
 // nobody should have to discover by typing into it.
 //
 // Turning it on opens a password popover (the same shape as
-// SubmitAndLockButton and EtcRatesButton). The password is checked by
+// SubmitMonthReportButton and EtcRatesButton). The password is checked by
 // /api/projects/gate, never in the browser — a route handler rather than a
 // server action because an action re-renders this whole route just to answer,
 // and that took seconds. Turning it off needs no password.

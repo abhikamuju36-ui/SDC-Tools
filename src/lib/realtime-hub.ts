@@ -76,6 +76,13 @@ export type ChangeEvent = {
   changeType: string;
   at: string;
   message: string;
+  // The cell this change belongs to, when it is one cell: the affected input's
+  // form-field name. Lets a browser update that single cell instead of refetching
+  // the whole route — see lib/etc-remote-values.ts. `altCellKey` is the same cell's
+  // other legitimate name (entry-id form vs job+section form), because two browsers
+  // can be holding different ones. Optional on purpose: a bulk change has no cell.
+  cellKey?: string;
+  altCellKey?: string;
 };
 
 type Envelope =

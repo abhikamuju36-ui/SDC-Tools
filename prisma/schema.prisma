@@ -473,3 +473,85 @@ model SavedView {
   @@unique([scope, name])
   @@map("saved_views")
 }
+
+// ── One record per monthly-report submission ATTEMPT ────────────────────────
+//
+// Written by lib/monthly-report.ts for every `Submit {Month} Report` click, successful
+// or refused. It is the answer to "who signed this month off, when, on what version,
+// and what was wrong with it the time it was refused" — a question the two old
+// buttons ("Submit ETC" / "Submit Standard Sheet") could not answer at all.
+//
+// `submissionId` is a client-generated UUID and is UNIQUE: that is the idempotency
+// key. A double-click or a retried request carries the same id, and the action returns
+// the first outcome instead of finalising the month twice.
+//
+// Accessed by RAW SQL, not the generated client — `prisma generate` cannot run while a
+// server process holds node_modules/.prisma open (EPERM), and blocking a fix on a
+// deploy window is worse. Same treatment as the AuditLog cell-change columns.
+model MonthlyReportSubmission {
+  id            Int      @id @default(autoincrement())
+  submissionId  String   @unique @db.VarChar(64)
+  month         String   @db.VarChar(7) // "2026-07"
+  year          Int
+  monthNumber   Int
+  userId        Int?
+  userName      String
+  status        String   @db.VarChar(16) // "submitted" | "failed"
+  appVersion    String   @db.VarChar(32)
+  sections      String   @db.Text // JSON array of the sections included
+  validation    String   @db.Text // JSON: { ok, totalIssues, counts, issues[] }
+  failureReason String?  @db.Text
+  // The flow, timed (§26.15). confirmedAt is the browser's clock — when "Yes, Submit
+  // Report" was pressed in the confirmation dialog; the other two are the server's.
+  confirmedAt   DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime @default(now())
+
+  @@index([month])
+}
+
+// ── One row per application-wide refresh, manual or scheduled (§25.11) ───────
+//
+// Written by lib/refresh-service.ts around every call to runAllSyncs, so "when was
+// the app last refreshed, by whom, how long did it take, and what failed" has one
+// answer instead of seven freshness rows and a log line. PowerBiFreshness still
+// tracks each SOURCE's own currency; this tracks the PASS.
+//
+// Accessed by raw SQL for the same reason as MonthlyReportSubmission: `prisma
+// generate` cannot run while a server process holds node_modules/.prisma open.
+model RefreshRun {
+  id           Int       @id @default(autoincrement())
+  refreshId    String    @unique @db.VarChar(64)
+  trigger      String    @db.VarChar(16) // "manual" | "interval" | "startup"
+  userId       Int?
+  userName     String? // null for a scheduled pass
+  startedAt    DateTime
+  completedAt  DateTime?
+  durationMs   Int?
+  appVersion   String    @db.VarChar(32)
+  status       String    @db.VarChar(16) // "running" | "ok" | "partial" | "failed"
+  sourcesOk    Int       @default(0)
+  sourcesFailed Int      @default(0)
+  sourcesSkipped Int     @default(0)
+  // Per-source outcome + the counts each sync reports, as JSON: the underlying syncs
+  // report different things (rows upserted, jobs updated, pools computed), so this
+  // keeps what each one actually said rather than flattening them into one number
+  // that would be wrong for most of them.
+  steps        String    @db.Text
+  failureDetail String?  @db.Text
+
+  @@index([startedAt])
+}
+
+// ── The refresh lock (§25.10) ───────────────────────────────────────────────
+//
+// ONE row, id = 1. A refresh is allowed to start only if it can claim it with a
+// single conditional UPDATE, which MySQL makes atomic — so two app servers (or two
+// users clicking together) cannot both start a pass. `startedAt` doubles as the
+// stale-lock timeout: a process killed mid-refresh must not lock the app forever.
+model RefreshLock {
+  id        Int      @id
+  holder    String?  @db.VarChar(128) // the refreshId currently holding it
+  startedAt DateTime?
+}

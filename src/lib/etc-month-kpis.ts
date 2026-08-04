@@ -35,13 +35,25 @@ export type GroupKpi = {
   // 4,070 hours" would be the card lying. Split out so the strip can say which it
   // is; `diff - diffUnplanned` is the genuine over/under from decided cells.
   diffUnplanned: number;
+  // The two operands that actually produce `diff`, summed over the DECIDED cells only
+  // and clamped exactly as the per-cell formula clamps (§28). `hoursLeft − newEtc`
+  // above does NOT equal `diff`: an undecided cell contributes 0 to diff while its
+  // Hours Left and New ETC still land in those totals. These two do:
+  //
+  //     plannedHoursLeft − plannedNewEtc === diff
+  //
+  // which is what lets a card explain its variance with figures that foot. Mirrors
+  // the same pair in lib/etc-live-totals.ts, so the server figure and the live one
+  // are the same quantity.
+  plannedHoursLeft: number;
+  plannedNewEtc: number;
   people: number; // distinct employees who booked time in this group this month
 };
 
 export type EtcMonthKpis = {
   engineering: GroupKpi;
   shop: GroupKpi;
-  parts: { prior: number; spent: number; moneyLeft: number; newEtc: number; diff: number };
+  parts: { prior: number; spent: number; moneyLeft: number; newEtc: number; diff: number; plannedMoneyLeft: number; plannedNewEtc: number };
   // Distinct people across both groups — NOT engineering.people + shop.people,
   // since anyone who booked to both would otherwise be counted twice.
   peopleTotal: number;
@@ -71,9 +83,9 @@ export async function getEtcMonthKpis(
   // Summed PER CELL, not derived from the group totals: the suggestion that
   // stands in for an untouched cell clamps at 0 per cell, and that clamp cannot
   // be reproduced from the sums. Every cell counts now — see newEtcDiff.
-  const eng = { prior: 0, worked: 0, newEtc: 0, diff: 0, diffUnplanned: 0 };
-  const shop = { prior: 0, worked: 0, newEtc: 0, diff: 0, diffUnplanned: 0 };
-  const parts = { prior: 0, spent: 0, newEtc: 0, diff: 0 };
+  const eng = { prior: 0, worked: 0, newEtc: 0, diff: 0, diffUnplanned: 0, plannedHoursLeft: 0, plannedNewEtc: 0 };
+  const shop = { prior: 0, worked: 0, newEtc: 0, diff: 0, diffUnplanned: 0, plannedHoursLeft: 0, plannedNewEtc: 0 };
+  const parts = { prior: 0, spent: 0, newEtc: 0, diff: 0, plannedLeft: 0, plannedNewEtc: 0 };
 
   for (const job of jobs) {
     for (const entry of job.etcEntries) {
@@ -82,6 +94,12 @@ export async function getEtcMonthKpis(
         parts.spent += Number(entry.hoursWorked);
         parts.newEtc += effectiveNewEtc(entry);
         parts.diff += newEtcDiff(entry);
+        // Decided cells only, clamped exactly as the per-cell formula clamps, so that
+        // plannedMoneyLeft − plannedNewEtc === diff. See GroupKpi.
+        if (isNewEtcDecided(entry)) {
+          parts.plannedLeft += calcHoursLeft(Number(entry.priorEtc), Number(entry.hoursWorked));
+          parts.plannedNewEtc += Math.max(effectiveNewEtc(entry), 0);
+        }
         continue;
       }
       const group = SECTION_GROUP.get(entry.section);
@@ -93,6 +111,10 @@ export async function getEtcMonthKpis(
       bucket.diff += newEtcDiff(entry);
       // Attributed to "unplanned" only while the cell is genuinely undecided.
       if (!isNewEtcDecided(entry)) bucket.diffUnplanned += newEtcDiff(entry);
+      else {
+        bucket.plannedHoursLeft += calcHoursLeft(Number(entry.priorEtc), Number(entry.hoursWorked));
+        bucket.plannedNewEtc += Math.max(effectiveNewEtc(entry), 0);
+      }
     }
   }
 
@@ -118,7 +140,7 @@ export async function getEtcMonthKpis(
   }
 
   const finish = (
-    b: { prior: number; worked: number; newEtc: number; diff: number; diffUnplanned: number },
+    b: { prior: number; worked: number; newEtc: number; diff: number; diffUnplanned: number; plannedHoursLeft: number; plannedNewEtc: number },
     people: number,
   ): GroupKpi => {
     const hoursLeft = calcHoursLeft(b.prior, b.worked);
@@ -129,6 +151,8 @@ export async function getEtcMonthKpis(
       newEtc: round2(b.newEtc),
       diff: round2(b.diff),
       diffUnplanned: round2(b.diffUnplanned),
+      plannedHoursLeft: round2(b.plannedHoursLeft),
+      plannedNewEtc: round2(b.plannedNewEtc),
       people,
     };
   };
@@ -143,6 +167,8 @@ export async function getEtcMonthKpis(
       moneyLeft: round2(partsLeft),
       newEtc: round2(parts.newEtc),
       diff: round2(parts.diff),
+      plannedMoneyLeft: round2(parts.plannedLeft),
+      plannedNewEtc: round2(parts.plannedNewEtc),
     },
     peopleTotal: allPeople.size,
     hasPunchData: punches.length > 0,

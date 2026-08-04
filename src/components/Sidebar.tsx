@@ -15,6 +15,7 @@ import {
 import { appVersionLabel } from "@/lib/app-version";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isEtcDirty } from "@/lib/etc-dirty-tracker";
+import { RefreshDataButton } from "@/components/RefreshDataButton";
 import { AppTextSize } from "@/components/AppTextSize";
 
 const COLLAPSE_KEY = "sdc-etc-planner-sidebar-collapsed";
@@ -295,7 +296,7 @@ export default function Sidebar({
   }
 
   // Leaving /etc with unsaved New ETC values (typing alone doesn't autosave —
-  // see EtcSectionCells/SaveEtcDraftsButton) is a plain client-side route
+  // see EtcSectionCells/EtcAutosave) is a plain client-side route
   // change, so it never fires the browser's native beforeunload warning.
   // This is the sidebar's equivalent of that warning; every nav item runs it
   // before whatever else it does (like the /etc triple-click above).
@@ -305,15 +306,6 @@ export default function Sidebar({
       return;
     }
     if (href === "/etc") handleEtcClick(e);
-  }
-
-  // Hard-refresh the current page — same intent as Ctrl+Shift+R: reloads the
-  // route so its server components re-read the database (fresh grid data).
-  // Warns first if there are unsaved New ETC edits, matching the nav-away and
-  // sign-out guards, so a reload can't silently discard typed changes.
-  function handleRefresh() {
-    if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Refresh anyway?")) return;
-    window.location.reload();
   }
 
   // Global Back — returns to the exact previous view (its URL preserves the
@@ -602,19 +594,22 @@ export default function Sidebar({
             this used to be — it reclaims a row of vertical space. Stacks again
             when collapsed, where there's no width for two. */}
         <div className={`flex gap-1.5 pt-1 pb-2.5 ${collapsed ? "flex-col" : ""}`}>
-          <button
-            onClick={handleRefresh}
-            title="Refresh this page (reload — re-reads the latest data)"
-            className="flex h-[30px] flex-1 items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] text-[12px] text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157]"
-          >
-            <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
-              <Icon>
-                <path d="M12.8 5.2 A5 5 0 1 0 13.6 9.2" strokeLinecap="round" strokeLinejoin="round" />
-                <path d="M13.2 2 L13.2 5.4 L9.8 5.4" strokeLinecap="round" strokeLinejoin="round" />
-              </Icon>
-            </span>
-            {!collapsed && <span>Refresh</span>}
-          </button>
+          {/* THE refresh control (§25). It used to be `window.location.reload()` —
+              which, to anyone reading the label, was a second refresh button that
+              refreshed no data at all: it re-read the same rows the last sync had left
+              behind. It now runs the one application-wide pass, from every page, and the
+              reload it replaces is unnecessary because the action revalidates the routes
+              and broadcasts to the other tabs. */}
+          {/* Hidden on Monthly ETC, where the button now sits in the page toolbar
+              beside the month picker (§29). Same component and the same single action
+              either way — this is about there being ONE button on screen, not one
+              refresh path. Two buttons for one action is the confusion §25 removed. */}
+          {pathname !== "/etc" && (
+            <RefreshDataButton
+              compact={collapsed}
+              className="flex h-[30px] flex-1 items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] px-2 text-[12px] whitespace-nowrap text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157] disabled:opacity-60"
+            />
+          )}
 
           <button
             onClick={toggleCollapsed}

@@ -185,7 +185,7 @@ export async function syncHoursWorked(
   // Re-checked here, not just trusted from the caller's earlier check — this
   // sync does one DB round-trip per row, so it can run long enough for a
   // manager to Submit and Lock this exact month mid-sync. A locked month is
-  // frozen history (same rule as submitMonth/clearMonth/syncPowerBiForEtc)
+  // frozen history (same rule as the submission path / syncPowerBiForEtc)
   // and must never be rewritten by a background refresh.
   const monthEntriesAtStart = await prisma.etcEntry.findMany({ where: { month }, select: { needsReview: true } });
   const monthStartedAtStart = monthEntriesAtStart.length > 0;

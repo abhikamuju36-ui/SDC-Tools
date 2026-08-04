@@ -62,6 +62,16 @@ export function useAutosave({
         // Not saving, but there IS something unsaved — say so rather than
         // sitting on a stale "All changes saved".
         if (on && dirty()) setStatus("pending");
+        // Nothing left to save. An edit that was UNDONE — typed and retyped, or
+        // cancelled with Escape (ExcelCellFocus) — leaves the grid exactly as it
+        // loaded, so there is nothing pending and the chip must stop saying there
+        // is. Found live 2026-08-04: reverting a cell left "Unsaved changes" on
+        // screen indefinitely, because schedule() had set `pending` and the run
+        // that would have cleared it declined to save and returned.
+        //
+        // Only `pending` is cleared: a real "All changes saved" or a failed save
+        // must survive a no-op pass.
+        else setStatus((s) => (s === "pending" ? "idle" : s));
         return;
       }
 
@@ -108,9 +118,13 @@ export function useAutosave({
 
   // Save NOW, skipping the debounce — used when the tab is being hidden, where
   // waiting out the timer would lose the edit. Also backs the chip's Retry.
+  //
+  // Returns the promise so a caller can WAIT for it. `Submit {Month} Report` does:
+  // it reads the month from the database, so a draft still on the debounce would be
+  // missing from the month it freezes. Callers that don't care can ignore it.
   const flush = useCallback(() => {
     if (timer.current) clearTimeout(timer.current);
-    void run();
+    return run();
   }, [run]);
 
   useEffect(() => {

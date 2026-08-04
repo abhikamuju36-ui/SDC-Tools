@@ -1,0 +1,383 @@
+import "server-only";
+
+import { randomUUID } from "crypto";
+import { prisma } from "@/lib/prisma";
+import { APP_VERSION } from "@/lib/app-version";
+import { logAudit } from "@/lib/audit";
+import { recordChanges } from "@/lib/change-log";
+// How many stages a full pass has, so progress can be reported as "3 of 7" without the
+// button hard-coding a number that would silently go wrong when a source is added.
+// (SYNC_SOURCES is already imported below.)
+import { runAllSyncs, SYNC_SOURCES, type SyncTrigger, type SyncRunResult } from "@/lib/auto-sync";
+
+const SYNC_SOURCE_COUNT = SYNC_SOURCES.length;
+
+// ── ONE application-wide refresh (§25) ───────────────────────────────────────
+//
+// Every refresh in this app now goes through here: the `Refresh Data` button and the
+// hourly schedule call the same function, with the same sources, in the same order.
+// That was already half-true — lib/auto-sync.ts has been the single definition of WHAT
+// gets refreshed since 2026-07-29 — and this adds the four things a shared entry point
+// needs to be trustworthy:
+//
+//   1. A LOCK, so only one pass can run at a time across every app server (§25.10).
+//      Two managers clicking together, or a click landing during the hourly tick, must
+//      not both start pulling the same sources into the same rows.
+//   2. A RECORD per pass — who, when, how long, which sources, what failed (§25.11).
+//      PowerBiFreshness tracks each SOURCE's currency; this tracks the PASS.
+//   3. A BROADCAST, so every connected browser updates without anyone reloading (§25.9).
+//   4. An honest STATUS. A pass where any required source failed is not a success, and
+//      the caller is told which source and whether anything was updated (§25.7).
+//
+// What a refresh does NOT touch is unchanged and deliberate (auto-sync.ts states the
+// rules): historical months, app-owned figures (quoted hours, manager-entered New ETC,
+// notes), and any locked month. §25.6 asks that manual entries survive a refresh — they
+// do, because no step writes them.
+
+// A pass that dies mid-flight (process killed, deploy) must not hold the lock forever.
+// Longer than any observed pass — the slowest measured is a few seconds — but short
+// enough that a stuck lock clears itself within a working session.
+const LOCK_TIMEOUT_MS = 15 * 60 * 1000;
+
+export type RefreshOutcome =
+  | {
+      ok: true;
+      refreshId: string;
+      startedAt: string;
+      completedAt: string;
+      durationMs: number;
+      // "ok" when every source that ran succeeded, "partial" when some failed. There is
+      // no "ok" with failures — see the note on `status` below.
+      status: "ok" | "partial";
+      sources: { source: string; label: string; status: string; detail: string }[];
+      failedLabels: string[];
+      month: string | null;
+      // Set when this refresh also STARTED a new ETC month — see the note in the body.
+      seededMonth: string | null;
+    }
+  | { ok: false; reason: "locked"; runningSince: string | null; holder: string | null }
+  | { ok: false; reason: "error"; message: string; refreshId: string };
+
+// ── The lock ────────────────────────────────────────────────────────────────
+//
+// A single conditional UPDATE. MySQL applies it atomically, so exactly one caller can
+// see affectedRows === 1 — which is what makes this work across processes, unlike an
+// in-memory flag (this app runs one instance today, but the realtime hub has already
+// taught us what "in-process state" costs when that changes; see DEVLOG §15).
+//
+// GET_LOCK() was the other option and is worse here: it is bound to the CONNECTION, and
+// Prisma pools connections, so the release could land on a different one.
+async function acquireLock(refreshId: string): Promise<{ got: boolean; holder: string | null; since: Date | null }> {
+  const now = new Date();
+  const cutoff = new Date(now.getTime() - LOCK_TIMEOUT_MS);
+  // ── Both sides of the comparison come from the SAME clock ──────────────────
+  //
+  // `startedAt` is written as a JS Date parameter, not with MySQL's NOW(3). That is not a
+  // style choice: the first version used NOW(3), and the lock never held — a second
+  // claimant always got it. NOW(3) is the MySQL SESSION's timezone while a JS Date is
+  // sent as UTC, so on this server (UTC-4) every freshly written `startedAt` compared as
+  // four hours old and instantly satisfied the stale-lock escape hatch. Found by
+  // scripts/refresh-smoke.ts, which is exactly the failure a unit test cannot see.
+  const claimed = await prisma.$executeRaw`
+    UPDATE RefreshLock
+       SET holder = ${refreshId}, startedAt = ${now}
+     WHERE id = 1
+       AND (holder IS NULL OR startedAt IS NULL OR startedAt < ${cutoff})`;
+  if (claimed === 1) return { got: true, holder: refreshId, since: null };
+  const rows = await prisma.$queryRaw<{ holder: string | null; startedAt: Date | null }[]>`
+    SELECT holder, startedAt FROM RefreshLock WHERE id = 1`;
+  return { got: false, holder: rows[0]?.holder ?? null, since: rows[0]?.startedAt ?? null };
+}
+
+async function releaseLock(refreshId: string): Promise<void> {
+  // Scoped to OUR refreshId: if the stale-timeout already handed the lock to somebody
+  // else, this must not release theirs.
+  await prisma.$executeRaw`UPDATE RefreshLock SET holder = NULL, startedAt = NULL WHERE id = 1 AND holder = ${refreshId}`;
+}
+
+// Is a refresh running right now? Used by the button to explain itself rather than
+// simply failing (§25.10: "show the current refresh status").
+export type RefreshProgress = {
+  running: boolean;
+  since: Date | null;
+  // The stage now in flight — the source's own label, e.g. "Parts cost (TotalETO)".
+  stage: string | null;
+  // Sources finished so far, and how many there are in total, so the button can say
+  // "(3 of 7)" rather than only naming a stage.
+  done: number;
+  total: number;
+  // What each finished source did, newest last — enough for the button to name the
+  // one that failed rather than reporting the pass as generically broken.
+  steps: { source: string; label: string; status: string; detail: string }[];
+};
+
+export async function currentRefresh(): Promise<RefreshProgress> {
+  const idle: RefreshProgress = { running: false, since: null, stage: null, done: 0, total: SYNC_SOURCE_COUNT, steps: [] };
+  const rows = await prisma.$queryRaw<{ holder: string | null; startedAt: Date | null }[]>`
+    SELECT holder, startedAt FROM RefreshLock WHERE id = 1`;
+  const row = rows[0];
+  if (!row?.holder || !row.startedAt) return idle;
+  // A lock older than the timeout is abandoned — a process killed mid-pass, which is
+  // exactly how the button came to sit on "Refresh running…" indefinitely.
+  if (row.startedAt.getTime() < Date.now() - LOCK_TIMEOUT_MS) return idle;
+
+  // The progress the running pass has written so far. Read separately from the lock,
+  // and failure-tolerant: not knowing the stage must never make a running refresh look
+  // finished.
+  let stage: string | null = null;
+  let steps: RefreshProgress["steps"] = [];
+  try {
+    const live = await prisma.$queryRaw<{ currentStage: string | null; steps: string | null }[]>`
+      SELECT currentStage, steps FROM RefreshRun WHERE status = 'running' ORDER BY id DESC LIMIT 1`;
+    stage = live[0]?.currentStage ?? null;
+    steps = live[0]?.steps ? (JSON.parse(live[0].steps) as RefreshProgress["steps"]) : [];
+  } catch (err) {
+    console.error("[refresh] could not read progress:", err);
+  }
+  return { running: true, since: row.startedAt, stage, done: steps.length, total: SYNC_SOURCE_COUNT, steps };
+}
+
+// ── The record ──────────────────────────────────────────────────────────────
+
+async function openRun(input: {
+  refreshId: string;
+  trigger: SyncTrigger;
+  userId: number | null;
+  userName: string | null;
+  startedAt: Date;
+}): Promise<void> {
+  await prisma.$executeRaw`
+    INSERT INTO RefreshRun (refreshId, \`trigger\`, userId, userName, startedAt, appVersion, status, steps)
+    VALUES (${input.refreshId}, ${input.trigger}, ${input.userId}, ${input.userName}, ${input.startedAt},
+            ${APP_VERSION}, 'running', '[]')`;
+}
+
+// ── Progress, written AS IT HAPPENS (§30) ───────────────────────────────────
+//
+// `steps` used to be written once, by closeRun, when the whole pass was over. So for
+// the entire duration of a refresh the only thing anybody could know was "running" —
+// which is exactly why the button sat on "Refreshing application data…" with no way
+// to tell a slow pass from a stuck one.
+//
+// This writes the steps completed so far after EVERY step, plus the stage now
+// starting. One small UPDATE per source (seven a run) against a single row by unique
+// key — immaterial next to the external calls it is reporting on, and it is what lets
+// refreshStatus() answer "Refreshing parts costs… (3 of 7)" to any tab that asks,
+// including one opened halfway through somebody else's refresh.
+async function recordProgress(refreshId: string, stage: string | null, steps: SyncRunResult["steps"]): Promise<void> {
+  try {
+    await prisma.$executeRaw`
+      UPDATE RefreshRun
+         SET steps = ${JSON.stringify(steps)}, currentStage = ${stage}
+       WHERE refreshId = ${refreshId}`;
+  } catch (err) {
+    // Progress reporting must never be able to fail a refresh.
+    console.error("[refresh] could not record progress:", err);
+  }
+}
+
+async function closeRun(input: {
+  refreshId: string;
+  completedAt: Date;
+  durationMs: number;
+  status: "ok" | "partial" | "failed";
+  steps: SyncRunResult["steps"];
+  failureDetail: string | null;
+}): Promise<void> {
+  const ok = input.steps.filter((s) => s.status === "ok").length;
+  const failed = input.steps.filter((s) => s.status === "failed").length;
+  const skipped = input.steps.filter((s) => s.status === "skipped").length;
+  await prisma.$executeRaw`
+    UPDATE RefreshRun
+       SET completedAt = ${input.completedAt}, durationMs = ${input.durationMs}, status = ${input.status},
+           sourcesOk = ${ok}, sourcesFailed = ${failed}, sourcesSkipped = ${skipped},
+           steps = ${JSON.stringify(input.steps)}, failureDetail = ${input.failureDetail}
+     WHERE refreshId = ${input.refreshId}`;
+}
+
+export type RefreshRunRecord = {
+  refreshId: string;
+  trigger: string;
+  userName: string | null;
+  startedAt: Date;
+  completedAt: Date | null;
+  durationMs: number | null;
+  status: string;
+  sourcesOk: number;
+  sourcesFailed: number;
+};
+
+// The last few passes, for the dashboard's own "when was this last refreshed" line.
+export async function recentRefreshRuns(limit = 5): Promise<RefreshRunRecord[]> {
+  const rows = await prisma.$queryRaw<Record<string, unknown>[]>`
+    SELECT refreshId, \`trigger\`, userName, startedAt, completedAt, durationMs, status, sourcesOk, sourcesFailed
+    FROM RefreshRun ORDER BY id DESC LIMIT ${limit}`;
+  return rows.map((r) => ({
+    refreshId: String(r.refreshId),
+    trigger: String(r.trigger),
+    userName: r.userName == null ? null : String(r.userName),
+    startedAt: r.startedAt as Date,
+    completedAt: (r.completedAt as Date | null) ?? null,
+    durationMs: r.durationMs == null ? null : Number(r.durationMs),
+    status: String(r.status),
+    sourcesOk: Number(r.sourcesOk ?? 0),
+    sourcesFailed: Number(r.sourcesFailed ?? 0),
+  }));
+}
+
+// ── The one refresh ─────────────────────────────────────────────────────────
+
+export async function refreshAllData(input: {
+  trigger: SyncTrigger;
+  userId?: number | null;
+  // Present for a manual refresh, so the notification can say who (§25.9).
+  userName?: string | null;
+}): Promise<RefreshOutcome> {
+  const refreshId = randomUUID();
+  const lock = await acquireLock(refreshId);
+  if (!lock.got) {
+    // Not an error: a refresh IS happening, which is what the caller wanted. Reported
+    // as such so the button can say "already running since 11:44" rather than failing.
+    return { ok: false, reason: "locked", runningSince: lock.since?.toISOString() ?? null, holder: lock.holder };
+  }
+
+  const startedAt = new Date();
+  try {
+    await openRun({
+      refreshId,
+      trigger: input.trigger,
+      userId: input.userId ?? null,
+      userName: input.userName ?? null,
+      startedAt,
+    });
+  } catch (err) {
+    // The record failing must not stop the refresh — but it is worth knowing about.
+    console.error("[refresh] could not open the run record:", err);
+  }
+
+  // ── Seeding the month a MANUAL refresh is entitled to start ───────────────
+  //
+  // The button this replaces did one thing runAllSyncs does not: it called seedMonth,
+  // so "Refresh Data" was also how a new ETC month came into existence (the page still
+  // says so: 'Refresh Data starts <month>'). Dropping that would have quietly removed
+  // the only way to start a month.
+  //
+  // MANUAL ONLY, deliberately. Seeding writes ~450 rows and decides that a new month is
+  // now open; a person clicking is making that decision, an hourly timer is not. And it
+  // is still gated by assertMonthSeedable inside startMonth — months must be started in
+  // order and only once the previous one is locked — so a click cannot invent a month
+  // out of turn. A "not seedable" outcome is expected and silent, because on almost
+  // every click there is nothing to start.
+  let seededMonth: string | null = null;
+  if (input.trigger === "manual") {
+    try {
+      const { startMonth } = await import("@/lib/etc-actions");
+      const { nextMonth, isMonthLocked } = await import("@/lib/etc");
+      const latest = await prisma.etcEntry.findFirst({ orderBy: { month: "desc" }, select: { month: true } });
+      if (latest) {
+        const entries = await prisma.etcEntry.findMany({ where: { month: latest.month }, select: { needsReview: true } });
+        if (isMonthLocked(entries)) {
+          const next = nextMonth(latest.month);
+          await startMonth(next, new FormData());
+          seededMonth = next;
+        }
+      }
+    } catch {
+      // Not seedable (out of order, previous month still open, nothing to seed): the
+      // normal case, and not something to report as a refresh failure.
+    }
+  }
+
+  let result: SyncRunResult;
+  try {
+    // Progress is streamed into the run record as each source starts (§30), so a tab
+    // watching this refresh — including one that did not start it — can say which
+    // stage it is on instead of an indefinite "Refreshing application data…".
+    result = await runAllSyncs(input.trigger, (stage, done) => recordProgress(refreshId, stage, done));
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    const completedAt = new Date();
+    await closeRun({
+      refreshId,
+      completedAt,
+      durationMs: completedAt.getTime() - startedAt.getTime(),
+      status: "failed",
+      steps: [],
+      failureDetail: message,
+    }).catch(() => {});
+    await releaseLock(refreshId);
+    await logAudit({
+      action: "refresh.all",
+      entityType: "RefreshRun",
+      entityId: refreshId,
+      summary: `Application refresh FAILED to run (${input.trigger}) — ${message}`,
+      metadata: { refreshId, trigger: input.trigger },
+    }).catch(() => {});
+    return { ok: false, reason: "error", message, refreshId };
+  }
+
+  const completedAt = new Date();
+  const durationMs = completedAt.getTime() - startedAt.getTime();
+  const failed = result.steps.filter((s) => s.status === "failed");
+  // "partial", never "ok", when anything failed: §25.7 is explicit that a success
+  // message must not appear if a required step failed, and the only way to keep that
+  // promise is for the status itself to carry it.
+  const status: "ok" | "partial" = failed.length === 0 ? "ok" : "partial";
+
+  await closeRun({
+    refreshId,
+    completedAt,
+    durationMs,
+    status,
+    steps: result.steps,
+    failureDetail: failed.length === 0 ? null : failed.map((f) => `${f.label}: ${f.detail}`).join(" | "),
+  }).catch((err) => console.error("[refresh] could not close the run record:", err));
+
+  await releaseLock(refreshId);
+
+  // ── Tell everyone (§25.9) ─────────────────────────────────────────────────
+  //
+  // No cellKey, so every connected tab takes the throttled route refresh
+  // (LiveRefresh) as well as showing the banner — which is right: a refresh moves
+  // figures across every table, not one cell.
+  const at = completedAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
+  await recordChanges(
+    [
+      {
+        tab: "Application",
+        rowRef: "All data",
+        columnName: "Refresh",
+        previousValue: null,
+        newValue: status === "ok" ? `refreshed at ${at}` : `refreshed at ${at} with ${failed.length} failure(s)`,
+        changeType: status === "ok" ? "recalculated" : "rejected",
+        entityType: "RefreshRun",
+        entityId: refreshId,
+      },
+    ],
+    { action: input.trigger === "manual" ? "refresh.manual" : "refresh.scheduled" },
+  ).catch(() => {});
+
+  await logAudit({
+    action: "refresh.all",
+    entityType: "RefreshRun",
+    entityId: refreshId,
+    summary:
+      `${input.trigger === "manual" ? `${input.userName ?? "A user"} refreshed` : "Scheduled refresh of"} all application data ` +
+      `in ${Math.round(durationMs / 100) / 10}s — ${result.steps.filter((s) => s.status === "ok").length}/${SYNC_SOURCES.length} sources ok` +
+      (failed.length > 0 ? `, ${failed.length} FAILED (${failed.map((f) => f.label).join(", ")})` : ""),
+    metadata: { refreshId, trigger: input.trigger, month: result.month, seededMonth, durationMs, steps: result.steps },
+  }).catch(() => {});
+
+  return {
+    ok: true,
+    refreshId,
+    startedAt: startedAt.toISOString(),
+    completedAt: completedAt.toISOString(),
+    durationMs,
+    status,
+    sources: result.steps.map((s) => ({ source: s.source, label: s.label, status: s.status, detail: s.detail })),
+    failedLabels: failed.map((f) => f.label),
+    month: result.month,
+    seededMonth,
+  };
+}

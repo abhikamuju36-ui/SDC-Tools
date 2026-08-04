@@ -214,39 +214,38 @@ export function stripEtcFieldPrefix(name: string): string {
   return name.replace(/^newEtcOverride__/, "").replace(/^newEtcCreate__/, "");
 }
 
-// ── Baselines for a NATIVE submit ───────────────────────────────────────────
+// ── injectEtcBaselineFields is GONE (§15, 2026-08-04) ───────────────────────
 //
-// Submit and Lock cannot trim its payload the way the draft save does — it needs
-// `hoursWorked__<id>` for every entry in the month, and it posts through
-// requestSubmit() so React serialises the form itself. So instead of choosing what
-// to send, it declares what it BELIEVED: a hidden field per registered cell,
-// injected into the DOM just before submitting.
+// It existed because Submit and Lock posted the whole grid natively, so the server had
+// to be told what each cell BELIEVED was stored — otherwise a stale tab froze its own
+// snapshot into confirmed history and no later save could put that right.
 //
-// Why Submit needs this at all (found by review, 2026-08-04). submitMonth writes
-// the posted value into `newEtc` — CONFIRMED history, frozen for the month. A tab
-// whose grid had gone stale would therefore freeze its own snapshot over whatever
-// colleagues had saved since, and unlike a draft that is not something the next
-// save can put right. With a baseline the server can tell "this user typed this"
-// from "this is just what my page loaded with", and prefer the stored draft for
-// the latter.
+// The submission does not read the form at all any more (lib/monthly-report.ts): it
+// reads the database, which is by definition at least as fresh as any tab. So there is
+// nothing to declare, and the class of bug this defended against cannot occur.
+
+// ── Making the submission wait for autosave ─────────────────────────────────
 //
-// Idempotent: re-uses the hidden input if it is already there, so submitting twice
-// does not accumulate duplicates.
-export function injectEtcBaselineFields(form: HTMLFormElement): number {
-  let n = 0;
-  for (const [name, baseline] of baselines) {
-    const fieldName = `${ETC_BASE_PREFIX}${stripEtcFieldPrefix(name)}`;
-    const existing = form.elements.namedItem(fieldName);
-    if (existing instanceof HTMLInputElement) {
-      existing.value = baseline;
-    } else {
-      const el = document.createElement("input");
-      el.type = "hidden";
-      el.name = fieldName;
-      el.value = baseline;
-      form.appendChild(el);
-    }
-    n++;
-  }
-  return n;
+// `Submit {Month} Report` reads the month from the DATABASE, so anything still sitting
+// on the 800ms autosave debounce would simply not be in the month it freezes. The
+// button therefore flushes first and WAITS — the "confirm that all pending auto-saves
+// have completed" step, and the only reason the submission touches the save machinery.
+//
+// A module-scope hook rather than a prop, for the same reason as everything else in
+// this file: the button and the autosave component are siblings in a toolbar with no
+// shared ancestor short of the page.
+let autosaveFlush: (() => Promise<unknown>) | null = null;
+
+export function registerEtcAutosaveFlush(fn: () => Promise<unknown>): () => void {
+  autosaveFlush = fn;
+  return () => {
+    if (autosaveFlush === fn) autosaveFlush = null;
+  };
+}
+
+// Resolves once any in-flight or pending save has finished. A no-op when nothing is
+// mounted (a locked month renders no autosave) or when there is nothing dirty.
+export async function flushEtcAutosave(): Promise<void> {
+  if (!autosaveFlush) return;
+  await autosaveFlush();
 }

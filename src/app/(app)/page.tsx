@@ -3,10 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { getDataQuality, getPunchExplorer } from "@/lib/data-quality";
 import { DashboardTabs } from "@/components/DashboardTabs";
 import { DataQualityPanel } from "@/components/DataQualityPanel";
-import { revalidatePath } from "next/cache";
-import { syncFromTotalEto } from "@/lib/sync-totaleto";
-import { syncActualHours, syncQuotedFromPowerBi } from "@/lib/sync-powerbi";
-import { runAllSyncs, SYNC_SOURCES, SYNC_INTERVAL_MS } from "@/lib/auto-sync";
+import { SYNC_SOURCES, SYNC_INTERVAL_MS } from "@/lib/auto-sync";
+import { recentRefreshRuns } from "@/lib/refresh-service";
 import { validJobTypeFilter } from "@/lib/job-filters";
 import { PageTitle, SectionTitle } from "@/components/ui/Typography";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -15,37 +13,6 @@ import { card, BUTTON_PRIMARY } from "@/components/ui/classnames";
 function currentMonth() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
-
-async function runTotalEtoSync() {
-  "use server";
-  await syncFromTotalEto();
-  revalidatePath("/");
-}
-
-async function runPowerBiSync() {
-  "use server";
-  await syncActualHours();
-  revalidatePath("/");
-}
-
-// Runs the EXACT pass the 6-hour schedule runs — same sources, same order, same
-// single month. A manual refresh that covered a different combination than the
-// automatic one is how "which of these numbers is current?" became unanswerable
-// in the first place, so there is deliberately no second definition of the work.
-async function runFullSync() {
-  "use server";
-  await runAllSyncs("manual");
-  revalidatePath("/");
-  revalidatePath("/etc");
-  revalidatePath("/quoted");
-}
-
-async function runQuotedSync() {
-  "use server";
-  await syncQuotedFromPowerBi();
-  revalidatePath("/");
-  revalidatePath("/quoted");
 }
 
 // Relative "…ago" instead of a raw UTC timestamp — the old ISO string read as
@@ -57,10 +24,6 @@ function timeAgo(d: Date): string {
   const hrs = Math.floor(mins / 60);
   if (hrs < 24) return `${hrs}h ago`;
   return `${Math.floor(hrs / 24)}d ago`;
-}
-
-function formatSynced(d: Date | null | undefined) {
-  return d ? `Synced ${timeAgo(d)}` : "Never synced";
 }
 
 function formatDataThrough(d: Date | null | undefined) {
@@ -88,24 +51,21 @@ export default async function Home({
     employeeCount,
     needsReviewCount,
     recentJobs,
-    lastTotalEtoSync,
-    lastPowerBiSync,
-    lastQuotedSync,
     freshnessRows,
     dataQuality,
+    // The last few passes (§25.11), so the card can say who refreshed and when.
+    refreshRuns,
   ] = await Promise.all([
     prisma.job.count({ where: validJobTypeFilter }),
     prisma.job.count({ where: { status: "Active", ...validJobTypeFilter } }),
     prisma.employee.count({ where: { active: true } }),
     prisma.etcEntry.count({ where: { needsReview: true } }),
     prisma.job.findMany({ where: validJobTypeFilter, orderBy: { createdAt: "desc" }, take: 8 }),
-    prisma.job.findFirst({ where: { totEtoSyncedAt: { not: null } }, orderBy: { totEtoSyncedAt: "desc" }, select: { totEtoSyncedAt: true } }),
-    prisma.jobMonthlyActualHours.findFirst({ orderBy: { syncedAt: "desc" }, select: { syncedAt: true } }),
-    prisma.estimatedHours.findFirst({ orderBy: { updatedAt: "desc" }, select: { updatedAt: true } }),
     prisma.powerBiFreshness.findMany(),
     // The Power BI report's Data Quality page, rebuilt locally — see
     // lib/data-quality.ts for where each rule comes from.
     getDataQuality(),
+    recentRefreshRuns(1),
   ]);
 
   const stats = [
@@ -137,18 +97,10 @@ export default async function Home({
     };
   });
   const failingFeeds = scheduledFeeds.filter((f) => f.failure);
-  const hoursActualFreshness = freshnessBySource.get("hours_actual");
+  // The most recent pass, whoever ran it — the answer to "has anybody refreshed this
+  // today" without reading seven per-source rows (§25.11).
+  const lastRun = refreshRuns[0] ?? null;
 
-  const syncRows = [
-    { label: "Jobs from TotalETO", action: runTotalEtoSync, lastSynced: lastTotalEtoSync?.totEtoSyncedAt, dataThrough: null },
-    {
-      label: "Actual hours from Paylocity (SharePoint)",
-      action: runPowerBiSync,
-      lastSynced: lastPowerBiSync?.syncedAt,
-      dataThrough: hoursActualFreshness?.refreshedThrough,
-    },
-    { label: "Quoted hours & cost", action: runQuotedSync, lastSynced: lastQuotedSync?.updatedAt, dataThrough: null },
-  ];
 
   const statIcons: Record<string, { bg: string; fg: string; path: React.ReactNode }> = {
     "Total Jobs": {
@@ -267,16 +219,29 @@ export default async function Home({
           <div>
             <SectionTitle>Refresh Schedule</SectionTitle>
             <p className="mt-1 text-xs text-sdc-gray-400">
-              All of these refresh together every {SYNC_INTERVAL_MS / 3_600_000} hours, in one pass. Historical months and
-              app-owned figures (quoted hours, New ETC) are deliberately excluded — they are never overwritten by a sync.
+              All of these refresh together every {SYNC_INTERVAL_MS / 3_600_000 === 1 ? "hour" : `${SYNC_INTERVAL_MS / 3_600_000} hours`}, in
+              one pass — and “Refresh Data” in the sidebar runs that identical pass on demand. Historical months and app-owned
+              figures (quoted hours, New ETC, notes) are deliberately excluded: they are never overwritten by a refresh.
             </p>
           </div>
-          <form action={runFullSync}>
-            <button type="submit" className={BUTTON_PRIMARY}>
-              Refresh all now
-            </button>
-          </form>
+          {/* No button here either (§25.14.6). This card is the STATUS — which feed is
+              current, which failed, when the last pass ran and who started it — and the
+              one control that starts a pass is "Refresh Data" in the sidebar, on every
+              page. A second copy beside this status is how the app came to have five
+              refresh buttons in the first place. */}
         </div>
+
+        {lastRun && (
+          <p className="mt-2 text-xs text-sdc-gray-500">
+            Last refresh: {lastRun.completedAt ? timeAgo(lastRun.completedAt) : "still running"}
+            {lastRun.userName ? ` — started by ${lastRun.userName}` : " — scheduled"}
+            {lastRun.completedAt && ` · ${lastRun.sourcesOk}/${lastRun.sourcesOk + lastRun.sourcesFailed} sources ok`}
+            {lastRun.sourcesFailed > 0 && (
+              <span className="font-semibold text-sdc-red-text"> · {lastRun.sourcesFailed} failed</span>
+            )}
+            {lastRun.durationMs != null && ` · took ${Math.round(lastRun.durationMs / 100) / 10}s`}
+          </p>
+        )}
 
         {failingFeeds.length > 0 && (
           <p className="mt-3 rounded-lg border border-sdc-red-border bg-sdc-red-bg px-3.5 py-2.5 text-xs font-medium text-sdc-red-text">
@@ -325,44 +290,12 @@ export default async function Home({
         </div>
       </div>
 
-      <div className={`${card("p-6")} mb-6`}>
-        <SectionTitle>Run One Source</SectionTitle>
-        <p className="mb-1 mt-1 text-xs text-sdc-gray-400">
-          Individual pulls, for when one feed needs re-running without waiting for the next pass. Prefer &ldquo;Refresh all
-          now&rdquo; above — it runs the same combination the schedule does.
-        </p>
-        <div className="divide-y divide-sdc-border-soft">
-          {syncRows.map((row) => (
-            <div key={row.label} className="flex items-center justify-between py-3.5">
-              <div className="flex items-center gap-2.5">
-                <span className="h-1.75 w-1.75 shrink-0 rounded-full bg-sdc-green" />
-                <p className="text-sm font-semibold text-sdc-navy">{row.label}</p>
-              </div>
-              <div className="flex items-center gap-5">
-                <span className="text-right text-xs text-sdc-gray-400">
-                  {formatSynced(row.lastSynced)}
-                  {formatDataThrough(row.dataThrough) && (
-                    <>
-                      <br />
-                      <span title="How current the underlying Power BI feed itself is, not when the app last asked">
-                        {formatDataThrough(row.dataThrough)}
-                      </span>
-                    </>
-                  )}
-                </span>
-                <form action={row.action}>
-                  <button
-                    type="submit"
-                    className="rounded-[7px] bg-sdc-blue-light px-4.5 py-1.5 text-xs font-semibold whitespace-nowrap text-sdc-blue transition-colors hover:bg-sdc-blue-100/40"
-                  >
-                    Sync
-                  </button>
-                </form>
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
+      {/* The "Run One Source" card is gone (§25.1, 2026-08-04). It offered five
+          buttons that each refreshed a SUBSET — jobs, or hours, or quoted figures — and
+          every one of them left the rest of the app aging beside the part it updated,
+          which is the state "which of these numbers is current?" comes from. There is
+          one refresh now, it covers every source, and the per-source state above still
+          shows exactly which feed is stale and why. */}
 
       <div className={card("p-0")}>
         <div className="border-b border-sdc-border-soft px-6 py-4">

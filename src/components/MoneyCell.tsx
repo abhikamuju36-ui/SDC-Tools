@@ -77,6 +77,11 @@ export function MoneyCell({
         type="text"
         // decimal, not numeric: numeric hides the minus/decimal keys on mobile.
         inputMode="decimal"
+        // Also on the VISIBLE input, so Escape can cancel an edit here
+        // (ExcelCellFocus reads this attribute off whatever cell has focus, and the
+        // hidden field beside this one never gets focus). Raw digits, matching what
+        // onChange stores — restoring "1,300,000" would put separators into `raw`.
+        data-baseline={defaultValue}
         value={editing ? raw : display}
         aria-label={ariaLabel}
         className={className}

@@ -89,6 +89,39 @@ export function requestLiveRefresh(): void {
   refreshNow?.();
 }
 
+// ── The same request, but at most once per window ───────────────────────────
+//
+// For callers reacting to a STREAM of events rather than to one decision. The
+// realtime change feed is the case: a colleague autosaving a column announces one
+// event per cell, and before 2026-08-04 each one triggered a full route refetch —
+// 854 KB and a ~600ms server render, per cell, in every open tab. Most of those
+// events are now applied to the individual cell with no network at all
+// (lib/etc-remote-values.ts); this is the fallback for the ones that cannot be, and
+// a burst of them must cost ONE refresh.
+//
+// Leading edge, then a quiet window: the first event refreshes immediately (so a
+// change is on screen at once) and further ones inside the window collapse into a
+// single trailing refresh. A pure debounce would delay the first, and a pure throttle
+// would drop the last — which on a stream of changes is the one that matters.
+const THROTTLE_MS = 5_000;
+let lastThrottledAt = 0;
+let trailingTimer: ReturnType<typeof setTimeout> | null = null;
+
+export function requestThrottledLiveRefresh(): void {
+  const now = Date.now();
+  if (now - lastThrottledAt >= THROTTLE_MS) {
+    lastThrottledAt = now;
+    refreshNow?.();
+    return;
+  }
+  if (trailingTimer) return; // one trailing refresh already scheduled
+  trailingTimer = setTimeout(() => {
+    trailingTimer = null;
+    lastThrottledAt = Date.now();
+    refreshNow?.();
+  }, THROTTLE_MS - (now - lastThrottledAt));
+}
+
 export function LiveRefresh({ intervalMs = DEFAULT_INTERVAL_MS }: { intervalMs?: number }) {
   const router = useRouter();
 

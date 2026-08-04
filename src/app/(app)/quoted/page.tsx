@@ -7,8 +7,9 @@ import { isProjectsUnlocked } from "@/lib/projects-gate";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
 import { PageTitle } from "@/components/ui/Typography";
-import { TABLE_HEADER_ROW, TABLE_GRID, BUTTON_PRIMARY } from "@/components/ui/classnames";
+import { TABLE_HEADER_ROW, TABLE_GRID, BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/ui/classnames";
 import { ProjectViewsMenu } from "@/components/ProjectViewsMenu";
+import { ExportMenu } from "@/components/ExportMenu";
 import { listSharedViews } from "@/lib/saved-views-actions";
 import { ProjectsFilterMenu } from "@/components/ProjectsFilterMenu";
 import { ProjectsDateFilter } from "@/components/ProjectsDateFilter";
@@ -558,6 +559,10 @@ export default async function QuotedPage({
         />
         <ProjectsDisplayMenu />
         <ProjectViewsMenu sharedViews={sharedViews} teamDefault={teamDefault} />
+        {/* Downloads exactly this view — the menu forwards the page's own query string
+            to /api/export/projects, which builds the WHERE clause with the same code
+            this page does (lib/projects-query.ts). See §24. */}
+        <ExportMenu report="projects" className={BUTTON_SECONDARY} />
         {/* Show all / Reset — last, and visually a switch rather than another
             dropdown, because it's the only binary control here. */}
         <ProjectsShowAllSwitch

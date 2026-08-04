@@ -5,6 +5,7 @@ import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
 import { VALID_JOB_TYPES, JOB_STATUSES, isSdcCustomer } from "@/lib/job-filters";
 import { assertProjectsEditable } from "@/lib/projects-edit-mode";
+import { CELL_SPECS, parseCell } from "@/lib/cell-rules";
 
 const HOURS_PREFIX = "quoted__";
 
@@ -162,11 +163,13 @@ async function saveHoursCells(formData: FormData): Promise<{ written: number; co
     const section = rest.slice(sepIndex + 2);
     if (!Number.isInteger(jobId)) continue;
 
-    const raw = String(rawValue).trim();
-    const quotedHours = raw === "" ? 0 : Number(raw);
-    if (!Number.isInteger(quotedHours) || quotedHours < 0) {
-      throw new Error(`Quoted hours must be a whole number — got "${raw}" for job ${jobId}, section ${section}.`);
+    // §27.15 — the shared spec. Blank still means 0, which is this column's
+    // documented rule (an unquoted section).
+    const parsed = parseCell(rawValue, CELL_SPECS["projects.quotedHours"]);
+    if (parsed.kind === "invalid") {
+      throw new Error(`${parsed.message} (job ${jobId}, section ${section})`);
     }
+    const quotedHours = parsed.kind === "value" ? (parsed.value as number) : 0;
     edits.push({ jobId, section, quotedHours, believed: believedBase(formData, key) });
   }
 
@@ -270,13 +273,19 @@ function parseDate(raw: string): Date | null {
 // were perfectly valid to a reader. Stripping is limited to currency/grouping
 // punctuation: anything else still fails loudly rather than being coerced.
 function parseMoney(raw: string, field: string, label: number | string): number | null {
-  const cleaned = raw.replace(/[$\s,]/g, "");
-  if (cleaned === "") return null;
-  const n = Number(cleaned);
-  if (!Number.isFinite(n) || n < 0) {
-    throw new Error(`Invalid ${field} "${raw}" for ${typeof label === "number" ? `job ${label}` : label}.`);
+  // Now the shared parser (§27.15). Its normalisation is a superset of the local
+  // strip this replaces — it also reads Excel's accounting negatives and every
+  // flavour of non-breaking space — and, unlike the local one, it REFUSES the
+  // European "1.234,56" instead of silently reading it as 1.23456. That was a live
+  // hole: `raw.replace(/[$\s,]/g, "")` turns it into a valid-looking number a
+  // thousand times too small.
+  const spec = { ...CELL_SPECS["projects.costQuoted"], label: field };
+  const out = parseCell(raw, spec);
+  if (out.kind === "clear" || out.kind === "absent") return null;
+  if (out.kind === "invalid") {
+    throw new Error(`${out.message} (${typeof label === "number" ? `job ${label}` : label})`);
   }
-  return n;
+  return out.value as number;
 }
 
 async function saveJobFields(formData: FormData): Promise<{ written: number; conflicts: string[]; conflictFields: string[] }> {
@@ -551,12 +560,15 @@ async function saveNewRows(formData: FormData): Promise<number> {
     const hoursMap = hoursByTemp.get(tempId) ?? new Map();
     const hours: { section: string; quotedHours: number }[] = [];
     for (const [section, raw] of hoursMap) {
-      const trimmed = raw.trim();
-      if (trimmed === "") continue;
-      const n = Number(trimmed);
-      if (!Number.isInteger(n) || n < 0) {
-        throw new Error(`Quoted hours must be a whole number — got "${raw}" for new project "${jobId}", section ${section}.`);
+      // §27.15 — the shared spec, so a pasted "1,200" is read here exactly as it is
+      // in the money cell two columns over. It used to be refused by a bare
+      // Number.isInteger, which also refused a perfectly ordinary "8.0".
+      const parsed = parseCell(raw, CELL_SPECS["projects.quotedHours"]);
+      if (parsed.kind === "absent" || parsed.kind === "clear") continue;
+      if (parsed.kind === "invalid") {
+        throw new Error(`${parsed.message} (new project "${jobId}", section ${section})`);
       }
+      const n = parsed.value as number;
       if (n !== 0) hours.push({ section, quotedHours: n });
     }
 
