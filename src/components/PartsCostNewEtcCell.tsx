@@ -90,8 +90,18 @@ export function PartsCostNewEtcCell({
     const typed = Number(value);
     const effective = value.trim() === "" || !Number.isFinite(typed) ? suggested : typed;
     const left = priorEtc - spent;
-    publishPartsCell(jobId, { prior: priorEtc, spent, left, newEtc: effective, diff: left - effective });
-  }, [jobId, priorEtc, spent, suggested, value]);
+    // `decided` published too, so the row's own Diff cell can be repainted: undecided
+    // prints "—" rather than $0. It is recomputed here rather than read from `decided`
+    // below to keep this effect's dependency list honest.
+    publishPartsCell(jobId, {
+      prior: priorEtc,
+      spent,
+      left,
+      newEtc: effective,
+      diff: left - effective,
+      decided: isNewEtcCellDecided(cellState, value),
+    });
+  }, [jobId, priorEtc, spent, suggested, value, cellState]);
 
   useEffect(() => {
     return () => forgetPartsCell(jobId);

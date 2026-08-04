@@ -1680,6 +1680,19 @@ export default async function MonthlyEtcPage({
                               locked={locked}
                             />
                             <td
+                              // LIVE (2026-08-04). This cell was the one dependent figure
+                              // on the grid that did not move: typing a Parts Cost New ETC
+                              // updated the footer totals correctly but left the row's own
+                              // Diff at its server-rendered value, because the input is a
+                              // client component (PartsCostNewEtcCell) while this <td> is
+                              // rendered here. The hours columns don't have the problem —
+                              // EtcSectionCells renders the input AND its Diff together, so
+                              // local state covers both. Found by predicting the value and
+                              // checking: $8,600 Money Left, typed $5,000, footer moved to
+                              // -$386,377 as expected while this stayed $8,600 instead of
+                              // $3,600.
+                              data-live="partsRowDiff"
+                              data-job={job.id}
                               className={`border-l border-sdc-border overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
                               // Dollars, so its own ceiling. Uncoloured when nothing
                               // is decided — there is no variance to report, which is

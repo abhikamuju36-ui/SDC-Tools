@@ -100,9 +100,20 @@ test("the section totals and the group totals sum the same cells", () => {
   );
 });
 
+test("a parts republish that only flips `decided` still notifies", () => {
+  // `decided` moves the row's own Diff between "—" and a figure, so the no-op shortcut
+  // must compare it. Miss it and typing the first value into a Parts Cost cell would
+  // leave that Diff showing "—".
+  publishPartsCell(9, { prior: 100, spent: 10, left: 90, newEtc: 90, diff: 0, decided: false });
+  assert.equal(readEtcLiveTotals().get(9)!.parts!.decided, false);
+  publishPartsCell(9, { prior: 100, spent: 10, left: 90, newEtc: 90, diff: 0, decided: true });
+  assert.equal(readEtcLiveTotals().get(9)!.parts!.decided, true);
+  forgetPartsCell(9);
+});
+
 test("Parts Cost grand total sums the per-job parts cells", () => {
-  publishPartsCell(1, { prior: 15000, spent: 2604.43, left: 12395.57, newEtc: 12000, diff: 395.57 });
-  publishPartsCell(2, { prior: 500, spent: 100, left: 400, newEtc: 250, diff: 150 });
+  publishPartsCell(1, { prior: 15000, spent: 2604.43, left: 12395.57, newEtc: 12000, diff: 395.57, decided: true });
+  publishPartsCell(2, { prior: 500, spent: 100, left: 400, newEtc: 250, diff: 150, decided: true });
   const { parts } = readEtcLiveFooterTotals();
   assert.equal(parts.newEtc, 12250);
   assert.equal(Math.round(parts.diff * 100) / 100, 545.57);

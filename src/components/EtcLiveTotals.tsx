@@ -44,6 +44,10 @@ export function EtcLiveTotals({ monthComplete }: { monthComplete: boolean }) {
       };
 
       for (const [jobId, t] of totals) {
+        // The Parts Cost row's own Diff. Repainted from the published parts cell because
+        // that cell's input lives in a client component while its Diff <td> is rendered by
+        // the page — so unlike the hours columns, local state cannot reach it.
+        if (t.parts) writePartsRowDiff(String(jobId), t.parts.diff, t.parts.decided);
         for (const group of ["Engineering", "Shop"] as const) {
           const g = group === "Engineering" ? t.engineering : t.shop;
           grand[group].newEtc += g.newEtc;
@@ -116,6 +120,24 @@ export function EtcLiveTotals({ monthComplete }: { monthComplete: boolean }) {
       cell.setAttribute("title", String(Math.round(value * 100) / 100));
       // Always in the dark <tfoot> — there is only one footer row.
       if (kind === "diff") paintDiffColor(cell, value, true, DIFF_CEILING.hoursTotal);
+    };
+
+    // The Parts Cost row Diff — dollars, in the BODY, so it colours a background like the
+    // hours cells rather than text like the footer. Prints "—" when nothing is decided,
+    // matching the server render: with no New ETC chosen there is no variance, and "$0"
+    // would read as "on plan".
+    const writePartsRowDiff = (job: string, value: number, decided: boolean) => {
+      const cell = document.querySelector<HTMLElement>(`[data-live="partsRowDiff"][data-job="${job}"]`);
+      if (!cell) return; // Parts Cost column hidden, or this job has no parts row
+      cell.textContent = decided ? formatUsd(value) : "—";
+      cell.setAttribute(
+        "title",
+        decided
+          ? value.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 })
+          : "No New ETC decided yet, so there is no variance to report.",
+      );
+      // Undecided carries no colour at all, so the style is cleared rather than set.
+      paintDiffColor(cell, decided ? value : 0, false, DIFF_CEILING.moneyCell);
     };
 
     // Parts Cost footer — dollars, not hours, and one cell each.

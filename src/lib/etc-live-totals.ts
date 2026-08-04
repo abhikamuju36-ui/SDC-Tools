@@ -63,7 +63,9 @@ export type JobTotals = {
   shop: { prior: number; worked: number; hoursLeft: number; newEtc: number; diff: number; diffUnplanned: number };
   // Parts Cost is dollars, not hours, and has one cell per job rather than one
   // per section — so it is published separately and carries no group.
-  parts: { prior: number; spent: number; left: number; newEtc: number; diff: number } | null;
+  // `decided` rides along so the row's own Diff cell can be repainted correctly: an
+  // undecided Parts Cost cell prints "—", not $0, and the repaint has to know which.
+  parts: { prior: number; spent: number; left: number; newEtc: number; diff: number; decided: boolean } | null;
 };
 
 // Keyed by STRING, not entry id: a section a job was never quoted for has no
@@ -109,7 +111,17 @@ export function forgetEtcCell(cellKey: string): void {
 
 export function publishPartsCell(jobId: number, cell: NonNullable<JobTotals["parts"]>): void {
   const prev = parts.get(jobId);
-  if (prev && prev.prior === cell.prior && prev.spent === cell.spent && prev.left === cell.left && prev.newEtc === cell.newEtc && prev.diff === cell.diff) {
+  // `decided` is compared too — it changes the row's Diff between "—" and a figure, so a
+  // republish that only flips it must still notify.
+  if (
+    prev &&
+    prev.prior === cell.prior &&
+    prev.spent === cell.spent &&
+    prev.left === cell.left &&
+    prev.newEtc === cell.newEtc &&
+    prev.diff === cell.diff &&
+    prev.decided === cell.decided
+  ) {
     return;
   }
   parts.set(jobId, cell);
