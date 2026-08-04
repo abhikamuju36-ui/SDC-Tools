@@ -832,11 +832,12 @@ export default async function MonthlyEtcPage({
         cleared: e.newEtcClearedAt != null,
         locked,
         monthComplete,
-        // Parts Cost is excluded: its New ETC always shows a figure, so it is never
-        // awaiting a decision and never part of this count. Same flag the cell
-        // itself passes, so the number on the button matches what turns yellow.
+        // Parts Cost is INCLUDED now (2026-08-04): it goes yellow on the same
+        // terms as an hours cell, so it is clearable on the same terms too. Only
+        // `precision` still distinguishes it — dollars keep their cents. Leaving
+        // it out here while the cell itself turns yellow would put a number on
+        // the button that disagreed with what the manager can see.
         precision: e.section === PARTS_COST_SECTION ? "exact" : "whole",
-        reopenAsksAgain: e.section !== PARTS_COST_SECTION,
       } satisfies NewEtcCellState),
   ).length;
 
@@ -1580,19 +1581,15 @@ export default async function MonthlyEtcPage({
                         const draftCost = partsCostEntry.newEtcDraft != null ? Number(partsCostEntry.newEtcDraft) : null;
                         const effectiveNewEtcCost = effectiveNewEtc(partsCostEntry);
                         const diffCost = moneyLeft - effectiveNewEtcCost;
-                        // Parallels the per-section-hours rule (see EtcSectionCells):
-                        // Parts Cost New ETC needs manager attention (yellow) only
-                        // when money was actually spent this month (spent > 0) and no
-                        // value has been decided yet.
+                        // The SAME rule as the per-section-hours cells, with no
+                        // exceptions left (lib/etc.ts): Parts Cost New ETC needs manager
+                        // attention (yellow) exactly when money was spent this month
+                        // (spent > 0) and no value has been entered yet. Nothing is
+                        // auto-filled into a cell in that state — the figure is a
+                        // judgement call, and the suggestion stays on the tooltip.
                         //
-                        // Now computed by the SHARED rule (lib/etc.ts) rather than its
-                        // own expression. The two had drifted: this one counted any
-                        // submittedAt as decided, so on a REOPENED month every Parts
-                        // Cost cell read as settled while the hours cells beside it
-                        // correctly went yellow again — 39 of July 2026's cells. A
-                        // dollar estimate carried over from last submission is no more
-                        // decided than an hours one, and Clear ETC acts on yellow, so
-                        // leaving Parts Cost out would have made it unclearable.
+                        // No spend, no question: the balance carries forward on its own
+                        // and the cell reads as neutral.
                         const partsCostState = {
                           priorEtc: prior,
                           hoursWorked: spent,
@@ -1603,12 +1600,23 @@ export default async function MonthlyEtcPage({
                           monthComplete,
                           // MONEY — keeps its cents. See NewEtcCellState.precision.
                           precision: "exact",
-                          // Parts Cost New ETC ALWAYS shows a figure (2026-08-03, by
-                          // request): a reopened month does not blank it and Clear ETC
-                          // does not touch it. Treating a carried-over dollar estimate
-                          // as unanswered emptied all 39 of July's cells, which is not
-                          // what this column is for.
-                          reopenAsksAgain: false,
+                          // reopenAsksAgain LEFT AT THE DEFAULT (true) as of 2026-08-04,
+                          // by request: "do not automatically fill the New ETC cells when
+                          // there is a value in Money Spent Month — highlight them yellow
+                          // so managers enter the values manually, just like the hours
+                          // cells."
+                          //
+                          // This reverses the 2026-08-03 request that the column ALWAYS
+                          // show a figure. The two are the same question asked from
+                          // opposite ends — is a dollar estimate carried over from last
+                          // submission an answer, or a starting point? — and the answer is
+                          // now the same one the hours columns give: money spent means the
+                          // next figure is a judgement call nobody has made yet.
+                          //
+                          // Nothing else here changes. A month with NO spend still
+                          // carries the balance forward automatically and reads as
+                          // neutral (isNewEtcCellDecided returns true on hoursWorked 0),
+                          // which is the half of the old behaviour worth keeping.
                         } satisfies NewEtcCellState;
                         const partsCostSeed = newEtcSeedText(partsCostState);
                         const decidedCost = isNewEtcCellDecided(partsCostState, partsCostSeed);

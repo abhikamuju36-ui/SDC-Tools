@@ -766,3 +766,40 @@ round.
   keeps such a draft honest as its inputs move, which removes the damage; not
   writing it at all would be better still, but the server would have to
   reconstruct the exact seed the page rendered to know the box was untouched.
+
+### Parts Cost New ETC stops auto-filling (2026-08-04, later the same day)
+
+Requested directly: *"Do not automatically fill the New ETC cells when there is a
+value in the Money Spent Month column. Instead, highlight those cells in yellow so
+managers can enter the values manually, just like they do for the hours cells."*
+
+This withdraws the 2026-08-03 request in the "Still open" list above. The two are
+the same question asked from opposite ends — **is a dollar estimate carried over
+from last submission an answer, or a starting point?** — and the answer is now the
+one the hours columns already gave: money spent means the next figure is a
+judgement nobody has made yet.
+
+The implementation is the removal of a single flag. `reopenAsksAgain` was
+introduced the day before specifically to exempt Parts Cost; every caller now
+leaves it at the default, so `precision` ("exact", because dollars keep their
+cents) is the only thing still separating a Parts Cost cell from an hours cell.
+One flag, and all four behaviours followed it back: the yellow, the clearability,
+the count on the Clear ETC button, and what Clear ETC actually writes.
+
+Unchanged, deliberately: **a cell with NO money spent still carries the balance
+forward on its own and reads as neutral.** `isNewEtcCellDecided` returns true on
+zero spend, so nothing was needed for that half — and it is the half worth
+keeping, since there is no judgement to make when nothing moved.
+
+Diff was already right for this. It prints "—" rather than $0 when nothing is
+decided (a $0 would read as "on plan"), and the row's own Diff cell repaints from
+the live store as the manager types — that was the fix in `e046db6`, which turns
+out to have been the groundwork for this one.
+
+`scripts/clear-parts-cost-new-etc.ts` applied the new rule to the values the OLD
+rule had already put in July's boxes: 39 cells cleared, all of them auto-seeds
+(draft identical to the confirmed figure — not one had been typed), 15 zero-spend
+cells left carrying forward, 0 decisions touched. Column-scoped rather than a
+click of Clear ETC, because that button would also have swept the hours cells
+holding today's in-progress work. Same rule, same fields, same audit trail, so any
+figure can be read back out of the log.

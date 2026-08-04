@@ -131,15 +131,18 @@ export type NewEtcCellState = {
   precision?: "whole" | "exact";
   // Does a REOPENED month ask this cell's question again?
   //
-  // True (default) for the section-hours columns: on a reopen every cell arrives
-  // carrying the figure it was submitted with, and re-opening a month is
+  // True (the default) for EVERY column, Parts Cost included: on a reopen a cell
+  // arrives carrying the figure it was submitted with, and re-opening a month is
   // re-reviewing it, so holding the old number counts as unanswered.
   //
-  // FALSE for Parts Cost (2026-08-03, by request): its New ETC must ALWAYS show a
-  // figure. Treating a carried-over dollar estimate as unanswered blanked the
-  // column on a reopened month, which is not what that column is for. Setting this
-  // false makes such a cell decided — so it is never yellow, never clearable, and
-  // never counted by Clear ETC. One flag, and all three follow.
+  // Parts Cost was the one exception between 2026-08-03 and 2026-08-04 (its New
+  // ETC had to ALWAYS show a figure). That was withdrawn: money spent means the
+  // next figure is a judgement call, in dollars exactly as in hours, so the
+  // column now goes yellow, is clearable, and is counted by Clear ETC like the
+  // rest. No caller sets this false today — the parameter survives because the
+  // question ("is a carried-over figure an answer?") is a real one that has now
+  // been answered both ways inside 24 hours, and a flag is cheaper than
+  // rewriting the rule the next time it flips.
   reopenAsksAgain?: boolean;
 };
 

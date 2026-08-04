@@ -714,13 +714,16 @@ export async function saveAllNewEtcDrafts(month: string, formData: FormData): Pr
 // manager's judgement — and leaves them yellow so the grid reads as a checklist of
 // what to re-enter.
 //
-// Which cells that is, exactly: yellow means hours were worked this month and no
-// decision has been made. On a first-pass month those cells are already empty, so
-// this does nothing. On a REOPENED month they arrive carrying the figure they were
-// submitted with, and that is what this removes — 142 of July 2026's cells at the
-// time of writing. It is scoped by lib/etc.ts's isNewEtcClearable, the same rule
-// that paints the cell, so it can never clear something the manager can't see as
-// yellow, or miss something they can.
+// Which cells that is, exactly: yellow means hours (or, for Parts Cost, money)
+// were spent this month and no decision has been made. On a first-pass month those
+// cells are already empty, so this does nothing. On a REOPENED month they arrive
+// carrying the figure they were submitted with, and that is what this removes —
+// 142 of July 2026's cells at the time of writing. It is scoped by lib/etc.ts's
+// isNewEtcClearable, the same rule that paints the cell, so it can never clear
+// something the manager can't see as yellow, or miss something they can.
+//
+// Parts Cost is in scope as of 2026-08-04 (it was excluded for one day). Its cells
+// answer the same question in dollars, so they clear on the same terms.
 //
 // Never touches a DECIDED cell (a value somebody typed) and never touches confirmed
 // history: `needsReview` false rows are skipped outright and a fully-submitted month
@@ -772,12 +775,12 @@ export async function clearYellowNewEtc(
       draft: e.newEtcDraft != null ? Number(e.newEtcDraft) : null,
       confirmed: isHistorical || e.submittedAt != null ? round2(Number(e.newEtc)) : null,
       cleared: e.newEtcClearedAt != null,
-      // Parts Cost New ETC always shows a figure, so it is never awaiting a decision
-      // and this action never touches it (2026-08-03, by request — an earlier pass
-      // did clear it, and blanked all 39 of July's cells). Same two flags the cell
-      // passes, so what this writes and what the manager sees as yellow are one set.
+      // Parts Cost IS cleared again (2026-08-04, by request — the 2026-08-03
+      // exclusion is withdrawn). Its cell now goes yellow whenever money was
+      // spent and no figure has been entered, exactly like an hours cell, and
+      // this action's whole contract is "clear the yellow ones". `precision` is
+      // the only thing that still distinguishes it: dollars keep their cents.
       precision: e.section === PARTS_COST_SECTION ? "exact" : "whole",
-      reopenAsksAgain: e.section !== PARTS_COST_SECTION,
       locked: false, // isMonthLocked was refused above
       // Cannot change the answer: monthComplete only gates the zero-hours
       // carry-forward seed, and a zero-hours cell is decided by definition, so it

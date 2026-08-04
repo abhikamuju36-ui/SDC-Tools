@@ -144,53 +144,65 @@ test("exact precision keeps cents in the seed", () => {
   assert.equal(newEtcSeedText(s), "50000.25");
 });
 
-// ── Parts Cost is never cleared, and never yellow ───────────────────────────
-// Its New ETC must ALWAYS show a figure (2026-08-03, by request). An earlier pass
-// brought it onto the hours columns' reopened-untouched rule, which blanked all 39
-// of July's cells on a reopened month — restored from the clear's audit metadata by
-// scripts/restore-parts-cost-clear-2026-08-03.ts. reopenAsksAgain:false is what
-// keeps it out, and it drives all three behaviours at once: colour, clearability,
-// and the count on the button.
+// ── Parts Cost answers the same question, in dollars ────────────────────────
+// Requested 2026-08-04: "do not automatically fill the New ETC cells when there is
+// a value in the Money Spent Month column — highlight those cells in yellow so
+// managers can enter the values manually, just like they do for the hours cells."
+//
+// That reverses the 2026-08-03 request that the column ALWAYS show a figure (which
+// this block used to assert, and which reopenAsksAgain:false implemented). The
+// column is built with the DEFAULT flags now, so the only difference left from an
+// hours cell is `precision` — dollars keep their cents.
 const partsCell = (over: Partial<NewEtcCellState> = {}): NewEtcCellState =>
-  cell({ precision: "exact", reopenAsksAgain: false, ...over });
+  cell({ precision: "exact", ...over });
 
-test("Parts Cost reopened + untouched stays DECIDED — it keeps showing its figure", () => {
-  const s = partsCell({ hoursWorked: 2604.43, draft: null, confirmed: 12395.57 });
-  // The value is still there...
-  assert.equal(newEtcSeedText(s), "12395.57");
-  // ...and it does not read as awaiting an answer, so it never goes yellow.
-  assert.equal(isNewEtcCellDecided(s, "12395.57"), true);
-  // ...and Clear ETC cannot touch it.
-  assert.equal(isNewEtcClearable(s), false);
-});
-
-test("Parts Cost with a real draft is decided too", () => {
-  const s = partsCell({ hoursWorked: 500, draft: 5819.03, confirmed: 5819.03 });
-  assert.equal(isNewEtcClearable(s), false);
-});
-
-test("Parts Cost with no money spent is decided", () => {
-  const s = partsCell({ hoursWorked: 0, confirmed: 500 });
-  assert.equal(isNewEtcClearable(s), false);
-});
-
-test("Parts Cost emptied by hand still reads as awaiting a decision", () => {
-  // reopenAsksAgain only governs the CARRIED-OVER case. An genuinely empty cell with
-  // money spent is still unanswered, so the yellow prompt survives.
+test("Parts Cost with money spent and nothing entered is YELLOW and blank", () => {
+  // The requirement, stated directly: spend but no decision means the manager is
+  // asked, and nothing is put in the box for them.
   const s = partsCell({ hoursWorked: 2604.43, draft: null, confirmed: null });
   assert.equal(newEtcSeedText(s), "");
   assert.equal(isNewEtcCellDecided(s, ""), false);
 });
 
-test("the same figure is clearable in an hours column but not in Parts Cost", () => {
-  // The one asymmetry, stated outright: identical state, opposite verdicts, and the
-  // only thing separating them is reopenAsksAgain.
+test("Parts Cost reopened + untouched is asked again, like an hours cell", () => {
+  const s = partsCell({ hoursWorked: 2604.43, draft: null, confirmed: 12395.57 });
+  // It still ARRIVES holding last submission's figure — that is what Clear ETC is
+  // for, and the same thing an hours cell does on a reopened month...
+  assert.equal(newEtcSeedText(s), "12395.57");
+  // ...but holding it is not an answer, so it reads as awaiting one and is clearable.
+  assert.equal(isNewEtcCellDecided(s, "12395.57"), false);
+  assert.equal(isNewEtcClearable(s), true);
+});
+
+test("Parts Cost stops being yellow the moment a different figure is typed", () => {
+  // "Once a value is entered, the yellow highlight should disappear." Judged from
+  // the LIVE text, so it happens as the manager types — no save required.
+  const s = partsCell({ hoursWorked: 2604.43, draft: null, confirmed: 12395.57 });
+  assert.equal(isNewEtcCellDecided(s, "9000"), true);
+  // Cents count as a change: dollars are compared at "exact" precision.
+  assert.equal(isNewEtcCellDecided(s, "12395.58"), true);
+});
+
+test("a Parts Cost figure the manager actually saved is decided and never cleared", () => {
+  const s = partsCell({ hoursWorked: 500, draft: 4200, confirmed: 5819.03 });
+  assert.equal(newEtcSeedText(s), "4200");
+  assert.equal(isNewEtcCellDecided(s, "4200"), true);
+  assert.equal(isNewEtcClearable(s), false);
+});
+
+test("Parts Cost with NO money spent still carries forward automatically", () => {
+  // The half of the old behaviour that stays: no spend, no question. The balance
+  // carries and the cell reads as settled, so Clear ETC leaves it alone.
+  const s = partsCell({ hoursWorked: 0, priorEtc: 8600, confirmed: 500 });
+  assert.equal(isNewEtcCellDecided(s, newEtcSeedText(s)), true);
+  assert.equal(isNewEtcClearable(s), false);
+});
+
+test("hours and Parts Cost now give the SAME verdict on the same state", () => {
+  // This used to assert the opposite — "identical state, opposite verdicts". The
+  // asymmetry is gone; only the cents in the seed text distinguish the columns.
   const hours = cell({ draft: null, confirmed: 96 });
   const parts = partsCell({ draft: null, confirmed: 96 });
   assert.equal(isNewEtcClearable(hours), true);
-  assert.equal(isNewEtcClearable(parts), false);
-  // Neither is blank — Parts Cost keeps its value, and so does the hours cell until
-  // the button actually runs.
-  assert.notEqual(newEtcSeedText(hours), "");
-  assert.notEqual(newEtcSeedText(parts), "");
+  assert.equal(isNewEtcClearable(parts), true);
 });
