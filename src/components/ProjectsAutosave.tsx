@@ -50,6 +50,28 @@ export function ProjectsAutosave() {
     },
   });
 
+  // Last line of defence, matching the Monthly ETC grid (2026-08-04).
+  //
+  // useAutosave already flushes on visibilitychange, which covers tab switches and most
+  // closes, but a refresh within the ~1.5s debounce could still lose the keystroke that
+  // triggered it — the flush dispatches the request, it cannot guarantee it completes.
+  // This is the native "leave site?" prompt, the same one Word and Excel show, and it is
+  // the difference between losing an edit and being asked about it.
+  //
+  // Only while editing: in read-only mode the grid is a disabled fieldset, so there is
+  // nothing unsaved to warn about and a prompt would be pure noise.
+  useEffect(() => {
+    if (!editing) return;
+    function onBeforeUnload(e: BeforeUnloadEvent) {
+      const form = formRef.current;
+      if (!form || countChanged(form) === 0) return;
+      e.preventDefault();
+      e.returnValue = "";
+    }
+    window.addEventListener("beforeunload", onBeforeUnload);
+    return () => window.removeEventListener("beforeunload", onBeforeUnload);
+  }, [editing]);
+
   // Find the enclosing form once and attach the delegated listeners.
   useEffect(() => {
     const form = anchorRef.current?.closest("form");
