@@ -183,6 +183,30 @@ export function SubmitReportAction({
     openerRef.current?.focus();
   }, [status]);
 
+  // ── The page behind the modal holds still (§36.11) ────────────────────────
+  //
+  // "Prevent background interaction while open" was only half true: the fixed overlay
+  // swallowed clicks, but the wheel still scrolled the Monthly ETC grid underneath — so
+  // the figures the dialog is asking about slid away behind it, and closing the dialog
+  // left the page somewhere else than where it was opened.
+  //
+  // The scrollbar's width is compensated with padding-right rather than left alone,
+  // because removing a 15px scrollbar reflows the whole page one notch wider — a layout
+  // shift on every open and close, which is exactly what §36.14 is about.
+  useEffect(() => {
+    if (phase !== "confirming" && phase !== "submitting") return;
+    const { body } = document;
+    const previousOverflow = body.style.overflow;
+    const previousPadding = body.style.paddingRight;
+    const gap = window.innerWidth - document.documentElement.clientWidth;
+    body.style.overflow = "hidden";
+    if (gap > 0) body.style.paddingRight = `${gap}px`;
+    return () => {
+      body.style.overflow = previousOverflow;
+      body.style.paddingRight = previousPadding;
+    };
+  }, [phase]);
+
   // ── Keyboard behaviour inside the dialog (§26.5) ──────────────────────────
   //
   // Escape closes — but only while the dialog is still just a question. Tab is trapped,
@@ -355,16 +379,16 @@ export function SubmitReportAction({
   if (locked || phase === "submitted") {
     return (
       <div className="flex flex-col gap-1.5 border-t border-sdc-border bg-sdc-gray-50 px-3 py-3">
-        <p aria-live="polite" className="text-[11px] font-semibold text-sdc-green-text">
+        <p aria-live="polite" className="text-note font-semibold text-sdc-green-text">
           {receipt ? receiptHeadline(receipt) : `${monthName} Report Submitted`}
         </p>
-        {notice && <p className="text-[10px] leading-relaxed text-sdc-gray-600">{notice}</p>}
+        {notice && <p className="text-label leading-relaxed text-sdc-gray-600">{notice}</p>}
         {receipt && (
-          <dl className="space-y-0.5 text-[10px] leading-snug text-sdc-gray-600">
+          <dl className="space-y-0.5 text-label leading-snug text-sdc-gray-600">
             {receiptLines(receipt).map((l) => (
               <div key={l.label} className="flex justify-between gap-2">
                 <dt className="shrink-0 text-sdc-gray-500">{l.label}</dt>
-                <dd className={`truncate text-right ${l.label === "Submission ID" ? "font-mono text-[9px] text-sdc-gray-400" : ""}`} title={l.value}>
+                <dd className={`truncate text-right ${l.label === "Submission ID" ? "font-mono text-micro text-sdc-gray-400" : ""}`} title={l.value}>
                   {l.value}
                 </dd>
               </div>
@@ -379,7 +403,7 @@ export function SubmitReportAction({
             )}
           </dl>
         )}
-        <p className="text-[10px] leading-relaxed text-sdc-gray-500">
+        <p className="text-label leading-relaxed text-sdc-gray-500">
           Use &ldquo;Reopen for editing&rdquo; in the toolbar above if a correction is needed — it unfreezes the whole month.
         </p>
       </div>
@@ -390,27 +414,27 @@ export function SubmitReportAction({
     <div className="flex flex-col gap-2 border-t border-sdc-border bg-sdc-gray-50 px-3 py-3">
       {/* §26.12: says what the button does and names the month, and no longer points at
           a toolbar button that has moved here. */}
-      <p className="text-[11px] leading-relaxed text-sdc-gray-600">{standardFeesSubmitBlurb(monthName)}</p>
+      <p className="text-note leading-relaxed text-sdc-gray-600">{standardFeesSubmitBlurb(monthName)}</p>
 
       {/* Readiness, immediately above the button (§26.4). aria-live so a screen reader
           hears it change when a colleague clears the last outstanding cell. */}
       <div aria-live="polite">
         <p
-          className={`text-[11px] font-medium ${
+          className={`text-note font-medium ${
             readiness.tone === "ok" ? "text-sdc-green-text" : readiness.tone === "blocked" ? "text-sdc-red-text" : "text-sdc-gray-600"
           }`}
         >
           {readiness.text}
           {rechecking && status ? " (re-checking…)" : ""}
         </p>
-        {readiness.detail && <p className="text-[10px] leading-relaxed text-sdc-gray-600">{readiness.detail}</p>}
+        {readiness.detail && <p className="text-label leading-relaxed text-sdc-gray-600">{readiness.detail}</p>}
       </div>
 
       {/* The affected tab, project, row and field — enough to go and fix it (§26.4). */}
       {status && !status.validation.ok && status.validation.issues.length > 0 && (
         <ul className="styled-scrollbar max-h-32 space-y-1 overflow-auto rounded border border-sdc-red-border bg-sdc-red-bg p-1.5">
           {status.validation.issues.slice(0, 8).map((iss, i) => (
-            <li key={i} className="text-[10px] leading-snug text-sdc-red-text">
+            <li key={i} className="text-label leading-snug text-sdc-red-text">
               <span className="font-semibold">{iss.section}</span>
               {" · "}
               {iss.rowRef}
@@ -419,7 +443,7 @@ export function SubmitReportAction({
             </li>
           ))}
           {status.validation.totalIssues > 8 && (
-            <li className="text-[10px] text-sdc-gray-600">
+            <li className="text-label text-sdc-gray-600">
               …and {status.validation.totalIssues - 8} more (the yellow cells in the grid are the full list).
             </li>
           )}
@@ -436,19 +460,22 @@ export function SubmitReportAction({
             ? `Finalize the whole ${monthName} report. You will be asked to confirm.`
             : "Fix the outstanding items above before submitting."
         }
-        className="w-full rounded-md bg-sdc-blue px-3 py-2 text-xs font-semibold text-white hover:bg-sdc-blue-dark disabled:cursor-not-allowed disabled:opacity-50"
+        // w-full, so the label changing between "Submit July 2026 Report", "Checking…"
+        // and "Submitting…" cannot resize it (§36.3). truncate rather than wrap, so a
+        // long month name in a narrow panel clips instead of growing the button's height.
+        className="motion-interactive w-full truncate rounded-md bg-sdc-blue px-3 py-2 text-xs font-semibold text-white hover:bg-sdc-blue-dark disabled:cursor-not-allowed disabled:opacity-50"
       >
         {submitButtonLabel(ctx)}
       </button>
 
       {/* Failure and stale-confirmation messages, near the button (§26.8/§26.9). */}
       {failure && (
-        <p aria-live="assertive" className="text-[10px] leading-relaxed font-medium text-sdc-red-text">
+        <p aria-live="assertive" className="text-label leading-relaxed font-medium text-sdc-red-text">
           <span className="font-semibold">{failure.category}:</span> {failure.text}
           {failure.retryable && " Press the button again to retry — it is safe."}
         </p>
       )}
-      {notice && !failure && <p aria-live="polite" className="text-[10px] leading-relaxed text-sdc-gray-600">{notice}</p>}
+      {notice && !failure && <p aria-live="polite" className="text-label leading-relaxed text-sdc-gray-600">{notice}</p>}
 
       {/* ── The confirmation dialog (§26.5) ────────────────────────────────────
           An in-app modal, not window.confirm: it has to name the month, list what is
@@ -457,7 +484,13 @@ export function SubmitReportAction({
           CANCELS; there is no path from it to a submission. */}
       {(phase === "confirming" || phase === "submitting") && (
         <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
+          // motion-overlay/motion-dialog: a fade on the scrim and a 4px rise on the
+          // panel, both at --motion-panel. Deliberately no scale and no bounce — §36.11
+          // names both — and nothing here animates a size, so the page behind does not
+          // reflow. Closing is instant, which §36.11 also asks for outright ("close
+          // immediately when cancelled"): a cancel that lingers reads as a click that
+          // did not register.
+          className="motion-overlay fixed inset-0 z-50 flex items-center justify-center bg-black/40 p-4"
           onMouseDown={(e) => {
             // Outside the panel only, and it cancels — never submits (§26.16 #11).
             // Refused mid-submission, so the modal cannot be dismissed out from under a
@@ -472,7 +505,7 @@ export function SubmitReportAction({
             aria-modal="true"
             aria-labelledby="submit-report-title"
             aria-describedby="submit-report-body"
-            className="w-full max-w-md rounded-xl border border-sdc-border bg-white p-5 shadow-xl"
+            className="motion-dialog w-full max-w-md rounded-xl border border-sdc-border bg-white p-5 shadow-xl"
           >
             {/* tabIndex -1 so focus can land on the heading without it being a tab stop:
                 the screen reader reads the dialog, and Enter has nothing to activate. */}
@@ -482,17 +515,22 @@ export function SubmitReportAction({
             <p id="submit-report-body" className="mb-4 text-xs leading-relaxed text-sdc-gray-600">
               {confirmBody(monthName)}
             </p>
-            {busy && (
-              <p aria-live="polite" className="mb-3 text-[11px] font-medium text-sdc-gray-600">
-                {submitButtonLabel(ctx)}
-              </p>
-            )}
+            {/* The progress line's ROW is always here, empty until there is something to
+                say (§36.11: "avoid shifting the page", §36.14: "do not change element
+                height during loading"). It used to be mounted only while busy, so
+                confirming grew the dialog by a line and re-centred it in the viewport at
+                the exact moment the user was watching for a result. min-h, not a
+                non-breaking space: the height comes from the line-height the text will
+                actually use. */}
+            <p aria-live="polite" className="mb-3 min-h-[1.1rem] text-note font-medium text-sdc-gray-600">
+              {busy ? submitButtonLabel(ctx) : ""}
+            </p>
             <div className="flex justify-end gap-2">
               <button
                 type="button"
                 onClick={() => closeDialog("cancelled")}
                 disabled={!canDismissDialog(phase)}
-                className="rounded-md px-3 py-1.5 text-sm text-sdc-gray-600 hover:bg-sdc-gray-100 disabled:opacity-50"
+                className="motion-interactive rounded-md px-3 py-1.5 text-sm text-sdc-gray-600 hover:bg-sdc-gray-100 disabled:opacity-50"
               >
                 Cancel
               </button>
@@ -504,9 +542,21 @@ export function SubmitReportAction({
                 // a dead control. The server's idempotency key is the backstop, not the
                 // first line of defence.
                 disabled={!canConfirmSubmit(ctx) || busy}
-                className="rounded-md bg-sdc-blue px-3 py-1.5 text-sm font-semibold text-white hover:bg-sdc-blue-dark disabled:cursor-not-allowed disabled:opacity-50"
+                className="motion-interactive inline-flex items-center gap-1.5 rounded-md bg-sdc-blue px-3 py-1.5 text-sm font-semibold text-white hover:bg-sdc-blue-dark disabled:cursor-not-allowed disabled:opacity-50"
               >
-                {busy ? `Submitting ${monthName} report…` : "Yes, Submit Report"}
+                {/* The LABEL no longer changes (§36.3: "button labels must not shift
+                    unexpectedly"). It used to become `Submitting July 2026 report…` — half
+                    again as wide as "Yes, Submit Report" — which moved Cancel sideways
+                    under a cursor that had just left it. A spinner takes the width it
+                    needs beside the unchanged label, and the line above already states
+                    the phase in words. */}
+                {busy && (
+                  <svg viewBox="0 0 16 16" width="12" height="12" className="shrink-0 animate-spin" aria-hidden>
+                    <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2" strokeOpacity="0.25" />
+                    <path d="M8 2 a6 6 0 0 1 6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
+                  </svg>
+                )}
+                Yes, Submit Report
               </button>
             </div>
           </div>

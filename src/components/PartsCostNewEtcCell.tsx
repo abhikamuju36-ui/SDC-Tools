@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { registerEtcField, forgetEtcField, updateEtcField, adoptEtcFieldBaseline } from "@/lib/etc-dirty-tracker";
 import { PARTS_COL_W } from "@/components/ui/classnames";
+import { usd } from "@/components/ui/format";
 import { publishPartsCell, forgetPartsCell } from "@/lib/etc-live-totals";
 import { isNewEtcCellDecided, formatNewEtcText, type NewEtcCellState } from "@/lib/etc";
 import { useRemoteEtcValue, forgetRemoteEtcValue } from "@/lib/etc-remote-values";
@@ -13,9 +14,8 @@ import { beginEditingCell, endEditingCell } from "@/components/RealtimeProvider"
 const NEUTRAL_BG = "bg-[#F2F2F2]";
 const ATTENTION_BG = "bg-[#FAFAC4]";
 
-function currency(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
+// Money formatting comes from ui/format (§39.13), not a local copy of it.
+const currency = usd;
 
 // Parts Cost's New ETC cell. Deliberately mirrors the New ETC cell in
 // EtcSectionCells rather than reusing EtcDraftInput:
@@ -142,7 +142,21 @@ export function PartsCostNewEtcCell({
     // genuinely differ for an unanswered cell. Must match the server's own
     // expression in etc/page.tsx or the figure would jump on hydration.
     const decidedNow = isNewEtcCellDecided(cellState, value);
-    const diffNow = left - (decidedNow ? effective : 0);
+    // ── Undecided contributes NOTHING, exactly as the hours cells do (§29) ────
+    //
+    // This was `left - (decidedNow ? effective : 0)`, which for an undecided cell
+    // published the whole Money Left as the variance. That is the one thing §29.2
+    // forbids outright ("do not display Money Left as the Diff"), and it made this
+    // column behave differently from every hours column beside it: newEtcDiff in
+    // lib/etc.ts returns 0 for an undecided cell, on the documented reasoning that
+    // until a manager enters a figure there is nothing to compare against.
+    //
+    // The consequence was not cosmetic. It summed: July's Parts Cost footer read
+    // $1,085,685 of "variance" that was really just money nobody had planned yet, and
+    // the KPI card said the same until §28 stopped it deriving from this number.
+    // Fixing it here fixes the cell, the row, the footer and the export at once,
+    // because they all read this one published value.
+    const diffNow = decidedNow ? left - Math.max(effective, 0) : 0;
     // `decided` is published too, but the row Diff no longer prints "—" for an
     // undecided cell — it prints the figure (see diffNow above). The flag is still
     // carried because the yellow/neutral background reads from it.
@@ -171,7 +185,10 @@ export function PartsCostNewEtcCell({
   return (
     // `relative` so the presence marker sits in the corner without resizing the cell.
     <td
-      className={`relative border-l border-sdc-border ${decided ? NEUTRAL_BG : ATTENTION_BG} ${saveState?.ring ?? ""} ${PARTS_COL_W} px-1 py-1 text-center`}
+      // motion-cell: same yellow ⇄ neutral crossfade as the hours cells (§36.7). One
+      // class, one duration, so the two kinds of New ETC cell cannot end up behaving
+      // differently — see EtcSectionCells and globals.css.
+      className={`motion-cell relative border-l border-sdc-border ${decided ? NEUTRAL_BG : ATTENTION_BG} ${saveState?.ring ?? ""} ${PARTS_COL_W} px-1 py-1 text-center`}
       title={saveState?.title}
     >
       <CellPresence cellKey={name} />
@@ -214,7 +231,7 @@ export function PartsCostNewEtcCell({
         title={hint}
         disabled={locked}
         aria-label={`New ETC cost override, ${jobName}, Parts Cost`}
-        className="w-full [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-[10px] font-bold leading-none text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"
+        className="w-full [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-label font-bold leading-none text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"
       />
     </td>
   );

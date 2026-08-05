@@ -7,7 +7,7 @@ import { isProjectsUnlocked } from "@/lib/projects-gate";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
 import { PageTitle } from "@/components/ui/Typography";
-import { TABLE_HEADER_ROW, TABLE_GRID, BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/ui/classnames";
+import { TABLE_HEADER_ROW, TABLE_GRID, GRID_SCROLLER, BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/ui/classnames";
 import { ProjectViewsMenu } from "@/components/ProjectViewsMenu";
 import { ExportMenu } from "@/components/ExportMenu";
 import { listSharedViews } from "@/lib/saved-views-actions";
@@ -15,7 +15,10 @@ import { ProjectsFilterMenu } from "@/components/ProjectsFilterMenu";
 import { ProjectsDateFilter } from "@/components/ProjectsDateFilter";
 import { ProjectsAutosave } from "@/components/ProjectsAutosave";
 import { ProjectsLiveTotals } from "@/components/ProjectsLiveTotals";
+import { ProjectsRemoteCells } from "@/components/ProjectsRemoteCells";
 import { ProjectsSectionsMenu } from "@/components/ProjectsSectionsMenu";
+import { ProjectsGridView } from "@/components/ProjectsGridView";
+import { PROJECTS_INFO_COLUMNS } from "@/lib/projects-view";
 import { ProjectsDisplayMenu } from "@/components/ProjectsDisplayMenu";
 import { ProjectsShowAllSwitch } from "@/components/ProjectsShowAllSwitch";
 import { SortButton } from "@/components/SortButton";
@@ -212,15 +215,11 @@ const BILLABLE_OPTIONS = ["Billable", "Non-Billable"];
 // Info columns the "Columns" dropdown can show/hide. # and Job Id always
 // show (row identity); phase section columns have their own phase pickers;
 // the two Cost columns are the grid's whole point, so neither is toggleable.
-const TOGGLE_COLUMNS = [
-  { key: "job", label: "Job" },
-  { key: "customer", label: "Customer" },
-  { key: "type", label: "Type" },
-  { key: "billable", label: "Billable" },
-  { key: "status", label: "Status" },
-  { key: "startDate", label: "Start Date" },
-  { key: "completeDate", label: "Complete Date" },
-] as const;
+//
+// One definition, shared with the code that writes `?hide=` — the param's value is
+// ORDERED by this list, so a second copy here could silently change the URL a given
+// view produces and stop a saved View comparing equal. See lib/projects-view.ts.
+const TOGGLE_COLUMNS = PROJECTS_INFO_COLUMNS;
 
 export default async function QuotedPage({
   searchParams,
@@ -311,7 +310,18 @@ export default async function QuotedPage({
   // Column show/hide — `hide` is a comma-separated list of hidden column
   // keys (absent = all shown). Drives the "Columns" dropdown.
   const hiddenCols = new Set(decodeParamList(hide ?? null));
-  const show = (key: string) => !hiddenCols.has(key);
+  // ── Always true now (§40.2) ─────────────────────────────────────────────────
+  // The info columns used to be dropped from the render, so toggling one was a route
+  // navigation: measured at 3,330 DOM mutations and ~440ms of blocked main thread to
+  // stop showing a column that was already on screen. They are always printed now and
+  // hidden with one CSS rule by GridViewProvider (see lib/grid-view.ts).
+  //
+  // Kept as a function rather than deleted at 14 call sites: `hiddenCols` still decides
+  // the SSR stylesheet and still travels in the URL for Export and saved Views, so the
+  // set is load-bearing — it just no longer decides what is RENDERED. Nothing on this
+  // grid derives a figure from an info column, which is why this one is safe; the
+  // section-column picker (`cols`) is not and still navigates.
+  const show = (_key: string) => true;
   // No `cols` param at all (first visit) defaults to every section EXCEPT the
   // ones below; an explicit (possibly empty) `cols` value means the user has
   // picked some via the phase pickers (which still list all sections).
@@ -478,9 +488,14 @@ export default async function QuotedPage({
   const shopCodes = visibleSectionsFlat.filter((s) => s.group === "Shop").map((s) => s.code);
 
   return (
-    // QuotedSaveForm (client) owns the <form> so the Save button can read what the
-    // action returned — counts on success, the message on failure. The grid below
-    // stays a server component, passed through as children.
+    // ProjectsGridView wraps the toolbar AND the grid: the info-column checkboxes read
+    // the same store whose stylesheet hides the cells. Info columns only — the section
+    // picker still navigates, because hiding a section changes the Eng/Shop totals.
+    // See lib/projects-view.ts.
+    <ProjectsGridView initialHidden={[...hiddenCols]}>
+    {/* QuotedSaveForm (client) owns the <form> so the Save button can read what the
+        action returned — counts on success, the message on failure. The grid below
+        stays a server component, passed through as children. */}
     <QuotedSaveForm action={saveQuotedHours} className="w-full px-8 py-10 md:px-13 md:py-11">
       {/* Wraps the toolbar AND the grid: the switch, the Add/Save buttons and
           the fieldset that locks the cells all read the same client state, so
@@ -555,7 +570,6 @@ export default async function QuotedPage({
           }))}
           visibleCodes={visibleCodes}
           infoColumns={[...TOGGLE_COLUMNS]}
-          hiddenInfo={[...hiddenCols]}
         />
         <ProjectsDisplayMenu />
         <ProjectViewsMenu sharedViews={sharedViews} teamDefault={teamDefault} />
@@ -579,13 +593,19 @@ export default async function QuotedPage({
           they are summed on the server, so nothing else would move them until a
           re-render. Renders nothing; it attaches one delegated listener. */}
       <ProjectsLiveTotals engCodes={engCodes} shopCodes={shopCodes} />
+      {/* Puts a colleague's saved value into the one cell it belongs to, without a
+          refetch and without disturbing anything the user is editing (§33.1). Until
+          2026-08-04 this grid's saves announced nothing at all, and even a refetch
+          could not update a cell that had ever been typed in — see
+          ProjectsRemoteCells for both halves of that. */}
+      <ProjectsRemoteCells />
       {/* ONE right-click menu for the whole grid — see JobCellMenuHost. It used
           to be a client component per Job cell, 2 per row. */}
       <JobCellMenuHost />
       {/* One delegated handler for every date cell — see GridDateCells. */}
       <GridDateCells />
       <ProjectsEditFieldset>
-      <DragScroll className="max-h-[calc(100vh-170px)] min-w-[480px] overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm select-none styled-scrollbar">
+      <DragScroll className={`max-h-[calc(100vh-170px)] min-w-[480px] ${GRID_SCROLLER}`}>
         {/* quiet-controls: hide the per-row dropdown chevrons (Type/Billable/
             Status) and date calendar icons until the cell is hovered/focused —
             see globals.css. Scoped to this table so other grids (Employees)
@@ -596,7 +616,7 @@ export default async function QuotedPage({
             halves and hiding them a frame later (see globals.css). It also
             widens the quoted input back out — with the suffix gone, there's a
             whole cell for it. */}
-        <table className={`quiet-controls w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS} ${showActuals ? "" : "hide-actuals"}`}>
+        <table data-grid="projects" className={`quiet-controls w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS} ${showActuals ? "" : "hide-actuals"}`}>
           <thead className="sticky top-0 z-20 bg-sdc-gray-100">
             <tr className={TABLE_HEADER_ROW}>
               <th rowSpan={3} className="frozen-col sticky left-0 z-10 w-8 min-w-8 bg-sdc-gray-100 px-1 py-2 text-center align-bottom">
@@ -606,7 +626,7 @@ export default async function QuotedPage({
                 <SortButton sortKey="jobId" label="Job Id" currentSort={sortKey} currentDir={sortDir} />
               </th>
               {show("job") && (
-                <th
+                <th data-col="job"
                   rowSpan={3}
                   style={{ width: "var(--job-col-width, 280px)", minWidth: "var(--job-col-width, 280px)" }}
                   className="frozen-col frozen-col-last sticky left-[7rem] z-10 border-l border-r border-sdc-border bg-sdc-gray-100 px-2 py-2 align-bottom"
@@ -623,7 +643,7 @@ export default async function QuotedPage({
                 </th>
               )}
               {show("customer") && (
-                <th
+                <th data-col="customer"
                   rowSpan={3}
                   style={{ width: "var(--customer-col-width, 120px)", minWidth: "var(--customer-col-width, 120px)" }}
                   className="relative px-2 py-2 align-bottom"
@@ -640,7 +660,7 @@ export default async function QuotedPage({
                 </th>
               )}
               {show("type") && (
-                <th
+                <th data-col="type"
                   rowSpan={3}
                   style={{ width: "var(--type-col-width, 90px)", minWidth: "var(--type-col-width, 90px)" }}
                   className="relative px-1 py-2 align-bottom"
@@ -657,7 +677,7 @@ export default async function QuotedPage({
                 </th>
               )}
               {show("billable") && (
-                <th
+                <th data-col="billable"
                   rowSpan={3}
                   style={{ width: "var(--billable-col-width, 110px)", minWidth: "var(--billable-col-width, 110px)" }}
                   className="relative px-1 py-2 align-bottom"
@@ -674,7 +694,7 @@ export default async function QuotedPage({
                 </th>
               )}
               {show("status") && (
-                <th
+                <th data-col="status"
                   rowSpan={3}
                   style={{ width: "var(--status-col-width, 100px)", minWidth: "var(--status-col-width, 100px)" }}
                   className="relative px-1 py-2 align-bottom"
@@ -691,7 +711,7 @@ export default async function QuotedPage({
                 </th>
               )}
               {show("startDate") && (
-                <th
+                <th data-col="startDate"
                   rowSpan={3}
                   style={{ width: "var(--startdate-col-width, 92px)", minWidth: "var(--startdate-col-width, 92px)" }}
                   className="relative px-1 py-2 align-bottom"
@@ -708,7 +728,7 @@ export default async function QuotedPage({
                 </th>
               )}
               {show("completeDate") && (
-                <th
+                <th data-col="completeDate"
                   rowSpan={3}
                   style={{ width: "var(--completedate-col-width, 92px)", minWidth: "var(--completedate-col-width, 92px)" }}
                   className="relative px-1 py-2 align-bottom"
@@ -743,7 +763,7 @@ export default async function QuotedPage({
               <th
                 rowSpan={3}
                 style={DATA_COL_STYLE}
-                className="border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-[11px] leading-tight text-sdc-blue-dark"
+                className="border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-note leading-tight text-sdc-blue-dark"
               >
                 ENG
                 <span className="block font-semibold">TOTAL</span>
@@ -751,7 +771,7 @@ export default async function QuotedPage({
               <th
                 rowSpan={3}
                 style={DATA_COL_STYLE}
-                className="border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-[11px] leading-tight text-sdc-blue-dark"
+                className="border-l border-sdc-border bg-sdc-blue-light px-2 py-2 text-center align-bottom text-note leading-tight text-sdc-blue-dark"
               >
                 SHOP
                 <span className="block font-semibold">TOTAL</span>
@@ -778,7 +798,7 @@ export default async function QuotedPage({
                     key={`${g.phase}-group-${i}`}
                     colSpan={run.count}
                     title={GROUP_FULL_NAME[run.group]}
-                    className={`qc border-l border-sdc-border px-1 py-1.5 text-center text-[10px] italic ${
+                    className={`qc border-l border-sdc-border px-1 py-1.5 text-center text-label italic ${
                       GROUP_HEADER_COLOR[run.group] ?? ""
                     }`}
                   >
@@ -798,9 +818,9 @@ export default async function QuotedPage({
                 // dormant at the width above and just guards against a future
                 // section name longer than any of today's.
                 return sections.map((s) => (
-                  <th key={s.code} title={s.code} style={DATA_COL_STYLE} className="qc break-normal border-l border-sdc-border px-1 py-2 text-center text-[10px] leading-tight">
+                  <th key={s.code} title={s.code} style={DATA_COL_STYLE} className="qc break-normal border-l border-sdc-border px-1 py-2 text-center text-label leading-tight">
                     {s.name}
-                    <span className="block font-mono text-[10px] font-normal normal-case tracking-normal text-sdc-gray-400">
+                    <span className="block font-mono text-label font-normal normal-case tracking-normal text-sdc-gray-400">
                       {s.code}
                     </span>
                   </th>
@@ -844,7 +864,7 @@ export default async function QuotedPage({
               // the plain cells and missed the rest.
               return (
                 <tr key={job.id} className={zebra}>
-                  <td className={`frozen-col sticky left-0 z-10 w-8 min-w-8 overflow-hidden px-1 py-1.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}>
+                  <td className={`frozen-col sticky left-0 z-10 w-8 min-w-8 overflow-hidden px-1 py-1.5 text-center align-middle text-label whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}>
                     {i + 1}
                   </td>
                   {/* Left-click keeps its direct Job Hour Details link (this
@@ -861,7 +881,7 @@ export default async function QuotedPage({
                       schedulerUrl: schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null,
                     })}
                     title={`Open ${job.jobId} in Job Hour Details — right-click for more`}
-                    className={`frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden truncate px-2 py-1.5 text-center font-mono text-[10px] ${zebraSticky}`}
+                    className={`frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden truncate px-2 py-1.5 text-center font-mono text-label ${zebraSticky}`}
                   >
                     <Link
                       href={`/job-hours?jobs=${encodeURIComponent(job.jobId)}`}
@@ -875,7 +895,7 @@ export default async function QuotedPage({
                     // The Job Hour Details / Scheduler icon-links that used to
                     // sit here moved into the right-click menu — same two
                     // destinations, without an icon pair on every row.
-                    <td
+                    <td data-col="job"
                       {...jobCellMenuProps({
                         jobId: job.jobId,
                         jobName: job.jobName,
@@ -883,12 +903,13 @@ export default async function QuotedPage({
                       })}
                       title={`${job.jobName} — right-click for options`}
                       style={{ width: "var(--job-col-width, 280px)", minWidth: "var(--job-col-width, 280px)" }}
-                      className={`frozen-col frozen-col-last sticky left-[7rem] z-10 overflow-hidden border-l border-r border-sdc-border px-2 py-1.5 text-left align-middle text-[10px] font-medium whitespace-nowrap text-sdc-navy ${zebraSticky}`}
+                      className={`frozen-col frozen-col-last sticky left-[7rem] z-10 overflow-hidden border-l border-r border-sdc-border px-2 py-1.5 text-left align-middle text-label font-medium whitespace-nowrap text-sdc-navy ${zebraSticky}`}
                     >
                       <div className="flex min-h-[14px] min-w-0 items-center gap-1">
                         <input
                           type="text"
                           name={`jobField__${job.id}__jobName`}
+                          data-remote-adopt=""
                           defaultValue={job.jobName}
                           data-baseline={job.jobName}
                           aria-label={`Job Name, ${job.jobName}`}
@@ -899,14 +920,15 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("customer") && (
-                    <td
+                    <td data-col="customer"
                       style={{ width: "var(--customer-col-width, 120px)", minWidth: "var(--customer-col-width, 120px)", maxWidth: "var(--customer-col-width, 120px)" }}
-                      className="overflow-hidden whitespace-nowrap px-2 py-1.5 text-left align-middle text-[10px] text-sdc-gray-600"
+                      className="overflow-hidden whitespace-nowrap px-2 py-1.5 text-left align-middle text-label text-sdc-gray-600"
                       title={job.customer ?? ""}
                     >
                       <input
                         type="text"
                         name={`jobField__${job.id}__customer`}
+                        data-remote-adopt=""
                         defaultValue={job.customer ?? ""}
                         data-baseline={job.customer ?? ""}
                         placeholder="—"
@@ -916,12 +938,13 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("type") && (
-                    <td
+                    <td data-col="type"
                       style={{ width: "var(--type-col-width, 90px)", minWidth: "var(--type-col-width, 90px)", maxWidth: "var(--type-col-width, 90px)" }}
-                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px] text-sdc-gray-600"
+                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-label text-sdc-gray-600"
                     >
                       <select
                         name={`jobField__${job.id}__type`}
+                        data-remote-adopt=""
                         defaultValue={job.type ?? ""}
                         data-baseline={job.type ?? ""}
                         aria-label={`Type, ${job.jobName}`}
@@ -937,9 +960,9 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("billable") && (
-                    <td
+                    <td data-col="billable"
                       style={{ width: "var(--billable-col-width, 110px)", minWidth: "var(--billable-col-width, 110px)", maxWidth: "var(--billable-col-width, 110px)" }}
-                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px]"
+                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-label"
                     >
                       {isSdc ? (
                         <span className="text-sdc-gray-500" aria-label={`Billable, ${job.jobName}`} title="SDC's own projects are always non-billable">
@@ -948,6 +971,7 @@ export default async function QuotedPage({
                       ) : (
                         <select
                           name={`jobField__${job.id}__billable`}
+                          data-remote-adopt=""
                           defaultValue={job.billable ? "Billable" : "Non-Billable"}
                           data-baseline={job.billable ? "Billable" : "Non-Billable"}
                           aria-label={`Billable, ${job.jobName}`}
@@ -960,9 +984,9 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("status") && (
-                    <td
+                    <td data-col="status"
                       style={{ width: "var(--status-col-width, 100px)", minWidth: "var(--status-col-width, 100px)", maxWidth: "var(--status-col-width, 100px)" }}
-                      className={`overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px] font-medium ${
+                      className={`overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-label font-medium ${
                         job.status === "Complete"
                           ? "text-sdc-green-text"
                           : job.status === "HeadStart"
@@ -973,6 +997,7 @@ export default async function QuotedPage({
                     >
                       <select
                         name={`jobField__${job.id}__status`}
+                        data-remote-adopt=""
                         defaultValue={job.status}
                         data-baseline={job.status}
                         aria-label={`Status, ${job.jobName}`}
@@ -987,9 +1012,9 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("startDate") && (
-                    <td
+                    <td data-col="startDate"
                       style={{ width: "var(--startdate-col-width, 92px)", minWidth: "var(--startdate-col-width, 92px)", maxWidth: "var(--startdate-col-width, 92px)" }}
-                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500"
+                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-label text-sdc-gray-500"
                     >
                       <input
                         {...dateCellProps({
@@ -1001,9 +1026,9 @@ export default async function QuotedPage({
                     </td>
                   )}
                   {show("completeDate") && (
-                    <td
+                    <td data-col="completeDate"
                       style={{ width: "var(--completedate-col-width, 92px)", minWidth: "var(--completedate-col-width, 92px)", maxWidth: "var(--completedate-col-width, 92px)" }}
-                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500"
+                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-label text-sdc-gray-500"
                     >
                       <input
                         {...dateCellProps({
@@ -1041,7 +1066,7 @@ export default async function QuotedPage({
                               // the live one can't drift.
                               data-cell-actual={actual}
                               style={DATA_COL_STYLE}
-                              className={`qc quoted-actual-cell overflow-hidden border-l border-sdc-border px-1 py-1.5 text-center align-middle font-mono text-[10px] whitespace-nowrap text-sdc-gray-600 ${tone}`}
+                              className={`qc quoted-actual-cell overflow-hidden border-l border-sdc-border px-1 py-1.5 text-center align-middle font-mono text-label whitespace-nowrap text-sdc-gray-600 ${tone}`}
                               title={`Quoted ${exactHours(hours) ?? "0"} / Actual ${exactHours(actual) ?? "0"}`}
                             >
                               <input
@@ -1049,6 +1074,7 @@ export default async function QuotedPage({
                                 step="1"
                                 min="0"
                                 name={`quoted__${job.id}__${s.code}`}
+                                data-remote-adopt=""
                                 defaultValue={hours != null ? Math.round(Number(hours)).toString() : ""}
                                 data-baseline={hours != null ? Math.round(Number(hours)).toString() : ""}
                                 placeholder="—"
@@ -1087,7 +1113,7 @@ export default async function QuotedPage({
                           data-job={job.id}
                           data-actual={exactHours(a) ?? "0"}
                           style={DATA_COL_STYLE}
-                          className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center align-middle font-mono text-[10px] font-medium"
+                          className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center align-middle font-mono text-label font-medium"
                           title={`${label} — Quoted ${exactHours(q) ?? "0"} / Actual ${exactHours(a) ?? "0"}`}
                         >
                           <span data-total-quoted className="font-semibold text-sdc-blue-dark">{wholeHours(q)}</span>
@@ -1102,7 +1128,7 @@ export default async function QuotedPage({
                       </>
                     );
                   })()}
-                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center align-middle text-[10px] font-medium text-sdc-navy ${zebra}`}>
+                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center align-middle text-label font-medium text-sdc-navy ${zebra}`}>
                     <div className="flex items-center justify-center gap-0.5">
                       <span className="text-sdc-gray-400">$</span>
                       <MoneyCell
@@ -1113,7 +1139,7 @@ export default async function QuotedPage({
                       />
                     </div>
                   </td>
-                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center align-middle text-[10px] text-sdc-gray-600 ${zebra}`}>
+                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center align-middle text-label text-sdc-gray-600 ${zebra}`}>
                     <div className="flex items-center justify-center gap-0.5">
                       <span className="text-sdc-gray-400">$</span>
                       <MoneyCell
@@ -1133,5 +1159,6 @@ export default async function QuotedPage({
       </ProjectsEditFieldset>
       </ProjectsEditModeProvider>
     </QuotedSaveForm>
+    </ProjectsGridView>
   );
 }

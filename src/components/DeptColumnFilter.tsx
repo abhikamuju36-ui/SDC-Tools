@@ -82,20 +82,20 @@ export function DeptColumnFilter({ selected, showJobName }: { selected: string[]
           fill="none"
           stroke="currentColor"
           strokeWidth="1.8"
-          className="shrink-0 opacity-70 transition-transform duration-150 group-open:rotate-180"
+          className="shrink-0 opacity-70 motion-interactive group-open:rotate-180"
         >
           <path d="M3.5 6 L8 10.5 L12.5 6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </summary>
-      <div className="absolute left-0 top-full z-30 mt-2 w-48 rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
-        <p className="px-1.5 pb-1 text-[11px] text-sdc-gray-400">Show section columns for:</p>
+      <div className="motion-menu-panel absolute left-0 top-full z-30 mt-2 w-48 rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
+        <p className="px-1.5 pb-1 text-note text-sdc-gray-400">Show section columns for:</p>
         {GROUPS.map((g) => (
           <label key={g} className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-sdc-gray-100">
             <input type="checkbox" checked={selectedSet.has(g)} onChange={() => toggle(g)} className="h-3.5 w-3.5 shrink-0" />
             <span className="flex-1">{g}</span>
           </label>
         ))}
-        <p className="mt-1 border-t border-sdc-border px-1.5 pb-1 pt-2 text-[11px] text-sdc-gray-400">Grid columns:</p>
+        <p className="mt-1 border-t border-sdc-border px-1.5 pb-1 pt-2 text-note text-sdc-gray-400">Grid columns:</p>
         <label className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-sm hover:bg-sdc-gray-100">
           <input type="checkbox" checked={showJobName} onChange={toggleJobName} className="h-3.5 w-3.5 shrink-0" />
           <span className="flex-1">Job Name</span>

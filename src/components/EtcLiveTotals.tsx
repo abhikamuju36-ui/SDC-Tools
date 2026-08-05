@@ -5,8 +5,9 @@ import { readEtcLiveTotals, readEtcLiveFooterTotals, subscribeEtcLiveTotals } fr
 // `usd` is byte-identical to etc/page.tsx's local currency() — same options, same
 // output — so the Parts Cost footer keeps formatting exactly as the server
 // rendered it rather than through a fourth private copy of the formatter.
-import { hours as formatHours, usd as formatUsd } from "@/components/ui/format";
+import { hours as formatHours, usd as formatUsd, usdExact } from "@/components/ui/format";
 import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
+import { changedForFlash, FLASH_MS, prefersReducedMotion } from "@/lib/motion";
 
 // Repaints the Monthly ETC grid's rollup cells from the live store as New ETC
 // values are typed — the row's TOTAL (NEW ETC) block and the sticky grand-total
@@ -41,6 +42,65 @@ import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc
 // whose whole contract is to equal the sum of what is displayed above it.
 export function EtcLiveTotals() {
   useEffect(() => {
+    // ── Which totals just moved, and whether to say so (§36.6) ──────────────
+    //
+    // §36.6 asks for "a subtle, brief highlight when a value is successfully updated"
+    // and, two lines later, "do not animate every cell during large refreshes". Both
+    // apply here, because this one function paints in two completely different
+    // situations: a keystroke, which moves two or three totals, and a Refresh Data /
+    // filter change / month switch, which can move every total on the page.
+    //
+    // So the painter records what each cell LAST HELD, and asks lib/motion.ts which of
+    // them changed. Above the cap that is a bulk update and nothing flashes — a grid
+    // strobing forty cells at once is not feedback, it is noise, and forty
+    // simultaneous animations is the main-thread cost §36.15 asks to avoid.
+    //
+    // Keyed on the rendered TEXT rather than the number: these cells print whole hours
+    // and whole dollars, so a change that rounds to the same string is not a change
+    // anybody can see, and flashing for it would be the grid crying wolf.
+    const lastText = new Map<string, string>();
+    // Collected during a paint, applied at the end — a flash decision needs the whole
+    // set before it can tell an edit from a bulk update.
+    let touched = new Map<string, HTMLElement>();
+    let nextText = new Map<string, string>();
+    // No JS at all when the viewer has asked for reduced motion (§36.16): the class is
+    // simply never applied, rather than applied to an element whose animation the
+    // stylesheet has just disabled.
+    const reduced = prefersReducedMotion();
+
+    // Records a cell's new text and hands back whether it needs writing. Every writer
+    // below goes through this, so no cell can be flashed without being tracked or
+    // tracked without being flashed.
+    const note = (key: string, cell: HTMLElement, text: string) => {
+      nextText.set(key, text);
+      touched.set(key, cell);
+    };
+
+    const applyFlashes = () => {
+      const { keys, bulk } = changedForFlash(lastText, nextText);
+      for (const [key, text] of nextText) lastText.set(key, text);
+      nextText = new Map();
+      const cells = touched;
+      touched = new Map();
+      if (reduced || bulk || keys.length === 0) return;
+      for (const key of keys) {
+        const cell = cells.get(key);
+        if (!cell) continue;
+        // Removed before re-adding, so a cell that moves twice inside one flash window
+        // restarts its animation instead of ignoring the second change. Two frames of
+        // separation are not needed — the class is absent for a full paint here because
+        // this runs inside the store's notification, not inside the same style
+        // recalculation.
+        cell.classList.remove("motion-flash");
+        // Force the removal to take effect before re-adding, so the animation restarts.
+        // Reading offsetWidth is the standard flush; it is one read on at most
+        // FLASH_CAP cells, not per frame.
+        void cell.offsetWidth;
+        cell.classList.add("motion-flash");
+        window.setTimeout(() => cell.classList.remove("motion-flash"), FLASH_MS);
+      }
+    };
+
     const paint = () => {
       const totals = readEtcLiveTotals();
 
@@ -82,6 +142,10 @@ export function EtcLiveTotals() {
       }
       writeParts("partsNewEtc", footer.parts.newEtc);
       writeParts("partsDiff", footer.parts.diff);
+
+      // Last, once every writer has reported: only now is it possible to tell a
+      // two-cell edit from a whole-grid refresh.
+      applyFlashes();
     };
 
     // Repaint a Diff cell's COLOUR, not just its number.
@@ -111,7 +175,9 @@ export function EtcLiveTotals() {
       // updating": on any in-progress month the New ETC totals were a dash that no
       // amount of typing could move. A total's contract is to equal the sum of the
       // values displayed above it — see the note in etc/page.tsx.
-      cell.textContent = formatHours(value);
+      const text = formatHours(value);
+      cell.textContent = text;
+      note(`${kind}|${group}|${job}`, cell, text);
       cell.setAttribute("title", String(Math.round(value * 100) / 100));
       // Body rows colour the cell background; the footer row (data-job="all") is dark
       // and colours the text instead. Both are hours rollups, so both scale against
@@ -126,7 +192,9 @@ export function EtcLiveTotals() {
     const writeSection = (sectionCode: string, kind: "newEtc" | "diff", value: number) => {
       const cell = document.querySelector<HTMLElement>(`[data-live="${kind}"][data-section="${sectionCode}"]`);
       if (!cell) return; // column hidden by the Columns filter
-      cell.textContent = formatHours(value);
+      const text = formatHours(value);
+      cell.textContent = text;
+      note(`section|${kind}|${sectionCode}`, cell, text);
       cell.setAttribute("title", String(Math.round(value * 100) / 100));
       // Always in the dark <tfoot> — there is only one footer row.
       if (kind === "diff") paintDiffColor(cell, value, true, DIFF_CEILING.hoursTotal);
@@ -140,13 +208,28 @@ export function EtcLiveTotals() {
     // blank New ETC counting as 0. It used to print "—" while nothing was decided;
     // `decided` now only affects nothing here, but is still received because the
     // publisher carries it for the cell background.
-    const writePartsRowDiff = (job: string, value: number, _decided: boolean) => {
+    const writePartsRowDiff = (job: string, value: number, decided: boolean) => {
       const cell = document.querySelector<HTMLElement>(`[data-live="partsRowDiff"][data-job="${job}"]`);
       if (!cell) return; // Parts Cost column hidden, or this job has no parts row
+      // ── Blank while nothing is decided (§29.2) ─────────────────────────────
+      //
+      // `decided` used to be received and ignored, on the since-reverted rule that a
+      // blank New ETC counted as 0 and the cell should print the resulting figure. It
+      // is load-bearing again: an undecided cell shows NOTHING — no zero, no Money
+      // Left, no leftover from before it was cleared — which is what the hours Diff
+      // cells beside it do, and what clearing a value has to leave behind.
+      if (!decided) {
+        cell.textContent = "";
+        note(`partsRowDiff|${job}`, cell, "");
+        cell.removeAttribute("title");
+        paintDiffColor(cell, 0, false, DIFF_CEILING.moneyCell);
+        return;
+      }
       cell.textContent = formatUsd(value);
+      note(`partsRowDiff|${job}`, cell, formatUsd(value));
       cell.setAttribute(
         "title",
-        value.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }),
+        usdExact(value),
       );
       paintDiffColor(cell, value, false, DIFF_CEILING.moneyCell);
     };
@@ -155,8 +238,10 @@ export function EtcLiveTotals() {
     const writeParts = (kind: "partsNewEtc" | "partsDiff", value: number) => {
       const cell = document.querySelector<HTMLElement>(`[data-live="${kind}"]`);
       if (!cell) return;
-      cell.textContent = formatUsd(value);
-      cell.setAttribute("title", value.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 }));
+      const text = formatUsd(value);
+      cell.textContent = text;
+      note(`parts|${kind}`, cell, text);
+      cell.setAttribute("title", usdExact(value));
       if (kind === "partsDiff") paintDiffColor(cell, value, true, DIFF_CEILING.moneyTotal);
     };
 

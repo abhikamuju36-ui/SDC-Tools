@@ -102,7 +102,7 @@ export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hours
               key={t}
               type="button"
               onClick={() => setHoursType(t)}
-              className={`rounded-md px-4 py-1.5 text-sm font-medium transition-colors ${
+              className={`rounded-md px-4 py-1.5 text-sm font-medium motion-interactive ${
                 hoursType === t ? "bg-white text-sdc-blue-dark shadow-sm" : "text-sdc-gray-600 hover:text-sdc-navy"
               }`}
             >
@@ -116,7 +116,7 @@ export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hours
               key={p}
               type="button"
               onClick={() => togglePhase(p)}
-              className={`rounded-full border px-3 py-1 text-xs transition-colors ${
+              className={`rounded-full border px-3 py-1 text-xs motion-interactive ${
                 activePhases.has(p)
                   ? "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark"
                   : "border-sdc-border-soft text-sdc-gray-500 hover:text-sdc-navy"
@@ -139,7 +139,7 @@ export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hours
         <div className={`${card("p-4")} overflow-x-auto`}>
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3">
             <p className="font-heading text-base font-bold tracking-tight text-sdc-navy">Estimate to Complete vs Actual</p>
-            <p className="text-[11px] text-sdc-gray-400">Click a section for its month-by-month detail</p>
+            <p className="text-note text-sdc-gray-400">Click a section for its month-by-month detail</p>
           </div>
           <SectionHierarchyChart rows={hierRows} plannedLabel={plannedLabel} onDrill={setDrillCode} drillCode={drillCode} />
           {drillRow && (
@@ -231,10 +231,30 @@ function SectionHierarchyChart({
 
   const Bar = ({ value, color }: { value: number; color: string }) => (
     <div className="flex h-full flex-col items-center justify-end">
-      <span className="mb-0.5 text-[8px] leading-none text-sdc-gray-500">{value ? fmt(value) : ""}</span>
+      <span className="mb-0.5 text-micro leading-none text-sdc-gray-500">{value ? fmt(value) : ""}</span>
+      {/* ── scaleY, not height (§36.2, §36.14, §36.15) ──────────────────────────
+          This was `transition-[height] duration-500`, which broke three of §36's
+          rules at once on a chart that can hold twenty bars:
+            * 500ms is well past the ~300ms ceiling for anything an interaction or a
+              data change triggers (§36.2);
+            * `height` is a layout property, so every frame relaid out the whole
+              chart grid — twenty bars × 30 frames of layout (§36.15);
+            * and because each bar grew from 0, the value LABEL above it (a sibling
+              in this flex column) travelled up with it for half a second, so the
+              numbers were unreadable while they moved (§36.14).
+          The bar now takes its final height immediately — which is what fixes the
+          label — and scales up from the baseline on the compositor. Same growing
+          gesture, one property, no layout. */}
       <div
-        className="w-5 rounded-t-sm transition-[height] duration-500 ease-out"
-        style={{ height: grown ? `${(value / max) * 100}%` : "0%", background: color }}
+        className="w-5 origin-bottom rounded-t-sm"
+        style={{
+          height: `${(value / max) * 100}%`,
+          background: color,
+          transform: grown ? "scaleY(1)" : "scaleY(0)",
+          transitionProperty: "transform",
+          transitionDuration: "var(--motion-panel)",
+          transitionTimingFunction: "var(--ease-out)",
+        }}
       />
     </div>
   );
@@ -266,7 +286,7 @@ function SectionHierarchyChart({
                 e.preventDefault();
                 onDrill(drillCode === r.code ? null : r.code);
               }}
-              className={`flex h-full cursor-pointer flex-col rounded-sm transition-opacity duration-150 hover:bg-sdc-blue-light/30 ${
+              className={`flex h-full cursor-pointer flex-col rounded-sm motion-interactive hover:bg-sdc-blue-light/30 ${
                 drillCode === r.code ? "bg-sdc-blue-light/60 ring-1 ring-sdc-blue" : ""
               } ${hover && hover.row.code !== r.code ? "opacity-40" : "opacity-100"}`}
               onMouseMove={(e) => {
@@ -275,7 +295,7 @@ function SectionHierarchyChart({
               }}
               onMouseLeave={() => setHover(null)}
             >
-              <div className={`h-4 text-center text-[11px] font-bold leading-none ${!has ? "text-transparent" : diff > 0 ? "text-sdc-green-text" : diff < 0 ? "text-red-600" : "text-sdc-gray-400"}`}>
+              <div className={`h-4 text-center text-note font-bold leading-none ${!has ? "text-transparent" : diff > 0 ? "text-sdc-green-text" : diff < 0 ? "text-red-600" : "text-sdc-gray-400"}`}>
                 {has ? `${diff > 0 ? "+" : ""}${fmt(diff)}` : ""}
               </div>
               <div className="flex flex-1 items-end justify-center gap-1.5">
@@ -294,7 +314,7 @@ function SectionHierarchyChart({
             style={{ left: hover.x, top: hover.y - 12 }}
           >
             <div className="mb-1 font-semibold text-sdc-navy">{hover.row.name}</div>
-            <div className="text-[10px] text-sdc-gray-500">{hover.row.phase} · {hover.row.group}</div>
+            <div className="text-label text-sdc-gray-500">{hover.row.phase} · {hover.row.group}</div>
             <div className="mt-1 flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: SERIES.planned }} /><span className="text-sdc-gray-600">{plannedLabel}:</span> <span className="font-medium tabular-nums">{fmt(hover.row.planned)}</span></div>
             <div className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: SERIES.actual }} /><span className="text-sdc-gray-600">Actual:</span> <span className="font-medium tabular-nums">{fmt(hover.row.actual)}</span></div>
             <div className={`mt-0.5 font-semibold tabular-nums ${diff > 0 ? "text-red-600" : diff < 0 ? "text-sdc-green-text" : "text-sdc-gray-400"}`}>
@@ -307,14 +327,14 @@ function SectionHierarchyChart({
       <div className="grid gap-x-1 border-t pt-1" style={{ ...colStyle, borderTopColor: TIER_DIVIDER }}>
         {rows.map((r) => (
           <div key={r.code} className="px-0.5 text-center leading-tight">
-            <div className="text-[10px] text-sdc-navy">{r.name}</div>
+            <div className="text-label text-sdc-navy">{r.name}</div>
           </div>
         ))}
       </div>
       {/* Tier 2 — department, spanning its sections */}
       <div className="mt-1 grid" style={colStyle}>
         {deptRuns.map((g, i) => (
-          <div key={i} style={{ gridColumn: `span ${g.count}`, borderLeftColor: TIER_DIVIDER }} className="border-l border-dashed py-0.5 text-center text-[10px] font-medium text-sdc-gray-600 first:border-l-0">
+          <div key={i} style={{ gridColumn: `span ${g.count}`, borderLeftColor: TIER_DIVIDER }} className="border-l border-dashed py-0.5 text-center text-label font-medium text-sdc-gray-600 first:border-l-0">
             {abbreviateLabel(g.label)}
           </div>
         ))}
@@ -322,7 +342,7 @@ function SectionHierarchyChart({
       {/* Tier 3 — phase, spanning its departments */}
       <div className="mt-0.5 grid" style={colStyle}>
         {phaseRuns.map((p, i) => (
-          <div key={i} style={{ gridColumn: `span ${p.count}`, borderLeftColor: TIER_DIVIDER, borderTopColor: TIER_DIVIDER }} className="border-l border-t border-dashed py-1 text-center text-[11px] font-semibold text-sdc-navy first:border-l-0">
+          <div key={i} style={{ gridColumn: `span ${p.count}`, borderLeftColor: TIER_DIVIDER, borderTopColor: TIER_DIVIDER }} className="border-l border-t border-dashed py-1 text-center text-note font-semibold text-sdc-navy first:border-l-0">
             {abbreviateLabel(p.label)}
           </div>
         ))}
@@ -366,14 +386,14 @@ function SectionDrill({
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <p className="text-sm font-bold text-sdc-navy">{row.name}</p>
-          <p className="text-[11px] text-sdc-gray-500">
+          <p className="text-note text-sdc-gray-500">
             {row.phase} · {row.group} · {row.code}
           </p>
         </div>
         <button
           type="button"
           onClick={onClose}
-          className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light"
+          className="rounded-md border border-sdc-border bg-white px-2 py-1 text-note font-medium text-sdc-navy hover:bg-sdc-blue-light"
         >
           Close
         </button>
@@ -399,7 +419,7 @@ function SectionDrill({
         </p>
       ) : (
         <div className="space-y-1">
-          <div className="grid grid-cols-[5rem_1fr_4rem_4.5rem] gap-2 text-[10px] font-semibold uppercase tracking-wide text-sdc-gray-400">
+          <div className="grid grid-cols-[5rem_1fr_4rem_4.5rem] gap-2 text-label font-semibold uppercase tracking-wide text-sdc-gray-400">
             <span>Month</span>
             <span />
             <span className="text-right">Hours</span>
@@ -407,15 +427,15 @@ function SectionDrill({
           </div>
           {rowsWithRunning.map((m) => (
             <div key={m.month} className="grid grid-cols-[5rem_1fr_4rem_4.5rem] items-center gap-2">
-              <span className="font-mono text-[11px] text-sdc-navy">{m.month}</span>
+              <span className="font-mono text-note text-sdc-navy">{m.month}</span>
               <div className="h-2 w-full overflow-hidden rounded-full bg-white">
                 <div className="h-full rounded-full" style={{ width: `${(m.worked / peak) * 100}%`, background: SERIES.actual }} />
               </div>
-              <span className="text-right text-[11px] font-semibold tabular-nums text-sdc-navy">{fmt(m.worked)}</span>
+              <span className="text-right text-note font-semibold tabular-nums text-sdc-navy">{fmt(m.worked)}</span>
               {/* Running total turns red once it passes the plan — the month the
                   section went over, which is the whole point of the panel. */}
               <span
-                className={`text-right text-[11px] tabular-nums ${
+                className={`text-right text-note tabular-nums ${
                   row.planned > 0 && m.running > row.planned ? "font-semibold text-red-600" : "text-sdc-gray-500"
                 }`}
               >

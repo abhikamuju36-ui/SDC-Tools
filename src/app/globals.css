@@ -44,6 +44,38 @@
   --sdc-red-bg: #fbeded;
   --sdc-red-text: #b03a3a;
   --sdc-red-border: #f0d6d6;
+
+  /* ── Motion (§36.17) ──────────────────────────────────────────────────────
+   * One duration per §36.2 band, and the SAME numbers as lib/motion.ts — which
+   * needs them as JavaScript for the timers that have to outlast an exit
+   * animation. tests/motion.test.ts reads this file and asserts the two agree, so
+   * changing one without the other fails the suite rather than producing an
+   * element dropped mid-fade.
+   *
+   * Every class that consumes these is at the bottom of this file under
+   * "Motion system". Nothing should hand-roll a duration: the drift §36.17
+   * forbids is what happens when a component reaches for `duration-300` because
+   * it felt better on that one control. */
+  --motion-press: 80ms;   /* button press feedback           (§36.2: 50–100ms) */
+  --motion-hover: 120ms;  /* hover / focus                  (§36.2: 100–150ms) */
+  --motion-menu: 150ms;   /* dropdowns, filter panels       (§36.2: 120–180ms) */
+  --motion-panel: 200ms;  /* tabs, cards, modals, banners   (§36.2: 150–250ms) */
+  --motion-flash: 600ms;  /* "this value changed" highlight (§36.6, §36.8) */
+  /* How long a loading state waits before it is allowed to paint (§36.9). Applied
+   * as an animation-delay on an element that starts invisible, so a fast
+   * navigation never flashes a skeleton and no JS timer is involved. */
+  --motion-loading-delay: 120ms;
+
+  /* The one size every data table renders at (§39.4). A grid overrides it by
+   * setting this variable on its own table; see the rule near the bottom of this
+   * file for why it is a variable rather than a constant. */
+  --table-font-size: 0.68rem;
+
+  /* Decelerating, for anything ENTERING or responding to a click — it leaves at
+   * once and settles, which is what makes a control feel connected to the press. */
+  --ease-out: cubic-bezier(0.2, 0, 0.2, 1);
+  /* Symmetric, for a property that moves both ways (the sidebar's width). */
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
 }
 
 @theme inline {
@@ -81,6 +113,41 @@
   --font-mono: "SF Mono", "Cascadia Code", "Segoe UI Mono", Consolas, monospace;
   --font-heading: var(--font-montserrat);
 
+  /* ── The type scale (§39.2, §39.17) ──────────────────────────────────────
+   *
+   * Three steps Tailwind does not have, because this app is a dense grid tool and
+   * its column headers, KPI labels and helper text all live below text-xs. Before
+   * these existed, every one of those was written as an arbitrary pixel value, and
+   * the app had accumulated TWENTY-TWO distinct font sizes — including 9.5px,
+   * 10.5px, 11.5px, 12.5px and 13.5px, each indistinguishable from its neighbour
+   * and each one more thing to keep in step. Counted 2026-08-04: 216 × text-[10px],
+   * 140 × text-[11px], 16 × text-[9px], plus a dozen one-offs.
+   *
+   * ── Why rem, and why that is the real fix (§39.14, §39.15) ───────────────
+   *
+   * The sidebar's text-size control sets the ROOT font size (AppTextSize, default
+   * 15px), and Tailwind's own steps are rem — so they scaled with it. The hundreds
+   * of arbitrary pixel sizes did NOT: they are absolute pixels. Turning the control
+   * up grew the body text and left every grid label, column header and KPI caption
+   * exactly where it was, which is not a text-size control, it is half of one.
+   *
+   * Sized as exact fractions of the 15px default, so at that default these are
+   * pixel-identical to the values they replace — the migration changed no rendered
+   * size — and above or below it the whole interface now scales together.
+   *
+   * ── No line-height is attached, on purpose ──────────────────────────────
+   *
+   * Tailwind v4 lets a --text-* token carry a default line-height. These
+   * deliberately do not. An arbitrary pixel size inherits its line-height, and
+   * the grids depend on that: they set leading-none / leading-tight per row to hit
+   * a density the user also controls (--etc-row-py). Attaching a default here would
+   * have silently changed the height of every row in the app. §39.11 is served by
+   * those explicit leading utilities; the rule is that a component states its
+   * line-height when it cares and inherits when it does not. */
+  --text-micro: 0.6rem; /* 9px @15 — densest grid metadata: presence initials, chart captions */
+  --text-label: 0.6667rem; /* 10px — uppercase column headers, KPI labels, dense controls */
+  --text-note: 0.7333rem; /* 11px — helper text, status lines, drill-through tables */
+
   /* Softer elevation instead of Tailwind's default flat black shadows,
      tinted with the brand's own Dark Navy (#061D39 = rgb(6 29 57)) rather
      than an arbitrary hue. Same shadow-sm/md/lg/xl scale used throughout
@@ -90,6 +157,23 @@
   --shadow-md: 0 4px 10px -2px rgb(6 29 57 / 0.1), 0 2px 4px -2px rgb(6 29 57 / 0.06);
   --shadow-lg: 0 12px 24px -6px rgb(6 29 57 / 0.14), 0 4px 8px -4px rgb(6 29 57 / 0.08);
   --shadow-xl: 0 24px 48px -12px rgb(6 29 57 / 0.22), 0 8px 16px -8px rgb(6 29 57 / 0.1);
+}
+
+/* ── The default root size, stated in CSS (§39.18) ─────────────────────────
+ *
+ * Everything in this app is sized in rem, and the sidebar's text-size control works
+ * by setting the root font size (AppTextSize, default 15px). But that default was
+ * only ever applied by JavaScript: the pre-paint script in layout.tsx sets the root
+ * size only when a SAVED preference exists, and AppTextSize's own effect runs after
+ * mount. So on a first visit the whole interface rendered at the browser default of
+ * 16px and then snapped to 15px once React hydrated — a 6.7% reflow of every page,
+ * which is exactly the font-related layout shift §39.18 and §39.21 #18 forbid.
+ *
+ * Declaring it here means the server-rendered HTML is already at the right size, and
+ * the script and the effect only ever OVERRIDE it for someone who has chosen
+ * something else. */
+html {
+  font-size: 15px;
 }
 
 body {
@@ -114,15 +198,56 @@ body {
   outline-color: #ffffff;
 }
 
-/* Uniform table text app-wide — overrides whatever size utility (text-xs,
- * text-[10px], text-[9px], etc.) individual cells/headers/inputs use, so every
- * data table reads at one consistent size. Expressed in `rem` (relative to the
- * root font-size) rather than an absolute px so the sidebar "Text size" control
- * — which sets the root font-size, see AppTextSize — actually scales the grids
- * too. 0.68rem ≈ 10px at the 15px default root; the control's 12–20px range
- * scales the tables ~8px–14px in step with the rest of the UI. */
+/* ── Uniform table text (§39.4), and the control it used to break (§39.14) ───
+ *
+ * One size for every data table, overriding whatever size utility an individual
+ * cell, header or input carries, so a grid reads at one consistent size. In `rem`
+ * so the sidebar's Text size control — which sets the root font size — scales the
+ * grids with the rest of the UI. The default is ~10px at the 15px default root.
+ *
+ * ── Why this reads a variable now ────────────────────────────────────────────
+ *
+ * Because the `!important` here had silently disabled a shipped control. The
+ * Monthly ETC View menu has its own Text size stepper, which writes
+ * --etc-font-size and was applied through `[&_td]:text-[length:var(--etc-font-size)]`
+ * utilities. The comment on those utilities claimed they "beat each cell's
+ * hardcoded size with no `!`" — true of the cell's own class, but not of THIS
+ * rule: an important declaration outside any layer beats a normal one inside
+ * `@layer utilities`, whatever the specificity. Measured live 2026-08-04, setting
+ * --etc-font-size to 22px moved a cell from 10.2px to 10.2px. The stepper did
+ * nothing at all.
+ *
+ * So the rule reads a variable, and a grid that wants its own size sets that
+ * variable on its table — see ZOOM_CONTROLS in etc/page.tsx. Cooperation by
+ * inheritance instead of an escalating fight over `!important`. */
 table, table * {
-  font-size: 0.68rem !important;
+  font-size: var(--table-font-size) !important;
+}
+
+/* ── The Monthly ETC grid's own Text size stepper (§39.14) ───────────────────
+ *
+ * That stepper (EtcViewMenu) writes --etc-font-size on <html>, and it had never
+ * worked: it was applied through `[&_td]:text-[length:var(--etc-font-size)]`
+ * utilities, and the un-layered !important above beats a normal declaration inside
+ * @layer utilities whatever its specificity. Measured live 2026-08-04 — setting the
+ * variable to 22px moved a cell from 10.2px to 10.2px.
+ *
+ * This rule is the one that reads it: same origin and importance as the rule above,
+ * higher specificity, so it wins for this one grid and leaves every other table on
+ * the shared default. Scoped by attribute rather than by class so a Tailwind class
+ * string cannot quietly stop matching it.
+ *
+ * ── Why --etc-font-size is referenced DIRECTLY ──────────────────────────────
+ *
+ * The obvious alternative — have the grid set `--table-font-size: var(--etc-font-size,
+ * …)` on its table and let the rule above resolve it — reads better and does not
+ * work. With that indirection, writing --etc-font-size on <html> updates the
+ * variable (getComputedStyle confirms it) but does NOT invalidate font-size on the
+ * descendants, so the text stays put until something else forces a restyle. Verified
+ * live, both ways round. One level of var() indirection is one too many here. */
+table[data-grid="etc"],
+table[data-grid="etc"] * {
+  font-size: var(--etc-font-size, var(--table-font-size)) !important;
 }
 
 /* AG Grid tables (Employees, Audit Log) render <div>s, not <table>, so the rule
@@ -554,4 +679,269 @@ summary {
   cursor: default;
   opacity: 1;
   -webkit-text-fill-color: currentColor;
+}
+
+/* ═══ Motion system (§36) ═══════════════════════════════════════════════════
+ *
+ * The classes below are the ONLY place a duration or an easing curve is written
+ * in this app's markup (§36.17). They read the --motion-* tokens declared at the
+ * top of this file; lib/motion.ts holds the identical numbers for the two timers
+ * that must outlast an animation, and tests/motion.test.ts asserts the two files
+ * agree.
+ *
+ * Everything here animates `opacity`, `transform` or `outline-color` (§36.15).
+ * Three things are deliberately NOT animated anywhere:
+ *
+ *   • width/height — the one exception is the sidebar's width, which is a
+ *     drag-resizable panel whose width IS the thing changing; there is no
+ *     transform that expresses it. Every other size change is instant.
+ *   • the row-hover highlight — `tbody tr:hover > td` paints an inset box-shadow
+ *     with a 9999px spread, and transitioning that would repaint every cell in a
+ *     row on every pointer move. It appears instantly, which is also what §36.1
+ *     asks for from a pointer-tracking affordance.
+ *   • numbers themselves — no count-up tweening. §36.8 forbids delaying the
+ *     latest value, and on a grid where a total is what gets submitted, a figure
+ *     that is briefly wrong on purpose is a worse idea than a static one.
+ */
+
+/* ── Interactive controls (§36.3) ─────────────────────────────────────────── */
+/* Replaces the `transition-all` that was on the shared button classes. `all` also
+ * animated width, height and the two-layer brand shadow, so a button that changed
+ * label mid-load animated its own geometry — the jump §36.3 forbids. This lists
+ * the properties that carry state and nothing that carries size. */
+/* `translate`, `rotate` and `scale` are listed SEPARATELY from `transform`, and that
+ * is load-bearing on Tailwind v4 rather than belt-and-braces: v4 compiles
+ * `translate-x-[10px]` to `translate: …` and `rotate-180` to `rotate: 180deg` — the
+ * standalone CSS properties, not the `transform` shorthand. Verified in the built
+ * stylesheet. With only `transform` in this list, every toggle knob and every
+ * dropdown chevron in the app would have snapped rather than moved, silently.
+ * `transform` stays because the inline scaleX/scaleY animations (the refresh progress
+ * bar, the dashboard's bars) do set the shorthand. */
+.motion-interactive {
+  transition-property: color, background-color, border-color, box-shadow, opacity, outline-color, transform, translate, rotate, scale;
+  transition-duration: var(--motion-hover);
+  transition-timing-function: var(--ease-out);
+}
+/* §36.3: "Pressed states appear immediately." The press is a shorter transition
+ * than the hover it interrupts, so the control answers the finger before it
+ * answers the pointer. */
+.motion-interactive:active {
+  transition-duration: var(--motion-press);
+}
+
+/* ── The two panels whose WIDTH is the thing changing (§36.12, §36.15) ────── */
+/* §36.15 says not to animate width, and it is right about the general case: width
+ * is a layout property, so every frame reflows whatever sits beside it. These two
+ * are the exception, and they are enumerated rather than left to judgement —
+ * the sidebar collapsing to its icon rail, and the Standard Fees pool panel. In
+ * both, the width IS the state change; there is no transform that expresses it
+ * without leaving the page content overlapped mid-animation.
+ *
+ * ease-in-out rather than ease-out: this is the one thing here that moves in both
+ * directions and back again, so a symmetric curve is what makes collapse and
+ * expand feel like one control rather than two. */
+.motion-panel-size {
+  transition-property: width;
+  transition-duration: var(--motion-panel);
+  transition-timing-function: var(--ease-in-out);
+}
+
+/* ── Per-link navigation hint (§36.4) ────────────────────────────────────── */
+/* A fixed-size dot on the sidebar link that was clicked, driven by next/link's
+ * useLinkStatus. It answers "did my click land" on the frame of the click, which
+ * is what §36.4 means by never letting a transition feel like a swallowed
+ * interaction — the page skeleton behind it needs a moment, and the sidebar has
+ * to say something in the meantime.
+ *
+ * Always rendered, opacity 0, so it never changes the link's layout — the
+ * useLinkStatus docs warn about exactly this, and a nav item that grew by 10px on
+ * click would be the layout shift §36.14 forbids. The same 120ms delay as the
+ * loading skeleton, so a prefetched route that resolves instantly never shows it.
+ *
+ * Two elements, one property each: the wrapper owns the fade (opacity) and the
+ * inner dot owns the pulse (transform). Putting both on one element would mean two
+ * animations competing for `opacity`, where whichever is declared last silently
+ * wins — the fragile pattern this avoids. */
+.motion-link-hint {
+  opacity: 0;
+}
+.motion-link-hint[data-pending="true"] {
+  animation: motion-reveal var(--motion-panel) var(--ease-out) var(--motion-loading-delay) forwards;
+}
+@keyframes motion-hint-pulse {
+  50% {
+    transform: scale(0.55);
+  }
+}
+.motion-link-hint[data-pending="true"] > span {
+  animation: motion-hint-pulse 1s var(--ease-in-out) infinite;
+}
+
+/* ── Grid cells (§36.7) ───────────────────────────────────────────────────── */
+/* Carries the New ETC cell between its yellow "needs a decision" fill and its
+ * neutral one as the box is filled and emptied — which happens on a keystroke, so
+ * it has to be smooth without being laggy.
+ *
+ * background-color ONLY, no box-shadow, and that is load-bearing rather than an
+ * omission: these cells also receive the save-state ring (a Tailwind `ring-*`,
+ * i.e. a box-shadow) and sit inside the row-hover rule described above. Including
+ * box-shadow here would animate a 9999px inset shadow on every cell of a row as
+ * the pointer crossed it. The ring appears instantly instead, which for a
+ * saving/saved/failed indicator is the correct behaviour anyway. */
+.motion-cell {
+  transition-property: background-color;
+  transition-duration: var(--motion-hover);
+  transition-timing-function: var(--ease-out);
+}
+
+/* ── Dropdowns and filter menus (§36.5) ──────────────────────────────────── */
+/* On the panel inside each <details>, so it plays when the menu opens and does NOT
+ * replay when a checkbox is ticked (the panel element is updated, never remounted
+ * — see useDraftParamMenu, which exists to guarantee exactly that). A 3px rise and
+ * an opacity ramp: no height animation, so a 200-row customer list opens as fast as
+ * a 4-row one. */
+@keyframes motion-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+.motion-menu-panel {
+  animation: motion-pop var(--motion-menu) var(--ease-out);
+}
+
+/* ── Panels, cards, drill-throughs, tab bodies (§36.4, §36.8) ────────────── */
+@keyframes motion-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+.motion-panel {
+  animation: motion-rise var(--motion-panel) var(--ease-out);
+}
+@keyframes motion-fade {
+  from {
+    opacity: 0;
+  }
+}
+.motion-fade {
+  animation: motion-fade var(--motion-panel) var(--ease-out);
+}
+
+/* ── The confirmation modal (§36.11) ─────────────────────────────────────── */
+/* Overlay fades, panel rises 4px. No scale and no bounce — §36.11 names both. */
+.motion-overlay {
+  animation: motion-fade var(--motion-panel) var(--ease-out);
+}
+.motion-dialog {
+  animation: motion-rise var(--motion-panel) var(--ease-out);
+}
+
+/* ── Toasts and the change banner (§36.13) ───────────────────────────────── */
+/* Both stacks sit `fixed` at the bottom-right, so they enter from the right edge
+ * they are anchored to. The leaving card keeps its slot until the animation ends
+ * (see mergeExiting in lib/motion.ts) and stops taking clicks the moment it starts
+ * to go, so a card fading out can never swallow a click meant for the grid. */
+@keyframes motion-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+}
+@keyframes motion-toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+}
+.motion-toast-in {
+  animation: motion-toast-in var(--motion-panel) var(--ease-out);
+}
+.motion-toast-out {
+  animation: motion-toast-out var(--motion-panel) var(--ease-out) forwards;
+  pointer-events: none;
+}
+
+/* ── "This value just changed" (§36.6, §36.8) ────────────────────────────── */
+/* An OUTLINE, not a background wash, for two reasons. The cells this lands on
+ * already carry meaning in their fill — the Diff gradient, the yellow
+ * needs-attention flag — and a flash that replaced it would be overwriting
+ * information with decoration. And an inset outline costs no layout at all
+ * (§36.14), where a border would move the row.
+ *
+ * One iteration, ending fully transparent, so nothing persists on an edited cell
+ * (§36.6). Which cells are allowed to flash — and the cap that stops a bulk
+ * refresh lighting up the whole grid — is decided by changedForFlash() in
+ * lib/motion.ts, not here. */
+@keyframes motion-flash {
+  from {
+    outline-color: rgb(21 116 196 / 0.9);
+  }
+  to {
+    outline-color: rgb(21 116 196 / 0);
+  }
+}
+.motion-flash {
+  outline: 2px solid rgb(21 116 196 / 0);
+  outline-offset: -2px;
+  animation: motion-flash var(--motion-flash) var(--ease-out) 1;
+}
+
+/* ── Loading states (§36.9) ──────────────────────────────────────────────── */
+/* Starts invisible and fades in only after --motion-loading-delay, so a
+ * navigation that resolves quickly never paints a loading state at all. Pure CSS:
+ * no timer, no state, nothing to leave behind if the route lands mid-delay,
+ * because the element unmounts with the fallback. */
+@keyframes motion-reveal {
+  to {
+    opacity: 1;
+  }
+}
+.motion-loading-reveal {
+  opacity: 0;
+  animation: motion-reveal var(--motion-panel) var(--ease-out) var(--motion-loading-delay) forwards;
+}
+/* Skeleton blocks. Opacity only — a shimmer built from a moving gradient repaints
+ * its whole box every frame, which is the CPU cost §36.9 warns about, on the one
+ * screen where the main thread is already busy rendering the incoming route. */
+@keyframes motion-skeleton {
+  50% {
+    opacity: 0.5;
+  }
+}
+.motion-skeleton {
+  animation: motion-skeleton 1.4s var(--ease-in-out) infinite;
+}
+
+/* ── Reduced motion (§36.16) ─────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  /* Collapse everything rather than removing it: an animation with a 0.01ms
+   * duration still ENDS, so an enter animation lands on its finished state
+   * immediately instead of leaving the element stuck at opacity 0 — which is what
+   * `animation: none` would do to every panel here. Delays go too, or a "delayed"
+   * loading reveal would simply never arrive. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+  /* The two exceptions §36.16 explicitly protects: "keep focus, loading, and
+   * status indicators clear". A spinner IS the loading indicator — frozen on one
+   * frame it reads as a hung request, which is strictly worse information. Slowed
+   * and kept, rather than removed. The skeleton pulse is dropped instead: it says
+   * nothing the static block does not. */
+  .animate-spin {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
+  .motion-skeleton {
+    animation: none !important;
+    opacity: 1 !important;
+  }
 }

@@ -45,7 +45,7 @@ function Finding({
           <p className={`font-heading text-2xl font-bold tabular-nums ${clean ? "text-sdc-green-text" : "text-sdc-yellow-text"}`}>
             {count.toLocaleString()}
           </p>
-          <p className="text-[10px] font-semibold text-sdc-gray-400">
+          <p className="text-label font-semibold text-sdc-gray-400">
             {unit}
             {hours > 0 && ` · ${fmtH(hours)}`}
           </p>
@@ -60,8 +60,8 @@ function Finding({
   );
 }
 
-const TH = "px-2 py-1.5 text-left text-[10px] font-bold uppercase tracking-wide text-white";
-const TD = "px-2 py-1 text-left text-[11px] text-sdc-navy";
+const TH = "px-2 py-1.5 text-left text-label font-bold uppercase tracking-wide text-white";
+const TD = "px-2 py-1 text-left text-note text-sdc-navy";
 
 export function DataQualityPanel({ dq, explorer }: { dq: DataQuality; explorer: PunchExplorer | null }) {
   return (
@@ -140,7 +140,7 @@ export function DataQualityPanel({ dq, explorer }: { dq: DataQuality; explorer: 
             <tbody>
               {dq.nonJobHours.rows.map((r, i) => (
                 <tr key={`${r.month}-${r.label}`} className={i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}>
-                  <td className={`${TD} font-mono text-[10px]`}>{r.month}</td>
+                  <td className={`${TD} font-mono text-label`}>{r.month}</td>
                   <td className={TD}>{r.label}</td>
                   <td className={`${TD} text-right tabular-nums`}>{r.rows.toLocaleString()}</td>
                   <td className={`${TD} text-right tabular-nums`}>{fmtH(r.hours)}</td>

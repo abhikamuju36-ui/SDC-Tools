@@ -12,10 +12,41 @@ export const SERIES = {
 const INK = "#12239e"; // sdc-navy — headings/values
 const MUTED = "#64748b"; // axis / secondary
 const GRID = "#eef1f5"; // recessive gridlines
-// Brand web font (Montserrat) so chart labels match the rest of the UI. The
-// webfont is loaded globally via next/font, so it's available to ECharts' SVG
-// text too; the system stack is the fallback until it loads.
-const FONT = "Montserrat, -apple-system, 'Segoe UI', system-ui, sans-serif";
+// ── The chart font is the app font, not a copy of it (§39.1, §39.16) ────────
+//
+// This was a hand-written duplicate of the stack in globals.css:
+//
+//     "Montserrat, -apple-system, 'Segoe UI', system-ui, sans-serif"
+//
+// which is wrong in two ways. It is a second definition of something §39.17 says must
+// be declared once — change the theme and the charts silently do not follow — and the
+// literal name "Montserrat" is not the font the rest of the app uses. next/font
+// self-hosts the file under a generated family name (`__Montserrat_e9a909…`), so
+// asking for "Montserrat" gets whatever Montserrat the machine happens to have
+// installed, or the fallback. Chart labels could therefore render in a different face
+// from every other label on the same screen.
+//
+// Read from the document instead, so it is the resolved stack the body is actually
+// using, generated family name included. ECharts needs a real string — it writes
+// `ctx.font` for canvas text, where `var(--font-sans)` means nothing — which is why
+// this is resolved rather than referenced.
+//
+// Memoised on first use, not at module load: this module is imported by server
+// components too, and the value only has to be right by the time a chart renders.
+let resolvedFont: string | null = null;
+
+function chartFont(): string {
+  if (resolvedFont) return resolvedFont;
+  if (typeof window === "undefined" || typeof getComputedStyle !== "function") {
+    // Server render: ECharts only draws in the browser, so this is never the string a
+    // label is painted with. Left as a plain system stack rather than a guess at the
+    // generated name.
+    return "system-ui, sans-serif";
+  }
+  const family = getComputedStyle(document.body).fontFamily;
+  if (family) resolvedFont = family;
+  return family || "system-ui, sans-serif";
+}
 
 // Imported (not just re-exported) so the option builders below can call it.
 import { usd } from "@/components/ui/format";
@@ -92,7 +123,7 @@ export function partsCostBarOption(
   const ordered = [...rows].reverse();
   return {
     color: [SERIES.planned], // fallback only; per-bar colors are set on each datum
-    textStyle: { fontFamily: FONT },
+    textStyle: { fontFamily: chartFont() },
     // Extra right room so the longest direct value label can't clip, and a real
     // left inset because at left:8 the first character of the longest category
     // label was being shaved off (seen live on "Estimated to Purchase").
@@ -184,7 +215,7 @@ export function groupedBarOption(opts: {
 
   return {
     color: [SERIES.planned, SERIES.actual],
-    textStyle: { fontFamily: FONT },
+    textStyle: { fontFamily: chartFont() },
     grid: { top: 40, left: 8, right: 12, bottom: opts.rotate ? 64 : 28, containLabel: true },
     legend: {
       top: 6,

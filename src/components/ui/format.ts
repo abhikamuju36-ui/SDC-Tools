@@ -11,6 +11,27 @@ export function usd2(n: number): string {
   return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 2 });
 }
 
+// ── Exactly two decimals (§39.13) ───────────────────────────────────────────
+//
+// "$5.00", never "$5". This is the precise figure behind a rounded one — the title
+// attribute on a money cell, the Parts Cost value a manager is typing into — where
+// dropping a trailing ".00" makes the reader wonder whether they are looking at the
+// rounded number again.
+//
+// It exists because ELEVEN call sites had written their own currency formatter, in
+// three shapes: six copies of usd()'s options, and five of these. Two of the three
+// files even called them the same names (`currency` / `currencyExact`), which is
+// duplication with a straight face. §39.13 asks for consistent decimal precision and
+// consistent symbol placement; the only way to have that is one definition each.
+export function usdExact(n: number): string {
+  return n.toLocaleString(undefined, {
+    style: "currency",
+    currency: "USD",
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
 // Whole hours with thousands separators. Hours are ALWAYS displayed rounded
 // across the app — the grids, the KPI cards, the charts and the drill tables all
 // come through here or an equivalent, so a figure never changes shape depending

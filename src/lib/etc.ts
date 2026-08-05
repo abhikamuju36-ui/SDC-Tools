@@ -410,6 +410,33 @@ export function isValidMonth(month: string): boolean {
   return /^\d{4}-(0[1-9]|1[0-2])$/.test(month);
 }
 
+/**
+ * The half-open UTC window a reporting month covers: `[start, endExclusive)`.
+ *
+ * Half-open on purpose, and the reason is §41.3's own wording — "Purchased Date >= July 1
+ * and < August 1". A `<=` end bound would either drop everything booked on the 31st (if
+ * the bound is midnight) or need a timezone-sensitive end-of-day, and both are how a
+ * month-boundary purchase goes missing from every report.
+ *
+ * UTC, not local: the source dates are stored as plain dates, and a local-time window
+ * shifts by the server's offset — which on a US host silently moves the first and last
+ * few hours of every month into the neighbouring one.
+ *
+ * Extracted and tested because it is now the single definition used by the money that
+ * this month reports (§41.4), and because year rollover is exactly the case an inline
+ * `new Date(Date.UTC(y, m, 1))` gets right by accident and a refactor gets wrong.
+ */
+export function monthWindowUtc(month: string): { start: Date; endExclusive: Date } {
+  if (!isValidMonth(month)) throw new Error(`${JSON.stringify(month)} is not a valid month.`);
+  const [year, monthNum] = month.split("-").map(Number);
+  return {
+    start: new Date(Date.UTC(year, monthNum - 1, 1)),
+    // Month index `monthNum` is the month AFTER a 1-indexed monthNum, and Date.UTC
+    // normalises 12 into January of the next year — which is what makes December work.
+    endExclusive: new Date(Date.UTC(year, monthNum, 1)),
+  };
+}
+
 // The Prior ETC carry-forward source for every job/section: the New ETC of the
 // LATEST month before `month` that has an entry for it — not necessarily the
 // month immediately before.

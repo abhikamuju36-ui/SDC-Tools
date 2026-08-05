@@ -32,7 +32,7 @@ import { JOB_MENU_CELL_SELECTOR } from "@/lib/job-cell-menu";
 type OpenAt = { x: number; y: number; ret: string; jobId: string; jobName: string; schedulerUrl: string | null };
 
 const ITEM =
-  "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-sdc-navy hover:bg-sdc-gray-100 focus:bg-sdc-gray-100 focus:outline-none";
+  "flex w-full items-center gap-2 px-3 py-1.5 text-left text-note text-sdc-navy hover:bg-sdc-gray-100 focus:bg-sdc-gray-100 focus:outline-none";
 
 export function JobCellMenuHost() {
   // `ret` is the report URL handed to the Scheduler, captured when the menu
@@ -126,7 +126,7 @@ export function JobCellMenuHost() {
       style={{ position: "fixed", left: at.x, top: at.y, visibility: "hidden", zIndex: 60 }}
       className="min-w-[190px] overflow-hidden rounded-md border border-sdc-border bg-white py-1 shadow-lg"
     >
-      <div className="truncate border-b border-sdc-border px-3 py-1 font-mono text-[10px] text-sdc-gray-500">{at.jobId}</div>
+      <div className="truncate border-b border-sdc-border px-3 py-1 font-mono text-label text-sdc-gray-500">{at.jobId}</div>
       <Link
         href={`/job-hours?jobs=${encodeURIComponent(at.jobId)}`}
         role="menuitem"

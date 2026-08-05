@@ -172,11 +172,11 @@ export function ProjectViewsMenu({
   }
 
   const sec = (label: string) => (
-    <div className="px-3 pt-2 pb-1 text-[10px] font-semibold uppercase tracking-wider text-sdc-gray-400">{label}</div>
+    <div className="px-3 pt-2 pb-1 text-label font-semibold uppercase tracking-wider text-sdc-gray-400">{label}</div>
   );
   const rowBtn =
     "flex-1 truncate rounded px-2 py-1 text-left text-xs hover:bg-sdc-gray-100";
-  const iconBtn = "shrink-0 rounded px-1.5 text-[11px] text-sdc-gray-400 hover:bg-sdc-gray-100 hover:text-sdc-navy";
+  const iconBtn = "shrink-0 rounded px-1.5 text-note text-sdc-gray-400 hover:bg-sdc-gray-100 hover:text-sdc-navy";
 
   const myNames = Object.keys(mine).sort((a, b) => a.localeCompare(b));
 
@@ -184,11 +184,11 @@ export function ProjectViewsMenu({
     <details ref={detailsRef} className="group relative inline-block">
       <summary className={`${TOOLBAR_BTN} ${activeName ? TOOLBAR_BTN_ACTIVE : TOOLBAR_BTN_NEUTRAL}`}>
         {activeName ? `View: ${activeName}` : "Views"}
-        <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" className="shrink-0 opacity-70 transition-transform duration-150 group-open:rotate-180">
+        <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" className="shrink-0 opacity-70 motion-interactive group-open:rotate-180">
           <path d="M3.5 6 L8 10.5 L12.5 6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </summary>
-      <div className="absolute left-0 top-full z-30 mt-2 w-64 rounded-lg border border-sdc-border bg-white py-1 shadow-lg">
+      <div className="motion-menu-panel absolute left-0 top-full z-30 mt-2 w-64 rounded-lg border border-sdc-border bg-white py-1 shadow-lg">
         {teamDefault && (
           <div className="col-view-row flex items-center gap-1 px-2">
             <button
@@ -209,7 +209,7 @@ export function ProjectViewsMenu({
           <div key={v.name} className="col-view-row flex items-center gap-1 px-2">
             <button type="button" onClick={() => applyView(v.name, v.config, router)} className={rowBtn}>
               {v.name}
-              {v.owner ? <span className="text-[10px] text-sdc-gray-400"> · {v.owner}</span> : null}
+              {v.owner ? <span className="text-label text-sdc-gray-400"> · {v.owner}</span> : null}
             </button>
             <button type="button" title="Delete this shared view (affects everyone)" className={iconBtn} disabled={busy} onClick={() => {
               if (window.confirm(`Delete shared view “${v.name}”? This removes it for everyone.`)) run("Couldn't delete the view.", () => deleteSharedView(v.name));

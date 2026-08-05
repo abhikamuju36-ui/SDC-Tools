@@ -1,5 +1,6 @@
 import type { ProjectRelease } from "@prisma/client";
 import { card, INPUT, BUTTON_PRIMARY } from "@/components/ui/classnames";
+import { usd } from "@/components/ui/format";
 import { uploadProjectRelease, deleteProjectRelease } from "@/lib/project-release-actions";
 import { ConfirmSubmit } from "@/components/ConfirmSubmit";
 
@@ -78,31 +79,31 @@ export function ProjectReleasePanel({
         <>
           <div className="mb-4 grid grid-cols-2 gap-3 sm:grid-cols-4">
             <div className="rounded-lg border border-sdc-border-soft p-3">
-              <p className="text-[11px] text-sdc-gray-400">RECEIPT OF PO</p>
+              <p className="text-note text-sdc-gray-400">RECEIPT OF PO</p>
               <p className="font-mono text-sm font-bold text-sdc-navy">{fmtDate(release.receiptOfPo)}</p>
             </div>
             <div className="rounded-lg border border-sdc-border-soft p-3">
-              <p className="text-[11px] text-sdc-gray-400">DELIVERY</p>
+              <p className="text-note text-sdc-gray-400">DELIVERY</p>
               <p className="font-mono text-sm font-bold text-sdc-navy">{release.deliveryDate || "—"}</p>
             </div>
             <div className="rounded-lg border border-sdc-border-soft p-3">
-              <p className="text-[11px] text-sdc-gray-400">WARRANTY</p>
+              <p className="text-note text-sdc-gray-400">WARRANTY</p>
               <p className="font-mono text-sm font-bold text-sdc-navy">
                 {details.warrantyMonths != null ? `${details.warrantyMonths} mo` : release.penalty ? "Penalty" : "—"}
               </p>
             </div>
             <div className="rounded-lg border border-sdc-border-soft p-3">
-              <p className="text-[11px] text-sdc-gray-400">PO # / QUOTE</p>
+              <p className="text-note text-sdc-gray-400">PO # / QUOTE</p>
               <p className="truncate font-mono text-xs font-bold text-sdc-navy" title={`${details.poNumber ?? ""} · ${details.quote ?? ""}`}>
                 {details.poNumber || "—"}
               </p>
-              <p className="truncate text-[11px] text-sdc-gray-400">{details.quote || ""}</p>
+              <p className="truncate text-note text-sdc-gray-400">{details.quote || ""}</p>
             </div>
           </div>
 
           {milestones.length > 0 && (
             <div className="mb-4">
-              <p className="mb-1 text-[11px] text-sdc-gray-400">FINANCIAL MILESTONES</p>
+              <p className="mb-1 text-note text-sdc-gray-400">FINANCIAL MILESTONES</p>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <tbody>
@@ -120,7 +121,7 @@ export function ProjectReleasePanel({
 
           {budget.length > 0 && (
             <div className="mb-4">
-              <p className="mb-1 text-[11px] text-sdc-gray-400">PROJECT BUDGET</p>
+              <p className="mb-1 text-note text-sdc-gray-400">PROJECT BUDGET</p>
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <tbody>
@@ -129,7 +130,7 @@ export function ProjectReleasePanel({
                         <td className="py-1 pr-4 text-sdc-gray-600">{b.label}</td>
                         <td className="py-1 text-right font-mono font-bold text-sdc-navy">
                           {b.isCost
-                            ? b.value.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 })
+                            ? usd(b.value)
                             : `${b.value} hrs`}
                         </td>
                       </tr>
@@ -142,7 +143,7 @@ export function ProjectReleasePanel({
 
           {release.budgetImage && (
             <div className="mb-4">
-              <p className="mb-1 text-[11px] text-sdc-gray-400">PROJECT BUDGET (image)</p>
+              <p className="mb-1 text-note text-sdc-gray-400">PROJECT BUDGET (image)</p>
               {/* eslint-disable-next-line @next/next/no-img-element */}
               <img src={release.budgetImage} alt="Project budget" className="max-w-full rounded-lg border border-sdc-border-soft" />
             </div>

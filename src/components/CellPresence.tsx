@@ -31,7 +31,7 @@ export function CellPresence({ cellKey }: { cellKey: string }) {
     <span
       // Top-right of the cell, clear of the caret and of the yellow
       // needs-attention background.
-      className="pointer-events-none absolute top-0 right-0 z-10 flex items-center gap-0.5 rounded-bl bg-[#7C3AED] px-1 text-[8px] leading-[11px] font-semibold text-white"
+      className="pointer-events-none absolute top-0 right-0 z-10 flex items-center gap-0.5 rounded-bl bg-[#7C3AED] px-1 text-micro leading-[11px] font-semibold text-white"
       title={title}
       aria-label={title}
     >

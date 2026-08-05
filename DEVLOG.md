@@ -1459,3 +1459,1222 @@ Live through the running app: `.xlsx` arrives as a real ZIP (PK header, correct 
 - **Large exports are not streamed.** 51 and 49 rows build in ~90ms and ~55ms; the sheet is
   assembled in memory. If a month ever needs tens of thousands of rows this becomes a
   streaming job, and exceljs supports that when it does.
+
+## 20. Motion, transitions and visual stability (2026-08-04)
+
+Requested: make every animation and transition in the app feel smooth, fluid and
+responsive, and stop it feeling laggy, jumpy or visually glitchy (§36).
+
+### 20.1 What was there before
+
+Motion existed in nine components and nowhere else, and no two of them agreed:
+`transition-all` with no duration on three shared button classes (so Tailwind's 150ms
+default), `transition-colors` on three more, `transition-shadow` on the card and the
+input, `duration-150` on the sidebar width and on two chevrons, `duration-200` on a panel
+that could never animate, and `duration-500` on a chart. The toasts, the change banner,
+the confirmation modal, the KPI cards, the loading state and every grid cell had no motion
+at all. That is exactly the "different arbitrary animation values in each component"
+§36.17 forbids, and it is how it happens: nobody chose it.
+
+Three things were actively wrong rather than merely inconsistent:
+
+- **The Refresh Data button changed width by up to 130px.** Its label WAS the stage
+  read-out, so "Refresh Data" (78px) became "Parts costs from TotalETO… (2 of 5)" (210px)
+  and back. It appears in the sidebar on every page and in the Monthly ETC toolbar, where
+  it shoved the Export menu sideways for twenty seconds and back again.
+- **Collapsing the sidebar made the nav icons leap 114px.** `justify-center` was added on
+  the frame of the click, while the panel was still 276px wide, so each icon jumped to the
+  middle of a wide panel and the panel then narrowed around it.
+- **The dashboard's bar chart animated `height` for 500ms.** Twenty bars, thirty frames of
+  full-chart layout, and each bar's value label rode up with it — so the numbers were
+  unreadable for half a second every time the data changed.
+
+### 20.2 Shape
+
+```
+lib/motion.ts              the tokens as numbers, + every rule worth testing
+components/useMotion.ts    useReducedMotion, useValueFlash, useExitList
+app/globals.css            the same tokens as CSS properties, the motion-* classes,
+                           the keyframes, and the prefers-reduced-motion block
+tests/motion.test.ts       22 tests, including the two regression guards below
+```
+
+The durations live in **two** places on purpose: CSS needs them as custom properties so a
+class can use them with no JavaScript, and TypeScript needs them as numbers because two
+timers have to outlast an animation (the exit-list drop, the flash clear). A test reads
+`globals.css` and asserts the two files hold the same numbers, so changing one without the
+other fails the suite rather than dropping a toast mid-fade.
+
+One token per §36.2 band, not a range — a range is how the drift started:
+
+```
+--motion-press   80ms   button press feedback        (§36.2: 50–100ms)
+--motion-hover  120ms   hover / focus                (§36.2: 100–150ms)
+--motion-menu   150ms   dropdowns, filter panels     (§36.2: 120–180ms)
+--motion-panel  200ms   tabs, cards, modals, banners (§36.2: 150–250ms)
+--motion-flash  600ms   "this value changed"         (§36.6, §36.8 — see below)
+--motion-loading-delay 120ms  how long a loading state waits before painting (§36.9)
+```
+
+### 20.3 The decisions that are not obvious
+
+**`transform` alone was not enough.** Tailwind v4 compiles `translate-x-[10px]` to
+`translate: …` and `rotate-180` to `rotate: 180deg` — the standalone properties, not the
+`transform` shorthand. Verified in the built stylesheet. With only `transform` in
+`.motion-interactive`'s transition-property list, every toggle knob and every dropdown
+chevron in the app would have snapped instead of moving, and nothing would have said so.
+
+**Three things are deliberately NOT animated.** The row-hover highlight, because
+`tbody tr:hover > td` paints an inset box-shadow with a 9999px spread and transitioning it
+would repaint every cell in a row on every pointer move (§36.15). Width, except on the two
+panels where the width IS the state change (the sidebar's rail, the pool panel) — those are
+enumerated in the CSS rather than left to judgement. And numbers: no count-up tweening,
+because §36.8 forbids delaying the latest value and on a grid where a total is what gets
+submitted, a figure that is briefly wrong on purpose is worse than a static one.
+
+**The flash is an outline, not a background wash.** The cells it lands on already carry
+meaning in their fill — the Diff gradient, the yellow needs-attention flag — so a
+background flash would be overwriting information with decoration. An inset outline costs
+no layout at all: measured, a flashing cell is 64×22.67px before and during.
+
+**Which cells may flash is a decision, not a side effect.** §36.6 asks for a highlight on
+an updated cell and, two lines later, forbids animating every cell during a large refresh.
+Both apply to `EtcLiveTotals`, because one function paints in both situations — a keystroke
+moves two or three totals, a Refresh Data can move all of them. So the painter records what
+each cell last held and asks `changedForFlash()`: above 12 changes it is a bulk update and
+nothing flashes at all. A cell seen for the first time is never a change, so the first paint
+is silent. And the comparison is on the rendered TEXT, so a change that rounds to the same
+whole hour does not flash.
+
+**Removals get to leave.** React unmounts a dismissed toast on the spot, so an exit
+animation on it never ran. `mergeExiting()` keeps a departed item mounted and marked
+`leaving`, **in the slot it already occupied**, so a toast in the middle of a stack fades
+where it stands instead of jumping to the end while it does. A key that comes back while it
+is leaving is restored rather than duplicated — the same change can be re-announced on the
+realtime feed.
+
+**The loading delay is CSS, not state.** `.motion-loading-reveal` starts at opacity 0 and
+fades in after 120ms, so a navigation that resolves sooner paints nothing. No timer to
+clear, and nothing left behind if the route lands mid-delay, because the element unmounts
+with the fallback. The same 120ms is on the per-link pending dot, so a prefetched route
+that lands immediately shows neither.
+
+**One running label on Refresh Data, not two.** "Refresh running…" (somebody else's pass)
+is gone from the visible label, and that is a trade rather than an oversight: measured in
+the running app, "Refresh running… 12/12" beside a spinner needs a 184px slot against
+"Refreshing… 12/12"'s 148px, so keeping it meant either a permanently 222px-wide button
+whose resting label is "Refresh Data", or a button that changes width. The tooltip and the
+sr-only live region still say whose refresh it is, and the outcome is identical either way —
+the pass is application-wide and everyone gets its result. The step counter is what the
+width buys instead.
+
+### 20.4 Verified
+
+Live, in the running app, against the real database:
+
+```
+Refresh Data (ETC toolbar)   188px in all four states, no clipping — was 78→210px
+Refresh Data (sidebar)       128px button / 98px slot, both states fit
+Show all / Reset switch      133px across all five labels
+Sidebar collapse             nav icon at x=24 expanded, mid-collapse AND collapsed;
+                             moved 0px — was a 114px leap
+KPI strip                    6 cards, all exactly 49px tall; Detail/Hide links all 36px
+Dropdowns                    all 5 toolbar menus carry motion-menu-panel; the nested
+                             group <details> correctly do not
+Grid cells                   685 New ETC cells carry motion-cell (169 currently yellow)
+Painter hooks                100 group + 13 section + 48 parts-row + 2 parts-footer
+Flash                        attaches, 1 iteration, outline-offset -2px, zero layout change
+Navigation                   link hint goes pending, then the shell paints with 52
+                             skeleton blocks and aria-busy; the sidebar stays present and
+                             every link stays clickable throughout
+Progress bar                 caught a real refresh mid-pass: scaleX(0.4286) against
+                             "step 4 of 7", sr-only reading "Parts cost actual (TotalETO)"
+Console                      no errors on /etc, /quoted or /job-hours
+```
+
+Caught during that pass and fixed: the sidebar's Refresh label was being clipped to
+"Refresh runni…" at 128px (hence the `dense` prop), and the first reservation was 6px too
+narrow for a two-digit source count — found by probing every state's width with the real
+font rather than reasoning about it.
+
+`tests/motion.test.ts` also carries two regression guards that are the point of the whole
+exercise: **no file under `src/` may contain a `transition-*` or `duration-<n>` utility**
+(comments stripped first, since several of them quote the classes they replaced), and
+**every `motion-*` class referenced anywhere in `src/` must exist in `globals.css`** — a
+typo there animates nothing and errors nowhere, which is indistinguishable from the
+un-animated app this set out to fix.
+
+### 20.5 Not done
+
+- **No live frame-rate profiling.** §36.18 asks for it and §36.19 sets a 60 FPS target. The
+  work here removes the specific causes it names — layout-property animations,
+  `transition: all` on shadowed buttons, a 500ms height animation on twenty bars, unbounded
+  per-cell flashing — and each is verified structurally. A trace under a real editing
+  session on a 4,150-cell month is still worth doing.
+- **The reduced-motion path is the one the verification browser exercised.** Headless
+  Chrome reports `prefers-reduced-motion: reduce`, so every computed duration read live was
+  the collapsed 0.01ms — which does prove the §36.16 block works, and that the spinner
+  keeps its 1.6s infinite animation through it. The normal-motion values were verified from
+  the CSSOM (the authored rules) and by the token-agreement test, not by watching them play.
+- **A leaving notification still collapses its slot in one step** once its animation ends.
+  Smoothing that away needs a height animation on the card, which §36.15 rules out for
+  better reasons than this one is worth.
+- **No visual-regression or slow-network test suite.** §36.20 asks for one. What exists is
+  22 unit tests over the decidable rules plus the live measurements above; screenshot
+  diffing and throttled-network runs would need a browser harness this repo does not have.
+- **`window.confirm` is still the unsaved-changes prompt** in the sidebar (three call
+  sites) and in `ConfirmSubmit`. §36.11 is about the report-submission modal, which is a
+  real in-app dialog and now animates; the native confirms cannot be styled or animated at
+  all, and replacing them is a behaviour change rather than a motion one.
+
+## 21. Six KPI cards became one summary card (2026-08-04)
+
+Requested: combine the KPI cards at the top of the Monthly ETC page into one unified
+summary card, without removing or changing any existing functionality (§37). Six named
+KPIs stay: Engineering hours, Shop hours, Parts spent, People booked, Undefined hours,
+Hours off the grid.
+
+The request is visual, and §37 spends a page — §37.12, twenty acceptance criteria — saying
+what must survive it. That emphasis is right. A consolidation is exactly the edit that
+loses a KPI, points two blocks at the same drill-through, or drops a tone, and none of
+those read as anything but "moved some divs" in the diff.
+
+### 21.1 The strip is data now
+
+`EtcMonthKpiCards` held six hand-written cards: two `GroupCard`s, four `Card`s, and the
+`Variance` / `Unplanned` pair that decided how a second line was painted. Each card chose
+its own content inline, which meant each one also chose which vintage of a figure to read
+— the mistake §28 was written about, where the Parts tooltip quoted a page-load operand
+beside a live variance.
+
+So the strip's content moved to `lib/etc-kpi-strip.ts` as a pure function:
+
+```
+buildKpiBlocks({ kpis, importIssues, offGridJobs }, { hours, usd }) -> KpiBlock[]
+```
+
+It computes no KPI. Every figure arrives already reconciled by `reconcileEtcKpis`, which
+stays the single authority on live-versus-synced. The module selects, labels and formats,
+and the component renders what comes back — so there is no longer a per-card choice to get
+wrong, and the six-blocks-with-six-drills property is a test rather than a claim
+(`tests/etc-kpi-strip.test.ts`, 39 cases).
+
+Two smaller rules moved with it, for the same reason:
+
+- `offGridTotalHours` / `undefinedHoursTotals` — the block and the drill panel that opens
+  from it now read one sum, so §37.13 #6 (a KPI reconciles with its own detail) holds by
+  construction rather than by coincidence.
+- `kpiDetailState(blockDrill, openDrill, lanes)` — which block is fetching, and which one
+  failed. Three lanes serve six blocks (punch detail for Engineering / Shop / People,
+  parts, hours export), and a block reports a state only when ITS drill is the open one.
+  Nothing is fetched for a closed drill, so at most one block is ever non-idle and the
+  other five keep their confirmed values — §37.9's "one slow KPI must not block the
+  others", as an assertion.
+
+`KpiBlock` is deliberately FLAT — every field a primitive. That is what lets the component
+spread a block into a `React.memo`'d `MetricBlock` and have the shallow comparison work. A
+nested `status` object would be a fresh identity every render, so all six blocks would
+re-render whenever any one figure moved: §37.4 and §37.11 satisfied on paper and false in
+the profiler.
+
+### 21.2 What the card looks like
+
+One `<section>` owns the border, the background and the shadow. The blocks inside have
+none of their own — the dividers are the grid's `gap-px` letting the container's colour
+through. That beats a per-block border for a reason worth writing down: a left border on
+each block leaves a stray line at the start of every wrapped row, and this grid wraps at
+three widths.
+
+A tone tints its block's background instead of bordering it (amber for Undefined hours, red
+for Hours off the grid), which reads as a section of one card rather than a card inside a
+card. Both toned blocks also carry a ⚠ and an sr-only "Needs attention" / "Action needed",
+because §37.10 forbids communicating status through colour alone and the tint was the only
+signal those two had.
+
+Each block is label / value / (status + Detail):
+
+```
+ENGINEERING HOURS
+3,015
+▲ 4 under                 Detail
+```
+
+The value gets its own line, which the six separate cards did not give it. Side by side —
+as they had it — there is no room at six blocks across: "$1,432,857" beside
+"▼ $1,084,643 over" needs ~180px and gets ~155px on a 1280px screen, so one of the two had
+to clip, and §37.7/§37.8 forbid clipping either. The Detail link moved down beside the
+status for the same reason: sharing the top line with the label left the label 94px of
+169px, which truncated "Engineering hours" and both toned labels (measured live, not
+guessed). Nothing in the card clips now at any width.
+
+Every block is 68px tall and stays 68px whatever its figures do — the value line and the
+status line both have reserved heights, because the status swaps between a variance, an
+unplanned figure and a neutral note as cells are filled in (§36.14, §37.7).
+
+Three lines instead of two costs ~19px of height against the old strip. At xl that is one
+row, so the whole card is 69px against the old 49px; below xl it wraps to two or three
+rows as before.
+
+### 21.3 The statuses, and one honest tooltip
+
+Four of the six blocks had no visible status at all before — their explanation was a
+`title` attribute nobody hovers. §37.1 asks for status text on every metric, so the short
+version is now on the card and the full version stays in the tooltip:
+
+| block            | status                 |
+|------------------|------------------------|
+| Engineering/Shop | `▲ 4 under` / `4,070 unplanned` / `On plan` |
+| Parts spent      | `▼ $189 over`          |
+| People booked    | `24 eng · 21 shop`     |
+| Undefined hours  | `25 entries` / `None outstanding` |
+| Hours off the grid | `5 jobs not listed`  |
+
+Making the People split visible exposed something the tooltip had been wrong about. July
+reads 49 people against 24 eng · 21 shop, and the old sentence explained only one direction
+of that gap ("counts each person once even if they booked to both"). It can fall either
+way: somebody whose sections belong to neither billing group — the pool sections the ETC
+grid excludes — is in the headline and in neither figure. The tooltip now says both, and
+quotes the headline it is reconciling against.
+
+### 21.4 Verified
+
+Live, in the running app, on July 2026 with real data:
+
+```
+Unified card         ONE <section>, one border, one shadow — 0 descendants with either
+Blocks               6, all exactly 68px tall, 1px dividers, zero per-block borders
+Clipping             0 clipped elements at 1585px, 1009px and 558px
+Layout               1585px -> 6 columns (--kpi-cols: 6)
+                     1009px -> 3 columns, two rows
+                      375px -> 1 column, stacked
+Values               3,015 / 2,675 / $361,074 / 49 / 179 / 296
+Drill: Engineering   "Engineering hours — 2026-07", 648 lines, eng sections only
+Drill: Shop          "Shop hours — 2026-07", 444 lines
+Drill: Parts         "Parts spent — 2026-07, by job", footer $361,074 = the block
+Drill: People        "Hours Detail — 2026-07", 1,092 lines, total 5,690 = 3,015 + 2,675
+Drill: Undefined     "Undefined hours — 2026-07", 25 of 25 lines, total 179 = the block
+Drill: Off the grid  "296 hours on 5 jobs", total 296 = the block
+Detail links         one per block; only the clicked block flips to "Hide"/aria-expanded
+Accessible names     "Show the Engineering hours detail", … — six distinct names, not
+                     six buttons called "Detail"
+Hide summary         hides the whole card, stores "0", keeps the open drill and its data;
+                     Show brings every value back with no reload
+Refresh Data         caught a refresh mid-pass (2/7 -> 4/7): all six values stayed visible
+Console              no errors
+```
+
+Plus 39 unit tests over the decidable criteria: all six KPIs present in order, each with
+its own value / status / drill; changing one KPI leaves the other five blocks deep-equal;
+a live New ETC edit moves that group's status and nothing else; synced figures never move
+when somebody types; the parts tooltip's subtraction produces the variance beside it; a
+slow or failed lane marks only its own block; the grid stacks at base and follows the block
+count at xl; Hide/Show round-trips and touches nothing but its own preference key.
+
+### 21.5 Not done
+
+- **The live-typing path was not exercised in the browser.** Autosave fires 800ms after the
+  last keystroke, and this dev server talks to the production database — so typing a New
+  ETC to watch a block move would write a real value to the July month managers are
+  working in. The reconcile-to-block mapping is covered by unit tests that drive
+  `reconcileEtcKpis` with published cells (including "a live edit in one group leaves the
+  other blocks untouched"), and the expression feeding the card is the same one it was
+  before this change. Worth doing against a scratch database.
+- **The page is unusable below ~900px, and that is not new.** At a 375px viewport the
+  card correctly stacks to one column, but the content area is 39px wide — the sidebar is
+  a 276px fixed flex sibling that never collapses, so the page's own `<h1>` measures 39px
+  too. The card is as responsive as §37.8 asks; the shell around it has no mobile
+  breakpoint. Out of scope here, and it affects every page equally.
+- **No visual-regression coverage.** Same gap §20.5 records: 39 unit tests plus the live
+  measurements above, no screenshot diffing.
+
+## 22. The app froze for four and a half seconds (2026-08-04)
+
+Reported: the application "frequently becomes unresponsive or reacts very slowly" when
+the pointer moves, a button is clicked, a cell is selected, a filter or dropdown is
+opened. Fix it across the whole app; the first click must never be ignored (§38).
+
+Two distinct defects, both measured rather than guessed at. One made the app ignore
+everything for 4.5 seconds after every load of the Monthly ETC page; the other made a
+single click on a grid cell do nothing at all, by design.
+
+### 22.1 Measure first — six suspects were wrong
+
+§38 lists thirty-odd plausible causes, and reading the code produced six good ones: the
+document-level `pointermove` in ColumnResize, the coarse presence subscription that
+notifies every one of ~830 cell indicators, `LiveRefresh`'s polling, the sidebar's
+`setState` in an effect, 367 stray `<table hidden>` nodes left in the body by React's
+streaming, and the sheer size of the route (2,030 KB of HTML, 7,328 DOM nodes, 4,150
+cells, 1,179 inputs).
+
+Every one of them was wrong, or too small to matter. What settled it was a production
+build (`.next-perf`, port 3024 — a dev server's numbers are meaningless here, React dev
+builds and HMR add hundreds of ms production does not have) with a `PerformanceObserver`
+on `longtask` and `event`:
+
+```
+/etc      first-contentful-paint  60ms
+          long task               162ms  at 622ms
+          long task             4,347ms  at 784ms      <-- the whole bug
+          total blocking        ~4,459ms
+
+/quoted   1,194 inputs (fifteen MORE than /etc), 7,596 nodes
+          worst long task         159ms
+          total blocking          109ms
+```
+
+The Projects grid has the same number of inputs and a slightly bigger DOM, and blocks the
+main thread for 109ms. Monthly ETC blocks it for 4,459ms. So it was never the cell count,
+the payload or the node count — it was something /etc does and /quoted does not.
+
+The page painted at 60ms and then ignored every click until 5,131ms. That is exactly the
+report, including why it reads as intermittent: a user who takes half a second to reach
+for the mouse loses their first click, and one who takes five seconds does not.
+
+### 22.2 One publish, one repaint — not one repaint per cell
+
+Every New ETC cell publishes itself to `lib/etc-live-totals.ts` on mount. The store's
+`emit()` notified every listener **synchronously, on every publish**. One of those
+listeners is not React: `EtcLiveTotals` repaints the grid's rollup cells imperatively,
+reading their text and writing new text and classes.
+
+So mounting a month's grid cost ~880 synchronous DOM-read-then-write passes over ~150
+cells — ~880 forced style recalculations inside one commit — plus ~880 re-render
+notifications to the KPI strip and to the Standard Fees columns, whose subtree is the
+whole grid. O(cells) repaints of an O(cells) structure, in the commit phase, with the page
+already on screen.
+
+The fix is four lines: `emit()` bumps the version counter synchronously and schedules ONE
+notification per animation frame (a microtask under node, where the tests run).
+
+```
+/etc after   long tasks 67ms, 212ms, 63ms
+             worst              212ms   (was 4,347ms)
+             total blocking     187ms   (was ~4,459ms)
+             first paint         80ms   (was 60ms — unchanged within noise)
+```
+
+**18× off the worst block, 96% off total blocking time**, on the same page with the same
+1,179 inputs and 4,150 cells.
+
+Two properties have to hold together, and `tests/interaction-latency.test.ts` pins both:
+
+- the **version counter stays synchronous**, so anything reading between a publish and
+  the notification — React rendering for another reason, the painter's own first pass —
+  sees the new figures rather than a stale cache. Deferring the notification is safe;
+  deferring the data would be a correctness bug.
+- a burst is **one** notification. 880 publishes, one repaint. A month switch (880
+  unmounts plus 880 mounts) is also one.
+
+The listener set is copied before iterating, because a month switch unsubscribes cells
+while the deferred notification is being delivered.
+
+### 22.3 The first click was suppressed on purpose
+
+`DragScroll` called `preventDefault()` on mousedown over any unfocused grid input, so a
+press on a grid full of inputs panned the view instead of dropping a caret into live data.
+Double-click was made the way into a cell.
+
+But focus is this grid's **only** selection model — the input IS the cell — so suppressing
+focus suppressed selection, and a single click on a cell genuinely did nothing. §38.1
+forbids that outright ("the first click must never be ignored") and §38.16 #3 asks for the
+opposite.
+
+Worse, it was the same `preventDefault` that caused the §34.2 stale-border bug (it
+suppresses the whole focus change, including moving focus AWAY from the cell that had it),
+which had been treated by adding a rule to blur the old cell explicitly. That fixed the
+border and left the ignored click, because the border was only the visible half.
+
+The gesture is now separated by MOVEMENT, which is what actually distinguishes a pan from
+a click:
+
+- press, don't move → the browser focuses the cell. Selected, first time, no handler.
+- press, move >3px → blur, drop the text selection, pan.
+
+`shouldBlurOnCellPress` and its whole rule are gone: focus transfers the way the browser
+transfers it, so no cell can be left outlined after the pointer moves on — the §34.2 bug
+cannot recur because its cause is gone, not because a rule compensates for it.
+`pressKindFor` replaces it and is exhaustively tested, plus a source-level guard that
+`onMouseDown` contains no `preventDefault` — the fix is the ABSENCE of a call, which no
+unit test can otherwise express.
+
+Verified live: one click on `newEtcOverride__50479` focused it and drew the active-cell
+outline (`2px solid rgb(21,116,196)`); a 150px drag panned the grid from `scrollLeft` 0 to
+281 with no text selected, focus released, and the grab cursor restored.
+
+### 22.4 An instrument, so the next report starts from a number
+
+`lib/interaction-metrics.ts` (pure: §38.13's budgets, the over-budget decision, a safe
+control label, a bounded ring buffer) and `components/InteractionMetrics.tsx` (the
+observers) record any interaction that misses its §38.13 target, any long task over 50ms,
+and any layout shift over 0.1 — with the page, the control, the action, the duration, the
+budget and how many requests were in flight.
+
+- **Nothing is sent anywhere.** No endpoint, no beacon. The last 50 records sit on
+  `window.__sdcInteractions`.
+- **Labels are structural only.** `value`, `title` and `placeholder` are excluded by
+  allowlist and asserted excluded by test, because this app's grids hold live commercial
+  figures and §38.14's "do not expose sensitive information in client logs" is a warning
+  about the grids, not about telemetry.
+- **Dormant in production** until somebody adds `?perf=1` (remembered for the tab), so a
+  manager reporting a slow afternoon can read the log out of the console without a deploy.
+  Confirmed dormant on the production build: `__sdcInteractions` undefined, `fetch`
+  unpatched. With the flag it recorded two long tasks (149ms, 109ms) and the fields above.
+
+The fetch wrapper that counts in-flight requests decrements in a `finally`, so a rejected
+request cannot drift the count upward for the life of the tab — §38.12's own rule, applied
+to the instrument.
+
+### 22.5 Verified
+
+```
+Hydration block   4,347ms -> 212ms worst; 4,459ms -> 187ms total blocking
+First click       ignored -> focuses the cell and draws its outline
+Drag to pan       still pans (scrollLeft 0 -> 281), no text selected, cursor restored
+Hover             pointerover/pointerenter handler processing 0ms
+Diagnostics       dormant by default; ?perf=1 records page/control/action/duration/requests
+Tests             545 pass (30 new across interaction-latency and cell-focus-transfer)
+```
+
+The residual 163ms input delays measured on hover all carry `processingMs: 0` — they are
+clicks and moves queueing behind what is left of hydration, not handlers doing work.
+
+### 22.6 Not done
+
+- **The grid is not virtualized.** §38.9 offers it "where appropriate" and it is the only
+  remaining lever on the 212ms: 4,150 cells and 1,179 inputs are still all mounted.
+  Virtualizing a grid with frozen columns, five header bands and a live footer is a
+  rewrite of `etc/page.tsx`, and the measured payoff after this change is ~150ms.
+- **No web worker.** §38.4 suggests one for CPU-heavy work. After this change there is no
+  CPU-heavy client work left to move: the totals recomputation is ~880 additions.
+- **Not every control in §38.2 was individually timed.** The approach was to measure
+  app-wide long tasks and input delay, fix what dominated, and leave an instrument
+  running. The Standard Fees panel, the modals and Export were exercised but not
+  profiled one by one.
+- **§38.15's browser-level matrix is not automated.** Rapid clicks, virtualized rows,
+  listener leaks across repeated navigation and memory growth need a DOM harness this
+  repo does not have. What exists is 30 unit tests over the decidable rules plus the
+  live measurements above.
+- **Two leftover `next dev` servers were found running on ports 3021 and 3022** on the
+  same box that serves production, each with its own file watcher, its own auto-sync
+  scheduler and its own in-process realtime hub, all pointed at the production database.
+  Left alone rather than killed, but they are a real drain and only one instance should
+  be running.
+
+## 23. One type system, and the two controls it turned out to be hiding (2026-08-04)
+
+Requested: review the whole application and make the typography consistent — one family,
+one scale, no scattered overrides (§39).
+
+The family was already right. The scale was not, and consolidating it uncovered two
+shipped controls that had never worked.
+
+### 23.1 Twenty-two font sizes
+
+Counted across `src/`:
+
+```
+216 × text-[10px]     168 × text-xs        140 × text-[11px]     135 × text-sm
+ 16 × text-[9px]       11 × text-[13px]      8 × text-[12px]      19 × text-lg
+  3 × text-[11.5px]     2 × text-[9.5px]     2 × text-[10.5px]     2 × text-[12.5px]
+  2 × text-[15px]       2 × text-[8px]       1 × text-[7px]        1 × text-[13.5px]
+  1 × text-[16px]       1 × text-[22px]      1 × text-[27px]     + base/xl/2xl
+```
+
+Twenty-two, several within half a pixel of each other. At the 15px root, `text-[11px]`,
+`text-xs` (11.25px) and `text-[11.5px]` are three names for the same thing, and 311 sites
+used them interchangeably.
+
+Now ten, every one a theme step: three new tokens for the sizes Tailwind lacks —
+`--text-micro` (9px), `--text-label` (10px), `--text-note` (11px) — plus Tailwind's own
+`xs / sm / base / lg / xl / 2xl / 3xl / 4xl`. 412 replacements across 45 files.
+
+Measured on the built app afterwards, the Projects page renders **seven** distinct sizes,
+all of them steps: 10.2 (table text), 11.25, 11.0, 10.0, 15, 13.125, 22.5.
+
+### 23.2 The scale is in rem, and that is the actual fix
+
+The sidebar's Text size control sets the ROOT font size (`AppTextSize`, default 15px), and
+Tailwind's steps are rem, so they scaled with it. **The hundreds of `text-[10px]` values did
+not** — they are absolute pixels. Turning the control up grew the body text and left every
+grid label, column header and KPI caption exactly where it was. It was half a control.
+
+The three new tokens are exact fractions of 15px (`0.6rem`, `0.6667rem`, `0.7333rem`), so at
+the default they are pixel-identical to the values they replaced — the migration moved
+nothing on screen — and away from the default the whole interface now scales together.
+
+`tests/typography.test.ts` asserts that identity directly: each token must resolve to the
+pixel size it replaced, and the handful of deliberate exceptions are listed with their
+deltas (12.5px → text-xs is the widest at 1.25px; 7px and 8px were RAISED to the 9px floor,
+because §39.15 does not allow a size nobody can read).
+
+No token carries a default line-height, deliberately. An arbitrary `text-[10px]` inherits
+its line-height and the grids depend on that — they set `leading-none` per row to hit a
+density the user also controls. Attaching a default would have changed the height of every
+row in the app.
+
+### 23.3 The first-visit reflow
+
+The root font size was only ever applied by JavaScript: the pre-paint script sets it *only
+when a saved preference exists*, and `AppTextSize`'s effect runs after mount. So a first
+visit rendered the entire app at the browser's 16px and snapped to 15px on hydration — a
+6.7% reflow of every page, on every new browser. `html { font-size: 15px }` in globals.css
+fixes it; the script and the effect now only ever override a default that is already right.
+The test pins the CSS value and `AppTextSize`'s `DEFAULT` to the same number.
+
+### 23.4 A weight the app does not have
+
+`font-extrabold` (800) was used in five places. next/font loads 400/500/600/700, so the
+browser **synthesised** 800 — those five rendered as a smeared faux bold matching nothing
+else on screen. Replaced with `font-bold`, and the test now reads the loaded weight list out
+of layout.tsx and rejects any class outside it.
+
+### 23.5 The charts were using a different font
+
+`components/charts/theme.ts` carried its own copy of the stack:
+
+```
+const FONT = "Montserrat, -apple-system, 'Segoe UI', system-ui, sans-serif";
+```
+
+Two things wrong. It is a second definition of something §39.17 says to declare once, and
+the literal `"Montserrat"` is **not the font the app uses** — next/font self-hosts the file
+under a generated family name, so that string resolved to whatever Montserrat the machine
+happened to have installed, or to the fallback. Chart labels could render in a different
+face from every other label on the same screen.
+
+ECharts needs a real string (it writes `ctx.font` for canvas text, where `var()` means
+nothing), so it now resolves the family from the document — the stack the body is actually
+using, generated name included — memoised, and guarded by a test that nothing outside
+globals.css and layout.tsx may name a font face.
+
+AG Grid was already correct: `fontFamily: "inherit"`. Pinned by a test so it stays that way.
+
+### 23.6 Eleven currency formatters
+
+`toLocaleString(undefined, { style: "currency", … })` appeared eleven times outside
+`ui/format.ts`, in three shapes — and three files had the identical *pair* of helpers under
+the identical names (`currency` / `currencyExact`). Five of the eleven used
+`minimumFractionDigits: 2`, which `usd2()` does not, so **$5 printed as "$5.00" in some
+places and "$5" in others**.
+
+Added `usdExact()` to `ui/format.ts` for the exactly-two-decimals case and routed all
+eleven through the shared functions — the three duplicate pairs became one import line each,
+so no call site changed.
+
+### 23.7 The Monthly ETC Text size stepper had never worked
+
+globals.css carries `table, table * { font-size: …!important }` for app-wide table
+uniformity. The ETC grid's own Text size stepper wrote `--etc-font-size` and applied it with
+`[&_td]:text-[length:var(--etc-font-size,10px)]` utilities, whose comment claimed they
+"beat each cell's hardcoded size with no `!`". True of the cell's own class — and irrelevant,
+because an important declaration outside any layer beats a normal one inside
+`@layer utilities` whatever its specificity.
+
+Measured live: **setting `--etc-font-size` to 22px moved a cell from 10.2px to 10.2px.**
+
+Two attempts were needed, and the first one is worth recording because it looked right:
+
+1. Have the grid set `--table-font-size: var(--etc-font-size, 0.68rem)` on its table and let
+   the blanket rule resolve it. Written as an arbitrary-property utility
+   (`[--table-font-size:var(--etc-font-size,0.68rem)]`) it **emitted no CSS at all** —
+   Tailwind's arbitrary-property parser does not take a nested `var()` containing a comma.
+   The class was on the element and the variable still resolved to the default. A class that
+   generates nothing is the worst kind of fix, because the diff looks correct.
+2. Moved to an inline style, which did set the variable — and the cells still did not move.
+   With that indirection, writing `--etc-font-size` on `<html>` updates the variable
+   (`getComputedStyle` confirms it) but does not invalidate `font-size` on the descendants.
+
+What works is a rule of the same weight and higher specificity that reads the variable
+**directly**: `table[data-grid="etc"], table[data-grid="etc"] *`. The grid's table carries
+that attribute; every other table keeps the shared default.
+
+Verified on the real path — a saved preference of 18, applied by the pre-paint script:
+
+```
+before   cells 10.2px, headers 10.2px, inputs 10.2px   (at every stepper setting)
+after    cells 18px,   headers 18px,   inputs 18px
+cleared  back to 10.2px
+```
+
+### 23.8 Verified
+
+Computed styles read off the built app:
+
+```
+/etc      ONE family across h1, sidebar, buttons, table headers, cells, inputs,
+          selects, KPI label, KPI value, banners — distinct families: ["Montserrat"]
+          inputs and selects inherit it (no browser-default leak)
+          4,067 of 4,067 body cells render tabular-nums
+          root 15px, declared in CSS
+/quoted   ONE family across h1/th/td/input/select/button/menu
+          SEVEN distinct rendered sizes on the whole page, all theme steps
+/audit-log buttons and inputs Montserrat (AG Grid inherits)
+Tests     556 pass, 11 new in tests/typography.test.ts
+```
+
+### 23.9 Not done
+
+- **No visual-regression suite.** §39.20 asks for one; this repo has no screenshot
+  harness. What exists is the size-identity proof in the test (a rename cannot move text),
+  11 structural guards, and the computed-style measurements above.
+- **Capitalization (§39.12) was not swept.** Button and header casing was spot-checked and
+  looked consistent, but "one style per UI category" was not audited label by label across
+  every control.
+- **Tailwind generates CSS for classes that appear only in comments.** Its content scanner
+  reads every non-ignored file, so `.text-\[10px\]` is still in the built stylesheet purely
+  because comments and tests quote it. Harmless — nothing carries those classes — but it
+  means the built CSS is not proof that a class is unused; the source guard in
+  `tests/typography.test.ts` is.
+- **The blanket table rule still overrides in-table size utilities.** That is deliberate
+  (§39.4 wants one size per grid) but it does mean a `text-note` on a `<td>` does nothing,
+  which is how the app accumulated sizes nobody could see the effect of. Worth revisiting
+  as a scoped rule rather than `table *`.
+
+---
+
+## 24. The filters that asked the server for something it had already sent (2026-08-04)
+
+Reported as §40: "filters, buttons, tables and tab navigation are still slow; selecting or
+unselecting a filter option does not update results quickly; transitions between tabs take
+too long or occasionally remain stuck loading."
+
+§17 and §22 had already been through this page twice. What was left was one specific
+mistake, and it was structural rather than a missed optimisation.
+
+### 24.1 The baseline — first production numbers this app has ever had
+
+§17.7 flagged that every figure to date was from a dev server and should be treated as an
+upper bound. That gap is now closed: built with `NEXT_DIST_DIR=.next-perf`, served by
+`next start`, live data (49 ETC jobs / 438 entries; Projects 51 rows of 233).
+
+| Route | server render | payload |
+|---|---|---|
+| `/quoted` (Projects) | 214ms | **953 KB** |
+| `/` (Dashboard) | 210ms | 57 KB |
+| `/etc` (Monthly ETC) | 148ms | 596 KB |
+| `/job-hours` | 114ms | 249 KB |
+| `/audit-log` | 62ms | 149 KB |
+| `/employees` | 12ms | 39 KB |
+
+Database critical path, re-run with `scripts/perf-baseline.ts`: ETC 89ms, Projects 140ms,
+Audit 63ms, Dashboard 5ms, Employees 3ms. **Still not the bottleneck anywhere**, which is
+now the third consecutive pass to find that.
+
+Page load is healthy — `/etc` first contentful paint 96ms, worst long task 166ms. The
+4,347ms hydration block from §22 has stayed fixed.
+
+### 24.2 What was actually wrong
+
+A filter tick, measured per interaction:
+
+| Page | Control | checkbox | server | results | DOM mutations | blocked |
+|---|---|---|---|---|---|---|
+| ETC | View to Shop (section columns) | 2ms | 17-47ms | 218-404ms | **4,113** | 29-97ms |
+| ETC | View to Job Name column | 2ms | 20-50ms | 104-242ms | **3,649** | 66-118ms |
+| Projects | Sections to one info column | 4ms | ~31ms | 231-258ms | **3,330** | 262-440ms |
+
+The checkbox was already instant — that was §17.4's fix, and it held. The server was never
+slow. **The cost was three and a half thousand DOM mutations to stop showing a column that
+was already on the screen.**
+
+These filters are *presentational*. Hiding the Job Name column does not change which jobs
+are fetched or what any figure is; it changes what you can see. Yet each tick was a full
+route navigation: a fresh RSC payload, and React reconciling all 4,272 cells against a tree
+that differed by one column.
+
+### 24.3 The fix: render once, hide with a stylesheet
+
+**`lib/grid-view.ts`** + **`components/GridViewProvider.tsx`**. The grid is rendered
+complete; every cell carries `data-col` with the keys that can hide it; visibility is one
+generated `<style>` element. Hiding a column is a single text update to one node, so it
+costs the same whether the grid has 50 cells or 5,000.
+
+The URL still carries the view — Export re-runs the query server-side from the query
+string, saved Views snapshot it, and a shared link has to open the same thing — written with
+`history.replaceState`, which Next supports for exactly this and which syncs
+`useSearchParams` with no server re-render
+(`node_modules/next/dist/docs/01-app/02-guides/single-page-applications.md`).
+
+Two details that are load-bearing rather than incidental:
+
+- **Banded header colSpans.** A colSpan is a number in the DOM and no stylesheet can change
+  it, so each band declares the leaf columns it spans and its colSpan is recomputed. That is
+  the only per-change DOM work and it is O(bands) — 18 cells on this grid, not 4,272. It is
+  also computed **server-side for the first render** (`bandProps` in etc/page.tsx), so a URL
+  that already hides a group does not paint a sheared header before hydration.
+- **A band's entries are the leaf's FULL key set, not its section code.** The first version
+  compared codes only, so hiding a billing *group* hid all its cells but shrank none of the
+  bands above them: the phase row spanned 78 columns over a 58-column body and the whole
+  header sheared sideways. Caught in the browser, now pinned by a test.
+
+### 24.4 Why only some filters moved
+
+This is the whole safety argument, and it is per-filter rather than per-page.
+
+**Moved (nothing derives a figure from them):**
+
+- ETC `dept` — `totals` iterates `ETC_SECTIONS`, every section, not the visible ones; and
+  `sectionGrandTotals` is keyed per section code. Verified empirically: all **48 footer
+  figures byte-identical** with Shop hidden and again after restoring it.
+- ETC `jobname`, Projects `hide` (the seven info columns).
+
+**Deliberately left navigating:**
+
+- ETC `billables` — filters ROWS, and `visibleJobs` decides the job count, the KPI card
+  figures and the grand totals.
+- Projects `cols` — hiding a section changes the Engineering and Shop hour totals, which the
+  page sums over the visible sections only (`engCodes`/`shopCodes`).
+
+Hiding either of those with CSS would leave a *wrong* number on a financial report rather
+than a slow one. Reimplementing that arithmetic in the browser is a second source of truth
+for money, which is not a trade worth making for 200ms.
+
+### 24.5 After
+
+| Interaction | Before | After |
+|---|---|---|
+| ETC section columns — mutations | 4,113 | **10** |
+| ETC section columns — requests | 1 (596 KB) | **0** |
+| ETC section columns — results | 218-404ms | **6-7ms** |
+| ETC Job Name column — mutations | 3,649 | **0** |
+| Projects info column — mutations | 3,330 | **4** |
+| Projects info column — requests | 1 (953 KB) | **0** |
+| Header alignment, every state | — | body/header/footer agree in all states |
+| Footer figures across a toggle | — | 48/48 identical |
+
+One filter action is one request where it needs one, and none where it does not.
+
+### 24.6 Two of my own measurements were wrong, and it mattered
+
+Recorded because both would have sent this work in the wrong direction.
+
+- **A "3.1 second" filter result was my instrument.** The first probe polled
+  `querySelectorAll('td,th')` every 8ms — a 4,000-node query 125x/second, competing with the
+  render it was timing. Replacing it with a MutationObserver gave 231ms for the same click.
+  Anything that polls the DOM to time the DOM is measuring itself.
+- **"15 duplicate fetches for one filter click" did not exist.** A patched `window.fetch`
+  counter was accumulating SSE stream chunks and the previous test's traffic. Measured
+  properly with a `PerformanceObserver` on resources, one server-side filter click is
+  **exactly one request** (930 KB, 657ms).
+
+The general lesson, and it is the same one as §22: find the control case before believing
+the number. Idle observation windows over the same duration recorded **zero** long tasks,
+which is what established that the ~75ms tasks per toggle are real.
+
+### 24.7 What was NOT done, and what is not proven
+
+- **The remaining ~225ms per toggle is browser style+layout, not React.** Three long tasks of
+  ~57-101ms follow each toggle, with the result painted at 69-101ms. That is the cost of
+  recalculating a 4,272-cell table's layout when its column count changes, and it did not go
+  away — the old path paid it too, on top of the reconciliation. Total main-thread time per
+  toggle is not obviously lower than before; what collapsed is the network, the payload and
+  the mutation count. A cheaper mechanism exists (`<colgroup>` + `visibility: collapse`, or
+  `table-layout: fixed`) and both are riskier than this pass could verify.
+- **An intermittent ~3s stall was observed twice in ~15 ticks and never reproduced on
+  demand.** Server responded in 20ms; React committed at 3,077ms. It correlates with
+  `SLOW_AFTER_MS = 3_000` — a watchdog timer firing would flush a parked transition, which
+  fits the shape exactly — but that is a hypothesis, not a diagnosis. The two controls it was
+  seen on no longer navigate at all, so it cannot occur for them; whether it can still occur
+  on `billables`, `cols` or a month change is **unproven**.
+- **The page twice navigated to `/` on its own** during rapid scripted clicking, and did not
+  reproduce under deliberate stepping (six consecutive toggles, no `pushState`, no
+  `popstate`, URL correct throughout). Unexplained; possibly the automation. Recorded rather
+  than claimed fixed.
+- **Payload grew slightly** — `/etc` 596 to 615 KB, `/quoted` 953 to 961 KB — because every
+  column is now always printed. `?dept=Engineering` costs the same as the full grid where it
+  used to cost less. That is the intended trade: pay once on load, nothing per toggle.
+- **Tab navigation misses §40.18's 200ms shell target on the two big grids.** URL and active
+  state change in 12-52ms, and no route hangs, but the shell appears at 465ms (Projects) and
+  530ms (ETC). A revisit costs the same as a first visit (485ms) because every route under
+  `(app)` is dynamic via the layout's `auth()` — the constraint §14 documented. Nothing here
+  changed that.
+- **Dashboard is 210ms of server render on 5ms of database and a 57 KB payload.** ~200ms is
+  unaccounted for and was not investigated. It is the clearest remaining backend lead.
+- **Two `replaceState` calls per toggle.** The second is Next's own router sync (confirmed
+  from the stack), not this code. Harmless: same URL, no history entry, no request.
+- **Not covered by this pass at all:** row/column virtualization (still none, same reasoning
+  as §17.7), the Audit Log's 1,000-row load, responsive breakpoint and browser zoom testing,
+  and the Scheduler (a separate app on port 4003).
+
+### 24.8 Tests added
+
+`tests/grid-view.test.ts` (11) and `tests/etc-view.test.ts` (7). Both exist because of bugs
+this pass actually produced rather than bugs it imagined:
+
+- `nextHiddenGroups` had its boolean inverted, so clicking the box hid nothing and raised no
+  error — an inert filter, which is the exact complaint §40 is about.
+- `bandColSpan` compared section codes only, which sheared the banded header.
+- A band with every leaf hidden must report 0 so the caller hides it, because `colSpan={0}`
+  means "span to the end of the column group" in HTML rather than "span nothing".
+- `etcViewWriteParams` must CLEAR a param that is no longer needed; a stale `dept` would
+  survive a reload and re-hide a column the user had just restored.
+- Keys reach a stylesheet from the query string, so an unsafe key is dropped rather than
+  escaped.
+
+Suite: 574 passing, `tsc --noEmit` clean, lint clean on every new file.
+
+---
+
+## 25. Money Spent Month reconciled to Total ETO (2026-08-05)
+
+Reported as §41: the Money Spent Month figures in the app do not match the Total ETO
+report. They did not, by $30,117 for July 2026 and by multiples on individual jobs.
+
+### 25.1 The reference
+
+A Total ETO pivot for July 2026 — `Sum of Debit Amt / Sum of Credit Amt / Sum of Net
+DR/CR`, 35 jobs, grand total **$420,656 net** ($423,240 debit less $2,584 credit). It is
+an accounting report, and the credits are real and material.
+
+Transcribed into `scripts/parts-spent-recon.ts` as the reconciliation reference. The
+transcription is self-checking: the per-job nets must sum to the pivot's own printed grand
+total or the script refuses to run, so a misread digit cannot silently become the expected
+answer. It checks out exactly.
+
+### 25.2 What the app was doing, and why both of its formulas were wrong
+
+Two formulas existed in `sync-totaleto.ts`, and the app had used each in turn.
+
+**`getPartsCostSpentByJob`** sums `[Total Price]`, which is
+`remaining-uninvoiced-balance + everything-invoiced-to-date`. That is a point-in-time PO
+snapshot, not a monthly flow: a job carrying a large open purchase order contributes the
+PO's whole undelivered value to any month it was touched in.
+
+| Job | ETO pivot | this formula | over by |
+|---|---|---|---|
+| 1142 | $113,101 | **$1,065,713** | $952,612 |
+| 1130 | $79,211 | $101,546 | $22,335 |
+| 1148 | $71,899 | $81,984 | $10,085 |
+| 1143 | $5,385 | $12,114 | $6,729 |
+| 1157 | $11,772 | $16,397 | $4,625 |
+
+Those five jobs are exactly the rows flagged in red on the sheet that came with the
+report, so somebody had already found the symptom.
+
+**`getPartsCostPurchasedByJob`** (§30) sums the committed PO value on
+`POH.PurchaseDate`. Stable, defensible, internally consistent — the stored grid values
+matched it to one cent — and *not what the business measures*. July: $361,074 against the
+pivot's $420,656, and per-job it is not close (1160: app $103,231, pivot $17,427).
+
+So the answer was neither of them.
+
+### 25.3 The corrected formula
+
+`getPartsCostBookedByJob`, and it is now the only Money Spent Month definition.
+
+| | |
+|---|---|
+| DATE | `APBD.APDocDate` — on the BATCH DOCUMENT table |
+| AMOUNT | `APDocQty × APDocUnitPrice × (1 − APDocItemPctDisc) × APDocCurrRate` |
+| SIGN | kept — a credit memo is a negative line and nets off |
+| JOB | `APDD.ProjectID`, straight off the AP line |
+| SCOPE | part-cost AP lines only; Extra Costs excluded |
+| DEDUPE | none — the grain is already one row per booked AP line |
+
+Qty, price and line discount live on the DETAIL; the currency rate and the date live on
+the BATCH DOCUMENT. Mixing those up fails with `Invalid column name 'APDocCurrRate'`,
+which is how the first attempt was caught.
+
+**Naming trap worth recording.** §41.3 asks for "Purchased Date, not Invoice Date", and
+the business calls the pivot's date the Purchased Date — but it is `APDocDate`, not
+`POH.PurchaseDate`. On this basis a part bought in June and billed in July lands in
+**July**, which is the opposite of §41.3's worked example. The reference report's rule
+won, because §41.2 makes the report the reconciliation reference and §41.29.1 makes
+matching it the acceptance criterion. This reverses §30.
+
+### 25.4 The reconciliation
+
+| | July 2026 |
+|---|---|
+| Total ETO pivot (net) | $420,656 |
+| App before | $361,074 |
+| **App after** | **$420,616** |
+| Residual | **−$40 (0.0095%)** |
+
+**31 of 35 jobs to the dollar.** The four that miss are 1118 (−$9), 1130 (−$6), 1153
+(−$2), 1161 (−$23) — all in the same direction, the app slightly lower.
+
+Two candidate explanations were tested and **eliminated**:
+
+- *Unattributed AP lines.* Zero AP lines in July carry a null `ProjectID`, so nothing is
+  missing from job mapping (§41.6 clean for this month). `getPartsCostBookedByJob`
+  reports `unmatchedLines`/`unmatchedAmount` and `syncPartsCost` warns on them, so if that
+  ever stops being true it will say so rather than silently drop the money.
+- *Extra Costs.* July has $39,987 of shipping/fees/tariffs across 23 jobs, and including
+  any of it moves the four jobs the WRONG way — 1153 carries $624.85 of extra costs while
+  sitting $2 below the pivot, and 1161 carries none while sitting $23 below. So excluding
+  Extra Costs is correct, and now measured rather than assumed.
+
+The most likely remaining explanation is timing: all four gaps run the same direction, and
+a credit memo posted after the pivot was exported would produce exactly that. Not proven.
+
+Verified end to end in the running app: KPI strip "Parts spent" **$420,616** = bottom-row
+Money Spent Month **$420,616**, and Money Left $3,993,063 = $4,413,679 − $420,616.
+
+### 25.5 Also done
+
+- **`monthWindowUtc`** extracted into `lib/etc.ts` and tested: half-open `[start,
+  endExclusive)`, UTC, throwing on a malformed month. It was inline arithmetic in one
+  place; it is now one definition, and the December→January rollover and the
+  every-month-abuts-the-next property are pinned by tests.
+- **`scripts/parts-spent-audit.ts`** — separates the four possible causes of a
+  disagreement (basis / scope / staleness / job mapping) for any month, changes nothing.
+- **`scripts/parts-spent-recon.ts`** — the §41.9 reconciliation, re-runnable.
+
+### 25.6 Two scope corrections I had to make to my own audit
+
+Both produced a confident wrong number before being caught, and both were the same
+mistake: comparing totals across different job sets.
+
+- The first audit reported "5 stale jobs, $29,465 drift" between the stored values and the
+  app's own formula. That was entirely a scope mismatch — `stored` has rows for jobs the
+  ETC grid no longer shows, `purchased` does not. Scoped correctly, the drift was **one
+  cent**, on one job.
+- Then the same bug in a different column: `tApp` summed stored values for jobs outside the
+  pivot, making a reconciled month read $29,425 over.
+
+A total is only a total of something. Both fixes are commented in the scripts.
+
+### 25.7 Not done
+
+- **§41.12–41.26 — the entire UI half is untouched.** No KPI card relayout, no Refresh
+  Data relocation, no button tokens, no table-edge work, no responsive testing.
+- The **six** KPI blocks (not five) were already consolidated into one card by §37.1, but
+  they render as a 2×3 grid, so §41.13's single parallel row remains real work.
+- **Refresh Data already exists in the sidebar** (`Sidebar.tsx`), and §29 deliberately put
+  a second copy in the ETC toolbar and hides the sidebar one on that route. §41.16 asks to
+  reverse that; it has not been done.
+- **§41.10 needed nothing.** An undecided New ETC already contributes 0 to Diff and the
+  cell renders empty — Money Left is never printed as Diff. I initially misread the
+  history in `etc.ts` and thought this had to change; the rule directly below the one I
+  read is the current, third revision. Now pinned by tests.
+- **Only July 2026 is reconciled, and history is deliberately NOT restated.** Measured,
+  because the decision needed evidence rather than caution: recomputing the eight most
+  recent months on the new basis moves them by up to $1.8M, in BOTH directions —
+
+  | Month | Stored | Corrected (AP) | Delta |
+  |---|---|---|---|
+  | 2026-06 | $1,001,070 | $1,436,342 | +$435,272 |
+  | 2026-05 | $970,559 | $637,650 | −$332,908 |
+  | 2026-04 | $266,173 | $969,842 | +$703,669 |
+  | 2026-03 | $1,008,916 | $407,441 | −$601,475 |
+  | 2026-02 | $2,698,803 | $1,051,194 | −$1,647,609 |
+  | 2026-01 | $852,487 | $549,953 | −$302,534 |
+  | 2025-12 | $107,121 | $1,939,202 | +$1,832,081 |
+
+  Swinging both ways rules out one systematic basis error, and §26/§14 explain why: those
+  figures have MIXED provenance — a Power BI "ETC Historical" backfill, June's import from
+  the team's working Excel (which matched it to the dollar), and both TotalETO formulas at
+  different times. There is exactly ONE pivot to reconcile against and it covers July, so a
+  blind resync would replace signed-off, Excel-reconciled numbers with a recomputation
+  nobody can check. It would also be recomputing a moving target: an AP ledger for a closed
+  month legitimately changes as late documents post.
+
+  `syncPartsCost`'s `isMonthLocked` guard already prevents it, and it stays. Restating any
+  month is a per-month exercise needing that month's own ETO pivot;
+  `scripts/parts-spent-audit.ts <YYYY-MM>` shows the gap for any of them without writing.
+- No database indexes were added; the AP query is a monthly aggregate over an indexed date
+  and was not slow.
+
+---
+
+## 26. The KPI card's parallel row, and one Refresh Data (2026-08-05)
+
+The UI half of §41. Two of its asks turned out to be already done, one was done but not
+working where it mattered, and one reverses a decision from §29.
+
+### 26.1 Already in place
+
+- **§41.12, consolidate the KPI cards.** Done by §37.1. Worth noting the count: there are
+  **six** blocks, not the five §41 describes — Engineering hours, Shop hours, Parts spent,
+  People booked, Undefined hours, and Hours off the grid (which appears conditionally).
+- **§41.10, blank New ETC.** Already correct: an undecided cell contributes 0 to Diff and
+  the cell renders empty via `isNewEtcDecided`, so Money Left is never printed as Diff.
+  Now pinned by tests in `tests/money-spent-month.test.ts`.
+
+### 26.2 §41.13 — the parallel row, and why it was not working
+
+The strip already reached one row, at Tailwind's `xl`. `xl` is a **1280px viewport**, and
+this card is not the viewport: it is inset by a sidebar that is ~276px expanded. So a
+1440px laptop gives the card **1089px**, under the breakpoint, and the card fell back to
+three columns and two rows on exactly the "normal desktop" width the requirement is about.
+The breakpoint was measuring the wrong box.
+
+Fixed by making the section a `@container` and replacing the whole breakpoint ladder — and
+the `--kpi-cols` variable — with one rule:
+
+    repeat(auto-fit, minmax(175px, 1fr))
+
+`auto-fit` rather than a container-query threshold, because **the block count varies**.
+"One row from 1100px" is right for six blocks (183px each) and wrong for seven (157px,
+which clips), and a container query cannot read the block count in its condition — so any
+single threshold is wrong for one of the two cases. A per-block minimum is right for both,
+and it deleted `kpiGridStyle` along with the arbitrary-property class.
+
+**175px is measured, not chosen.** Forcing the real card to N-across and checking every
+text node for overflow: at 180px nothing clips; at 154px "24 eng · 21 shop" and "5 jobs not
+listed" both do. (Two elements report overflow at every width — they are `sr-only` spans
+with a 1px client width, and mistaking them for clipping is easy.)
+
+Measured after, by constraining the card and reading the laid-out geometry:
+
+| Card width | Rows | Per row | Equal height | Clipped | Detail links |
+|---|---|---|---|---|---|
+| 1089 (1440px viewport) | **1** | **6** | yes | 0 | 6 |
+| 1180 | 1 | 6 | yes | 0 | 6 |
+| 1000 | 2 | 3 | yes | 0 | 6 |
+| 820 | 2 | 3 | yes | 0 | 6 |
+| 560 | 2 | 3 | yes | 0 | 6 |
+| 420 | 3 | 2 | yes | 0 | 6 |
+| 340 | 6 | 1 | yes | 0 | 6 |
+
+All six Detail drill-throughs survive at every width, nothing clips anywhere, and no width
+needs horizontal scrolling. Browser zoom needs no separate handling: zoom changes the
+card's effective width, so the same rule covers 80%–200%.
+
+### 26.3 §41.16 — one Refresh Data, in the sidebar
+
+Removed from the Monthly ETC toolbar; the sidebar copy is no longer route-gated.
+
+This reverses §29, which had moved it INTO that toolbar on the reasoning that "one button
+on every page beats one per page. True in the abstract, wrong in practice: this is the grid
+people refresh, the sidebar collapses to a rail, and a control nobody can find is not a
+control."
+
+That objection is real, and it is answered by the rail rather than by a second button:
+`compact={collapsed}` renders it as an icon with its label as a tooltip, so it never
+disappears. There was only ever ONE refresh path (`lib/refresh-actions` →
+`refresh-service` → `runAllSyncs`); every one of these changes has been about how many
+buttons point at it. Verified on `/etc`: exactly one Refresh Data on screen, zero in
+`<main>`, sitting beside Collapse as §41.17 asks.
+
+`tests/refresh-data-placement.test.ts` counts call sites across the routes, because this
+placement has now been reversed three times (§25, §29, §41.16) and each reversal looked
+like "moved a button" in the diff while the actual failure mode was two buttons for one
+action.
+
+### 26.4 Not done
+
+**§41.19–41.22 (button size tokens) and §41.23–41.25 (table edges) were not started.** No
+shared size tokens per button category, no compaction pass, no table border/radius/edge
+alignment work. §41.26's responsive sweep was done for the KPI card only — the buttons and
+tables were not tested at the listed breakpoints or zoom levels.
+
+---
+
+## 27. Button geometry and table edges (2026-08-05)
+
+§41.19–41.26. Both were framed as "make it consistent", so the first step was measuring
+what was actually rendered rather than reading class strings — and the measurement found
+§41.21's own worked example sitting in the Projects toolbar.
+
+### 27.1 The audit
+
+Every control in the Projects toolbar band, measured on the running production build:
+**eight distinct heights and four distinct corner radii in one row.**
+
+| Height | Controls |
+|---|---|
+| 15px | Select all, Clear (x2 groups) |
+| 23px | − / + zoom steppers |
+| 26px | Save current as view, Set as Team default |
+| 28px | nested menu group summaries |
+| **30px** | **Show all** |
+| **34px** | **Read-only, Filters, Dates, Sections, Display, Views** |
+| **39px** | **Export** |
+| 42px | Start Date / Complete Date inputs |
+
+The three bolded rows are the same visual line: six triggers at 34px, Export 5px taller,
+and Show all 4px shorter between them. §41.21 lists "one unusually tall button beside
+smaller controls" as the thing to avoid, and it was there literally.
+
+Two other findings from the same pass:
+
+- **`BUTTON_PRIMARY_SM`, `BUTTON_GHOST` and `BUTTON_DANGER` had zero call sites.** Three of
+  the six categories §41.22 asks to standardise did not exist in the rendered UI at all.
+- **"Select all" / "Clear" were 15px tall** — a bare underlined span, the text line and
+  nothing else. §41.20 rules that out as a click target outright.
+
+### 27.2 Tokens, and why the height is in rem
+
+Height, radius and horizontal padding are no longer written per button:
+
+| Category | Height | Radius | Padding |
+|---|---|---|---|
+| Standard — toolbar triggers, primary, secondary | `BTN_H_STANDARD` 2.4rem = **36px** | rounded-lg | px-3.5 |
+| Compact — in-menu, in-row | `BTN_H_COMPACT` 1.9rem = ~28px | rounded-md | px-2.5 |
+
+**rem, not px, and 2.4rem rather than `h-9`.** The root font-size is 15px and the sidebar's
+Text size control moves it between 12 and 20 — a px height would stop matching its own
+label the moment anyone touched that control, which is the same rem-vs-px trap the frozen
+grid columns hit. And `h-9` is 2.25rem = 33.75px at the default root, *under* §41.20's 36px
+floor, which is why the token is an explicit rem instead of a Tailwind step.
+
+Note this is a **reduction**, per §41.19: primary and secondary were `px-5 py-2.5` → 39-40px
+tall with 19px of side padding, and are now 36px with 13px.
+
+Three dead tokens deleted, replaced by one live `BUTTON_COMPACT` (+ a danger variant and
+`BUTTON_MENU_LINK` for the understated in-menu actions, which keeps the text-link look but
+carries the compact height and a padded hit box).
+
+### 27.3 After
+
+Measured on the same toolbar, at the real 100% zoom with the default root font:
+
+| | Before | After |
+|---|---|---|
+| Main toolbar row heights | 34, 34, 34, 34, 34, 34, **39**, **30** | **36 × 8** |
+| Distinct radii in that row | 4 | **1** (7.5px) |
+| Select all / Clear | **15px** | **29px** |
+
+Zoom 80 / 100 / 125 / 150 / 200%: the row keeps a single uniform height at every level
+(31, 40, 49, 59px as it scales), with zero clipped labels and zero overlapping controls.
+
+Heights that remain different are all *inside dropdown panels* — the zoom steppers (23px),
+the Views menu's two actions (26px), the nested group summaries (28px) and the date inputs
+(42px). Those are separate categories in separate containers, which §41.21 allows; see
+§27.5 for the ones that are still under an accessible target.
+
+### 27.4 Table edges
+
+The two big grids had drifted into two different treatments, and the shared `TABLE_CARD`
+token was used by **neither** of them:
+
+| | Corners | Border |
+|---|---|---|
+| Monthly ETC | sharp | `sdc-border` on three sides, `#808080` on top |
+| Projects | `rounded-xl` | `sdc-border` all round |
+
+The colour is not a taste call. `TABLE_GRID` gives every cell a **bottom and left** border
+only, so the topmost cells have no top edge and the rightmost have no right edge — the
+CONTAINER's border is literally the grid's top and right gridline. A different colour makes
+the frame two-toned and the corners fail to meet, which is §41.23's "grid lines meet
+cleanly" and "left and right table edges are visually complete". The ETC grid had noticed
+half of this and matched its top border only; Projects had not noticed at all.
+
+One `GRID_SCROLLER` token now, used by both: `#808080` on all four sides (from a named
+`GRID_LINE_BORDER`, so the hex exists once), square corners, one `shadow-sm` on the frame.
+Square because `rounded-xl` on a scroll container clips the corner cells' gridlines —
+§41.23's "scroll containers do not cut off rounded corners incorrectly". A rounded frame
+and a square grid cannot both be right, and the grid wins: these read as spreadsheets.
+
+Verified on Projects: all four borders `rgb(128,128,128)`, identical to the cells' own
+gridline colour, radius `0px`, one shadow. §41.25 needed nothing — there was never a
+per-cell shadow or a blur.
+
+### 27.5 Not done
+
+- **The in-menu controls still under an accessible target.** The zoom steppers (23px) and
+  the Views menu's two actions (26px) were measured but not resized. They are inside
+  panels rather than the toolbar row, so they are not part of the §41.21 symmetry defect,
+  but 23px is small for a click target and §41.20 would want them larger.
+- **§41.26 was run on Projects only.** The zoom sweep and the width sweep covered that
+  toolbar and grid plus the KPI card (§26.2); the ETC toolbar, the Employees and Audit Log
+  tables and the modals were not measured at the listed breakpoints.
+- **Row and header heights across tables were not normalised** (§41.24's "consistent header
+  heights / row heights / cell padding" between tables). The two grids share `TABLE_GRID`
+  and now share a frame, but their row density is still set per page.
+- `tests/control-tokens.test.ts` pins the token relationships (one height per category, one
+  radius, compact < standard, the 36px floor, rem not px, frame colour equals gridline
+  colour, square corners, both pages on the shared scroller). It cannot check rendered
+  geometry — that was the browser measurement above.

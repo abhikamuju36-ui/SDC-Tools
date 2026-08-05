@@ -57,7 +57,7 @@ export function SortButton({
         fill="none"
         stroke="currentColor"
         strokeWidth="2"
-        className={`shrink-0 transition-transform duration-150 ${active ? "opacity-100" : "opacity-30"} ${
+        className={`shrink-0 motion-interactive ${active ? "opacity-100" : "opacity-30"} ${
           active && currentDir === "desc" ? "rotate-180" : ""
         }`}
       >

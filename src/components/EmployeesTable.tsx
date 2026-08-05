@@ -113,13 +113,13 @@ export function EmployeesTable({ rows }: { rows: EmployeeRow[] }) {
           <header className={`flex shrink-0 items-center justify-between gap-2 px-3 py-2 ${card.theme.band} ${card.theme.onBand}`}>
             <div className="flex min-w-0 items-center gap-2">
               {card.code && (
-                <span className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-[10px] font-bold ${card.theme.chip}`}>
+                <span className={`shrink-0 rounded px-1.5 py-0.5 font-mono text-label font-bold ${card.theme.chip}`}>
                   {card.code}
                 </span>
               )}
-              <h3 className="truncate text-[11px] font-bold tracking-wider uppercase">{card.title}</h3>
+              <h3 className="truncate text-note font-bold tracking-wider uppercase">{card.title}</h3>
             </div>
-            <span className="shrink-0 text-[11px] font-semibold tabular-nums opacity-80">{card.people.length}</span>
+            <span className="shrink-0 text-note font-semibold tabular-nums opacity-80">{card.people.length}</span>
           </header>
           {/* flex-1 + overflow-y-auto: the list takes whatever height is left in
               the fixed box and scrolls only if it runs out. */}
@@ -127,7 +127,7 @@ export function EmployeesTable({ rows }: { rows: EmployeeRow[] }) {
             {card.people.map((p, i) => (
               <li
                 key={p.id}
-                className={`flex items-baseline gap-2 px-3 py-1 text-[11px] hover:bg-sdc-blue-light/40 ${
+                className={`flex items-baseline gap-2 px-3 py-1 text-note hover:bg-sdc-blue-light/40 ${
                   i > 0 ? "border-t border-sdc-border-soft" : ""
                 } ${p.active ? "" : "bg-sdc-gray-50/60"}`}
               >
@@ -140,13 +140,13 @@ export function EmployeesTable({ rows }: { rows: EmployeeRow[] }) {
                     someone reports to is the one thing that still varies. The
                     full record stays on the row's tooltip. */}
                 <span
-                  className="max-w-[45%] shrink-0 truncate text-[10px] text-sdc-gray-400"
+                  className="max-w-[45%] shrink-0 truncate text-label text-sdc-gray-400"
                   title={`${p.name} — ${p.discipline}, reports to ${p.supervisor}, ${p.department?.trim() || DASH}`}
                 >
                   {p.supervisor === DASH ? "" : p.supervisor}
                 </span>
                 {!p.active && (
-                  <span className="shrink-0 rounded bg-sdc-gray-100 px-1 text-[9px] font-semibold text-sdc-gray-500">Inactive</span>
+                  <span className="shrink-0 rounded bg-sdc-gray-100 px-1 text-micro font-semibold text-sdc-gray-500">Inactive</span>
                 )}
               </li>
             ))}

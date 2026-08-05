@@ -2,8 +2,8 @@ import { prisma } from "@/lib/prisma";
 import { VALID_JOB_TYPES, etcActiveJobFilter } from "@/lib/job-filters";
 import { runDax } from "@/lib/powerbi-client";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
-import { calcHoursLeft, round2, isMonthLocked, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft } from "@/lib/etc";
-import { getPartsCostSpentByJob } from "@/lib/sync-totaleto";
+import { calcHoursLeft, round2, isMonthLocked, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, monthWindowUtc } from "@/lib/etc";
+import { getPartsCostBookedByJob } from "@/lib/sync-totaleto";
 import { resolveEtcPeriodName } from "@/lib/etc-period";
 import {
   fetchJobHoursRows,
@@ -379,10 +379,27 @@ export async function syncPartsCost(month: string): Promise<{ rowsUpserted: numb
     return { rowsUpserted: 0 };
   }
 
-  const [year, monthNum] = month.split("-").map(Number);
-  const monthStart = new Date(Date.UTC(year, monthNum - 1, 1));
-  const monthEndExclusive = new Date(Date.UTC(year, monthNum, 1));
-  const spentByJobId = await getPartsCostSpentByJob(monthStart, monthEndExclusive);
+  // One definition of "which dates are this month", shared and tested — see
+  // monthWindowUtc. Half-open [start, endExclusive), UTC.
+  const { start: monthStart, endExclusive: monthEndExclusive } = monthWindowUtc(month);
+  // §41: the AP-document basis, reconciled to the Total ETO report — see
+  // getPartsCostBookedByJob for the date, the amount, the sign rule and the measured
+  // reasons Extra Costs stay out. This SUPERSEDES §30's purchased-date basis
+  // (getPartsCostPurchasedByJob), which was internally consistent but $30,117 away from
+  // the business's own report for July 2026, and off by multiples on individual jobs.
+  //
+  // getPartsCostSpentByJob is still used, but only by the Projects grid's cumulative
+  // Parts Cost Actual column, which is a lifetime measure and a different question.
+  const booked = await getPartsCostBookedByJob(monthStart, monthEndExclusive);
+  const spentByJobId = booked.net;
+  // An AP line with no ProjectID belongs to nobody and would silently vanish. Surfaced in
+  // the sync log rather than reassigned (§41.6); it was 0 lines for July 2026.
+  if (booked.unmatchedLines > 0) {
+    console.warn(
+      `[parts-cost] ${month}: ${booked.unmatchedLines} AP line(s) totalling ` +
+        `${booked.unmatchedAmount.toFixed(2)} carry no ProjectID and are in NO job's Money Spent.`,
+    );
+  }
 
   // costQuoted comes along now: it is the Parts Cost Quoted column on the
   // Projects tab, and it is what a job's FIRST parts month opens at.

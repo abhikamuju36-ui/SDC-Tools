@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
+import { recordChanges, classifyChange } from "@/lib/change-log";
 import { assertStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
 import { CELL_SPECS, parseCell } from "@/lib/cell-rules";
 
@@ -30,6 +31,11 @@ export async function saveStandardRates(engrRate: number, shopRate: number, part
   }
   ({ engrRate, shopRate, partsMarkup, contingencyRate } = checked);
 
+  // Read BEFORE the write, so the change events below can say what each rate was.
+  // These four drive every fee on the sheet, so "who changed the Engineering rate
+  // from 170 to 185" is the single most valuable line this app can record.
+  const before = await prisma.standardSheetSetting.findUnique({ where: { id: 1 } });
+
   await prisma.standardSheetSetting.upsert({
     where: { id: 1 },
     update: { engrRate, shopRate, partsMarkup, contingencyRate },
@@ -42,6 +48,45 @@ export async function saveStandardRates(engrRate: number, shopRate: number, part
     entityId: "1",
     summary: `Set global ETC rates: ENGR ${engrRate}, Shop ${shopRate}, Parts ${partsMarkup}, Contingency ${contingencyRate}`,
   });
+
+  // ── Announce them (§33.1) ─────────────────────────────────────────────────
+  //
+  // These are GLOBAL: one change re-prices every job's Standard Fees on every open
+  // ETC page. So they matter more to other users than an individual cell does, and
+  // they were among the paths that announced nothing at all.
+  //
+  // No cellKey: the rates live in a dialog rather than in a grid cell, and their
+  // effect is the whole Standard block rather than one input. An event with no
+  // cellKey is exactly how a change says "refetch, I am not one cell" — see
+  // RealtimeProvider's onmessage.
+  const rateFields: { key: keyof typeof checked; label: string }[] = [
+    { key: "engrRate", label: "Engineering Rate" },
+    { key: "shopRate", label: "Shop Rate" },
+    { key: "partsMarkup", label: "Parts Markup" },
+    { key: "contingencyRate", label: "Contingency Rate" },
+  ];
+  await recordChanges(
+    rateFields
+      .map(({ key, label }) => {
+        const previousValue = before ? String(Number(before[key])) : null;
+        const newValue = String(checked[key]);
+        return { label, previousValue, newValue };
+      })
+      // Only the rates that actually moved. All four post together whether or not
+      // they were touched, so without this one edit would announce four changes.
+      .filter((r) => r.previousValue !== r.newValue)
+      .map((r) => ({
+        tab: "Monthly ETC",
+        rowRef: "ETC Rates (all jobs)",
+        columnName: r.label,
+        previousValue: r.previousValue,
+        newValue: r.newValue,
+        changeType: classifyChange(r.previousValue, r.newValue),
+        entityType: "StandardSheetSetting",
+        entityId: 1,
+      })),
+    { action: "standardRates.save" },
+  );
 
   revalidatePath("/etc");
 }

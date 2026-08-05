@@ -17,6 +17,7 @@
 /.next/
 /.next-preview*/
 /.next-verify*/
+/.next-perf*/
 /.next-buildcheck/
 /out/
 

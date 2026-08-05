@@ -3,6 +3,7 @@ import AppShell from "@/components/AppShell";
 import { LiveRefresh } from "@/components/LiveRefresh";
 import { RealtimeProvider } from "@/components/RealtimeProvider";
 import { ChangeNotifications } from "@/components/ChangeNotifications";
+import { InteractionMetrics } from "@/components/InteractionMetrics";
 import { getSchedulerBaseUrl } from "@/lib/scheduler-link";
 import { withSchedulerSso } from "@/lib/scheduler-sso";
 
@@ -45,6 +46,10 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
           here rather than per-page so every tab behaves identically. */}
       <RealtimeProvider />
       <ChangeNotifications />
+      {/* Interaction timing (§38.14), once for the whole app so every route is measured
+          the same way. Renders nothing, sends nothing, and stays dormant in production
+          until somebody asks for it with ?perf=1 — see the header note. */}
+      <InteractionMetrics />
       {children}
     </AppShell>
   );

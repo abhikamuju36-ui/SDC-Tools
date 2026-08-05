@@ -195,9 +195,9 @@ export function HoursDetailPanel({
   };
 
   const SELECT =
-    "h-7 rounded-md border border-sdc-border bg-white px-1.5 text-[11px] text-sdc-navy outline-none focus:border-sdc-blue";
+    "h-7 rounded-md border border-sdc-border bg-white px-1.5 text-note text-sdc-navy outline-none focus:border-sdc-blue";
   const CHIP =
-    "h-7 rounded-md border px-2 text-[11px] font-medium transition-colors focus-visible:outline-none";
+    "h-7 rounded-md border px-2 text-note font-medium motion-interactive focus-visible:outline-none";
   const CHIP_OFF = "border-sdc-border bg-white text-sdc-navy hover:bg-sdc-blue-light";
   const CHIP_ON = "border-sdc-blue bg-sdc-blue text-white hover:bg-sdc-blue-dark";
 
@@ -206,7 +206,7 @@ export function HoursDetailPanel({
       <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
         <div>
           <p className="text-sm font-bold text-sdc-navy">{title ?? "Hours Detail"}</p>
-          <p className="text-[11px] text-sdc-gray-500">
+          <p className="text-note text-sdc-gray-500">
             {/* Says what the table currently IS. Grouped, "25 of 25 lines" would
                 describe rows that are no longer on screen. */}
             {grouped
@@ -216,13 +216,13 @@ export function HoursDetailPanel({
               : `${showJob ? "Every booked punch this month" : "Every booked punch on this job"} — ${rows.length.toLocaleString()} of ${detail.rows.length.toLocaleString()} lines`}
             {detail.truncated && " (capped at 4,000 — oldest lines omitted)"}
           </p>
-          {note && <p className="mt-0.5 max-w-2xl text-[11px] leading-tight text-sdc-yellow-text">{note}</p>}
+          {note && <p className="mt-0.5 max-w-2xl text-note leading-tight text-sdc-yellow-text">{note}</p>}
         </div>
         <div className="flex flex-wrap items-center gap-2">
           {/* Group-by chips. Combinable and click-ordered — see the note where
               groupBy is declared. Placed before the filters because rolling up
               changes what the table IS, where the selects only narrow it. */}
-          <span className="text-[11px] font-medium text-sdc-gray-500">Group by</span>
+          <span className="text-note font-medium text-sdc-gray-500">Group by</span>
           {GROUP_KEYS.map((k) => {
             const on = groupBy.includes(k);
             const rank = groupBy.indexOf(k) + 1;
@@ -289,7 +289,7 @@ export function HoursDetailPanel({
           <button
             type="button"
             onClick={onClose}
-            className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light"
+            className="rounded-md border border-sdc-border bg-white px-2 py-1 text-note font-medium text-sdc-navy hover:bg-sdc-blue-light"
           >
             Close
           </button>
@@ -338,7 +338,7 @@ export function HoursDetailPanel({
                 return (
                   <Fragment key={g.key}>
                     <tr
-                      className={`text-[11px] hover:bg-sdc-blue-light/40 ${i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}`}
+                      className={`text-note hover:bg-sdc-blue-light/40 ${i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}`}
                     >
                       {g.values.map((v, vi) => (
                         <td key={groupBy[vi]} className="px-2 py-1 text-sdc-navy" title={v}>
@@ -355,7 +355,7 @@ export function HoursDetailPanel({
                               title={open ? "Hide these punches" : `Show the ${g.lines} punch${g.lines === 1 ? "" : "es"} behind this`}
                               className="flex w-full items-center gap-1 text-left hover:text-sdc-blue-dark"
                             >
-                              <span aria-hidden="true" className={`shrink-0 text-[9px] text-sdc-gray-500 ${open ? "rotate-90" : ""}`}>
+                              <span aria-hidden="true" className={`shrink-0 text-micro text-sdc-gray-500 ${open ? "rotate-90" : ""}`}>
                                 ▶
                               </span>
                               <span className="line-clamp-1">{v}</span>
@@ -379,7 +379,7 @@ export function HoursDetailPanel({
                         <td colSpan={groupBy.length + 2} className="bg-sdc-blue-light/20 px-2 py-1.5">
                           <table className={`w-full text-sm ${TABLE_GRID}`}>
                             <thead>
-                              <tr className="[&>th]:px-2 [&>th]:py-1 [&>th]:text-left [&>th]:text-[10px] [&>th]:font-semibold [&>th]:text-sdc-gray-500">
+                              <tr className="[&>th]:px-2 [&>th]:py-1 [&>th]:text-left [&>th]:text-label [&>th]:font-semibold [&>th]:text-sdc-gray-500">
                                 <th className="w-24">Date</th>
                                 {detailCols.job && <th className="w-56">Job</th>}
                                 {detailCols.employee && <th>Employee</th>}
@@ -390,7 +390,7 @@ export function HoursDetailPanel({
                             </thead>
                             <tbody>
                               {g.rows.map((r, ri) => (
-                                <tr key={`${r.date}-${r.employee}-${r.section}-${ri}`} className="text-[11px]">
+                                <tr key={`${r.date}-${r.employee}-${r.section}-${ri}`} className="text-note">
                                   <td className="px-2 py-0.5 font-mono text-sdc-navy">{r.date}</td>
                                   {detailCols.job && (
                                     <td className="px-2 py-0.5 text-sdc-navy" title={r.job}>
@@ -425,7 +425,7 @@ export function HoursDetailPanel({
                 rows.map((r, i) => (
                 <tr
                   key={`${r.date}-${r.employee}-${r.section}-${i}`}
-                  className={`text-[11px] hover:bg-sdc-blue-light/40 ${i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}`}
+                  className={`text-note hover:bg-sdc-blue-light/40 ${i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}`}
                 >
                   <td className="px-2 py-1 font-mono text-sdc-navy">{r.date}</td>
                   {showJob && (
@@ -446,7 +446,7 @@ export function HoursDetailPanel({
               ))}
             </tbody>
             <tfoot className="sticky bottom-0 bg-sdc-gray-100">
-              <tr className="text-[11px] font-bold text-sdc-navy">
+              <tr className="text-note font-bold text-sdc-navy">
                 {/* Spans everything left of Hours. Grouped that is the dimension
                     columns plus Lines; ungrouped it is the punch columns. Getting this
                     wrong doesn't error — it just shunts the total out of its column. */}

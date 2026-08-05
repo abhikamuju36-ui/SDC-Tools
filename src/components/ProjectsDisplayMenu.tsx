@@ -85,12 +85,12 @@ export function ProjectsDisplayMenu() {
           fill="none"
           stroke="currentColor"
           strokeWidth="1.8"
-          className="shrink-0 opacity-70 transition-transform duration-150 group-open:rotate-180"
+          className="shrink-0 opacity-70 motion-interactive group-open:rotate-180"
         >
           <path d="M3.5 6 L8 10.5 L12.5 6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </summary>
-      <div className="absolute right-0 top-full z-30 mt-2 flex w-max min-w-[13rem] flex-col gap-2 rounded-lg border border-sdc-border bg-white p-2.5 shadow-lg">
+      <div className="motion-menu-panel absolute right-0 top-full z-30 mt-2 flex w-max min-w-[13rem] flex-col gap-2 rounded-lg border border-sdc-border bg-white p-2.5 shadow-lg">
         <label className="flex cursor-pointer items-center justify-between gap-3">
           <span title="Show or hide actual hours next to quoted in each cell">Actual hours in cells</span>
           <input type="checkbox" checked={showActuals} onChange={toggleActuals} className="h-3.5 w-3.5 shrink-0" />

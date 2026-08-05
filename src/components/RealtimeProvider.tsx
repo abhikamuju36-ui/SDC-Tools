@@ -3,6 +3,12 @@
 import { useCallback, useEffect, useRef, useSyncExternalStore } from "react";
 import { requestLiveRefresh, requestThrottledLiveRefresh } from "@/components/LiveRefresh";
 import { applyRemoteEtcValues } from "@/lib/etc-remote-values";
+import {
+  setRealtimeStatus,
+  subscribeRealtimeStatus,
+  readRealtimeStatus,
+  type RealtimeStatus,
+} from "@/lib/realtime-status";
 
 // The client half of the realtime layer, mounted once for the whole app.
 //
@@ -203,24 +209,13 @@ export function dismissAllChanges(): void {
 }
 
 // ── Connection state, for the banner to be honest about ─────────────────────
-export type RealtimeStatus = "connecting" | "live" | "offline";
-let status: RealtimeStatus = "connecting";
-const statusListeners = new Set<() => void>();
-
-function setStatus(next: RealtimeStatus) {
-  if (status === next) return;
-  status = next;
-  for (const l of statusListeners) l();
-}
-
-export function subscribeRealtimeStatus(cb: () => void): () => void {
-  statusListeners.add(cb);
-  return () => statusListeners.delete(cb);
-}
-
-export function readRealtimeStatus(): RealtimeStatus {
-  return status;
-}
+//
+// The store itself is in lib/realtime-status.ts so LiveRefresh can read it without
+// an import cycle (this file imports requestLiveRefresh from it). Re-exported here
+// because this is where consumers already look for it.
+const setStatus = setRealtimeStatus;
+export { subscribeRealtimeStatus, readRealtimeStatus };
+export type { RealtimeStatus };
 
 export function RealtimeProvider() {
   const retryRef = useRef(0);

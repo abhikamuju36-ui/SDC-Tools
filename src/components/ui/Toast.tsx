@@ -9,6 +9,7 @@
 // that renders in isolation (tests, stories) never crashes.
 
 import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { useExitList } from "@/components/useMotion";
 
 type ToastType = "success" | "error" | "info";
 type ToastItem = { id: number; message: string; type: ToastType };
@@ -61,15 +62,32 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
 
   const dismiss = (id: number) => setToasts((prev) => prev.filter((t) => t.id !== id));
 
+  // ── Enter and exit, not appear and vanish (§36.13) ────────────────────────
+  //
+  // React unmounts a removed item on the spot, so an exit animation on a toast never
+  // ran — a confirmation popped in and blinked out, which on the success message
+  // after a 20-second refresh is the one moment the user is actually watching.
+  //
+  // useExitList keeps a dismissed toast mounted, marked `leaving`, for exactly as long
+  // as the CSS animation lasts (both read --motion-panel / PANEL_MS, so they cannot
+  // disagree), and holds it in its original slot so the ones above it do not jump while
+  // it goes (§36.14). Under reduced motion it passes items straight through, so a
+  // dismissed toast is simply gone.
+  const shown = useExitList(toasts, (t) => String(t.id));
+
   return (
     <ToastCtx.Provider value={{ toast }}>
       {children}
       <div className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2" aria-live="polite" aria-atomic="false">
-        {toasts.map((t) => (
+        {shown.map(({ key, item: t, leaving }) => (
           <div
-            key={t.id}
+            key={key}
             role="status"
+            // motion-toast-out also sets pointer-events: none, so a toast on its way out
+            // can never swallow a click meant for the one behind it or for the grid.
             className={`pointer-events-auto flex items-start gap-2 rounded-lg border px-3.5 py-2.5 text-sm shadow-lg ${
+              leaving ? "motion-toast-out" : "motion-toast-in"
+            } ${
               t.type === "error"
                 ? "border-sdc-red-border bg-sdc-red-bg text-sdc-red-text"
                 : t.type === "info"
@@ -83,7 +101,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
               type="button"
               onClick={() => dismiss(t.id)}
               aria-label="Dismiss"
-              className="-mr-1 shrink-0 rounded p-0.5 opacity-60 hover:opacity-100"
+              className="motion-interactive -mr-1 shrink-0 rounded p-0.5 opacity-60 hover:opacity-100"
             >
               <svg viewBox="0 0 16 16" width="13" height="13" fill="none" stroke="currentColor" strokeWidth="1.8">
                 <path d="M4 4 L12 12 M12 4 L4 12" strokeLinecap="round" />

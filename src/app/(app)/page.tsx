@@ -167,8 +167,12 @@ export default async function Home({
             <div
               className={`relative ${
                 s.alert
-                  ? `${card("p-5")} border-sdc-yellow bg-sdc-yellow-bg/40 transition-shadow hover:shadow-md`
-                  : `${card("p-5")} transition-shadow hover:shadow-md`
+                  // No transition-shadow here any more: card() carries
+                  // `motion-interactive`, which already transitions box-shadow at the
+                  // shared duration. Two transition declarations on one element means
+                  // whichever Tailwind emits last wins, silently (§36.17).
+                  ? `${card("p-5")} border-sdc-yellow bg-sdc-yellow-bg/40 hover:shadow-md`
+                  : `${card("p-5")} hover:shadow-md`
               }`}
             >
               {icon && (
@@ -189,7 +193,7 @@ export default async function Home({
                 </div>
               )}
               <p className={`pr-8 text-xs font-semibold ${s.alert ? "text-sdc-yellow-text" : "text-sdc-gray-600"}`}>{s.label}</p>
-              <p className={`mt-3.5 font-heading text-[27px] font-bold tracking-tight ${s.alert ? "text-sdc-yellow-text" : "text-sdc-navy"}`}>
+              <p className={`mt-3.5 font-heading text-3xl font-bold tracking-tight ${s.alert ? "text-sdc-yellow-text" : "text-sdc-navy"}`}>
                 {s.value}
               </p>
             </div>
@@ -264,7 +268,7 @@ export default async function Home({
                   <p className="truncate text-sm font-semibold text-sdc-navy">{f.label}</p>
                   {f.monthScoped && (
                     <span
-                      className="shrink-0 rounded bg-sdc-gray-100 px-1.5 py-0.5 text-[10px] font-medium text-sdc-gray-600"
+                      className="shrink-0 rounded bg-sdc-gray-100 px-1.5 py-0.5 text-label font-medium text-sdc-gray-600"
                       title="Only the latest open ETC month — a submitted month is frozen and never touched"
                     >
                       open month only
@@ -307,7 +311,7 @@ export default async function Home({
             <Link
               key={job.id}
               href={`/jobs/${job.id}`}
-              className="flex items-center justify-between px-6 py-3.5 text-sm transition-colors hover:bg-sdc-blue-light/40"
+              className="motion-interactive flex items-center justify-between px-6 py-3.5 text-sm hover:bg-sdc-blue-light/40"
             >
               <span>
                 <span className="font-mono text-sdc-gray-400">#{job.jobId}</span>{" "}

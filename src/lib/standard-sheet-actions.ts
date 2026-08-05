@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
+import { recordChanges, classifyChange, type CellChange } from "@/lib/change-log";
 import { assertStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
 import { round2 } from "@/lib/etc";
 import { CELL_SPECS, parseCell, type FieldSpec } from "@/lib/cell-rules";
@@ -80,6 +81,10 @@ export async function savePools(month: string, formData: FormData) {
   await assertMonthNotSubmitted(month);
   const categories = ["ENGINEERING_PM", "ENGINEERING_WARRANTY", "SHOP_MANUFACTURING", "SHOP_WARRANTY"] as const;
   const changes: Record<string, unknown>[] = [];
+  // Per-cell events for the realtime feed and the queryable history, built alongside
+  // the audit `changes` blob above rather than derived from it — that blob records
+  // every pool the save touched, whether or not its values moved.
+  const cellChanges: CellChange[] = [];
 
   // One parser, from lib/cell-rules.ts (§27.15). What this replaces is a local
   // `Number.isFinite(n) || n < 0` that was the fourth different spelling of the same
@@ -120,6 +125,30 @@ export async function savePools(month: string, formData: FormData) {
     const standardFee = round2(newEtcHours * rate);
     writes.push({ id: pool.id, data: { hoursPulledThisMonth, rate, newEtcHours, standardFee } });
     changes.push({ category, hoursPulledThisMonth, rate, newEtcHours, standardFee });
+    // The two MANUAL cells only. newEtcHours and standardFee are derived from them
+    // (see above), so announcing those as well would report one edit as four changes
+    // and bury the one a reader cares about.
+    cellChanges.push(
+      ...(
+        [
+          { field: "hoursPulledThisMonth", label: "Hours Pulled", stored: Math.round(Number(pool.hoursPulledThisMonth)), next: hoursPulledThisMonth, cell: `pulled__${category}` },
+          { field: "rate", label: "Rate", stored: Number(pool.rate), next: rate, cell: `rate__${category}` },
+        ] as const
+      )
+        .filter((f) => String(f.stored) !== String(f.next))
+        .map((f) => ({
+          tab: "Monthly ETC",
+          // The pool, not a job — these four rows are department-level buckets.
+          rowRef: `${POOL_LABELS[category] ?? category} pool (${month})`,
+          columnName: f.label,
+          previousValue: String(f.stored),
+          newValue: String(f.next),
+          changeType: classifyChange(String(f.stored), String(f.next)),
+          entityType: "CategoryPool",
+          entityId: pool.id,
+          cellKey: f.cell,
+        })),
+    );
   }
   await prisma.$transaction(writes.map((w) => prisma.categoryPool.update({ where: { id: w.id }, data: w.data })));
 
@@ -130,8 +159,20 @@ export async function savePools(month: string, formData: FormData) {
     summary: `Saved category pool cells for ${month}`,
     metadata: { changes },
   });
+  // §33.1 — the pool panel was one of the paths that saved silently. A pulled-hours
+  // or rate edit re-prices a whole department's Standard Fee, so other users need it.
+  await recordChanges(cellChanges, { action: "standardSheet.savePools" });
   revalidatePath("/etc");
 }
+
+// Pool category -> the name the panel shows, so a banner reads "Engineering PM pool"
+// rather than "ENGINEERING_PM".
+const POOL_LABELS: Record<string, string> = {
+  ENGINEERING_PM: "Engineering PM",
+  ENGINEERING_WARRANTY: "Engineering Warranty",
+  SHOP_MANUFACTURING: "Shop Manufacturing",
+  SHOP_WARRANTY: "Shop Warranty",
+};
 
 // Per-job Contingency $ and Notes — the sheet's manual R/Notes columns. Edited
 // inline in the /etc Standard block now that the tab is gone. Split into two
@@ -145,25 +186,82 @@ export async function saveContingencyAmount(jobId: number, contingencyAmount: nu
   if (amount.kind === "invalid") throw new Error(amount.message);
   if (amount.kind === "absent") throw new Error("Contingency is required.");
   const contingency = amount.kind === "clear" ? 0 : (amount.value as number);
+  // Read before the write so the change event can name the old figure (§33.9). One
+  // indexed single-row read on a cell save.
+  const before = await prisma.executionRate.findUnique({ where: { jobId }, select: { contingencyAmount: true } });
   await prisma.executionRate.upsert({
     where: { jobId },
     update: { contingencyAmount: contingency },
     create: { jobId, contingencyAmount: contingency },
   });
   await logAudit({ action: "standardSheet.saveContingency", entityType: "ExecutionRate", entityId: String(jobId), summary: `Saved contingency ${contingencyAmount} for job ${jobId}` });
+  await recordJobCellChange({
+    jobId,
+    columnName: "Contingency $",
+    previousValue: before?.contingencyAmount != null ? String(Number(before.contingencyAmount)) : null,
+    newValue: String(contingency),
+    cellKey: `contingencyAmount__${jobId}`,
+    action: "standardSheet.saveContingency",
+  });
   revalidatePath("/etc");
 }
 
 export async function saveJobNotes(jobId: number, notes: string) {
   await assertStandardSheetUnlocked();
   if (!Number.isInteger(jobId)) throw new Error(`Invalid job id "${jobId}".`);
+  const before = await prisma.executionRate.findUnique({ where: { jobId }, select: { notes: true } });
   await prisma.executionRate.upsert({
     where: { jobId },
     update: { notes },
     create: { jobId, notes },
   });
   await logAudit({ action: "standardSheet.saveNotes", entityType: "ExecutionRate", entityId: String(jobId), summary: `Saved notes for job ${jobId}` });
+  await recordJobCellChange({
+    jobId,
+    columnName: "Notes",
+    previousValue: before?.notes ?? null,
+    newValue: notes,
+    cellKey: `jobNotes__${jobId}`,
+    action: "standardSheet.saveNotes",
+  });
   revalidatePath("/etc");
+}
+
+// Shared by the two per-job Standard cells above: resolve the human job number for
+// the banner and announce the change, skipping the no-op case.
+//
+// The job NUMBER, not the primary key — rowRef is what a reader sees ("Job 1165") and
+// what the cell-history search matches on. `jobId` in these actions is the Job PK.
+async function recordJobCellChange(args: {
+  jobId: number;
+  columnName: string;
+  previousValue: string | null;
+  newValue: string | null;
+  cellKey: string;
+  action: string;
+}): Promise<void> {
+  const previousValue = args.previousValue === "" ? null : args.previousValue;
+  const newValue = args.newValue === "" ? null : args.newValue;
+  // A save that changed nothing must not announce anything: these two cells autosave
+  // on blur, so leaving a cell without typing would otherwise notify everybody.
+  if (previousValue === newValue) return;
+  const job = await prisma.job.findUnique({ where: { id: args.jobId }, select: { jobId: true } });
+  await recordChanges(
+    [
+      {
+        tab: "Monthly ETC",
+        rowRef: `Job ${job?.jobId ?? args.jobId}`,
+        columnName: args.columnName,
+        previousValue,
+        newValue,
+        changeType: classifyChange(previousValue, newValue),
+        entityType: "ExecutionRate",
+        entityId: args.jobId,
+        cellKey: args.cellKey,
+      },
+    ],
+    { action: args.action },
+  );
 }
 
 // The global contingency multiplier (StandardSheetSetting.contingencyRate).
@@ -184,6 +282,29 @@ export async function saveContingencyRate(contingencyRate: number) {
     summary: `Changed global contingency rate to ${contingencyRate}`,
     metadata: { before: before ? Number(before.contingencyRate) : null, after: contingencyRate },
   });
+  {
+    // Global, like the ETC rates: one change moves every job's contingency. No
+    // cellKey — the effect is the whole Standard block, not one input.
+    const previousValue = before ? String(Number(before.contingencyRate)) : null;
+    const newValue = String(contingencyRate);
+    if (previousValue !== newValue) {
+      await recordChanges(
+        [
+          {
+            tab: "Monthly ETC",
+            rowRef: "ETC Rates (all jobs)",
+            columnName: "Contingency Rate",
+            previousValue,
+            newValue,
+            changeType: classifyChange(previousValue, newValue),
+            entityType: "StandardSheetSetting",
+            entityId: 1,
+          },
+        ],
+        { action: "standardSheet.saveContingencyRate" },
+      );
+    }
+  }
   revalidatePath("/etc");
 }
 

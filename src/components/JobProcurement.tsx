@@ -84,7 +84,7 @@ const STATUS_ROW_BG: Record<StatusKey, string> = {
 
 function StatusPill({ st }: { st: PartStatus }) {
   return (
-    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wide ${STATUS_PILL[st.key]}`} title={st.sub || st.label}>
+    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-micro font-bold tracking-wide ${STATUS_PILL[st.key]}`} title={st.sub || st.label}>
       {st.label}
       {st.sub ? <span className="font-medium opacity-70">{st.sub}</span> : null}
     </span>
@@ -95,11 +95,11 @@ function StatusPill({ st }: { st: PartStatus }) {
 // ≤8w warn (amber), >8w long (blue). Day count in the tooltip.
 function LeadChip({ ordered, expected }: { ordered: string | null; expected: string | null }) {
   const days = daysBetween(ordered, expected);
-  if (days == null || days < 0) return <span className="text-[10px] text-sdc-gray-400">—</span>;
+  if (days == null || days < 0) return <span className="text-label text-sdc-gray-400">—</span>;
   const wks = Math.round((days / 7) * 2) / 2;
   const cls = wks <= 4 ? "bg-sdc-green-bg text-sdc-green-text" : wks <= 8 ? "bg-sdc-yellow-bg text-sdc-yellow-text" : "bg-sdc-blue-light text-sdc-blue-dark";
   return (
-    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums ${cls}`} title={`${days} day lead time (ordered → expected delivery)`}>
+    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-label font-semibold tabular-nums ${cls}`} title={`${days} day lead time (ordered → expected delivery)`}>
       {wks}w
     </span>
   );
@@ -108,14 +108,14 @@ function LeadChip({ ordered, expected }: { ordered: string | null; expected: str
 // Due countdown chip — green "RCVD" when received, else weeks ahead (+Nw) /
 // due-soon (+Nw amber) / late (-Nw red) vs. the expected date.
 function DueChip({ expected, received, now }: { expected: string | null; received: boolean; now: number }) {
-  if (received) return <span className="inline-flex items-center rounded bg-sdc-green-bg px-1.5 py-0.5 text-[9px] font-bold text-sdc-green-text" title="Already received">RCVD</span>;
-  if (!expected) return <span className="text-[10px] text-sdc-gray-400">—</span>;
+  if (received) return <span className="inline-flex items-center rounded bg-sdc-green-bg px-1.5 py-0.5 text-micro font-bold text-sdc-green-text" title="Already received">RCVD</span>;
+  if (!expected) return <span className="text-label text-sdc-gray-400">—</span>;
   const t = new Date(expected).getTime();
-  if (Number.isNaN(t)) return <span className="text-[10px] text-sdc-gray-400">—</span>;
+  if (Number.isNaN(t)) return <span className="text-label text-sdc-gray-400">—</span>;
   const rawDays = (t - now) / DAY;
   const daysRounded = Math.round(rawDays);
   const wks = Math.round((rawDays / 7) * 2) / 2;
-  const base = "inline-flex items-center rounded px-1.5 py-0.5 text-[10px] font-semibold tabular-nums";
+  const base = "inline-flex items-center rounded px-1.5 py-0.5 text-label font-semibold tabular-nums";
   if (rawDays > 7) return <span className={`${base} bg-sdc-green-bg text-sdc-green-text`} title={`Due in ${daysRounded} days`}>+{wks}w</span>;
   if (rawDays >= 0) return <span className={`${base} bg-sdc-yellow-bg text-sdc-yellow-text`} title={`Due in ${daysRounded} days`}>+{wks}w</span>;
   const overWks = Math.round((Math.abs(rawDays) / 7) * 2) / 2;
@@ -190,18 +190,18 @@ function SupplierAvatar({ supplier, size = 30 }: { supplier: string; size?: numb
 }
 
 function SupplierChip({ supplier }: { supplier: string | null }) {
-  if (!supplier) return <span className="text-[11px] text-sdc-gray-400">—</span>;
+  if (!supplier) return <span className="text-note text-sdc-gray-400">—</span>;
   const initials = supplierInitials(supplier);
   return (
     <span className="flex min-w-0 items-center gap-1.5">
       <span
         aria-hidden
-        className="inline-flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded text-[7px] font-bold text-white"
+        className="inline-flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded text-micro font-bold text-white"
         style={{ background: avatarColor(supplier) }}
       >
         {initials}
       </span>
-      <span className="truncate text-[11px] font-medium text-sdc-navy" title={supplier}>
+      <span className="truncate text-note font-medium text-sdc-navy" title={supplier}>
         {supplier}
       </span>
     </span>
@@ -223,7 +223,7 @@ function ReadinessBar({ pct, width = "w-full" }: { pct: number; width?: string }
       <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-sdc-gray-100">
         <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
       </div>
-      <span className={`w-9 shrink-0 text-right text-[11px] font-bold tabular-nums ${text}`}>{pct}%</span>
+      <span className={`w-9 shrink-0 text-right text-note font-bold tabular-nums ${text}`}>{pct}%</span>
     </div>
   );
 }
@@ -541,7 +541,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
     <div className="flex flex-col gap-4">
       {/* Top readiness summary line */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-sdc-border bg-white px-4 py-3 shadow-sm">
-        <span className="text-[9px] font-bold uppercase tracking-wider text-sdc-gray-400">Readiness</span>
+        <span className="text-micro font-bold uppercase tracking-wider text-sdc-gray-400">Readiness</span>
         <div className="w-40">
           <ReadinessBar pct={summary.pct} />
         </div>
@@ -595,7 +595,7 @@ function TabChip({ active, onClick, label, count }: { active: boolean; onClick: 
     <button
       type="button"
       onClick={onClick}
-      className={`inline-flex items-center gap-2 rounded-lg border px-3.5 h-9 text-sm font-semibold transition-colors ${
+      className={`inline-flex items-center gap-2 rounded-lg border px-3.5 h-9 text-sm font-semibold motion-interactive ${
         active
           ? "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark"
           : "border-sdc-border bg-white text-sdc-gray-600 hover:bg-sdc-blue-light"
@@ -603,7 +603,7 @@ function TabChip({ active, onClick, label, count }: { active: boolean; onClick: 
     >
       {label}
       <span
-        className={`inline-flex min-w-[1.5rem] items-center justify-center rounded px-1.5 py-0.5 text-[11px] font-bold tabular-nums ${
+        className={`inline-flex min-w-[1.5rem] items-center justify-center rounded px-1.5 py-0.5 text-note font-bold tabular-nums ${
           active ? "bg-white/70 text-sdc-blue-dark" : "bg-sdc-gray-100 text-sdc-gray-600"
         }`}
       >
@@ -695,7 +695,7 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
                   z-[2] matches the sticky footer; the parts tables inside carry
                   no sticky header of their own, so nothing competes. */}
               <div className="sticky top-0 z-[2] flex items-center justify-between gap-2 border-y-2 border-sdc-navy bg-sdc-blue-light px-4 py-2 shadow-sm">
-                <span className="text-[13px] font-bold uppercase tracking-wide text-sdc-navy">{sectionLabelFor(section)}</span>
+                <span className="text-sm font-bold uppercase tracking-wide text-sdc-navy">{sectionLabelFor(section)}</span>
                 <span className="whitespace-nowrap text-xs font-bold tabular-nums text-sdc-navy">
                   {usd(section.totalCost)}
                 </span>
@@ -719,7 +719,7 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
 
           {/* Dark BOM-materials footer — sticky to the bottom of the scroll container */}
           <div className="sticky bottom-0 z-[2] flex items-center justify-between gap-2 bg-sdc-navy px-4 py-2.5 text-white">
-            <span className="text-[11px] font-semibold uppercase tracking-wide">
+            <span className="text-note font-semibold uppercase tracking-wide">
               BOM materials value
               <span className="ml-2 font-normal normal-case text-white/60">assembly parts at latest PO price</span>
             </span>
@@ -764,29 +764,29 @@ function AssemblyRow({
         {/* Assembly (caret + indent + pn chip) */}
         <div className="flex min-w-0 items-center gap-2" style={{ paddingLeft: `${8 + depth * 18}px` }}>
           <span aria-label={isOpen ? "Collapse" : "Expand"} className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-sdc-blue">
-            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" className={`transition-transform ${isOpen ? "rotate-90" : ""}`}>
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" className={`motion-interactive ${isOpen ? "rotate-90" : ""}`}>
               <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
           </span>
-          <span className="shrink-0 truncate font-mono text-[11px] font-bold text-sdc-blue" title={node.pn}>
+          <span className="shrink-0 truncate font-mono text-note font-bold text-sdc-blue" title={node.pn}>
             {node.pn || "—"}
           </span>
         </div>
         {/* Description */}
-        <div className="min-w-0 truncate text-[13px] font-bold text-sdc-navy" title={node.desc || node.label}>
+        <div className="min-w-0 truncate text-sm font-bold text-sdc-navy" title={node.desc || node.label}>
           {node.desc || node.label || "—"}
-          {node.children.length ? <span className="ml-1 text-[10px] font-medium text-sdc-gray-400">· {node.children.length} sub-assy</span> : null}
+          {node.children.length ? <span className="ml-1 text-label font-medium text-sdc-gray-400">· {node.children.length} sub-assy</span> : null}
         </div>
         {/* Priced */}
-        <span className="text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600" title="Parts with a price">
+        <span className="text-right text-note font-semibold tabular-nums text-sdc-gray-600" title="Parts with a price">
           {priced.priced}/{priced.total} parts
         </span>
         {/* Rcvd / Total */}
-        <span className="text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600" title="Received / total parts">
+        <span className="text-right text-note font-semibold tabular-nums text-sdc-gray-600" title="Received / total parts">
           <span className={`font-bold ${text}`}>{node.stats.received}</span>/{node.stats.total}
         </span>
         {/* Material $ */}
-        <span className="text-right text-[13px] font-bold tabular-nums text-sdc-navy">
+        <span className="text-right text-sm font-bold tabular-nums text-sdc-navy">
           {node.totalCost ? usd(node.totalCost) : "—"}
         </span>
         {/* Readiness */}
@@ -836,7 +836,7 @@ function PartsDetailTable({
             (the wrapper above) rather than forcing the whole tree to. */}
         <table className="w-full min-w-[1320px] border-collapse text-left">
           <thead>
-            <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wide text-white [&>th]:px-2 [&>th]:py-1 [&>th]:font-bold">
+            <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wide text-white [&>th]:px-2 [&>th]:py-1 [&>th]:font-bold">
               <th className="w-10 text-right">Qty</th>
               <th>Part #</th>
               <th>Description</th>
@@ -861,20 +861,20 @@ function PartsDetailTable({
                   title="Open in Parts List · copies part #"
                   className={`cursor-pointer border-b border-sdc-border-soft/60 ${STATUS_ROW_BG[st.key]}`}
                 >
-                  <td className="w-10 px-2 py-1.5 text-right text-[11px] font-bold tabular-nums text-sdc-gray-600" title={st.sub || st.label}>{num(p.qty)}</td>
+                  <td className="w-10 px-2 py-1.5 text-right text-note font-bold tabular-nums text-sdc-gray-600" title={st.sub || st.label}>{num(p.qty)}</td>
                   <td className="px-2 py-1.5">
-                    <span className="inline-flex items-center gap-1 font-mono text-[11px] font-bold text-sdc-blue">
+                    <span className="inline-flex items-center gap-1 font-mono text-note font-bold text-sdc-blue">
                       {p.pn}
                       <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
                         <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
                       </svg>
                     </span>
                   </td>
-                  <td className="px-2 py-1.5 text-[11px] font-semibold text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
-                  <td className="px-2 py-1.5 text-[11px] font-semibold text-sdc-gray-600" title={p.manufacturer}>
+                  <td className="px-2 py-1.5 text-note font-semibold text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
+                  <td className="px-2 py-1.5 text-note font-semibold text-sdc-gray-600" title={p.manufacturer}>
                     <span className="line-clamp-1">{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>
                   </td>
-                  <td className="px-2 py-1.5 text-[11px] text-sdc-gray-600" title={p.supplier ?? ""}>
+                  <td className="px-2 py-1.5 text-note text-sdc-gray-600" title={p.supplier ?? ""}>
                     <span className="line-clamp-1">{p.supplier || "—"}</span>
                   </td>
                   <td className="px-2 py-1.5">
@@ -883,27 +883,27 @@ function PartsDetailTable({
                         type="button"
                         onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poId); }}
                         title="View PO"
-                        className="font-mono text-[10px] font-bold text-sdc-blue underline decoration-dotted underline-offset-2"
+                        className="font-mono text-label font-bold text-sdc-blue underline decoration-dotted underline-offset-2"
                       >
                         {p.poId}
                       </button>
                     ) : (
-                      <span className="text-[10px] font-bold text-sdc-red-text">NO PO</span>
+                      <span className="text-label font-bold text-sdc-red-text">NO PO</span>
                     )}
                   </td>
-                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.poDate)}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.originalDate)}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.poDate)}</td>
+                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.originalDate)}</td>
                   {/* A revision is news — a date that moved is the reason a part
                       is late — so it's called out rather than printed like the
                       rest. Blank where nothing moved (see job-bom.ts). */}
-                  <td className={`px-2 py-1.5 whitespace-nowrap font-mono text-[10px] ${p.revisedDate ? "font-bold text-sdc-red-text" : "text-sdc-gray-400"}`}>
+                  <td className={`px-2 py-1.5 whitespace-nowrap font-mono text-label ${p.revisedDate ? "font-bold text-sdc-red-text" : "text-sdc-gray-400"}`}>
                     {p.revisedDate ? fmtDate(p.revisedDate) : "—"}
                   </td>
-                  <td className={`px-2 py-1.5 whitespace-nowrap font-mono text-[10px] ${p.receivedDate ? "font-semibold text-sdc-green-text" : "text-sdc-gray-400"}`}>
+                  <td className={`px-2 py-1.5 whitespace-nowrap font-mono text-label ${p.receivedDate ? "font-semibold text-sdc-green-text" : "text-sdc-gray-400"}`}>
                     {p.receivedDate ? fmtDate(p.receivedDate) : "—"}
                   </td>
-                  <td className="px-2 py-1.5 text-right font-mono text-[11px] font-semibold text-sdc-gray-600" title={`Required ${fmtDate(p.requiredDate)} · Expected ${fmtDate(p.expectedDate)}`}>{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-[11px] font-bold text-sdc-navy">{p.unitPrice > 0 ? usd(p.unitPrice * p.qty) : "—"}</td>
+                  <td className="px-2 py-1.5 text-right font-mono text-note font-semibold text-sdc-gray-600" title={`Required ${fmtDate(p.requiredDate)} · Expected ${fmtDate(p.expectedDate)}`}>{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
+                  <td className="px-2 py-1.5 text-right font-mono text-note font-bold text-sdc-navy">{p.unitPrice > 0 ? usd(p.unitPrice * p.qty) : "—"}</td>
                 </tr>
               );
             })}
@@ -1135,7 +1135,7 @@ function PartsListTab({
           <details ref={colMenuRef} className="relative">
             <summary className={`flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md border px-3 text-xs font-medium hover:bg-sdc-blue-light ${hidden.size ? "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark" : "border-sdc-border bg-white text-sdc-navy"}`}>
               Columns
-              {hidden.size > 0 && <span className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-sdc-blue px-1 text-[10px] font-bold text-white tabular-nums">{hidden.size}</span>}
+              {hidden.size > 0 && <span className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-sdc-blue px-1 text-label font-bold text-white tabular-nums">{hidden.size}</span>}
               <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6 L8 11 L13 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
             </summary>
             <div className="absolute left-0 z-20 mt-1 max-h-80 w-52 overflow-auto styled-scrollbar rounded-lg border border-sdc-border bg-white p-1.5 shadow-lg">
@@ -1157,9 +1157,9 @@ function PartsListTab({
                 </label>
               ))}
               <div className="mt-1.5 flex flex-wrap gap-2 border-t border-sdc-border-soft pt-1.5">
-                <button type="button" onClick={() => setHidden(() => new Set())} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light">Show all</button>
-                <button type="button" onClick={() => setHidden(() => new Set(DEFAULT_HIDDEN_COLS))} title="Back to the default column set" className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light">Reset</button>
-                <button type="button" onClick={() => setColWidths(() => ({}))} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light" title="Restore default column widths">Reset widths</button>
+                <button type="button" onClick={() => setHidden(() => new Set())} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-note font-medium text-sdc-navy hover:bg-sdc-blue-light">Show all</button>
+                <button type="button" onClick={() => setHidden(() => new Set(DEFAULT_HIDDEN_COLS))} title="Back to the default column set" className="rounded-md border border-sdc-border bg-white px-2 py-1 text-note font-medium text-sdc-navy hover:bg-sdc-blue-light">Reset</button>
+                <button type="button" onClick={() => setColWidths(() => ({}))} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-note font-medium text-sdc-navy hover:bg-sdc-blue-light" title="Restore default column widths">Reset widths</button>
               </div>
             </div>
           </details>
@@ -1238,23 +1238,23 @@ function PartRowCells({
   const cell = (key: ColKey) => {
     switch (key) {
       case "qty":
-        return <span className="text-[11px] font-bold tabular-nums text-sdc-navy">{num(p.qty)}</span>;
+        return <span className="text-note font-bold tabular-nums text-sdc-navy">{num(p.qty)}</span>;
       case "pn":
         // Blue link-style — the row itself copies the PN + drills, so the link
         // is the affordance (no separate copy glyph).
-        return <span className="block truncate font-mono text-[11px] font-bold text-sdc-blue group-hover:underline" title={p.pn}>{p.pn}</span>;
+        return <span className="block truncate font-mono text-note font-bold text-sdc-blue group-hover:underline" title={p.pn}>{p.pn}</span>;
       case "desc":
-        return <span className="block truncate text-[11px] font-semibold text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>;
+        return <span className="block truncate text-note font-semibold text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>;
       case "parent":
         return (
-          <span className={`block truncate font-mono text-[10px] font-medium ${p.parentPN ? "text-sdc-navy" : "italic text-sdc-gray-500"}`} title={parentLine}>
+          <span className={`block truncate font-mono text-label font-medium ${p.parentPN ? "text-sdc-navy" : "italic text-sdc-gray-500"}`} title={parentLine}>
             {parentLine}
           </span>
         );
       case "category":
-        return <span className="block truncate text-[11px] font-medium text-sdc-navy" title={p.category ?? ""}>{p.category || "—"}</span>;
+        return <span className="block truncate text-note font-medium text-sdc-navy" title={p.category ?? ""}>{p.category || "—"}</span>;
       case "mfr":
-        return <span className="block truncate text-[11px] font-medium text-sdc-navy" title={p.manufacturer}>{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>;
+        return <span className="block truncate text-note font-medium text-sdc-navy" title={p.manufacturer}>{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>;
       case "supplier":
         return <SupplierChip supplier={p.supplier} />;
       case "po":
@@ -1263,35 +1263,35 @@ function PartRowCells({
             type="button"
             onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poNumber); }}
             title="View PO"
-            className="block truncate text-left font-mono text-[11px] font-medium text-sdc-blue hover:underline"
+            className="block truncate text-left font-mono text-note font-medium text-sdc-blue hover:underline"
           >
             {p.poNumber}
           </button>
         ) : (
-          <span className="text-[10px] font-semibold text-sdc-red-text">NO PO</span>
+          <span className="text-label font-semibold text-sdc-red-text">NO PO</span>
         );
       case "purchased":
-        return <span className="whitespace-nowrap font-mono text-[10px] font-medium text-sdc-navy">{fmtDate(p.purchasedDate)}</span>;
+        return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.purchasedDate)}</span>;
       case "invoiceddate":
-        return <span className="whitespace-nowrap font-mono text-[10px] font-medium text-sdc-navy">{fmtDate(p.invoicedDate)}</span>;
+        return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.invoicedDate)}</span>;
       case "exp":
-        return <span className="whitespace-nowrap font-mono text-[10px] font-medium text-sdc-navy">{fmtDate(p.expectedDate)}</span>;
+        return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.expectedDate)}</span>;
       case "lead":
         return <LeadChip ordered={p.purchasedDate} expected={p.expectedDate} />;
       case "due":
         return <DueChip expected={p.expectedDate} received={p.st.key === "received"} now={now} />;
       case "unit":
-        return <span className="whitespace-nowrap font-mono text-[11px] font-medium tabular-nums text-sdc-navy">{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</span>;
+        return <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy">{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</span>;
       case "total":
-        return <span className="whitespace-nowrap font-mono text-[11px] font-semibold tabular-nums text-sdc-navy">{p.totalPrice > 0 ? usd(p.totalPrice) : "—"}</span>;
+        return <span className="whitespace-nowrap font-mono text-note font-semibold tabular-nums text-sdc-navy">{p.totalPrice > 0 ? usd(p.totalPrice) : "—"}</span>;
       case "invoiced":
-        return <span className="whitespace-nowrap font-mono text-[11px] font-medium tabular-nums text-sdc-navy">{usd(p.invoicedAmount)}</span>;
+        return <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy">{usd(p.invoicedAmount)}</span>;
       case "pctinv":
-        return <span className="whitespace-nowrap font-mono text-[11px] font-medium tabular-nums text-sdc-gray-600">{p.pctInvoiced}%</span>;
+        return <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-gray-600">{p.pctInvoiced}%</span>;
       case "jobcost":
-        return <span className="whitespace-nowrap font-mono text-[11px] font-semibold tabular-nums text-sdc-navy" title="Job parts cost, excl SDC supplier">{p.jobCostExclSdc > 0 ? usd(p.jobCostExclSdc) : "—"}</span>;
+        return <span className="whitespace-nowrap font-mono text-note font-semibold tabular-nums text-sdc-navy" title="Job parts cost, excl SDC supplier">{p.jobCostExclSdc > 0 ? usd(p.jobCostExclSdc) : "—"}</span>;
       case "leftspend":
-        return <span className="whitespace-nowrap font-mono text-[11px] font-medium tabular-nums text-sdc-navy">{usd(p.leftToSpend)}</span>;
+        return <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy">{usd(p.leftToSpend)}</span>;
       case "status":
         return <StatusPill st={p.st} />;
     }
@@ -1390,7 +1390,7 @@ function PartsTableView({
             ))}
           </colgroup>
           <thead className="sticky top-0 z-[2]">
-            <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wider text-white">
+            <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
               {cols.map((c) => (
                 <th key={c.key} title={c.title} className={`relative border-r border-white/15 px-2 py-1.5 font-bold ${c.align === "right" ? "text-right" : ""}`}>
                   <span className="block truncate">{c.label}</span>
@@ -1427,9 +1427,9 @@ function PartsTableView({
             })}
           </tbody>
           <tfoot className="sticky bottom-0 z-[2]">
-            <tr className="border-t-2 border-sdc-blue bg-sdc-navy text-[12px] font-extrabold text-white">
+            <tr className="border-t-2 border-sdc-blue bg-sdc-navy text-xs font-bold text-white">
               {cols.map((c, idx) => (
-                <td key={c.key} className={`overflow-hidden border-r border-white/15 px-2 py-2 align-middle font-mono font-extrabold tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
+                <td key={c.key} className={`overflow-hidden border-r border-white/15 px-2 py-2 align-middle font-mono font-bold tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
                   {footCell(c.key, idx)}
                 </td>
               ))}
@@ -1582,24 +1582,24 @@ function PartsCardView({
               <div className="flex min-w-0 items-center gap-2">
                 <SupplierAvatar supplier={v.supplier} size={30} />
                 <div className="min-w-0">
-                  <div className="truncate text-[13px] font-bold text-sdc-navy" title={v.supplier}>{v.supplier}</div>
-                  <div className="text-[10px] text-sdc-gray-400">
+                  <div className="truncate text-sm font-bold text-sdc-navy" title={v.supplier}>{v.supplier}</div>
+                  <div className="text-label text-sdc-gray-400">
                     {v.poCount} PO{v.poCount === 1 ? "" : "s"} · {v.total} item{v.total === 1 ? "" : "s"}
                   </div>
                 </div>
               </div>
-              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wide ${v.status.cls}`}>{v.status.label}</span>
+              <span className={`shrink-0 rounded px-1.5 py-0.5 text-micro font-bold tracking-wide ${v.status.cls}`}>{v.status.label}</span>
             </div>
             <div className="flex items-center gap-2" title={`${barPct}% received${rollup ? " (supplier PO lines)" : ""}`}>
               <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-sdc-gray-100">
                 <div className={`h-full rounded-full ${vendorBar(barPct)}`} style={{ width: `${Math.min(100, barPct)}%` }} />
               </div>
-              <span className={`w-9 shrink-0 text-right text-[11px] font-semibold tabular-nums ${vendorText(barPct)}`}>{barPct}%</span>
+              <span className={`w-9 shrink-0 text-right text-note font-semibold tabular-nums ${vendorText(barPct)}`}>{barPct}%</span>
             </div>
           </div>
 
           {/* Mini PO table */}
-          <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 bg-sdc-gray-100 px-3 py-1.5 text-[9px] font-bold uppercase tracking-wider text-sdc-gray-400">
+          <div className="grid grid-cols-[1fr_auto_auto_auto] items-center gap-2 bg-sdc-gray-100 px-3 py-1.5 text-micro font-bold uppercase tracking-wider text-sdc-gray-400">
             <span>PO #</span>
             <span className="text-right">Received</span>
             <span className="text-right">Date</span>
@@ -1644,15 +1644,15 @@ function PartsCardView({
                         e.stopPropagation();
                         onCopy(po.poNumber!, `PO ${po.poNumber}`);
                       }}
-                      className="truncate font-mono text-[11px] font-semibold text-sdc-blue underline decoration-dotted underline-offset-2"
+                      className="truncate font-mono text-note font-semibold text-sdc-blue underline decoration-dotted underline-offset-2"
                     >
                       {po.poNumber}
                     </span>
                   ) : (
-                    <span className="text-[10px] font-semibold text-sdc-red-text">NO PO</span>
+                    <span className="text-label font-semibold text-sdc-red-text">NO PO</span>
                   )}
-                  <span className="text-right text-[10px] tabular-nums text-sdc-gray-600" title={apo ? "Supplier PO line count" : "BOM-derived count"}>{rc}/{tot} rcvd</span>
-                  <span className={`text-right font-mono text-[10px] ${po.pastDue ? "text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(po.expected)}</span>
+                  <span className="text-right text-label tabular-nums text-sdc-gray-600" title={apo ? "Supplier PO line count" : "BOM-derived count"}>{rc}/{tot} rcvd</span>
+                  <span className={`text-right font-mono text-label ${po.pastDue ? "text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(po.expected)}</span>
                   <span className="flex items-center gap-1.5">
                     <span
                       title={PO_ROW_STATE_LABEL[dotKey]}
@@ -1760,11 +1760,11 @@ function PoPanel({
       {/* Backdrop */}
       <div
         onClick={requestClose}
-        className={`absolute inset-0 bg-sdc-navy/40 transition-opacity duration-200 ${open ? "opacity-100" : "opacity-0"}`}
+        className={`absolute inset-0 bg-sdc-navy/40 motion-interactive ${open ? "opacity-100" : "opacity-0"}`}
       />
       {/* Panel */}
       <aside
-        className={`absolute right-0 top-0 flex h-full w-[440px] max-w-[92vw] flex-col bg-white shadow-xl transition-transform duration-200 ${open ? "translate-x-0" : "translate-x-full"}`}
+        className={`absolute right-0 top-0 flex h-full w-[440px] max-w-[92vw] flex-col bg-white shadow-xl motion-interactive ${open ? "translate-x-0" : "translate-x-full"}`}
       >
         {/* Header */}
         <div className="flex flex-col gap-3 border-b border-sdc-border-soft p-4">
@@ -1772,12 +1772,12 @@ function PoPanel({
             <div className="flex min-w-0 items-center gap-2.5">
               <SupplierAvatar supplier={supplier} size={38} />
               <div className="min-w-0">
-                <div className="truncate text-[15px] font-bold text-sdc-navy" title={supplier}>{supplier}</div>
-                <div className="font-mono text-[12px] text-sdc-gray-600">{po.poNumber ? `PO #${po.poNumber}` : "Parts without PO"}</div>
+                <div className="truncate text-base font-bold text-sdc-navy" title={supplier}>{supplier}</div>
+                <div className="font-mono text-xs text-sdc-gray-600">{po.poNumber ? `PO #${po.poNumber}` : "Parts without PO"}</div>
               </div>
             </div>
             <div className="flex items-center gap-2">
-              <span className={`shrink-0 rounded px-1.5 py-0.5 text-[9px] font-bold tracking-wide ${badge.cls}`}>{badge.label}</span>
+              <span className={`shrink-0 rounded px-1.5 py-0.5 text-micro font-bold tracking-wide ${badge.cls}`}>{badge.label}</span>
               <button type="button" onClick={requestClose} aria-label="Close" className="rounded p-1 text-sdc-gray-400 hover:bg-sdc-gray-100 hover:text-sdc-navy">
                 <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 4 L12 12 M12 4 L4 12" strokeLinecap="round" /></svg>
               </button>
@@ -1811,7 +1811,7 @@ function PoPanel({
         <div className="flex-1 overflow-y-auto styled-scrollbar">
           <table className="w-full border-collapse text-left">
             <thead className="sticky top-0 z-[1]">
-              <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wider text-white">
+              <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
                 <th className="px-3 py-2 font-bold">Part</th>
                 <th className="px-2 py-2 text-right font-bold">Qty</th>
                 <th className="px-2 py-2 font-bold">Ordered</th>
@@ -1832,24 +1832,24 @@ function PoPanel({
                       <tr key={`${l.partNumber}-${i}`} className={`border-b border-sdc-border-soft/60 ${rowTint}`}>
                         <td className="px-3 py-2">
                           {match ? (
-                            <button type="button" onClick={() => handlePart(match)} title="Copy part # · locate row" className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-sdc-blue">
+                            <button type="button" onClick={() => handlePart(match)} title="Copy part # · locate row" className="inline-flex items-center gap-1 font-mono text-note font-semibold text-sdc-blue">
                               {l.partNumber}
                               <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
                                 <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
                               </svg>
                             </button>
                           ) : (
-                            <span className="font-mono text-[11px] font-semibold text-sdc-navy">{l.partNumber}</span>
+                            <span className="font-mono text-note font-semibold text-sdc-navy">{l.partNumber}</span>
                           )}
-                          <div className="line-clamp-1 text-[10px] text-sdc-gray-600" title={l.desc}>{l.desc || "—"}</div>
+                          <div className="line-clamp-1 text-label text-sdc-gray-600" title={l.desc}>{l.desc || "—"}</div>
                         </td>
-                        <td className="px-2 py-2 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(l.qty)}</td>
-                        <td className="px-2 py-2 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(l.orderedDate)}</td>
-                        <td className={`px-2 py-2 whitespace-nowrap font-mono text-[10px] ${isPast ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(l.expectedDate)}</td>
-                        <td className="px-2 py-2 whitespace-nowrap font-mono text-[10px]">
+                        <td className="px-2 py-2 text-right text-note font-semibold tabular-nums text-sdc-gray-600">{num(l.qty)}</td>
+                        <td className="px-2 py-2 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(l.orderedDate)}</td>
+                        <td className={`px-2 py-2 whitespace-nowrap font-mono text-label ${isPast ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(l.expectedDate)}</td>
+                        <td className="px-2 py-2 whitespace-nowrap font-mono text-label">
                           {isRcvd ? <span className="font-semibold text-sdc-green-text">✓ {fmtDate(l.receivedDate)}</span> : <span className="text-sdc-yellow-text">Exp {fmtDate(l.expectedDate)}</span>}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono text-[10px] text-sdc-gray-600">{l.price > 0 ? usd(l.price) : "—"}</td>
+                        <td className="px-3 py-2 text-right font-mono text-label text-sdc-gray-600">{l.price > 0 ? usd(l.price) : "—"}</td>
                       </tr>
                     );
                   })
@@ -1864,26 +1864,26 @@ function PoPanel({
                             type="button"
                             onClick={() => handlePart(p)}
                             title="Copy part # · locate row"
-                            className="inline-flex items-center gap-1 font-mono text-[11px] font-semibold text-sdc-blue"
+                            className="inline-flex items-center gap-1 font-mono text-note font-semibold text-sdc-blue"
                           >
                             {p.pn}
                             <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
                               <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
                             </svg>
                           </button>
-                          <div className="line-clamp-1 text-[10px] text-sdc-gray-600" title={p.desc}>{p.desc || "—"}</div>
+                          <div className="line-clamp-1 text-label text-sdc-gray-600" title={p.desc}>{p.desc || "—"}</div>
                         </td>
-                        <td className="px-2 py-2 text-right text-[11px] font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</td>
-                        <td className="px-2 py-2 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.purchasedDate)}</td>
-                        <td className={`px-2 py-2 whitespace-nowrap font-mono text-[10px] ${isPast ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(p.expectedDate)}</td>
-                        <td className="px-2 py-2 whitespace-nowrap font-mono text-[10px]">
+                        <td className="px-2 py-2 text-right text-note font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</td>
+                        <td className="px-2 py-2 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.purchasedDate)}</td>
+                        <td className={`px-2 py-2 whitespace-nowrap font-mono text-label ${isPast ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(p.expectedDate)}</td>
+                        <td className="px-2 py-2 whitespace-nowrap font-mono text-label">
                           {isRcvd ? (
                             <span className="font-semibold text-sdc-green-text">✓ {fmtDate(p.receivedDate)}</span>
                           ) : (
                             <span className="text-sdc-yellow-text">Exp {fmtDate(p.expectedDate)}</span>
                           )}
                         </td>
-                        <td className="px-3 py-2 text-right font-mono text-[10px] text-sdc-gray-600">{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
+                        <td className="px-3 py-2 text-right font-mono text-label text-sdc-gray-600">{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
                       </tr>
                     );
                   })}
@@ -1899,7 +1899,7 @@ function PanelBar({ label, received, total, pct }: { label: string; received: nu
   const color = pct >= 90 ? "bg-sdc-green" : pct >= 60 ? "bg-sdc-yellow" : "bg-sdc-blue";
   return (
     <div>
-      <div className="mb-1 flex items-center justify-between text-[10px]">
+      <div className="mb-1 flex items-center justify-between text-label">
         <span className="font-semibold uppercase tracking-wide text-sdc-gray-400">{label}</span>
         <span className="text-sdc-gray-600 tabular-nums">
           {received}/{total} · <span className="font-semibold text-sdc-navy">{pct}%</span>
@@ -1915,8 +1915,8 @@ function PanelBar({ label, received, total, pct }: { label: string; received: nu
 function Stat({ label, value, tone }: { label: string; value: string; tone?: "danger" }) {
   return (
     <div className="flex flex-col">
-      <span className="text-[9px] font-bold uppercase tracking-wider text-sdc-gray-400">{label}</span>
-      <span className={`font-mono text-[12px] font-semibold tabular-nums ${tone === "danger" ? "text-sdc-red-text" : "text-sdc-navy"}`}>{value}</span>
+      <span className="text-micro font-bold uppercase tracking-wider text-sdc-gray-400">{label}</span>
+      <span className={`font-mono text-xs font-semibold tabular-nums ${tone === "danger" ? "text-sdc-red-text" : "text-sdc-navy"}`}>{value}</span>
     </div>
   );
 }
@@ -1942,12 +1942,12 @@ function SidePanel({ title, subtitle, onClose, children }: { title: string; subt
   }, [requestClose]);
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={title}>
-      <div onClick={requestClose} className={`absolute inset-0 bg-sdc-navy/40 transition-opacity duration-200 ${open ? "opacity-100" : "opacity-0"}`} />
-      <aside className={`absolute right-0 top-0 flex h-full w-[560px] max-w-[94vw] flex-col bg-white shadow-xl transition-transform duration-200 ${open ? "translate-x-0" : "translate-x-full"}`}>
+      <div onClick={requestClose} className={`absolute inset-0 bg-sdc-navy/40 motion-interactive ${open ? "opacity-100" : "opacity-0"}`} />
+      <aside className={`absolute right-0 top-0 flex h-full w-[560px] max-w-[94vw] flex-col bg-white shadow-xl motion-interactive ${open ? "translate-x-0" : "translate-x-full"}`}>
         <div className="flex items-center justify-between gap-3 border-b border-sdc-border-soft p-4">
           <div className="min-w-0">
-            <div className="truncate text-[15px] font-bold text-sdc-navy">{title}</div>
-            {subtitle ? <div className="text-[12px] text-sdc-gray-600">{subtitle}</div> : null}
+            <div className="truncate text-base font-bold text-sdc-navy">{title}</div>
+            {subtitle ? <div className="text-xs text-sdc-gray-600">{subtitle}</div> : null}
           </div>
           <button type="button" onClick={requestClose} aria-label="Close" className="rounded p-1 text-sdc-gray-400 hover:bg-sdc-gray-100 hover:text-sdc-navy">
             <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 4 L12 12 M12 4 L4 12" strokeLinecap="round" /></svg>
@@ -2069,8 +2069,8 @@ function RiskCards({
         {/* Delivery Slip */}
         <div className="overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
-            <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-sdc-yellow-text">
-              <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-yellow-bg text-[12px] font-extrabold text-sdc-yellow-text">!</span>
+            <span className="inline-flex items-center gap-2 text-note font-bold uppercase tracking-wider text-sdc-yellow-text">
+              <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-yellow-bg text-xs font-bold text-sdc-yellow-text">!</span>
               Delivery Slip
             </span>
             <div className="flex items-center gap-4">
@@ -2092,8 +2092,8 @@ function RiskCards({
         {/* No Purchase Order */}
         <div className="overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
           <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
-            <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-sdc-red-text">
-              <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-red-bg text-[13px] font-extrabold text-sdc-red-text">×</span>
+            <span className="inline-flex items-center gap-2 text-note font-bold uppercase tracking-wider text-sdc-red-text">
+              <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-red-bg text-sm font-bold text-sdc-red-text">×</span>
               No Purchase Order
             </span>
             <div className="flex items-center gap-4">
@@ -2114,9 +2114,9 @@ function RiskCards({
                   title="Copy part # · locate row"
                   className="grid cursor-pointer grid-cols-[100px_1fr_auto] items-center gap-3 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
                 >
-                  <span className="truncate font-mono text-[11px] font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
-                  <span className="truncate text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
-                  <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
+                  <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
+                  <span className="truncate text-note text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
+                  <span className="whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
                 </div>
               ))
             )}
@@ -2127,8 +2127,8 @@ function RiskCards({
       {/* Upcoming Deliveries */}
       <div className="overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
-          <span className="inline-flex items-center gap-2 text-[11px] font-bold uppercase tracking-wider text-sdc-blue-dark">
-            <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-blue-light text-[11px] font-extrabold text-sdc-blue-dark">→</span>
+          <span className="inline-flex items-center gap-2 text-note font-bold uppercase tracking-wider text-sdc-blue-dark">
+            <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-blue-light text-note font-bold text-sdc-blue-dark">→</span>
             Upcoming Deliveries
           </span>
           <div className="flex flex-wrap items-center gap-1">
@@ -2137,7 +2137,7 @@ function RiskCards({
                 key={w.week}
                 type="button"
                 onClick={() => setUpcomingWeek(w.week)}
-                className={`rounded px-2 py-0.5 text-[11px] font-semibold transition-colors ${
+                className={`rounded px-2 py-0.5 text-note font-semibold motion-interactive ${
                   w.week === (selectedWeek?.week ?? 1) ? "bg-sdc-blue text-white" : w.count > 0 ? "bg-sdc-blue-light text-sdc-blue-dark hover:bg-sdc-blue-100" : "text-sdc-gray-400 hover:bg-sdc-gray-100"
                 }`}
               >
@@ -2177,7 +2177,7 @@ function RiskCards({
         >
           <table className="w-full border-collapse text-left">
             <thead className="sticky top-0 z-[1]">
-              <tr className="bg-sdc-navy text-[9px] font-bold uppercase tracking-wider text-white">
+              <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
                 {seeAll === "upcoming" && <th className="px-3 py-2 font-bold">PO #</th>}
                 <th className="px-3 py-2 font-bold">Part #</th>
                 <th className="px-2 py-2 font-bold">Desc</th>
@@ -2194,12 +2194,12 @@ function RiskCards({
                   title="Copy part # · locate row"
                   className={`cursor-pointer border-b border-sdc-border-soft/60 ${STATUS_ROW_BG[p.st.key]}`}
                 >
-                  {seeAll === "upcoming" && <td className="px-3 py-1.5 font-mono text-[10px] text-sdc-gray-600">{p.poNumber || "—"}</td>}
-                  <td className="px-3 py-1.5 font-mono text-[11px] font-semibold text-sdc-blue">{p.pn}</td>
-                  <td className="px-2 py-1.5 text-[11px] text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
+                  {seeAll === "upcoming" && <td className="px-3 py-1.5 font-mono text-label text-sdc-gray-600">{p.poNumber || "—"}</td>}
+                  <td className="px-3 py-1.5 font-mono text-note font-semibold text-sdc-blue">{p.pn}</td>
+                  <td className="px-2 py-1.5 text-note text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
                   {seeAll !== "nopo" && <td className="px-2 py-1.5"><SupplierChip supplier={p.supplier} /></td>}
-                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</td>
-                  {seeAll !== "nopo" && <td className="px-2 py-1.5 whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.expectedDate)}</td>}
+                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.requiredDate)}</td>
+                  {seeAll !== "nopo" && <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.expectedDate)}</td>}
                 </tr>
               ))}
             </tbody>
@@ -2216,7 +2216,7 @@ function SeeAllBtn({ onClick, disabled }: { onClick: () => void; disabled?: bool
       type="button"
       onClick={onClick}
       disabled={disabled}
-      className="rounded-md border border-sdc-border bg-white px-2 py-1 text-[11px] font-medium text-sdc-navy hover:bg-sdc-blue-light disabled:cursor-not-allowed disabled:opacity-40"
+      className="rounded-md border border-sdc-border bg-white px-2 py-1 text-note font-medium text-sdc-navy hover:bg-sdc-blue-light disabled:cursor-not-allowed disabled:opacity-40"
     >
       See all
     </button>
@@ -2232,11 +2232,11 @@ function SlipRow({ p, now, onClick }: { p: FlatPart; now: number; onClick: () =>
       title="Copy part # · locate row"
       className="grid cursor-pointer grid-cols-[88px_1fr_100px_58px_58px] items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
     >
-      <span className="truncate font-mono text-[11px] font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
-      <span className="truncate text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
-      <span className="truncate text-[10px] text-sdc-gray-600" title={p.supplier ?? ""}>{p.supplier || "—"}</span>
-      <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
-      <span className={`whitespace-nowrap font-mono text-[10px] ${expLate ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(p.expectedDate)}</span>
+      <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
+      <span className="truncate text-note text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
+      <span className="truncate text-label text-sdc-gray-600" title={p.supplier ?? ""}>{p.supplier || "—"}</span>
+      <span className="whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
+      <span className={`whitespace-nowrap font-mono text-label ${expLate ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(p.expectedDate)}</span>
     </div>
   );
 }
@@ -2248,12 +2248,12 @@ function UpcomingRow({ p, onClick }: { p: FlatPart; onClick: () => void }) {
       title="Copy part # · locate row"
       className="grid cursor-pointer grid-cols-[58px_88px_1fr_100px_58px_58px] items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
     >
-      <span className="truncate font-mono text-[10px] text-sdc-gray-600" title={p.poNumber ?? ""}>{p.poNumber || "—"}</span>
-      <span className="truncate font-mono text-[11px] font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
-      <span className="truncate text-[11px] text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
-      <span className="truncate text-[10px] text-sdc-gray-600" title={p.supplier ?? ""}>{p.supplier || "—"}</span>
-      <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.expectedDate)}</span>
-      <span className="whitespace-nowrap font-mono text-[10px] text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
+      <span className="truncate font-mono text-label text-sdc-gray-600" title={p.poNumber ?? ""}>{p.poNumber || "—"}</span>
+      <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
+      <span className="truncate text-note text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
+      <span className="truncate text-label text-sdc-gray-600" title={p.supplier ?? ""}>{p.supplier || "—"}</span>
+      <span className="whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.expectedDate)}</span>
+      <span className="whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
     </div>
   );
 }
@@ -2268,7 +2268,7 @@ function Segmented<T extends string>({ value, onChange, options }: { value: T; o
           key={o.value}
           type="button"
           onClick={() => onChange(o.value)}
-          className={`h-7 rounded px-2.5 text-xs font-medium transition-colors ${
+          className={`h-7 rounded px-2.5 text-xs font-medium motion-interactive ${
             value === o.value ? "bg-sdc-blue-light text-sdc-blue-dark" : "text-sdc-gray-600 hover:text-sdc-navy"
           }`}
         >

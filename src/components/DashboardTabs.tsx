@@ -45,7 +45,7 @@ export function DashboardTabs({
   }
 
   const tabClass = (active: boolean) =>
-    `relative -mb-px border-b-2 px-4 py-2.5 text-sm font-semibold transition-colors ${
+    `relative -mb-px border-b-2 px-4 py-2.5 text-sm font-semibold motion-interactive ${
       active
         ? "border-sdc-blue text-sdc-blue-dark"
         : "border-transparent text-sdc-gray-500 hover:border-sdc-border hover:text-sdc-navy"
@@ -60,7 +60,7 @@ export function DashboardTabs({
         <button type="button" role="tab" aria-selected={tab === "quality"} onClick={() => setTab("quality")} className={tabClass(tab === "quality")}>
           Data Quality
           {issueCount > 0 && (
-            <span className="ml-2 rounded-full bg-sdc-red px-1.5 py-0.5 text-[10px] font-bold text-white tabular-nums">{issueCount}</span>
+            <span className="ml-2 rounded-full bg-sdc-red px-1.5 py-0.5 text-label font-bold text-white tabular-nums">{issueCount}</span>
           )}
         </button>
       </div>

@@ -1,5 +1,7 @@
 "use client";
 
+import { BUTTON_MENU_LINK } from "@/components/ui/classnames";
+
 // The two bits of feedback every draft-applying toolbar menu needs (see
 // useDraftParamMenu): a dot while changes are unapplied, a spinner while the
 // navigation is in flight. Both occupy the chevron's slot so the button never
@@ -28,7 +30,7 @@ export function MenuStatus({ pending }: { pending: boolean }) {
         fill="none"
         stroke="currentColor"
         strokeWidth="1.8"
-        className="shrink-0 opacity-70 transition-transform duration-150 group-open:rotate-180"
+        className="shrink-0 opacity-70 motion-interactive group-open:rotate-180"
       >
         <path d="M3.5 6 L8 10.5 L12.5 6" strokeLinecap="round" strokeLinejoin="round" />
       </svg>
@@ -42,7 +44,7 @@ export function MenuStatus({ pending }: { pending: boolean }) {
 // grid is in, so a slow render still has something saying so.
 export function MenuApplyHint({ dirty }: { dirty: boolean }) {
   return (
-    <p className="mt-1 border-t border-sdc-border-soft px-1.5 pt-1 text-[10px] text-sdc-gray-400">
+    <p className="mt-1 border-t border-sdc-border-soft px-1.5 pt-1 text-label text-sdc-gray-400">
       {dirty ? "Applying…" : "Up to date"}
     </p>
   );
@@ -74,7 +76,7 @@ export function MenuGroup({
 }) {
   return (
     <details open={defaultOpen} className="group/g border-b border-sdc-border-soft last:border-b-0">
-      <summary className="flex cursor-pointer list-none items-center gap-1.5 px-1.5 py-1.5 text-[11px] font-semibold text-sdc-navy hover:bg-sdc-gray-100">
+      <summary className="flex cursor-pointer list-none items-center gap-1.5 px-1.5 py-1.5 text-note font-semibold text-sdc-navy hover:bg-sdc-gray-100">
         <svg
           viewBox="0 0 16 16"
           width="8"
@@ -82,7 +84,7 @@ export function MenuGroup({
           fill="none"
           stroke="currentColor"
           strokeWidth="2.4"
-          className="shrink-0 opacity-60 transition-transform duration-150 group-open/g:rotate-90"
+          className="shrink-0 opacity-60 motion-interactive group-open/g:rotate-90"
         >
           <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
@@ -97,11 +99,14 @@ export function MenuGroup({
 // Select all / Clear pair, repeated in every group.
 export function MenuBulkActions({ onAll, onNone }: { onAll: () => void; onNone: () => void }) {
   return (
-    <div className="flex items-center gap-3 px-1.5 pb-1 text-[10px] text-sdc-gray-400">
-      <button type="button" onClick={onAll} className="underline hover:text-sdc-navy">
+    // BUTTON_MENU_LINK, not a bare underlined span: these measured 15px tall — the text
+    // line and nothing else — which §41.20 rules out as a click target. Same understated
+    // look, a real hit box, and one shared token so the two cannot drift apart (§41.21).
+    <div className="flex items-center gap-1 pb-1">
+      <button type="button" onClick={onAll} className={BUTTON_MENU_LINK}>
         Select all
       </button>
-      <button type="button" onClick={onNone} className="underline hover:text-sdc-navy">
+      <button type="button" onClick={onNone} className={BUTTON_MENU_LINK}>
         Clear
       </button>
     </div>
@@ -124,7 +129,7 @@ export function MenuCheckbox({
     <label className="flex cursor-pointer items-center gap-2 rounded px-1.5 py-1 text-xs hover:bg-sdc-gray-100">
       <input type="checkbox" checked={checked} onChange={onChange} className="h-3.5 w-3.5 shrink-0" />
       <span className="flex-1 truncate">{label}</span>
-      {suffix && <span className="shrink-0 font-mono text-[10px] text-sdc-gray-400">{suffix}</span>}
+      {suffix && <span className="shrink-0 font-mono text-label text-sdc-gray-400">{suffix}</span>}
     </label>
   );
 }

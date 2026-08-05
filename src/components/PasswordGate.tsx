@@ -60,7 +60,7 @@ export function PasswordGate({
         </div>
         {wrongPassword && <p className="mt-2 text-xs text-sdc-red-text">Incorrect password.</p>}
         <UnlockButton />
-        <p className="mt-3 text-[11px] text-sdc-gray-400">Ask an admin if you don&apos;t have the password.</p>
+        <p className="mt-3 text-note text-sdc-gray-400">Ask an admin if you don&apos;t have the password.</p>
       </form>
     </div>
   );

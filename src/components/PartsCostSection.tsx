@@ -200,7 +200,7 @@ export function PartsCostSection({ parts, estimatedToPurchase }: { parts: JobPar
             {allLines.length === 0 ? "No parts purchased for this job." : "No line items match the current filters."}
           </p>
         ) : (
-          <table className="w-full border-collapse text-[11px]">
+          <table className="w-full border-collapse text-note">
             <thead className="sticky top-0 z-20">
               <tr className="bg-sdc-navy text-left text-white">
                 {table.getFlatHeaders().map((header, i) => {
@@ -215,7 +215,7 @@ export function PartsCostSection({ parts, estimatedToPurchase }: { parts: JobPar
                     >
                       <span className={`inline-flex items-center gap-1 ${i >= 8 ? "justify-end" : ""}`}>
                         {COLS[i]}
-                        <span className="text-[9px] opacity-80">{sorted === "asc" ? "▲" : sorted === "desc" ? "▼" : ""}</span>
+                        <span className="text-micro opacity-80">{sorted === "asc" ? "▲" : sorted === "desc" ? "▼" : ""}</span>
                       </span>
                     </th>
                   );

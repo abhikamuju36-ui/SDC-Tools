@@ -409,13 +409,23 @@ export function EtcSectionCells({
     updateEtcField(fieldName, raw);
   }
 
+  // Which view keys hide this cell. Space-separated and matched with `[data-col~=]`,
+  // so ONE attribute answers both "is this section hidden" and "is this billing group
+  // hidden" — the Monthly ETC View menu filters by group, and the cell does not need
+  // to know which of the two is being used. See lib/grid-view.ts.
+  //
+  // On all five cells rather than a wrapper, because there is no wrapper: these are
+  // sibling <td>s in the row, and a <td> is the only thing a column can be hidden by.
+  const colKey = `${sectionCode} ${billingGroup}`;
+
   return (
     <>
-      <td className={`${edge} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={String(round2(priorEtc))}>
+      <td data-col={colKey} className={`${edge} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`} title={String(round2(priorEtc))}>
         {wholeNum(priorEtc)}
       </td>
       <td
-        className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-navy`}
+        data-col={colKey}
+        className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-navy`}
         title={String(worked)}
       >
         {/* Read-only — auto-synced from Power BI, not manager-editable. The
@@ -428,15 +438,25 @@ export function EtcSectionCells({
         {workedDisplay}
       </td>
       <td
-        className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-500`}
+        data-col={colKey}
+        className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-500`}
         title={`${round2(hoursLeft)} = Prior ETC (${round2(priorEtc)}) − Hours Worked (${worked})`}
       >
         {wholeNum(hoursLeftShown)}
       </td>
       {/* `relative` so the presence marker can sit in the corner without changing
           the cell's size — see CellPresence. */}
+      {/* motion-cell (§36.7): the yellow ⇄ neutral fill crossfades over
+          --motion-hover instead of snapping. It changes on a KEYSTROKE — filling the
+          box clears the flag, emptying it brings it back — so §36.7's "yellow
+          highlighting should appear or disappear smoothly without delay" is really
+          two requirements, and 120ms satisfies both.
+          background-color only, deliberately: this cell also wears the save-state
+          ring (a box-shadow) and lives under the row-hover rule, whose highlight is an
+          inset shadow with a 9999px spread. See the class in globals.css. */}
       <td
-        className={`relative border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(decided)} ${saveState?.ring ?? ""} px-1 py-1 text-center align-middle whitespace-nowrap`}
+        data-col={colKey}
+        className={`motion-cell relative border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(decided)} ${saveState?.ring ?? ""} px-1 py-1 text-center align-middle whitespace-nowrap`}
         title={invalidMessage ?? saveState?.title}
         // Announced, not just coloured: a red ring is invisible to a screen reader and
         // to anyone who cannot distinguish the shade from the yellow "needs attention"
@@ -497,11 +517,12 @@ export function EtcSectionCells({
           onBlur={() => endEditingCell(fieldName)}
           disabled={locked}
           aria-label={`New ETC override, ${jobName}, ${sectionName}`}
-          className="w-full [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-[10px] font-bold leading-none text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"
+          className="w-full [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-label font-bold leading-none text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"
         />
       </td>
       <td
-        className={`border-l border-sdc-border ${ETC_COL_W} ${diffShown == null ? "bg-white" : ""} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+        data-col={colKey}
+        className={`border-l border-sdc-border ${ETC_COL_W} ${diffShown == null ? "bg-white" : ""} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`}
         // Coloured from the ROUNDED value, so the shade matches the number printed
         // in the cell rather than the exact figure behind it. Recomputed on every
         // keystroke, since diffShown derives from the live New ETC text.

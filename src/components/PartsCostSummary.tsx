@@ -116,7 +116,7 @@ export function PartsCostSummary({
           </p>
         </div>
         {failedJobs > 0 && (
-          <p className="mb-2 rounded border border-sdc-yellow bg-sdc-yellow-bg px-2 py-1 text-[11px] text-sdc-yellow-text">
+          <p className="mb-2 rounded border border-sdc-yellow bg-sdc-yellow-bg px-2 py-1 text-note text-sdc-yellow-text">
             {failedJobs} of {jobCount} jobs couldn&apos;t be reached in Total ETO, so their parts are missing from these totals. The
             figures below are a floor, not the full picture.
           </p>

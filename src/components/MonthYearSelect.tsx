@@ -102,7 +102,7 @@ export function MonthYearSelect({
     !months.includes(ym) ? " (new)" : locked.has(ym) ? " — locked" : " — in progress";
 
   const selectClass =
-    "rounded-lg border border-sdc-border bg-white px-3 py-1.5 text-sm font-medium text-sdc-navy shadow-sm outline-none transition-opacity focus:border-sdc-blue disabled:cursor-wait";
+    "rounded-lg border border-sdc-border bg-white px-3 py-1.5 text-sm font-medium text-sdc-navy shadow-sm outline-none motion-interactive focus:border-sdc-blue disabled:cursor-wait";
 
   return (
     <span className="inline-flex items-center gap-2">

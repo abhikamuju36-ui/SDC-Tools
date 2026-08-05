@@ -1,21 +1,42 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { usd, hours as fmtHours } from "@/components/ui/format";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 import { ETC_SECTIONS } from "@/lib/sections";
 import { offGridBySection, sectionName, type OffGridJob } from "@/lib/off-grid-hours";
 import type { EtcMonthKpis } from "@/lib/etc-month-kpis";
+// The strip's CONTENT — which blocks exist, what each one says, which drill it opens —
+// is a pure function of the reconciled figures (§37). See the header note there for why
+// it is not inline JSX any more.
+import {
+  buildKpiBlocks,
+  kpiDetailState,
+  offGridTotalHours,
+  KPI_GRID_CLASS,
+  type DrillScope,
+  type KpiBlock,
+} from "@/lib/etc-kpi-strip";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
 import type { UnattributedDetail } from "@/lib/unattributed-hours";
 import { loadUnattributedDetail } from "@/lib/unattributed-actions";
-import { loadEtcMonthHoursDetail } from "@/lib/hours-detail-actions";
+import { loadEtcMonthHoursDetail, loadPartsSpentDetail, loadJobPartsLines } from "@/lib/hours-detail-actions";
+import type { PartsSpentDetail } from "@/lib/parts-spent";
+import type { JobPartsCost } from "@/lib/sync-totaleto";
 import { readKpiStripOpen, writeKpiStripOpen, subscribeKpiStrip } from "@/lib/kpi-strip-pref";
+// Newest-wins ordering and in-flight de-duplication for every drill fetch below
+// (§32.2). Replaces four hand-rolled request-id refs that each got the ordering
+// right and the DUPLICATION wrong — see the note on the fetch effects.
+import { sequenced } from "@/lib/request-sequence";
 import { useEtcLiveTotals } from "@/lib/etc-live-totals";
-import { reconcileEtcKpis, rollupLiveTotals, varianceTooltip } from "@/lib/etc-kpi-live";
+// varianceTooltip is no longer imported here: the Parts tooltip is built where the block
+// is built (lib/etc-kpi-strip.ts), which is what stops this component from having an
+// opinion about which figures the sentence should quote.
+import { reconcileEtcKpis, rollupLiveTotals } from "@/lib/etc-kpi-live";
 // A completed refresh publishes through this feed, which is how the drill caches below
 // learn that their sources have moved — including when somebody else started it.
 import { useRealtimeChanges } from "@/components/RealtimeProvider";
+import { useValueFlash } from "@/components/useMotion";
 
 // Section code -> billing group, so the drill can be narrowed to the card that
 // opened it. Same mapping the grid's column bands and the KPI totals use, from
@@ -23,7 +44,9 @@ import { useRealtimeChanges } from "@/components/RealtimeProvider";
 // card, the grid and the drill.
 const SECTION_GROUP = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]));
 
-type DrillScope = "Engineering" | "Shop" | "All" | "Unattributed" | "OffGrid";
+// The formatters the blocks are built with. Module-level and frozen, so building the
+// strip cannot depend on anything that changes per render.
+const KPI_FORMAT = { hours: fmtHours, usd } as const;
 
 // Re-exported so the page's existing `import type { OffGridJob }` keeps working; the
 // type and the rollup both live in lib/off-grid-hours.ts now, where a plain test can
@@ -100,28 +123,22 @@ export function EtcMonthKpiCards({
   // that says which fields are editable-derived (newEtc, diff, diffUnplanned) and
   // which are synced (worked, spent, people, prior, hoursLeft). There is no arithmetic
   // left in this component, so no card can pick a different vintage from its neighbour.
+  //
+  // `live` is the ONLY set of figures the summary blocks are built from (§37.3): every
+  // block reads it through buildKpiBlocks, so there is no longer a per-card choice
+  // between `live.x` and `kpis.x` to get wrong — which is how the Parts tooltip came to
+  // quote a page-load operand beside a live variance.
   const live = reconcileEtcKpis(kpis, rollupLiveTotals(useEtcLiveTotals()));
-  const engDiff = live.engineering.diff;
-  const shopDiff = live.shop.diff;
-  const partsDiff = live.parts.diff;
-  const engUnplanned = live.engineering.diffUnplanned;
-  const shopUnplanned = live.shop.diffUnplanned;
 
-  // Summed here rather than passed in, so the card and its drill can never
-  // disagree about how much is off the grid.
-  const offGridTotal = offGridJobs.reduce((s, j) => s + j.hours, 0);
+  // Summed through the same helpers the summary blocks use (lib/etc-kpi-strip.ts), so a
+  // block and the drill panel that opens from it cannot disagree about the figure
+  // (§37.13 #6). Both are cheap reductions over data already in props.
+  const offGridTotal = offGridTotalHours(offGridJobs);
   // "By job" is the default because the ACTION lives on the job — setting it back to
   // Active is what saves the hours. "By section" answers the other question: what kind
   // of work is about to be lost.
   const [offGridView, setOffGridView] = useState<"job" | "section">("job");
   const offGridSections = useMemo(() => offGridBySection(offGridJobs), [offGridJobs]);
-
-  // How many cards the strip will render, so the xl grid can be exactly that many
-  // columns wide. FIVE fixed cards — Engineering hours, Shop hours, Parts spent, People
-  // booked, Undefined hours — plus the off-grid one when it applies. Was six until
-  // "Total hours worked" was removed on 2026-08-03; leaving this at 6 would have left a
-  // permanently empty column at the end of the strip.
-  const cardCount = 5 + (offGridJobs.length > 0 ? 1 : 0);
 
   const [drill, setDrill] = useState<DrillScope | null>(null); // null = closed
   // The punch rows behind the Engineering / Shop / People cards, fetched on first
@@ -140,6 +157,11 @@ export function EtcMonthKpiCards({
   // The unattributed drill is fetched on click, not with the page: it re-parses
   // the hours export, which nobody should pay for unless they open it.
   const [unattributed, setUnattributed] = useState<UnattributedDetail | null>(null);
+  // The Parts spent drill: same treatment as the two beside it — fetched when opened,
+  // cached, and dropped when a refresh lands (see the invalidation effect below).
+  const [parts, setParts] = useState<PartsSpentDetail | null>(null);
+  const [loadingParts, startParts] = useTransition();
+  const [partsError, setPartsError] = useState<string | null>(null);
   const [loadingUnattributed, startUnattributed] = useTransition();
   const [unattributedError, setUnattributedError] = useState<string | null>(null);
 
@@ -189,27 +211,49 @@ export function EtcMonthKpiCards({
   // DIFFERENT card still switches scope instead of closing, which is what
   // someone comparing Engineering against Shop is actually asking for.
   //
-  // Opening one of the punch drills also STARTS THE FETCH, if this is the first
-  // time. Deliberately not an effect keyed on `drill`: the click is the event that
-  // means "I want this data", and an effect would also fire on a re-render that
-  // merely happened to have a drill open, which is how duplicate requests start.
-  // `loadingDetail` and `detail` between them make a second click a no-op.
-  const toggleDrill = (scope: DrillScope) => {
+  // ── Opening a drill only OPENS it; the fetch is the effect's job ───────────
+  //
+  // This used to start the fetch itself, on the reasoning that "the click is the
+  // event that means I want this data, and an effect would also fire on a
+  // re-render, which is how duplicate requests start". The self-healing effects
+  // below were added later for first-open and cache-invalidation, and once they
+  // existed this handler became the duplicate it was written to prevent: the
+  // click issued one request, then the re-render with `drill` set and `detail`
+  // still null satisfied the effect's `if (detail) return` guard and issued a
+  // SECOND identical one. Two requests for one click (§32.3 forbids exactly this).
+  //
+  // One fetch path now, and it is the effect. `sequenced` makes that safe on its
+  // own terms rather than by argument: an identical request already in flight is
+  // joined, not repeated.
+  //
+  // useCallback with no dependencies, so its identity never changes: it is passed to
+  // every memoised MetricBlock, and a fresh function each render would defeat the
+  // memoisation §37.4 and §37.11 ask for (only the affected block re-renders).
+  const toggleDrill = useCallback((scope: DrillScope) => {
     setDrill((current) => (current === scope ? null : scope));
-    if (scope === "OffGrid" || scope === "Unattributed") return; // served from props / their own fetch
-    if (detail || loadingDetail) return;
-    setDetailError(null);
-    startDetail(async () => {
-      try {
-        setDetail(await loadEtcMonthHoursDetail(month, detailJobIds));
-      } catch (err) {
-        // Shown in the panel rather than thrown: losing the whole ETC page to an
-        // error boundary over an optional drill would be a bad trade. Same call as
-        // the unattributed drill beside it.
-        setDetailError(err instanceof Error ? err.message : "Could not load the punch detail.");
-      }
-    });
-  };
+  }, []);
+
+  // ── Retry, per KPI (§37.9) ──────────────────────────────────────────────────
+  //
+  // Drops the cache and the error for the ONE lane that failed, which is enough: the
+  // effect that owns that lane sees its data missing while its drill is open and
+  // refetches. Nothing else is touched, so a failed Parts fetch cannot clear the punch
+  // detail somebody else is reading.
+  //
+  // Stable identity for the same reason as toggleDrill — hence the scope argument
+  // rather than a read of the `drill` state.
+  const retryDrill = useCallback((scope: DrillScope) => {
+    if (scope === "Parts") {
+      setParts(null);
+      setPartsError(null);
+    } else if (scope === "Unattributed") {
+      setUnattributed(null);
+      setUnattributedError(null);
+    } else {
+      setDetail(null);
+      setDetailError(null);
+    }
+  }, []);
 
   // ── Drill caches are dropped when the data underneath them moves (§30) ─────
   //
@@ -231,76 +275,126 @@ export function EtcMonthKpiCards({
     drillChangeSeen.current = changes.length;
     setDetail(null);
     setUnattributed(null);
+    setParts(null);
   }, [changes.length]);
+
+  // ── Ordering and de-duplication now come from lib/request-sequence ─────────
+  //
+  // There were three request-id refs here (plus a fourth for the per-job parts
+  // lines), each doing `const req = ++ref.current` and checking it again on the
+  // way out. That is the right idea — it is what stops a response the user has
+  // moved on from landing late — but four copies of it meant four chances to get
+  // it subtly wrong, and none of them de-duplicated a request already in flight.
+  //
+  // `sequenced(lane, key, work)` is the one implementation: the lane is the thing
+  // being kept current, the key is the question being asked, and a result comes
+  // back `ok` only if it is still the newest answer for that lane. The trap the
+  // old comment warned about still applies and is still avoided — the
+  // transition's pending flag must never be an effect dependency, because
+  // starting the transition flips it and re-runs the effect.
+
+  // ── The second level of the parts drill ───────────────────────────────────
+  //
+  // Which job's purchase lines are expanded, and the lines themselves, cached per job
+  // so collapsing and reopening a row is instant. Each job is a separate TotalETO
+  // round trip, so they are fetched one at a time, on demand — never all 45 up front.
+  const [openJob, setOpenJob] = useState<string | null>(null);
+  const [jobLines, setJobLines] = useState<Record<string, JobPartsCost>>({});
+  const [loadingJobLines, startJobLines] = useTransition();
+  const [jobLinesError, setJobLinesError] = useState<string | null>(null);
+
+  function toggleJobLines(jobNumber: string) {
+    if (openJob === jobNumber) {
+      setOpenJob(null);
+      return;
+    }
+    setOpenJob(jobNumber);
+    setJobLinesError(null);
+    if (jobLines[jobNumber]) return; // already fetched
+    startJobLines(async () => {
+      // Keyed on the job, so expanding a second row does not invalidate the first
+      // — each row's lines are a separate answer that stays valid once fetched.
+      const out = await sequenced(`parts-lines:${jobNumber}`, jobNumber, () => loadJobPartsLines(jobNumber));
+      if (out.ok) setJobLines((m) => ({ ...m, [jobNumber]: out.value }));
+      else if (out.reason === "error") {
+        setJobLinesError(out.error instanceof Error ? out.error.message : "Could not load the purchase lines.");
+      }
+    });
+  }
+  useEffect(() => {
+    if (drill !== "Parts" || parts) return;
+    // No synchronous clear of the error here: setting state during an effect cascades a
+    // render, and the branches below already replace it with whatever this attempt
+    // produces.
+    startParts(async () => {
+      const out = await sequenced("kpi-parts", month, () => loadPartsSpentDetail(month, detailJobIds));
+      if (out.ok) setParts(out.value);
+      else if (out.reason === "error") {
+        setPartsError(out.error instanceof Error ? out.error.message : "Could not load the parts detail.");
+      }
+    });
+    // detailJobIds is a new array each render; its CONTENT only moves with the month or
+    // the Billable filter, both of which re-render the page and null this cache anyway.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [drill, parts, month]);
 
   // Self-healing refetch: whenever a drill is open and its data is missing — first
   // open, or the invalidation above — fetch it. Guarded on the loading flag so a
   // re-render cannot start a second request, which is the duplicate-call hazard the
   // click-driven fetch above was written to avoid.
   useEffect(() => {
-    if (drill !== "Unattributed" || unattributed || loadingUnattributed) return;
-    let alive = true;
+    // Same shape as the Parts effect above, and the same trap avoided: the transition's
+    // pending flag must not be a dependency, or starting the request re-runs the effect
+    // and cancels it.
+    if (drill !== "Unattributed" || unattributed) return;
     startUnattributed(async () => {
-      try {
-        const d = await loadUnattributedDetail(month);
-        if (alive) setUnattributed(d);
-      } catch (err) {
-        if (alive) setUnattributedError(err instanceof Error ? err.message : "Could not read the hours export.");
+      const out = await sequenced("kpi-unattributed", month, () => loadUnattributedDetail(month));
+      if (out.ok) setUnattributed(out.value);
+      else if (out.reason === "error") {
+        setUnattributedError(out.error instanceof Error ? out.error.message : "Could not read the hours export.");
       }
     });
-    return () => {
-      alive = false;
-    };
-  }, [drill, unattributed, loadingUnattributed, month]);
+  }, [drill, unattributed, month]);
 
   useEffect(() => {
-    if (drill === null || drill === "OffGrid" || drill === "Unattributed") return;
-    if (detail || loadingDetail) return;
-    let alive = true;
+    if (drill === null || drill === "OffGrid" || drill === "Unattributed" || drill === "Parts") return;
+    if (detail) return;
     startDetail(async () => {
-      try {
-        const d = await loadEtcMonthHoursDetail(month, detailJobIds);
-        if (alive) setDetail(d);
-      } catch (err) {
-        if (alive) setDetailError(err instanceof Error ? err.message : "Could not load the punch detail.");
+      // Keyed on the month alone: the punch detail is the same answer whichever of
+      // the Engineering / Shop / All cards opened it (the panel narrows it
+      // client-side), so switching cards must not refetch — and with a shared key
+      // it cannot, because the second open joins the first request.
+      const out = await sequenced("kpi-detail", month, () => loadEtcMonthHoursDetail(month, detailJobIds));
+      if (out.ok) setDetail(out.value);
+      else if (out.reason === "error") {
+        setDetailError(out.error instanceof Error ? out.error.message : "Could not load the punch detail.");
       }
     });
-    return () => {
-      alive = false;
-    };
     // detailJobIds is a fresh array every render; its CONTENT is what matters, and it
     // only changes with the month or the Billable filter — both of which re-render the
     // page and null the cache anyway.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [drill, detail, loadingDetail, month]);
 
-  const unattributedTotal = importIssues.reduce((s, i) => s + i.hours, 0);
-  const unattributedEntries = importIssues.reduce((s, i) => s + i.rows, 0);
+  // ── The blocks (§37.1) ──────────────────────────────────────────────────────
+  //
+  // Six blocks' worth of labels, values, statuses and tones, from the reconciled
+  // figures. Deliberately NOT memoised: `live` is a fresh object whenever a cell
+  // publishes (that is what makes the strip live), so a useMemo keyed on it would
+  // recompute every time anyway while implying it did not. What actually keeps the work
+  // down is MetricBlock being memo'd on primitives — building six small objects costs
+  // nothing, re-rendering six subtrees on every keystroke was the cost worth removing.
+  const blocks = buildKpiBlocks({ kpis: live, importIssues, offGridJobs }, KPI_FORMAT);
 
-  function toggleUnattributed() {
-    if (drill === "Unattributed") {
-      setDrill(null);
-      return;
-    }
-    setDrill("Unattributed");
-    // Fetched once, then cached — re-parsing the export on every open would make the
-    // panel feel broken. The cache is dropped when a refresh lands (see the realtime
-    // effect below), which is the case this guard used to get wrong: its reasoning was
-    // "the export only changes on a sync", and Refresh Data IS a sync, so the card
-    // moved while its own detail kept serving pre-refresh rows.
-    if (unattributed || loadingUnattributed) return;
-    setUnattributedError(null);
-    startUnattributed(async () => {
-      try {
-        setUnattributed(await loadUnattributedDetail(month));
-      } catch (err) {
-        // Surfaced in the panel rather than thrown: this reads a file that can be
-        // missing or stale, and losing the whole ETC page to an error boundary
-        // over an optional drill would be a bad trade.
-        setUnattributedError(err instanceof Error ? err.message : "Could not read the hours export.");
-      }
-    });
-  }
+  // The three fetch lanes behind the six blocks, in the shape kpiDetailState reads
+  // (§37.9). Which block shows an updating or failed marker is decided there, so the
+  // property that matters — a slow or failed KPI leaves the other five alone — is a test
+  // rather than a chain of ternaries nobody can check.
+  const lanes = {
+    punches: { loading: loadingDetail, error: detailError, loaded: detail != null },
+    parts: { loading: loadingParts, error: partsError, loaded: parts != null },
+    undefinedHours: { loading: loadingUnattributed, error: unattributedError, loaded: unattributed != null },
+  };
 
   return (
     <div className="mb-4">
@@ -312,144 +406,210 @@ export function EtcMonthKpiCards({
           type="button"
           onClick={() => setStripOpen(!stripOpen)}
           aria-expanded={stripOpen}
-          className="text-[10px] font-medium text-sdc-gray-500 underline decoration-dotted underline-offset-2 hover:text-sdc-navy"
+          // Right-aligned in a fixed slot: "Hide summary" and "Show summary" are
+          // different widths, and without the reservation the control walked left and
+          // right as it was used (§36.14: "avoid replacing text with differently sized
+          // content").
+          className="motion-interactive min-w-[6.5rem] text-right text-label font-medium text-sdc-gray-500 underline decoration-dotted underline-offset-2 hover:text-sdc-navy"
         >
           {stripOpen ? "Hide summary" : "Show summary"}
         </button>
       </div>
-      {/* One row at xl, however many cards there are (2026-08-03, by request).
-          The count VARIES — "Hours off the grid" only appears when there is
-          something off the grid — so a hardcoded xl:grid-cols-6 wrapped the
-          seventh card onto a line of its own, and hardcoding 7 would leave a gap
-          on every normal month. The column count follows the card count instead,
-          via a CSS variable, so both cases fill the row exactly.
-          Below xl it still wraps to 2 or 3 — seven cards on a laptop would be
-          unreadable, and this strip is a glance, not a table. */}
+      {/* ── ONE summary card (§37.1) ─────────────────────────────────────────
+          Six separate bordered cards became one: one outer border, one background,
+          one shadow, and the metric blocks inside separated by hairline dividers
+          rather than by six more borders (§37.7).
+          The dividers are the grid's `gap-px` showing this container's background
+          through — see KPI_GRID_CLASS for why that beats a per-block border (it
+          survives wrapping, which a left border does not).
+          motion-fade on the CARD, not on the blocks: revealing the summary is one
+          deliberate action, so it is one transition. Animating each block separately
+          would stagger six things the user asked for at once (§36.1).
+          Labelled, so a screen reader announces what the region is before reading six
+          figures out of it (§37.10). */}
       {stripOpen && (
-      <div
-        style={{ ["--kpi-cols" as string]: String(cardCount) }}
-        className="grid grid-cols-2 gap-1.5 lg:grid-cols-3 xl:[grid-template-columns:repeat(var(--kpi-cols),minmax(0,1fr))]"
+      <section
+        aria-label={`${month} summary`}
+        // @container: the block layout inside responds to THIS card's width rather than
+        // the viewport's — see KPI_GRID_CLASS for why the viewport was the wrong box.
+        className="@container motion-fade overflow-hidden rounded-xl border border-sdc-border bg-sdc-border-soft shadow-sm"
       >
-        <GroupCard
-          label="Engineering hours"
-          worked={kpis.engineering.worked}
-          diff={engDiff}
-          unplanned={engUnplanned}
-          people={kpis.engineering.people}
-          hasPunchData={kpis.hasPunchData}
-          drillOpen={drill === "Engineering"}
-          onDrill={() => toggleDrill("Engineering")}
-        />
-        <GroupCard
-          label="Shop hours"
-          worked={kpis.shop.worked}
-          diff={shopDiff}
-          unplanned={shopUnplanned}
-          people={kpis.shop.people}
-          hasPunchData={kpis.hasPunchData}
-          drillOpen={drill === "Shop"}
-          onDrill={() => toggleDrill("Shop")}
-        />
-        {/* `live.parts`, not `kpis.parts`, for the New ETC in the tooltip — it is the
-            operand of the variance shown beside it, and reading it from the page-load
-            snapshot is exactly what made this sentence stop adding up (§28.15). */}
-        <Card label="Parts spent" value={usd(live.parts.spent)}>
-          <Variance
-            value={partsDiff}
-            format={usd}
-            title={varianceTooltip({
-              leftLabel: "Money Left",
-              plannedLeft: live.parts.plannedMoneyLeft,
-              plannedNewEtc: live.parts.plannedNewEtc,
-              groupLeft: live.parts.moneyLeft,
-              groupNewEtc: live.parts.newEtc,
-              format: usd,
-            })}
+      <div className={KPI_GRID_CLASS}>
+        {/* Every block, from the one place that decides what the blocks are. The
+            labels, tones, drill scopes and the conditional off-grid block all live in
+            lib/etc-kpi-strip.ts — see its header for why the six hand-written cards
+            that used to sit here became data.
+            Keyed on the block's own id, not the index: `id` is stable across renders
+            and across the off-grid block appearing or disappearing, so React updates a
+            block in place rather than remounting the ones after it (§37.11). */}
+        {blocks.map((block) => (
+          <MetricBlock
+            key={block.id}
+            {...block}
+            drillOpen={block.drill != null && drill === block.drill}
+            detailState={kpiDetailState(block.drill, drill, lanes)}
+            onDrill={toggleDrill}
+            onRetry={retryDrill}
           />
-        </Card>
-        <Card
-          label="People booked"
-          value={kpis.hasPunchData ? String(kpis.peopleTotal) : "—"}
-          hint={
-            kpis.hasPunchData
-              ? // Not eng + shop: anyone who booked to both would be double-counted.
-                `${kpis.engineering.people} engineering · ${kpis.shop.people} shop (distinct overall)`
-              : "No punch-level hours stored for this month yet"
-          }
-          drillOpen={drill === "All"}
-          onDrill={kpis.hasPunchData ? () => toggleDrill("All") : undefined}
-        />
-        {/* "Total hours worked" removed 2026-08-03, by request. It was just
-            Engineering + Shop, both of which are the two cards to its left, and its own
-            hint spelled that out ("2,980 eng + 2,675 shop") — so it restated two figures
-            already on screen and cost a column doing it. */}
-        {/* Hours booked to something that isn't a job number. A card, not just
-            the banner above the grid, because this is the one figure here that
-            is MISSING from every other figure — it belongs beside the totals it
-            is absent from, not only in a notice people learn to scroll past.
-            Shown even at zero: "0 undefined hours" is a daily reassurance that
-            the import is clean, where an absent card says nothing either way.
-
-            Labelled "Undefined hours" (2026-08-03, by request). It read
-            "Unattributed hours" until earlier the same day, then "Undefined errors"
-            briefly; this is the settled name. The punches it counts are booked to the
-            literal job number "NOT DEFINED", which is what the banner above the grid
-            already calls them, so the card and the banner use one word for one thing —
-            and "hours" is what the figure actually is, which "errors" was not.
-
-            The internals still say `unattributed` throughout (types, the store,
-            lib/unattributed-hours.ts) — that describes the data accurately and renaming
-            it would touch six files for no visible gain. */}
-        <Card
-          label="Undefined hours"
-          value={fmtHours(unattributedTotal)}
-          tone={unattributedTotal > 0 ? "warn" : undefined}
-          hint={
-            unattributedTotal > 0
-              ? `${unattributedEntries} ${unattributedEntries === 1 ? "entry" : "entries"} · ${importIssues
-                  .map((i) => i.label)
-                  .join(", ")} — not counted in any figure here`
-              : "Every punch this month has a valid job number"
-          }
-          drillOpen={drill === "Unattributed"}
-          onDrill={unattributedTotal > 0 ? toggleUnattributed : undefined}
-        />
-        {/* Hours on jobs the grid isn't listing. The mirror image of the card
-            beside it: those hours have no job, these have a job the grid has
-            stopped showing — and both are MISSING from every other figure on this
-            strip, which is exactly why they belong on it rather than only in a
-            banner above a table people scroll past.
-            Red rather than amber: undefined-error hours sit there until someone
-            fixes Paylocity, but these rows are DELETED by the next Refresh Data or
-            Submit ETC, so the window to act on them closes.
-            Hidden at zero, unlike Undefined hours: "0 undefined hours" is a daily
-            reassurance the import is clean, whereas a permanent "0 off-grid" card
-            would just be a column of nothing on the normal month. */}
-        {offGridJobs.length > 0 && (
-          <Card
-            label="Hours off the grid"
-            value={fmtHours(offGridTotal)}
-            tone="danger"
-            hint={`${offGridJobs.length} ${offGridJobs.length === 1 ? "job" : "jobs"} not listed below — ${offGridJobs
-              .slice(0, 2)
-              .map((j) => j.jobId)
-              .join(", ")}${offGridJobs.length > 2 ? `, +${offGridJobs.length - 2} more` : ""} — missing from every figure here`}
-            drillOpen={drill === "OffGrid"}
-            onDrill={() => toggleDrill("OffGrid")}
-          />
-        )}
+        ))}
       </div>
+      </section>
       )}
 
-      {drill === "OffGrid" ? (
-        <div className="rounded-xl border border-sdc-red-border bg-white p-4 shadow-sm">
+      {drill === "Parts" ? (
+        // ── Where the parts money went, by job ──────────────────────────────
+        //
+        // Every figure here comes from the same EtcEntry rows and the same functions
+        // (effectiveNewEtc / newEtcDiff / calcHoursLeft) that getEtcMonthKpis uses, so
+        // the footer IS the card rather than a second opinion about it (§28.15).
+        <div className="motion-panel rounded-xl border border-sdc-border bg-white p-4 shadow-sm">
+          <p className="mb-1 text-xs font-semibold text-sdc-navy">Parts spent — {month}, by job</p>
+          <p className="mb-3 text-xs leading-relaxed font-medium text-sdc-gray-700">
+            Money invoiced against each job this month, biggest first. Click a row to see the purchase-order lines behind it.
+          </p>
+
+          {partsError && <p className="text-note font-medium text-sdc-red-text">{partsError}</p>}
+          {!partsError && loadingParts && !parts && <p className="text-note text-sdc-gray-600">Loading the parts detail…</p>}
+          {!partsError && parts && parts.rows.length === 0 && (
+            <p className="text-note text-sdc-gray-600">No job in this month has a parts budget or any parts spend.</p>
+          )}
+
+          {!partsError && parts && parts.rows.length > 0 && (
+            <div className="styled-scrollbar max-h-[420px] overflow-auto">
+              {/* Two columns only, by request: the question this panel answers is
+                  "where did the money go", and budget/plan columns were answering a
+                  different one that the grid below already covers. */}
+              <table className="w-full border-collapse text-xs">
+                <thead className="sticky top-0 bg-white">
+                  <tr className="border-b-2 border-sdc-border text-sdc-navy">
+                    <th className="px-2 py-2 text-left font-bold">Job</th>
+                    <th className="px-2 py-2 text-right font-bold">Money spent</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {parts.rows.map((r) => {
+                    const open = openJob === r.jobId;
+                    const lines = jobLines[r.jobId];
+                    return (
+                      <Fragment key={r.id}>
+                        <tr
+                          className={`cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/40 ${open ? "bg-sdc-blue-light/50" : ""}`}
+                          onClick={() => toggleJobLines(r.jobId)}
+                        >
+                          <td className="px-2 py-2 text-left">
+                            <span className="mr-1.5 inline-block w-2 text-sdc-navy">{open ? "▾" : "▸"}</span>
+                            <span className="font-mono font-bold text-sdc-navy">{r.jobId}</span>
+                            <span className="ml-2 font-semibold text-sdc-navy">{r.jobName}</span>
+                          </td>
+                          <td className="px-2 py-2 text-right font-bold tabular-nums text-sdc-navy">{usd(r.spent)}</td>
+                        </tr>
+                        {open && (
+                          <tr className="border-b border-sdc-border">
+                            <td colSpan={2} className="bg-sdc-gray-50 px-3 py-2.5">
+                              {jobLinesError && <p className="text-xs font-semibold text-sdc-red-text">{jobLinesError}</p>}
+                              {!jobLinesError && !lines && loadingJobLines && (
+                                <p className="text-xs font-medium text-sdc-gray-700">Loading purchase lines for {r.jobId}…</p>
+                              )}
+                              {!jobLinesError && lines && lines.lines.length === 0 && (
+                                <p className="text-xs font-medium text-sdc-gray-700">
+                                  TotalETO holds no purchase-order lines for job {r.jobId}.
+                                </p>
+                              )}
+                              {!jobLinesError && lines && lines.lines.length > 0 && (
+                                <>
+                                  {/* Says outright that these are the job's WHOLE purchase
+                                      history, not the month's — a part invoiced in July can
+                                      have been ordered in March, and the PO is what is being
+                                      examined. Without this the two totals look wrong. */}
+                                  <p className="mb-2 text-note leading-relaxed font-medium text-sdc-gray-700">
+                                    All purchase lines for job {r.jobId} — <strong>{usd(lines.purchased)} purchased</strong>,{" "}
+                                    {usd(lines.paid)} invoiced, {usd(lines.leftToPay)}{" "}
+                                    left to pay. This is the job&apos;s whole history,
+                                    not just {month}, so it will not equal the {usd(r.spent)} above.
+                                  </p>
+                                  <div className="styled-scrollbar max-h-64 overflow-auto rounded border border-sdc-border bg-white">
+                                    <table className="w-full border-collapse text-note">
+                                      <thead className="sticky top-0 bg-sdc-gray-50">
+                                        <tr className="border-b border-sdc-border text-sdc-navy">
+                                          <th className="px-2 py-1.5 text-left font-bold">PO</th>
+                                          {/* getJobPartsCost already sorts newest purchase first, so this
+                                              column is also the order the rows are in. */}
+                                          <th className="px-2 py-1.5 text-left font-bold whitespace-nowrap">Purchased on</th>
+                                          <th className="px-2 py-1.5 text-left font-bold">Supplier</th>
+                                          <th className="px-2 py-1.5 text-left font-bold">Part</th>
+                                          <th className="px-2 py-1.5 text-right font-bold">Qty</th>
+                                          <th className="px-2 py-1.5 text-right font-bold">Unit</th>
+                                          <th className="px-2 py-1.5 text-right font-bold">Purchased</th>
+                                          <th className="px-2 py-1.5 text-right font-bold">Invoiced</th>
+                                        </tr>
+                                      </thead>
+                                      <tbody>
+                                        {lines.lines.map((l, i) => (
+                                          <tr key={i} className="border-b border-sdc-border-soft/50" title={l.description ?? undefined}>
+                                            <td className="px-2 py-1.5 text-left font-mono font-semibold text-sdc-navy">{l.poNumber ?? "—"}</td>
+                                            {/* The PO date, not the invoiced date — "when did we buy
+                                                this" is the question a purchase line answers. The
+                                                invoiced date is what the month's figure is windowed
+                                                on, which is why the two need not agree; the note
+                                                above the table says so. */}
+                                            <td className="px-2 py-1.5 text-left font-medium whitespace-nowrap text-sdc-navy">
+                                              {l.purchaseDate ?? "—"}
+                                            </td>
+                                            <td className="max-w-[150px] truncate px-2 py-1.5 text-left font-medium text-sdc-navy">
+                                              {l.supplier ?? "—"}
+                                            </td>
+                                            <td className="max-w-[220px] truncate px-2 py-1.5 text-left font-medium text-sdc-navy">
+                                              {l.partNumber ? `${l.partNumber} — ` : ""}
+                                              {l.description ?? "—"}
+                                            </td>
+                                            <td className="px-2 py-1.5 text-right font-medium tabular-nums text-sdc-navy">{l.quantity}</td>
+                                            <td className="px-2 py-1.5 text-right font-medium tabular-nums text-sdc-navy">{usd(l.unitPrice)}</td>
+                                            <td className="px-2 py-1.5 text-right font-bold tabular-nums text-sdc-navy">{usd(l.totalPrice)}</td>
+                                            <td className="px-2 py-1.5 text-right font-medium tabular-nums text-sdc-gray-700">
+                                              {usd(l.invoicedAmount)}
+                                            </td>
+                                          </tr>
+                                        ))}
+                                      </tbody>
+                                    </table>
+                                  </div>
+                                </>
+                              )}
+                            </td>
+                          </tr>
+                        )}
+                      </Fragment>
+                    );
+                  })}
+                </tbody>
+                <tfoot>
+                  <tr className="border-t-2 border-sdc-border bg-sdc-gray-50 font-bold text-sdc-navy">
+                    <td className="px-2 py-2 text-left">{parts.rows.length} jobs</td>
+                    <td className="px-2 py-2 text-right tabular-nums">{usd(parts.totals.spent)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+              {/* Says so out loud when the footer and the card differ, rather than
+                  leaving somebody to spot it. They can legitimately differ by the
+                  quiet jobs excluded above — nothing else should move them apart. */}
+              {Math.abs(parts.totals.spent - live.parts.spent) >= 0.5 && (
+                <p className="mt-2 rounded border border-sdc-yellow bg-sdc-yellow-bg/60 px-2 py-1.5 text-label leading-relaxed text-sdc-gray-600">
+                  This totals {usd(parts.totals.spent)} against the card&apos;s {usd(live.parts.spent)}. Both read the same month; if the gap
+                  is not the excluded jobs above, run &ldquo;Refresh Data&rdquo; and check again.
+                </p>
+              )}
+            </div>
+          )}
+        </div>
+      ) : drill === "OffGrid" ? (
+        <div className="motion-panel rounded-xl border border-sdc-red-border bg-white p-4 shadow-sm">
           <p className="mb-1 text-xs font-semibold text-sdc-navy">
             {fmtHours(offGridTotal)} hours on {offGridJobs.length} {offGridJobs.length === 1 ? "job" : "jobs"} the grid isn&apos;t listing
           </p>
           {/* The WHY and the WHAT-NOW, not just the number. This is the one figure
               on the strip with a deadline attached, and a drill that only restated
               the total would send someone hunting for the explanation. */}
-          <p className="mb-2 text-[11px] leading-relaxed text-sdc-gray-600">
+          <p className="mb-2 text-note leading-relaxed text-sdc-gray-600">
             The grid lists <strong>Active, billable</strong> jobs only, so anything else lands here — a job that moved status, one that is
             non-billable, one already Complete, or a <strong>HeadStart</strong> job (no PO, so never planned in an ETC month; listed always,
             even at 0 hours, so one that starts booking time is seen). Set a job back to Active and billable to bring it into the month, or
@@ -458,14 +618,14 @@ export function EtcMonthKpiCards({
           {/* Sourced from JobHoursDetail, not EtcEntry — see where hiddenJobEntries is
               built. Worth stating outright, because the previous version of this panel
               promised the opposite and was right to: it read rows that prune deletes. */}
-          <p className="mb-3 text-[11px] leading-relaxed text-sdc-gray-600">
+          <p className="mb-3 text-note leading-relaxed text-sdc-gray-600">
             Counted from the <strong>punch records</strong>, so this figure stays visible and is not affected by Refresh Data or Submit ETC.
             It still reaches no total in the grid below until the job qualifies.
           </p>
           {/* Two readings of the same 181 hours. Both total identically — they have to,
               since the card above shows that figure too. */}
           <div className="mb-2 flex items-center gap-1.5">
-            <span className="text-[10px] font-medium text-sdc-gray-500">Split by</span>
+            <span className="text-label font-medium text-sdc-gray-500">Split by</span>
             {(["job", "section"] as const).map((v) => (
               <button
                 key={v}
@@ -477,7 +637,7 @@ export function EtcMonthKpiCards({
                     ? "One row per job — the job is where the fix is (set it back to Active)"
                     : "One row per section, summed across every off-grid job"
                 }
-                className={`h-6 rounded-md border px-2 text-[10px] font-medium transition-colors ${
+                className={`h-6 rounded-md border px-2 text-label font-medium motion-interactive ${
                   offGridView === v
                     ? "border-sdc-blue bg-sdc-blue text-white"
                     : "border-sdc-border bg-white text-sdc-navy hover:bg-sdc-blue-light"
@@ -488,9 +648,9 @@ export function EtcMonthKpiCards({
             ))}
           </div>
           <div className="styled-scrollbar max-h-72 overflow-auto rounded-lg border border-sdc-border">
-            <table className="w-full border-collapse text-[11px]">
+            <table className="w-full border-collapse text-note">
               <thead className="sticky top-0 bg-sdc-gray-100">
-                <tr className="text-left text-[10px] font-semibold uppercase tracking-wide text-sdc-gray-500">
+                <tr className="text-left text-label font-semibold uppercase tracking-wide text-sdc-gray-500">
                   {offGridView === "job" ? (
                     <>
                       <th className="px-2 py-1.5">Job</th>
@@ -567,15 +727,15 @@ export function EtcMonthKpiCards({
               these hours come from, so including it would put money in an hours
               total. Said here because a reader comparing this against the job's
               Parts row would otherwise think something was missing. */}
-          <p className="mt-2 text-[10px] text-sdc-gray-400">Hours only — Parts Cost is money and is not counted here.</p>
+          <p className="mt-2 text-label text-sdc-gray-400">Hours only — Parts Cost is money and is not counted here.</p>
         </div>
       ) : drill === "Unattributed" ? (
         loadingUnattributed || (!unattributed && !unattributedError) ? (
-          <p className="rounded-xl border border-sdc-border bg-white p-4 text-xs text-sdc-gray-500 shadow-sm">
+          <p className="motion-panel rounded-xl border border-sdc-border bg-white p-4 text-xs text-sdc-gray-500 shadow-sm">
             Reading the hours export…
           </p>
         ) : unattributedError ? (
-          <p className="rounded-xl border border-sdc-red-border bg-sdc-red-bg p-4 text-xs font-medium text-sdc-red-text shadow-sm">
+          <p className="motion-panel rounded-xl border border-sdc-red-border bg-sdc-red-bg p-4 text-xs font-medium text-sdc-red-text shadow-sm">
             Could not load the undefined-hours detail — {unattributedError}
           </p>
         ) : (
@@ -604,25 +764,23 @@ export function EtcMonthKpiCards({
         // cursor: a one-line box while loading, the same box with the error, then
         // the table.
         (detailError ? (
-          <p className="rounded-xl border border-sdc-red-border bg-sdc-red-bg p-4 text-xs font-medium text-sdc-red-text shadow-sm">
+          <p className="motion-panel rounded-xl border border-sdc-red-border bg-sdc-red-bg p-4 text-xs font-medium text-sdc-red-text shadow-sm">
             Could not load the punch detail — {detailError}{" "}
             <button
               type="button"
-              onClick={() => {
-                setDetailError(null);
-                setDetail(null);
-                const scope = drill;
-                setDrill(null);
-                // Re-open, which re-runs the fetch through the one path that owns it.
-                setTimeout(() => toggleDrill(scope), 0);
-              }}
+              // The same retry the block's own link offers (§37.9), which is now one
+              // function rather than two. It used to close the drill and re-open it on a
+              // setTimeout to force the fetch; clearing the lane is enough, because the
+              // effect that owns it refetches whenever its drill is open and its data is
+              // missing — and it keeps the panel on screen while it does.
+              onClick={() => retryDrill(drill)}
               className="underline underline-offset-2 hover:no-underline"
             >
               Try again
             </button>
           </p>
         ) : scopedDetail == null ? (
-          <p className="rounded-xl border border-sdc-border bg-white p-4 text-xs text-sdc-gray-500 shadow-sm">
+          <p className="motion-panel rounded-xl border border-sdc-border bg-white p-4 text-xs text-sdc-gray-500 shadow-sm">
             Loading the punch detail…
           </p>
         ) : (
@@ -641,183 +799,179 @@ export function EtcMonthKpiCards({
   );
 }
 
-function Card({
+// ── One metric block inside the unified card (§37.1) ─────────────────────────
+//
+// The six separate Card / GroupCard / Variance / Unplanned components this replaced are
+// gone, along with the two places a card decided its own content. A block renders a
+// KpiBlock and nothing else: no arithmetic, no formatting, and no choice about which
+// vintage of a figure to read (see lib/etc-kpi-strip.ts).
+//
+// ── Why memo, and why the props are flat (§37.4, §37.11) ────────────────────
+//
+// This component re-renders on EVERY keystroke anywhere in the grid — that is what
+// makes the variances live. Before consolidation, six cards re-rendered with it each
+// time, and after consolidation a single monolithic card would have been worse: one
+// component whose whole subtree repaints because one of six figures moved is exactly
+// what §37.11 forbids.
+//
+// memo + primitive props gives the opposite behaviour: React's shallow comparison sees
+// that Engineering's label, value, status and tone are unchanged and skips it entirely,
+// so typing in a Shop cell updates the Shop block alone. It only works because every
+// field of KpiBlock is a primitive and both callbacks are stable — a nested `status`
+// object or an inline arrow would compare unequal every render and silently restore the
+// old all-six behaviour while looking optimised.
+const MetricBlock = memo(function MetricBlock({
+  id,
   label,
   value,
   hint,
-  children,
-  onDrill,
-  drillOpen = false,
   tone,
-}: {
-  label: string;
-  value: string;
-  hint?: string;
-  children?: React.ReactNode;
-  onDrill?: () => void;
-  // "warn" tints the card amber — used for a figure that represents work to do
-  // rather than work done. Deliberately not red: nothing is broken, some hours
-  // are mis-keyed upstream.
-  // "danger" is for a figure that is not merely worth noticing but is about to
-  // be LOST — see the off-grid card.
-  tone?: "warn" | "danger";
-  // Whether THIS card's panel is the one currently open, so the link can say so
+  toneLabel,
+  drill,
+  statusKind,
+  statusArrow,
+  statusText,
+  statusSign,
+  statusTitle,
+  drillOpen,
+  detailState,
+  onDrill,
+  onRetry,
+}: KpiBlock & {
+  // Whether THIS block's panel is the one currently open, so its link can say so
   // instead of reading "Detail" while the detail is already on screen.
-  drillOpen?: boolean;
+  drillOpen: boolean;
+  // This block's own fetch state (§37.9). At most one block is ever non-idle, because
+  // only an OPEN drill fetches anything — so a slow Parts query cannot put the other
+  // five blocks into a loading state, and a failed one is named rather than hidden.
+  detailState: "idle" | "loading" | "error";
+  onDrill: (scope: DrillScope) => void;
+  onRetry: (scope: DrillScope) => void;
 }) {
+  // ── The block updates; it does not re-arrive (§36.8) ───────────────────────
+  //
+  // Keyed on the FORMATTED value, not the raw number: the strip prints whole hours and
+  // whole dollars, so a change of 0.4h that rounds to the same string is not a change
+  // anybody can see, and flashing for it would be the block crying wolf.
+  //
+  // The highlight is an inset outline, which costs no layout at all, and the block's
+  // element is never keyed or replaced — §36.8 forbids remounting a card to show that
+  // its figure moved, and §37.4 forbids reloading the unified card to update one block.
+  const changed = useValueFlash(value);
+  const labelId = `kpi-${id}-label`;
   return (
     <div
-      // px-2 py-1.5 rather than p-3, and the hint moved into the title: three
-      // stacked lines per card was most of the height, and the third line was the
-      // least-read of them. Padding came down again when the strip went to seven
-      // across (2026-08-03) — at xl each card is now ~1/7 of the row, and the
-      // widest content ("$1,432,857" beside "▼ $1,084,643 over") needs the space
-      // more than the border does.
-      className={`min-w-0 rounded-lg border px-2 py-1.5 shadow-sm ${
-        tone === "danger"
-          ? "border-sdc-red-border bg-sdc-red-bg/60"
-          : tone === "warn"
-            ? "border-sdc-yellow bg-sdc-yellow-bg/50"
-            : "border-sdc-border bg-white"
+      // No border and no shadow of its own: the unified card owns both, and the 1px
+      // gaps between blocks are the dividers (§37.7 — "do not create nested heavy card
+      // borders"). A tone tints the block's background instead of bordering it, which
+      // reads as a section of one card rather than a card inside a card.
+      //
+      // min-h on the value line and the status line below, not on the block: the status
+      // swaps between a variance, an unplanned figure and a neutral note as cells are
+      // filled in, and without a floor the block changed height mid-typing and took the
+      // whole card (and the grid below it) with it (§36.14, §37.7).
+      className={`motion-interactive min-w-0 px-2.5 py-2 ${changed ? "motion-flash" : ""} ${
+        tone === "danger" ? "bg-sdc-red-bg/70" : tone === "warn" ? "bg-sdc-yellow-bg/70" : "bg-white"
       }`}
-      title={hint}
+      title={hint ?? undefined}
+      // A group per KPI, named by its own label, so a screen reader announces
+      // "Engineering hours" before the figure and its status rather than reading six
+      // numbers out of one region (§37.10).
+      role="group"
+      aria-labelledby={labelId}
     >
-      <div className="flex items-baseline justify-between gap-2">
-        <p className="truncate text-[10px] font-semibold uppercase tracking-wide text-sdc-gray-500">{label}</p>
-        {onDrill && (
+      {/* The label gets the block's whole width. Sharing the top line with the Detail
+          link left it 94px of 169px, which truncated "Engineering hours" and both toned
+          labels — measured live, and §37.7 asks for every label to stay readable. The
+          link moved down beside the status instead, where the two together still fit
+          with room to spare. `truncate` stays as the graceful fallback if the strip is
+          ever asked to hold more blocks than this. */}
+      <p id={labelId} className="truncate text-label font-semibold uppercase tracking-wide text-sdc-gray-500">
+        {/* The tone, said in something other than colour (§37.10). The glyph is
+            decorative — the sr-only words here and the status line below are what
+            carry the meaning. */}
+        {toneLabel && (
+          <>
+            <span aria-hidden="true" className={`mr-1 ${tone === "danger" ? "text-sdc-red-text" : "text-sdc-yellow-text"}`}>
+              ⚠
+            </span>
+            <span className="sr-only">{toneLabel}: </span>
+          </>
+        )}
+        {label}
+      </p>
+      {/* The value on its own line, so it can never compete with anything for width.
+          Side by side with the status — as the separate cards had them — there is no room
+          at six blocks across: "$1,432,857" beside "▼ $1,084,643 over" needs ~180px and
+          gets ~155px on a 1280px screen, so one of the two had to clip, and §37.7/§37.8
+          forbid clipping either. The reserved heights keep every block the same size
+          whatever its figures do. */}
+      <p className="font-heading min-h-[1.4rem] truncate text-base leading-tight font-bold tabular-nums text-sdc-navy">
+        {value}
+      </p>
+      <div className="flex min-h-[1.05rem] items-baseline justify-between gap-1.5">
+        <p
+          className={`min-w-0 truncate text-note font-semibold tabular-nums ${
+            statusKind === "unplanned"
+              ? // Neutral amber rather than the green/red of a variance: unplanned work is
+                // not good news or bad news, it is unfinished input. Painting it green
+                // (which a positive Diff would have done) actively told managers the
+                // opposite of what the number meant.
+                "text-sdc-yellow-text"
+              : statusKind === "text" || statusSign === 0
+                ? "text-sdc-gray-400"
+                : statusSign > 0
+                  ? "text-sdc-green-text"
+                  : "text-sdc-red-text"
+          }`}
+          title={statusTitle}
+        >
+          {/* Direction is in the words too ("under" / "over"), so the arrow is decorative
+              and the meaning survives without colour or glyph (§37.10). */}
+          {statusArrow && (
+            <span aria-hidden="true" className="mr-0.5">
+              {statusArrow}
+            </span>
+          )}
+          {statusText}
+        </p>
+        {drill != null && (
           <button
             type="button"
-            onClick={onDrill}
+            // Retry replaces Detail only while THIS block's fetch has failed, and it
+            // clears just this lane before the effect refetches — the drill stays open
+            // throughout, so the panel below is never yanked out from under the click
+            // (§37.9: "provide a retry option through the approved refresh or detail
+            // workflow").
+            onClick={() => (detailState === "error" ? onRetry(drill) : onDrill(drill))}
             aria-expanded={drillOpen}
+            // The accessible name carries the KPI; the visible text stays "Detail".
+            // Six buttons all named "Detail" is unusable from a screen reader's element
+            // list, and §37.10 requires each Detail action to be associated with the
+            // right KPI.
+            aria-label={
+              detailState === "error"
+                ? `Retry loading the ${label} detail`
+                : drillOpen
+                  ? `Hide the ${label} detail`
+                  : `Show the ${label} detail`
+            }
             title={drillOpen ? "Hide the punch detail" : "Show every booked punch behind this figure"}
-            className={`shrink-0 text-[10px] font-medium underline decoration-dotted underline-offset-2 ${
-              drillOpen ? "text-sdc-navy" : "text-sdc-blue hover:text-sdc-blue-dark"
+            // min-w, because "Detail", "Hide", "Loading…" and "Retry" are different
+            // widths and this control sits at the block's right edge — swapping them
+            // used to nudge the label beside it (§36.8, §36.14: reserve the space).
+            className={`motion-interactive shrink-0 text-right text-label font-medium underline decoration-dotted underline-offset-2 min-w-[3.2rem] ${
+              detailState === "error"
+                ? "text-sdc-red-text"
+                : drillOpen
+                  ? "text-sdc-navy"
+                  : "text-sdc-blue hover:text-sdc-blue-dark"
             }`}
           >
-            {drillOpen ? "Hide" : "Detail"}
+            {detailState === "error" ? "Retry" : detailState === "loading" ? "Loading…" : drillOpen ? "Hide" : "Detail"}
           </button>
         )}
       </div>
-      {/* min-w-0 + gap-1: with seven cards across, the value and its variance are
-          competing for ~1/7 of the row. Without min-w-0 a flex child refuses to
-          shrink below its content and the pair overflows the card; with it, the
-          variance truncates instead — and its full text is still on the card's
-          own title attribute. */}
-      <div className="flex min-w-0 items-baseline justify-between gap-1">
-        <p className="font-heading shrink-0 text-[16px] leading-tight font-bold tabular-nums text-sdc-navy">{value}</p>
-        {/* Variance sits BESIDE the number rather than under it — same information,
-            one line instead of two. */}
-        {children}
-      </div>
     </div>
   );
-}
-
-function GroupCard({
-  label,
-  worked,
-  diff,
-  unplanned,
-  people,
-  hasPunchData,
-  onDrill,
-  drillOpen,
-}: {
-  label: string;
-  worked: number;
-  diff: number;
-  // The part of `diff` from cells nobody has planned yet — see GroupKpi.
-  unplanned: number;
-  people: number;
-  hasPunchData: boolean;
-  onDrill: () => void;
-  drillOpen?: boolean;
-}) {
-  return (
-    <Card
-      label={label}
-      value={fmtHours(worked)}
-      hint={hasPunchData ? `${people} ${people === 1 ? "person" : "people"} booked time` : undefined}
-      onDrill={hasPunchData ? onDrill : undefined}
-      drillOpen={drillOpen}
-    >
-      {/* While anything is still unplanned, the card reports THAT rather than a
-          variance. A blank New ETC counts as 0 (2026-08-03), so an untouched cell
-          contributes its whole Hours Left — real, but calling it "under plan"
-          would be a lie: nobody has planned it at all. As cells get filled in the
-          unplanned figure shrinks to zero and the card flips to the true
-          over/under, which is exactly the state it needs to be right in at
-          submission. Both numbers are always in the tooltip. */}
-      {Math.round(unplanned) !== 0 ? (
-        <Unplanned hours={unplanned} rest={diff - unplanned} />
-      ) : (
-        <Variance
-          value={diff}
-          format={fmtHours}
-          title="Sum of (Hours Left − New ETC) over the cells a manager has confirmed"
-        />
-      )}
-    </Card>
-  );
-}
-
-// "Nobody has planned this yet" — deliberately NOT dressed as a variance.
-//
-// Neutral amber rather than the green/red of Variance: unplanned work is not
-// good news or bad news, it is unfinished input. Painting it green (which a
-// positive Diff would have done) actively told managers the opposite of what the
-// number meant.
-function Unplanned({ hours, rest }: { hours: number; rest: number }) {
-  const restRounded = Math.round(rest);
-  return (
-    <p
-      className="min-w-0 truncate text-[11px] font-semibold tabular-nums text-sdc-yellow-text"
-      title={
-        `${fmtHours(hours)} hours sit in sections with no New ETC entered — counted in full because an empty cell plans nothing. ` +
-        (restRounded === 0
-          ? "Every cell that HAS been planned is exactly on plan."
-          : `Separately, the cells already planned are ${fmtHours(Math.abs(restRounded))} ${restRounded > 0 ? "under" : "over"}.`)
-      }
-    >
-      {fmtHours(hours)} unplanned
-    </p>
-  );
-}
-
-// The grid's Diff, in words. Positive = New ETC is under what's left (good),
-// negative = over. Zero says "on plan" rather than "0", which reads as missing.
-function Variance({
-  value,
-  format,
-  title,
-}: {
-  value: number;
-  format: (n: number) => string;
-  title: string;
-}) {
-  const rounded = Math.round(value);
-  if (rounded === 0) {
-    return (
-      <p className="text-[11px] font-semibold text-sdc-gray-400" title={title}>
-        On plan
-      </p>
-    );
-  }
-  return (
-    <p
-      // min-w-0 + truncate, not shrink-0: at seven cards across, the widest pair
-      // on the strip ("$1,432,857" beside "▼ $1,084,643 over") exceeds a card at
-      // the narrow end of xl. Something has to give, and it should be this rather
-      // than the headline figure — so the variance clips with an ellipsis while
-      // the value stays whole. The full text is on both this element's title and
-      // the card's, so nothing becomes unreachable. On a wide screen it never
-      // clips at all.
-      className={`min-w-0 truncate text-[11px] font-semibold tabular-nums ${
-        rounded > 0 ? "text-sdc-green-text" : "text-sdc-red-text"
-      }`}
-      title={title}
-    >
-      {rounded > 0 ? "▲" : "▼"} {format(Math.abs(value))} {rounded > 0 ? "under" : "over"}
-    </p>
-  );
-}
+});

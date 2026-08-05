@@ -68,7 +68,7 @@ export function IndicatorCard({
           {/* target tick at 100% */}
           <div className="absolute inset-y-[-2px] w-px bg-sdc-gray-400" style={{ left: "100%" }} />
         </div>
-        <div className="mt-1 flex justify-between text-[10px] tabular-nums" style={{ color: MUTED }}>
+        <div className="mt-1 flex justify-between text-label tabular-nums" style={{ color: MUTED }}>
           <span>{Math.round((bullet.value / bullet.target) * 100)}% of target</span>
           <span>{(bullet.target).toLocaleString(undefined, { maximumFractionDigits: 0 })}</span>
         </div>
@@ -82,11 +82,11 @@ export function IndicatorCard({
         <p className="text-xs font-semibold text-sdc-gray-600">{label}</p>
         {deltaEl}
       </div>
-      <p className={`mt-1.5 font-heading text-[22px] font-bold leading-none tracking-tight tabular-nums ${tone === "green" ? "text-sdc-green-text" : "text-sdc-navy"}`}>
+      <p className={`mt-1.5 font-heading text-2xl font-bold leading-none tracking-tight tabular-nums ${tone === "green" ? "text-sdc-green-text" : "text-sdc-navy"}`}>
         {value}
       </p>
       {bulletEl}
-      {hint && <p className="mt-1.5 text-[10px] leading-tight text-sdc-gray-400">{hint}</p>}
+      {hint && <p className="mt-1.5 text-label leading-tight text-sdc-gray-400">{hint}</p>}
     </div>
   );
 }

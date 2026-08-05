@@ -3,6 +3,7 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
+import { recordChanges, classifyChange } from "@/lib/change-log";
 import { syncSchedulerTeam, reconcileSchedulerRoster, type TeamSyncResult, type RosterReconciliation } from "@/lib/sync-scheduler-team";
 import { parseSupervisorExport, applySupervisorImport, type SupervisorImportResult } from "@/lib/import-employee-supervisors";
 
@@ -72,7 +73,49 @@ export async function updateEmployee(id: number, formData: FormData) {
     summary: `Updated employee ${data.name}`,
     metadata: { before, after: data },
   });
+  // §33.1 — one event per field that moved, so the Employees tab is live for other
+  // users like every other tab. No cellKey: these are dialog fields, not grid cells,
+  // so a receiving browser refetches rather than patching one input.
+  await recordChanges(
+    (Object.keys(EMPLOYEE_FIELD_LABELS) as (keyof typeof data)[])
+      .map((field) => {
+        const previousValue = employeeFieldText(before ? (before as Record<string, unknown>)[field] : null);
+        const newValue = employeeFieldText(data[field]);
+        return { field, previousValue, newValue };
+      })
+      .filter((f) => f.previousValue !== f.newValue)
+      .map((f) => ({
+        tab: "Employees",
+        // The person is the row. Their name before the edit, so a rename reads
+        // "Bob Smith → Robert Smith" against the row you were looking at.
+        rowRef: before?.name ?? data.name,
+        columnName: EMPLOYEE_FIELD_LABELS[f.field],
+        previousValue: f.previousValue,
+        newValue: f.newValue,
+        changeType: classifyChange(f.previousValue, f.newValue),
+        entityType: "Employee",
+        entityId: id,
+      })),
+    { action: "employee.update" },
+  );
   revalidatePath("/employees");
+}
+
+// The editable employee fields, as a human reads them. Also the allow-list for what
+// gets announced — a field absent here is not reported.
+const EMPLOYEE_FIELD_LABELS = {
+  name: "Name",
+  department: "Department",
+  billingGroup: "Billing Group",
+  discipline: "Discipline",
+  paylocityId: "Paylocity ID",
+  supervisorId: "Supervisor",
+} as const;
+
+function employeeFieldText(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  const s = String(value);
+  return s === "" ? null : s;
 }
 
 // Read-only: reports how ETC's full roster (active + inactive) reconciles with
@@ -118,5 +161,24 @@ export async function setEmployeeActive(id: number, active: boolean, _formData: 
     entityId: id,
     summary: `${active ? "Reactivated" : "Deactivated"} employee ${employee.name}`,
   });
+  // Announced like any other change: this one moves a person between the roster's
+  // Active and Inactive lists, so a colleague looking at either needs to know.
+  // "edited" rather than added/removed — the soft-delete flips a value, it does not
+  // clear a cell (historical ActualHours rows stay linked either way).
+  await recordChanges(
+    [
+      {
+        tab: "Employees",
+        rowRef: employee.name,
+        columnName: "Active",
+        previousValue: active ? "Inactive" : "Active",
+        newValue: active ? "Active" : "Inactive",
+        changeType: "edited",
+        entityType: "Employee",
+        entityId: id,
+      },
+    ],
+    { action: active ? "employee.reactivate" : "employee.deactivate" },
+  );
   revalidatePath("/employees");
 }

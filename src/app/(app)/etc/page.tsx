@@ -3,8 +3,10 @@ import { prisma } from "@/lib/prisma";
 import { compareJobIds, isSdcCustomer, validJobTypeFilter } from "@/lib/job-filters";
 import { compareSections } from "@/lib/off-grid-hours";
 import { EtcViewMenu } from "@/components/EtcViewMenu";
+import { EtcGridView } from "@/components/EtcGridView";
+import { ETC_DEPT_GROUPS } from "@/lib/etc-view";
+import { bandColSpan } from "@/lib/grid-view";
 import { ExportMenu } from "@/components/ExportMenu";
-import { RefreshDataButton } from "@/components/RefreshDataButton";
 import { getEtcMonthJobWhere } from "@/lib/etc-month-jobs";
 import { getEtcMonthKpis } from "@/lib/etc-month-kpis";
 import { EtcMonthKpiCards } from "@/components/EtcMonthKpiCards";
@@ -28,12 +30,12 @@ import { isStandardSheetUnlocked, hadWrongPassword, unlockStandardSheet, lockSta
 import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/execution-etc";
 import { PageTitle } from "@/components/ui/Typography";
 import { StatusBadge } from "@/components/ui/StatusBadge";
-import { hours as formatHours } from "@/components/ui/format";
+import { hours as formatHours, usd as currency, usdExact as currencyExact } from "@/components/ui/format";
 import { MonthYearSelect } from "@/components/MonthYearSelect";
 import { JobCellMenuHost } from "@/components/JobCellMenuHost";
 import { jobCellMenuProps } from "@/lib/job-cell-menu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
-import { BUTTON_PRIMARY, BUTTON_SECONDARY, TABLE_HEADER_ROW, TABLE_GRID, ETC_COL_W, PARTS_COL_W } from "@/components/ui/classnames";
+import { BUTTON_SECONDARY, TABLE_HEADER_ROW, TABLE_GRID, GRID_SCROLLER, ETC_COL_W, PARTS_COL_W } from "@/components/ui/classnames";
 import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
@@ -87,18 +89,30 @@ type EtcCol = {
 // Consecutive columns sharing keyOf(col) collapse into one header cell whose
 // colSpan is count × 5 (the sub-columns per section). Used for the phase,
 // billing-group, and sub-group header rows.
+// `codes` carries the section codes each run spans, which is what lets a banded
+// header cell fix its own colSpan when a column is hidden client-side. A colSpan is a
+// number in the DOM and no stylesheet can change it, so the band has to declare what
+// it covers and GridViewProvider recomputes it — see bandColSpan in lib/grid-view.ts.
 function headerRuns(cols: EtcCol[], keyOf: (c: EtcCol) => string, labelOf: (c: EtcCol) => string) {
-  const runs: { key: string; label: string; count: number }[] = [];
+  const runs: { key: string; label: string; count: number; codes: string[] }[] = [];
   for (const c of cols) {
     const key = keyOf(c);
     const last = runs[runs.length - 1];
-    if (last && last.key === key) last.count += 1;
-    else runs.push({ key, label: labelOf(c), count: 1 });
+    // The leaf's FULL key set, matching its cells' `data-col` — a leaf is hidden if
+    // either its section code or its billing group is, and bandColSpan has to agree
+    // with the stylesheet or the banded header shears sideways.
+    const leafKey = `${c.code} ${c.billingGroup}`;
+    if (last && last.key === key) {
+      last.count += 1;
+      last.codes.push(leafKey);
+    } else runs.push({ key, label: labelOf(c), count: 1, codes: [leafKey] });
   }
   return runs;
 }
 
-const DEPT_GROUPS = ["Engineering", "Shop"] as const;
+// Re-exported from the client wrapper that also uses them as `data-col` keys and as
+// `?dept=` values, so the three cannot drift apart. See EtcGridView.
+const DEPT_GROUPS = ETC_DEPT_GROUPS;
 
 // Colored section-cell labels, exactly as the sheet prints them (no "CE"
 // prefixes; Testing/Teardown show "All"/"Total" rather than section names).
@@ -240,15 +254,9 @@ function subColBodyBg(col: string): string {
   return "";
 }
 
-function currency(n: number) {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
-// Cents-precision counterpart to currency() above, for tooltips — Parts Cost
-// display rounds to whole dollars, but the underlying values (Power BI
-// actuals, manager overrides) carry cents.
-function currencyExact(n: number) {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+// Money formatting comes from ui/format (§39.13): `usd` for whole dollars and
+// `usdExact` for the cents-precision figure behind it. These were two local copies
+// of both — three files had the identical pair, under the identical names.
 // Full names for the department abbreviations printed in the sub-group header
 // row (SUBGROUP_DISPLAY) — only defined for labels that are actually
 // abbreviated; "General Engineering"/"Shop" are already spelled out.
@@ -325,20 +333,34 @@ const SUBGROUP_EDGE = "border-l-8! border-l-[#808080]!";
 // of bottoming out at the inputs' own py-1. Column width scales cell + input
 // horizontal padding.
 //
-// --etc-font-size (Text size stepper) drives the data-cell font on the same
-// class+element descendant-selector trick, so it beats each cell's hardcoded
-// text-[10px] with no `!`. The Text size stepper also bumps --etc-row-py /
-// --etc-col-px in step, so rows and columns grow to fit the larger text rather
-// than clipping it. Fallback 10px reproduces the current text-[10px] exactly.
-// Body data cells (td), their inputs, and inner spans scale; the sticky label
-// columns and section headers keep their fixed sizing.
+// ── The Text size stepper, which did nothing at all (§39.14) ────────────────
+//
+// --etc-font-size used to be applied here as three
+// `[&_td…]:text-[length:var(--etc-font-size,10px)]` utilities, on the reasoning that
+// a descendant selector beats each cell's own size class "with no `!`". True of the
+// cell's class — and irrelevant, because globals.css carries an un-layered
+// `table, table * { font-size: … !important }` for app-wide table uniformity, and an
+// important declaration outside any layer beats a normal one inside @layer utilities
+// whatever its specificity. Measured live 2026-08-04: setting --etc-font-size to 22px
+// moved a cell from 10.2px to 10.2px. The stepper had never worked.
+//
+// It is applied by a rule of the same weight instead — `table[data-grid="etc"] *` in
+// globals.css, which is why this table carries that attribute — so the stepper's value
+// resolves through the !important rather than losing to it. Its fallback is the same
+// default every other table uses, so a grid with no saved preference renders exactly
+// as it did before. See the note on that rule for why the variable is referenced
+// directly rather than fed through --table-font-size.
+//
+// The stepper also bumps --etc-row-py / --etc-col-px in step, so rows and columns grow
+// to fit larger text rather than clipping it.
 // Row height is scoped to TBODY on purpose. It used to hit every `td`, which
 // included the grand-total row — so that row's own py-2.5 was overridden down to
 // 4px and it read as a hairline strip under the data (reported 2026-07-30:
 // "bottom header too thin"). Horizontal padding and font size stay grid-wide,
 // because the totals must keep column alignment with the rows above them.
 const ZOOM_CONTROLS =
-  "[&_tbody_td]:py-[var(--etc-row-py,4px)] [&_tbody_td]:leading-none [&_td_input]:py-[var(--etc-row-py,4px)] [&_td_input]:leading-none [&_td:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_th:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_td_input:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_td:not([class*='sticky'])]:text-[length:var(--etc-font-size,10px)] [&_td_input]:text-[length:var(--etc-font-size,10px)] [&_td_span]:text-[length:var(--etc-font-size,10px)]";
+  "[&_tbody_td]:py-[var(--etc-row-py,4px)] [&_tbody_td]:leading-none [&_td_input]:py-[var(--etc-row-py,4px)] [&_td_input]:leading-none [&_td:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_th:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_td_input:not([class*='sticky'])]:px-[var(--etc-col-px,4px)]";
+
 
 function currentMonth() {
   const d = new Date();
@@ -361,6 +383,13 @@ export default async function MonthlyEtcPage({
   const showNonBillable = selectedBillables.includes("Non-Billable");
   const billableFilterActive = !(showBillable && showNonBillable);
   // Job Name column toggle (Columns dropdown) — shown unless ?jobname=0.
+  //
+  // NOT used to decide what to render any more (§40.2). The column is always printed
+  // and hidden with CSS, because a server round-trip plus a 3,649-mutation React
+  // reconciliation to stop showing 49 cells that were already on screen is what made
+  // this menu feel broken. This value now only seeds the client's initial hidden set,
+  // so a reload and a shared link still show what the URL asks for. See
+  // lib/grid-view.ts and GridViewProvider.
   const showJobName = jobnameParam !== "0";
   // The Standard Sheet entry point is hidden by design (only a few people know
   // it exists). The password box renders only when this secret flag is present
@@ -377,8 +406,52 @@ export default async function MonthlyEtcPage({
       .filter((g): g is (typeof DEPT_GROUPS)[number] => g === "Engineering" || g === "Shop");
     return new Set(raw.length ? raw : DEPT_GROUPS);
   })();
-  const visibleCols = ALL_ETC_COLS.filter((c) => selectedGroups.has(c.billingGroup));
-  const visibleGroups = DEPT_GROUPS.filter((g) => selectedGroups.has(g));
+  // ── The grid is printed COMPLETE, always (§40.2) ────────────────────────────
+  //
+  // These used to be filtered here, which meant every tick of the View menu's
+  // "Section columns" was a route navigation: a fresh 596KB payload and a React
+  // reconciliation of 4,272 cells, measured at 4,113 DOM mutations and ~100ms of
+  // blocked main thread to hide columns that were already rendered.
+  //
+  // Now both are the full set on every render and visibility is one CSS rule, applied
+  // by GridViewProvider. The filter costs nothing per cell, so it is instant no matter
+  // how large the month is.
+  //
+  // This is safe for the money on the page, which is the only reason it is allowed:
+  // `totals` below iterates ETC_SECTIONS (every section, not the visible ones), and
+  // `sectionGrandTotals` is keyed per section code, so no figure anywhere on this grid
+  // changes with which columns are shown. A hidden column's total is hidden with it.
+  // Anything that DID change a total stays server-side — see the `billables` filter,
+  // which still navigates.
+  const visibleCols = ALL_ETC_COLS;
+  const visibleGroups = DEPT_GROUPS;
+  // What the client starts hidden, parsed from the URL so SSR and a share link agree.
+  // `jobname` is a pseudo-column key: the Job Name cells carry data-col="jobname".
+  const initialHiddenView = [
+    ...DEPT_GROUPS.filter((g) => !selectedGroups.has(g)),
+    ...(showJobName ? [] : ["jobname"]),
+  ];
+  const initialHiddenSet: ReadonlySet<string> = new Set(initialHiddenView);
+
+  // The banded header cells' colSpans for the FIRST render.
+  //
+  // GridViewProvider recomputes these on every later change, but it does so in an
+  // effect — which runs after hydration. Without this the server would emit full-width
+  // bands for a URL that already hides a group (a shared link, a reload, a saved View),
+  // and the banded header would sit visibly sheared until hydration caught up. The
+  // stylesheet is server-rendered for exactly the same reason.
+  //
+  // A band with every leaf hidden gets display:none rather than colSpan={0}, because 0
+  // means "span to the end of the column group" in HTML — see bandColSpan.
+  const bandProps = (codes: readonly string[], mult: number) => {
+    const span = bandColSpan(codes, initialHiddenSet, mult);
+    return {
+      "data-band-codes": codes.join(","),
+      "data-band-mult": mult,
+      colSpan: span === 0 ? 1 : span,
+      style: span === 0 ? { display: "none" } : undefined,
+    } as const;
+  };
 
   // Every section that starts a new phase (Complete Design & Build / Testing /
   // Teardown & Install) gets a heavier divider — like the sheet's solid black
@@ -849,6 +922,11 @@ export default async function MonthlyEtcPage({
   const partsCostGrandTotal = { prior: 0, worked: 0, newEtc: 0 };
 
   return (
+    // EtcGridView wraps the toolbar AND the grid, because the menu and the cells are
+    // two halves of one piece of state: the checkbox reads it, the stylesheet it
+    // renders acts on it. Everything inside is unchanged by a tick except the one
+    // <style> node and the ~20 banded header cells. See lib/grid-view.ts.
+    <EtcGridView initialHidden={initialHiddenView}>
     <div className="w-full p-8">
       <PageTitle className="mb-1">Monthly ETC</PageTitle>
       <p className="mb-4 text-sm text-sdc-gray-600">
@@ -865,27 +943,13 @@ export default async function MonthlyEtcPage({
           lockedMonths={lockedMonthList}
           nextStartable={nextStartable}
         />
-        <EtcViewMenu selectedGroups={visibleGroups} showJobName={showJobName} selectedBillables={selectedBillables} />
-        {/* ── Refresh Data, back in this toolbar (§29, 2026-08-04) ───────────
-            It had been moved to the sidebar on the reasoning that one button on every
-            page beats one per page. True in the abstract, wrong in practice: this is
-            the grid people refresh, the sidebar collapses to a rail, and a control
-            nobody can find is not a control. It is back where the work happens.
-
-            Still the ONE application-wide refresh, and still the only user-facing
-            one: `RefreshDataButton` is a single component with a single action
-            (lib/refresh-actions -> lib/refresh-service -> runAllSyncs), which is the
-            identical pass the hourly schedule runs. Rendering it twice would put a
-            second BUTTON on screen, not a second refresh path — but two buttons for
-            one action is exactly the confusion §25 removed, so the sidebar's copy is
-            hidden on this route (see Sidebar).
-
-            What it deliberately does NOT do: save, submit, or touch a manager's
-            entered values. The pass writes only the columns it pulls from upstream
-            (hours, parts cost, jobs, pools); New ETC drafts, cleared cells, notes and
-            Standard Sheet figures are not in its scope. Autosave and
-            `Submit {Month} Report` remain entirely separate. */}
-        <RefreshDataButton className={BUTTON_PRIMARY} />
+        <EtcViewMenu selectedBillables={selectedBillables} />
+        {/* Refresh Data is NOT here any more (§41.16, 2026-08-05). §29 had put it in this
+            toolbar because the sidebar collapses to a rail and "a control nobody can find
+            is not a control"; §41.16 asks for one application-wide control in the sidebar
+            instead, and the rail keeps it visible as an icon rather than hiding it. There
+            was always exactly one refresh PATH — this only ever decided how many buttons
+            pointed at it. See Sidebar. */}
         {/* Downloads the month exactly as filtered, every department column included —
             the ones the on-screen table only reaches by scrolling. Flushes any pending
             autosave first, because the export reads the database (§24.8). */}
@@ -1100,8 +1164,8 @@ export default async function MonthlyEtcPage({
               inputs. The month is finalised by SubmitMonthReportButton, which reads the
               database rather than this DOM. */}
           <form key={month} id="etc-month-form" className="min-w-0 flex-1">
-          <DragScroll className="max-h-[calc(100vh-215px)] overflow-auto border border-sdc-border border-t-[#808080] bg-white shadow-sm select-none styled-scrollbar">
-            <table className={`w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
+          <DragScroll className={`max-h-[calc(100vh-215px)] ${GRID_SCROLLER}`}>
+            <table data-grid="etc" className={`w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
               <thead className="sticky top-0 z-20 bg-sdc-gray-100">
                 <tr className={TABLE_HEADER_ROW}>
                   <th rowSpan={5} className="sticky left-0 z-10 w-10 min-w-10 bg-sdc-gray-100 px-2 py-3 text-center align-bottom">
@@ -1112,32 +1176,44 @@ export default async function MonthlyEtcPage({
                   {/* text-left overrides TABLE_HEADER_ROW's text-center on the
                       <tr>, so these two headers line up with their now
                       left-aligned values. */}
-                  <th rowSpan={5} className={`sticky left-10 z-10 w-20 min-w-20 bg-sdc-gray-100 px-3 py-3 text-left align-bottom ${showJobName ? "" : "border-r-8 border-[#808080]"}`}>
+                  {/* data-etc-jobid: when Job Name is hidden the heavy grey divider
+                      moves onto this cell, as a CSS rule rather than a className that
+                      would need all 49 rows re-rendered. See etcViewExtraRules. */}
+                  <th data-etc-jobid rowSpan={5} className="sticky left-10 z-10 w-20 min-w-20 bg-sdc-gray-100 px-3 py-3 text-left align-bottom">
                     Job Id
                   </th>
-                  {showJobName && (
-                    <th
-                      rowSpan={5}
-                      style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
-                      className="sticky left-[7.5rem] z-10 border-r-8 border-[#808080] bg-sdc-gray-100 px-3 py-3 text-left align-bottom"
-                    >
-                      Job Name
-                      <div
-                        className="col-resize-handle absolute right-0 inset-y-0 z-10 w-3"
-                        data-resize-var="--etc-job-col-width"
-                        data-resize-min="150"
-                        data-resize-max="600"
-                        title="Drag to resize"
-                        style={{ touchAction: "none" }}
-                      />
-                    </th>
-                  )}
+                  <th
+                    data-col="jobname"
+                    rowSpan={5}
+                    style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
+                    className="sticky left-[7.5rem] z-10 border-r-8 border-[#808080] bg-sdc-gray-100 px-3 py-3 text-left align-bottom"
+                  >
+                    Job Name
+                    <div
+                      className="col-resize-handle absolute right-0 inset-y-0 z-10 w-3"
+                      data-resize-var="--etc-job-col-width"
+                      data-resize-min="150"
+                      data-resize-max="600"
+                      title="Drag to resize"
+                      style={{ touchAction: "none" }}
+                    />
+                  </th>
                   {headerRuns(visibleCols, (c) => c.phaseLabel, (c) => c.phaseLabel).map((p, i) => (
-                    <th key={p.key + i} colSpan={p.count * SUB_COLUMNS.length} className={`${i === 0 ? "border-l border-sdc-border" : PHASE_EDGE} px-3 py-1.5 text-center`}>
+                    <th
+                      key={p.key + i}
+                      {...bandProps(p.codes, SUB_COLUMNS.length)}
+                      className={`${i === 0 ? "border-l border-sdc-border" : PHASE_EDGE} px-3 py-1.5 text-center`}
+                    >
                       {p.label}
                     </th>
                   ))}
-                  <th colSpan={visibleGroups.length * TOTAL_SUB_COLUMNS.length} className={`${PHASE_EDGE} bg-sdc-yellow-bg px-3 py-1.5 text-center text-sdc-navy`}>
+                  {/* The Total (New ETC) band spans one block per billing group, so its
+                      leaf keys are the GROUP names rather than section codes — the same
+                      keys the group filter hides. */}
+                  <th
+                    {...bandProps(visibleGroups, TOTAL_SUB_COLUMNS.length)}
+                    className={`${PHASE_EDGE} bg-sdc-yellow-bg px-3 py-1.5 text-center text-sdc-navy`}
+                  >
                     Total (New ETC)
                   </th>
                   <th colSpan={PARTS_COST_SUB_COLUMNS.length} className={`${PHASE_EDGE} bg-sdc-gray-100 px-3 py-1.5 text-center text-sdc-gray-700`}>
@@ -1161,14 +1237,18 @@ export default async function MonthlyEtcPage({
                       const startCode = visibleCols[colIdx].code;
                       colIdx += g.count;
                       return (
-                        <th key={g.key + i} colSpan={g.count * SUB_COLUMNS.length} className={`${edgeFor(startCode, i)} px-2 py-1 text-center font-medium`}>
+                        <th
+                          key={g.key + i}
+                          {...bandProps(g.codes, SUB_COLUMNS.length)}
+                          className={`${edgeFor(startCode, i)} px-2 py-1 text-center font-medium`}
+                        >
                           {abbreviateLabel(g.label)}
                         </th>
                       );
                     });
                   })()}
                   {visibleGroups.map((group, i) => (
-                    <th key={group} colSpan={TOTAL_SUB_COLUMNS.length} className={`${i === 0 ? PHASE_EDGE : "border-l border-sdc-border"} bg-sdc-yellow-bg px-2 py-1 text-center font-medium text-sdc-navy`}>
+                    <th key={group} data-col={group} colSpan={TOTAL_SUB_COLUMNS.length} className={`${i === 0 ? PHASE_EDGE : "border-l border-sdc-border"} bg-sdc-yellow-bg px-2 py-1 text-center font-medium text-sdc-navy`}>
                       {abbreviateLabel(group)}
                     </th>
                   ))}
@@ -1193,7 +1273,7 @@ export default async function MonthlyEtcPage({
                         <th
                           key={g.key + i}
                           title={SUBGROUP_FULL_NAME[g.label]}
-                          colSpan={g.count * SUB_COLUMNS.length}
+                          {...bandProps(g.codes, SUB_COLUMNS.length)}
                           className={`${edgeFor(startCode, i)} px-2 py-1 text-center font-medium`}
                         >
                           {abbreviateLabel(g.label)}
@@ -1206,6 +1286,7 @@ export default async function MonthlyEtcPage({
                     return (
                       <th
                         key={group}
+                        data-col={group}
                         title={SUBGROUP_FULL_NAME[label]}
                         colSpan={TOTAL_SUB_COLUMNS.length}
                         className={`${i === 0 ? PHASE_EDGE : "border-l border-sdc-border"} bg-sdc-yellow-bg px-2 py-1 text-center font-medium text-sdc-navy`}
@@ -1222,6 +1303,7 @@ export default async function MonthlyEtcPage({
                     return (
                       <th
                         key={s.code}
+                        data-col={`${s.code} ${s.billingGroup}`}
                         title={`${s.name} (${s.code})`}
                         colSpan={SUB_COLUMNS.length}
                         className={`${edgeFor(s.code, i)} break-normal px-2 py-1 text-center ${color ?? ""}`}
@@ -1233,6 +1315,7 @@ export default async function MonthlyEtcPage({
                   {visibleGroups.map((group, i) => (
                     <th
                       key={group}
+                      data-col={group}
                       colSpan={TOTAL_SUB_COLUMNS.length}
                       className={`${i === 0 ? PHASE_EDGE : "border-l border-sdc-border"} px-2 py-1 text-center text-sdc-navy ${group === "Engineering" ? "bg-sdc-blue-100" : "bg-sdc-yellow-bg"}`}
                     >
@@ -1245,7 +1328,8 @@ export default async function MonthlyEtcPage({
                     SUB_COLUMNS.map((col, ci) => (
                       <th
                         key={`${s.code}-${col}`}
-                        className={`${ci === 0 ? edgeFor(s.code, i) : "border-l border-sdc-border"} ${ETC_COL_W} break-normal px-1 py-1.5 text-center text-[10px] ${
+                        data-col={`${s.code} ${s.billingGroup}`}
+                        className={`${ci === 0 ? edgeFor(s.code, i) : "border-l border-sdc-border"} ${ETC_COL_W} break-normal px-1 py-1.5 text-center text-label ${
                           subColHeaderBg(col) || SECTION_HEADER_COLOR_LIGHT[s.code] || ""
                         }`}
                       >
@@ -1257,7 +1341,8 @@ export default async function MonthlyEtcPage({
                     TOTAL_SUB_COLUMNS.map((col, ci) => (
                       <th
                         key={`${group}-${col}`}
-                        className={`${ci === 0 && gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} break-normal px-1 py-1.5 text-center text-[10px] ${
+                        data-col={group}
+                        className={`${ci === 0 && gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} break-normal px-1 py-1.5 text-center text-label ${
                           subColHeaderBg(col) || "bg-sdc-yellow-bg text-sdc-navy"
                         }`}
                       >
@@ -1268,7 +1353,7 @@ export default async function MonthlyEtcPage({
                   {PARTS_COST_SUB_COLUMNS.map((col, i) => (
                     <th
                       key={`parts-cost-${col}`}
-                      className={`${i === 0 ? PHASE_EDGE : "border-l border-sdc-border"} px-1 py-1.5 text-center text-[10px] ${
+                      className={`${i === 0 ? PHASE_EDGE : "border-l border-sdc-border"} px-1 py-1.5 text-center text-label ${
                         subColHeaderBg(col) || "bg-sdc-gray-100 text-sdc-gray-700"
                       }`}
                     >
@@ -1281,7 +1366,7 @@ export default async function MonthlyEtcPage({
                         key={`std-${col}`}
                         // Heavy divider before each Standard block; "% Total"
                         // stays thin as it shares the Total ETC block.
-                        className={`${col === "% Total" ? "border-l border-sdc-border" : STD_EDGE} bg-sdc-blue-light/60 px-1 py-1.5 text-center text-[10px] text-sdc-blue-dark`}
+                        className={`${col === "% Total" ? "border-l border-sdc-border" : STD_EDGE} bg-sdc-blue-light/60 px-1 py-1.5 text-center text-label text-sdc-blue-dark`}
                       >
                         {col}
                       </th>
@@ -1382,7 +1467,7 @@ export default async function MonthlyEtcPage({
                   // the coloured cells (Prior ETC, Diff, New ETC) got nothing.
                   return (
                     <tr key={job.id} className={zebra}>
-                      <td className={`sticky left-0 z-10 w-10 min-w-10 overflow-hidden px-2 py-1 text-center align-middle text-[10px] leading-none whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}>{jobIndex + 1}</td>
+                      <td className={`sticky left-0 z-10 w-10 min-w-10 overflow-hidden px-2 py-1 text-center align-middle text-label leading-none whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}>{jobIndex + 1}</td>
                       {/* Job Id and Job Name both carry the right-click menu
                           (Job Hour Details / Project Schedule) — the same one the
                           Projects grid uses. It replaced the inline Scheduler
@@ -1395,30 +1480,30 @@ export default async function MonthlyEtcPage({
                           schedulerUrl: schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null,
                         })}
                         title={`${job.jobId} — right-click for options`}
-                        className={`sticky left-10 z-10 w-20 min-w-20 overflow-hidden px-3 py-1 text-left align-middle font-mono text-[10px] leading-none whitespace-nowrap text-sdc-gray-400 ${showJobName ? "" : "border-r-8 border-[#808080]"} ${zebraSticky}`}
+                        data-etc-jobid
+                        className={`sticky left-10 z-10 w-20 min-w-20 overflow-hidden px-3 py-1 text-left align-middle font-mono text-label leading-none whitespace-nowrap text-sdc-gray-400 ${zebraSticky}`}
                       >
                         {job.jobId}
                       </td>
-                      {showJobName && (
-                        <td
-                          {...jobCellMenuProps({
-                            jobId: job.jobId,
-                            jobName: job.jobName,
-                            schedulerUrl: schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null,
-                          })}
-                          title={`${job.jobName} — right-click for options`}
-                          style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
-                          className={`sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] px-3 py-1 text-left align-middle text-[10px] font-medium leading-none whitespace-nowrap text-sdc-navy ${zebraSticky}`}
-                        >
-                          {/* min-h keeps row heights identical to the Projects
-                              grid now that no icon pads this cell (c51cd42).
-                              justify-start so the truncated name starts at the
-                              cell's left edge, matching text-left above. */}
-                          <div className="flex min-h-[14px] min-w-0 items-center justify-start gap-1.5">
-                            <span className="min-w-0 truncate">{job.jobName}</span>
-                          </div>
-                        </td>
-                      )}
+                      <td
+                        {...jobCellMenuProps({
+                          jobId: job.jobId,
+                          jobName: job.jobName,
+                          schedulerUrl: schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null,
+                        })}
+                        data-col="jobname"
+                        title={`${job.jobName} — right-click for options`}
+                        style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
+                        className={`sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] px-3 py-1 text-left align-middle text-label font-medium leading-none whitespace-nowrap text-sdc-navy ${zebraSticky}`}
+                      >
+                        {/* min-h keeps row heights identical to the Projects
+                            grid now that no icon pads this cell (c51cd42).
+                            justify-start so the truncated name starts at the
+                            cell's left edge, matching text-left above. */}
+                        <div className="flex min-h-[14px] min-w-0 items-center justify-start gap-1.5">
+                          <span className="min-w-0 truncate">{job.jobName}</span>
+                        </div>
+                      </td>
                       {visibleCols.map((s, sIdx) => {
                         const edge = edgeFor(s.code, sIdx);
                         const entry = entryByCode.get(s.code);
@@ -1508,14 +1593,15 @@ export default async function MonthlyEtcPage({
                         groupGrandTotals[group].diff += totals[group].diff;
                         return (
                           <Fragment key={group}>
-                            <td className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={String(round2(totals[group].prior))}>
+                            <td data-col={group} className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`} title={String(round2(totals[group].prior))}>
                               {wholeNum(totals[group].prior)}
                             </td>
-                            <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-500`} title={String(round2(totals[group].worked))}>
+                            <td data-col={group} className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-500`} title={String(round2(totals[group].worked))}>
                               {wholeNum(totals[group].worked)}
                             </td>
                             <td
-                              className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-500`}
+                              data-col={group}
+                              className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-500`}
                               title={`${round2(hoursLeftExact)} = Prior ETC (${round2(totals[group].prior)}) − Hours Worked (${round2(totals[group].worked)})`}
                             >
                               {wholeNum(hoursLeft)}
@@ -1529,8 +1615,9 @@ export default async function MonthlyEtcPage({
                             <td
                               data-live="newEtc"
                               data-group={group}
+                              data-col={group}
                               data-job={job.id}
-                              className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-1 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`}
+                              className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-1 text-center align-middle text-label font-bold whitespace-nowrap text-sdc-navy`}
                               title={String(round2(totals[group].newEtc))}
                             >
                               {wholeNum(totals[group].newEtc)}
@@ -1538,8 +1625,9 @@ export default async function MonthlyEtcPage({
                             <td
                               data-live="diff"
                               data-group={group}
+                              data-col={group}
                               data-job={job.id}
-                              className={`border-l border-sdc-border ${ETC_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                              className={`border-l border-sdc-border ${ETC_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`}
                               // A rollup of one billing group for one job, so it
                               // scales against the hours-TOTAL ceiling rather than a
                               // single cell's.
@@ -1608,7 +1696,10 @@ export default async function MonthlyEtcPage({
                         // function answers a different question — "what will this month be if
                         // submitted as-is" — and next month's Prior ETC depends on its answer, so
                         // it stays as it is. Only Diff reads a blank as zero.
-                        const diffCost = moneyLeft - (decidedCost ? effectiveNewEtcCost : 0);
+                        // §29.2/§29.3 — undecided contributes NOTHING, like every hours
+                        // Diff beside it. See the note on the cell below and the matching
+                        // change in PartsCostNewEtcCell (the client half of this cell).
+                        const diffCost = decidedCost ? moneyLeft - Math.max(effectiveNewEtcCost, 0) : 0;
 
                         partsCostGrandTotal.prior += prior;
                         partsCostGrandTotal.worked += spent;
@@ -1619,7 +1710,7 @@ export default async function MonthlyEtcPage({
                             {/* PARTS_COL_W on every cell in this block: these are seven-figure
                                 money columns and the hours width clipped them ("$1,065,7…").
                                 See components/ui/classnames.ts. */}
-                            <td className={`${PHASE_EDGE} ${PARTS_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={currencyExact(prior)}>
+                            <td className={`${PHASE_EDGE} ${PARTS_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`} title={currencyExact(prior)}>
                               {currency(prior)}
                             </td>
                             <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle whitespace-nowrap`}>
@@ -1629,12 +1720,12 @@ export default async function MonthlyEtcPage({
                               {/* w-full, not a fixed w-16 with `truncate`: the cell now sizes the
                                   column, so the figure should use all of it rather than being cut
                                   to 64px inside a wider box. */}
-                              <span className="block w-full text-center text-[10px] text-sdc-gray-600" title={currencyExact(spent)}>
+                              <span className="block w-full text-center text-label text-sdc-gray-600" title={currencyExact(spent)}>
                                 {currency(spent)}
                               </span>
                             </td>
                             <td
-                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-500`}
+                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-500`}
                               title={`${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(prior)}) − Money Spent (${currencyExact(spent)})`}
                             >
                               {currency(moneyLeft)}
@@ -1696,25 +1787,33 @@ export default async function MonthlyEtcPage({
                               // $3,600.
                               data-live="partsRowDiff"
                               data-job={job.id}
-                              className={`border-l border-sdc-border ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
-                              // ── ALWAYS a figure (2026-08-04, by request) ──────────────
+                              className={`border-l border-sdc-border ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`}
+                              // ── BLANK until a New ETC is entered (§29.2) ──────────────
                               //
-                              // "Diff must always be calculated as Hours Left − New ETC."
-                              // This cell used to print "—" while no New ETC was decided, on
-                              // the reasoning that an unanswered cell has no variance to
-                              // report. That reasoning is withdrawn: the hours columns have
-                              // treated a blank New ETC as 0 since 2026-08-03 (see newEtcDiff
-                              // in lib/etc.ts), so Diff there reads as Money Left until
-                              // somebody plans the row — and Parts Cost printing a dash beside
-                              // them made one column of the block unreadable against the rest.
+                              // Third and final position on this cell, so both predecessors
+                              // are worth recording. It printed "—" for an undecided cell;
+                              // that was replaced on 2026-08-04 by ALWAYS printing a figure,
+                              // on the reasoning that the hours columns treat a blank New ETC
+                              // as 0 and so read as Money Left until somebody plans the row.
                               //
-                              // Now uniform: blank New ETC ⇒ Diff = Money Left, which is a fair
-                              // thing to be told (this much money is unaccounted for), and the
-                              // colouring applies on the same terms as every other Diff cell.
-                              style={diffCellStyle(diffCost, DIFF_CEILING.moneyCell)}
-                              title={`${currencyExact(diffCost)} = Money Left (${currencyExact(moneyLeft)}) − New ETC (${currencyExact(effectiveNewEtcCost)})`}
+                              // That premise was wrong about the hours columns. newEtcDiff
+                              // returns 0 for an undecided cell — it does NOT report Money
+                              // Left — and the hours Diff cell prints nothing, judged by
+                              // isNewEtcDecided. So "uniform with hours" actually means what
+                              // §29 asks for: blank New ETC ⇒ blank Diff, contributing
+                              // nothing to any total.
+                              //
+                              // It summed, too: this expression is what put $1,085,685 of
+                              // "variance" in July's Parts footer when the real figure across
+                              // decided cells was $0.
+                              style={decidedCost ? diffCellStyle(diffCost, DIFF_CEILING.moneyCell) : undefined}
+                              title={
+                                decidedCost
+                                  ? `${currencyExact(diffCost)} = Money Left (${currencyExact(moneyLeft)}) − New ETC (${currencyExact(effectiveNewEtcCost)})`
+                                  : "No New ETC entered yet, so there is no variance to report."
+                              }
                             >
-                              {currency(diffCost)}
+                              {decidedCost ? currency(diffCost) : ""}
                             </td>
                           </Fragment>
                         );
@@ -1759,17 +1858,22 @@ export default async function MonthlyEtcPage({
                         + sticky offsets) rather than one colSpan cell, so the
                         section totals after them line up exactly with the rows. */}
                     <td className="sticky left-0 z-10 w-10 min-w-10 overflow-hidden bg-sdc-gray-100 px-2 py-2.5 text-center align-middle whitespace-nowrap" />
-                    <td className={`sticky left-10 z-10 w-20 min-w-20 overflow-hidden bg-sdc-gray-100 px-3 py-2.5 text-right align-middle font-bold whitespace-nowrap text-sdc-navy ${showJobName ? "" : "border-r-8 border-[#808080]"}`}>
-                      {showJobName ? "" : "Total"}
+                    <td data-etc-jobid className="sticky left-10 z-10 w-20 min-w-20 overflow-hidden bg-sdc-gray-100 px-3 py-2.5 text-right align-middle font-bold whitespace-nowrap text-sdc-navy">
+                      {/* The "Total" label belongs against the heavy divider, so it sits
+                          on whichever of these two cells is last. Both are printed and
+                          CSS picks — see etcViewExtraRules. `invisible` is a Tailwind
+                          utility, so it is in a CSS layer; the generated stylesheet is
+                          unlayered and therefore wins when it reveals this, with no
+                          !important needed. */}
+                      <span data-etc-total-fallback className="invisible">Total</span>
                     </td>
-                    {showJobName && (
-                      <td
-                        style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
-                        className="sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] bg-sdc-gray-100 px-3 py-2.5 text-right align-middle font-bold whitespace-nowrap text-sdc-navy"
-                      >
-                        Total
-                      </td>
-                    )}
+                    <td
+                      data-col="jobname"
+                      style={{ width: "var(--etc-job-col-width, 260px)", minWidth: "var(--etc-job-col-width, 260px)" }}
+                      className="sticky left-[7.5rem] z-10 overflow-hidden border-r-8 border-[#808080] bg-sdc-gray-100 px-3 py-2.5 text-right align-middle font-bold whitespace-nowrap text-sdc-navy"
+                    >
+                      Total
+                    </td>
                     {visibleCols.map((s, sIdx) => {
                       const t = sectionGrandTotals.get(s.code)!;
                       // Same rounded-chain rule as every other Hours Left on this
@@ -1779,10 +1883,11 @@ export default async function MonthlyEtcPage({
                       const diff = t.diff;
                       return (
                         <Fragment key={s.code}>
-                          <td className={`${edgeFor(s.code, sIdx)} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
-                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-navy`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
+                          <td data-col={`${s.code} ${s.billingGroup}`} className={`${edgeFor(s.code, sIdx)} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
+                          <td data-col={`${s.code} ${s.billingGroup}`} className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-navy`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
                           <td
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-navy`}
+                            data-col={`${s.code} ${s.billingGroup}`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-navy`}
                             title={`${round2(hoursLeftExact)} = Prior ETC (${round2(t.prior)}) − Hours Worked (${round2(t.worked)})`}
                           >
                             {wholeNum(hoursLeft)}
@@ -1805,7 +1910,8 @@ export default async function MonthlyEtcPage({
                           <td
                             data-live="newEtc"
                             data-section={s.code}
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`}
+                            data-col={`${s.code} ${s.billingGroup}`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-label font-bold whitespace-nowrap text-sdc-navy`}
                             title={String(round2(t.newEtc))}
                           >
                             {wholeNum(t.newEtc)}
@@ -1813,7 +1919,8 @@ export default async function MonthlyEtcPage({
                           <td
                             data-live="diff"
                             data-section={s.code}
-                            className={`border-l border-sdc-border ${ETC_COL_W} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            data-col={`${s.code} ${s.billingGroup}`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`}
                             style={diffTotalStyle(diff, DIFF_CEILING.hoursTotal)}
                             title={`${round2(diff)} = the sum of (Hours Left − New ETC) down this column. Cells with no New ETC typed compare against the suggestion, so they read 0 unless already overspent.`}
                           >
@@ -1830,10 +1937,11 @@ export default async function MonthlyEtcPage({
                       const diff = t.diff;
                       return (
                         <Fragment key={group}>
-                          <td className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
-                          <td className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-blue-dark`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
+                          <td data-col={group} className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`} title={String(round2(t.prior))}>{wholeNum(t.prior)}</td>
+                          <td data-col={group} className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-blue-dark`} title={String(round2(t.worked))}>{wholeNum(t.worked)}</td>
                           <td
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-blue-dark`}
+                            data-col={group}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-blue-dark`}
                             title={`${round2(hoursLeftExact)} = Prior ETC (${round2(t.prior)}) − Hours Worked (${round2(t.worked)})`}
                           >
                             {wholeNum(hoursLeft)}
@@ -1843,8 +1951,9 @@ export default async function MonthlyEtcPage({
                           <td
                             data-live="newEtc"
                             data-group={group}
+                            data-col={group}
                             data-job="all"
-                            className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-blue-dark`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-label font-bold whitespace-nowrap text-sdc-blue-dark`}
                             title={String(round2(t.newEtc))}
                           >
                             {wholeNum(t.newEtc)}
@@ -1852,8 +1961,9 @@ export default async function MonthlyEtcPage({
                           <td
                             data-live="diff"
                             data-group={group}
+                            data-col={group}
                             data-job="all"
-                            className={`border-l border-sdc-border ${ETC_COL_W} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            className={`border-l border-sdc-border ${ETC_COL_W} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`}
                             style={diffTotalStyle(diff, DIFF_CEILING.hoursTotal)}
                             title={`${round2(diff)} = the sum of (Hours Left − New ETC) down this column. A cell with no New ETC typed compares against the suggestion, so it reads 0 unless that section is already overspent.`}
                           >
@@ -1868,13 +1978,13 @@ export default async function MonthlyEtcPage({
                       const diffCost = moneyLeft - t.newEtc;
                       return (
                         <Fragment key="parts-cost-total">
-                          <td className={`${PHASE_EDGE} overflow-hidden bg-[#5E91D3] px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`} title={currencyExact(t.prior)}>{currency(t.prior)}</td>
+                          <td className={`${PHASE_EDGE} overflow-hidden bg-[#5E91D3] px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`} title={currencyExact(t.prior)}>{currency(t.prior)}</td>
                           {/* Total Money Spent is ALWAYS the live month-to-date
                               total, even while per-job cells are blanked pending
                               month completion. */}
-                          <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-navy`} title={`${currencyExact(t.worked)} — live month-to-date total`}>{currency(t.worked)}</td>
+                          <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-navy`} title={`${currencyExact(t.worked)} — live month-to-date total`}>{currency(t.worked)}</td>
                           <td
-                            className={`border-l border-sdc-border ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-navy`}
+                            className={`border-l border-sdc-border ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-navy`}
                             title={`${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(t.prior)}) − Money Spent (${currencyExact(t.worked)})`}
                           >
                             {currency(moneyLeft)}
@@ -1884,14 +1994,14 @@ export default async function MonthlyEtcPage({
                               with it the same way the hours columns do. */}
                           <td
                             data-live="partsNewEtc"
-                            className={`border-l border-sdc-border ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] font-bold whitespace-nowrap text-sdc-navy`}
+                            className={`border-l border-sdc-border ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-label font-bold whitespace-nowrap text-sdc-navy`}
                             title={currencyExact(t.newEtc)}
                           >
                             {currency(t.newEtc)}
                           </td>
                           <td
                             data-live="partsDiff"
-                            className={`border-l border-sdc-border overflow-hidden px-1 py-2.5 text-center align-middle text-[10px] whitespace-nowrap text-sdc-gray-700`}
+                            className={`border-l border-sdc-border overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`}
                             style={diffTotalStyle(diffCost, DIFF_CEILING.moneyTotal)}
                             title={`${currencyExact(diffCost)} = Money Left (${currencyExact(moneyLeft)}) − New ETC (${currencyExact(t.newEtc)})`}
                           >
@@ -1929,5 +2039,6 @@ export default async function MonthlyEtcPage({
         </StandardRatesProvider>
       )}
     </div>
+    </EtcGridView>
   );
 }

@@ -77,7 +77,7 @@ export function ImportSupervisorsButton() {
                 )}
 
                 {result.notInEtc > 0 && (
-                  <p className="mb-2 text-[11px] text-sdc-gray-500">
+                  <p className="mb-2 text-note text-sdc-gray-500">
                     {result.notInEtc} export rows had no matching active ETC employee (terminated / not tracked) — skipped.
                   </p>
                 )}

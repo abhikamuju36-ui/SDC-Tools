@@ -38,16 +38,16 @@ export function AppTextSize({ collapsed }: { collapsed?: boolean }) {
   // footer block owns the border and padding now, so this row is just the label
   // + stepper.
   const btn =
-    "flex h-5 w-5 items-center justify-center rounded-[5px] bg-[#0B2846] text-[13px] leading-none text-[#A9BCD0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157] disabled:opacity-40";
+    "flex h-5 w-5 items-center justify-center rounded-[5px] bg-[#0B2846] text-sm leading-none text-[#A9BCD0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157] disabled:opacity-40";
 
   if (collapsed) return null;
 
   return (
     <div className="flex h-[34px] items-center justify-between gap-2 px-[10px]">
-      <span className="text-[12px] text-[#7E93AC]">Text size</span>
+      <span className="text-xs text-[#7E93AC]">Text size</span>
       <div className="flex items-center gap-1">
         <button type="button" onClick={() => apply(px - STEP)} disabled={px <= MIN} className={btn} aria-label="Decrease text size">−</button>
-        <span className="min-w-[18px] text-center font-mono text-[11.5px] tabular-nums text-[#C3D1E0]">{px}</span>
+        <span className="min-w-[18px] text-center font-mono text-note tabular-nums text-[#C3D1E0]">{px}</span>
         <button type="button" onClick={() => apply(px + STEP)} disabled={px >= MAX} className={btn} aria-label="Increase text size">+</button>
       </div>
     </div>

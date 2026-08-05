@@ -1,6 +1,7 @@
 "use client";
 
 import { dismissAllChanges, dismissChange, useRealtimeChanges, useRealtimeStatus } from "@/components/RealtimeProvider";
+import { useExitList } from "@/components/useMotion";
 
 // The change-notification banner (spec 5).
 //
@@ -43,10 +44,25 @@ export function ChangeNotifications() {
   // is happening". Autosave still works (it is an ordinary request) — the wording
   // is careful not to imply edits are being lost.
   const offline = status === "offline";
-  if (changes.length === 0 && !offline) return null;
 
   const shown = changes.slice(0, VISIBLE);
   const hidden = changes.length - shown.length;
+  // ── Cards enter and leave, rather than blinking (§36.13) ──────────────────
+  //
+  // A change event arriving used to insert a card instantly and pop the stack; a
+  // dismissal removed it the same way. On a busy month with several managers editing,
+  // that is the "repeated flashing" §36.13 forbids.
+  //
+  // useExitList holds a departed card in its own slot for one --motion-panel while it
+  // fades out, which also covers the case that produces the most churn: a fifth change
+  // arriving pushes the oldest past VISIBLE, so it leaves at the same moment the new one
+  // arrives. Held in place, the two cross over instead of the whole stack jumping.
+  //
+  // Called BEFORE the early return below — a hook cannot be conditional, and this is
+  // also what lets the last card animate out instead of the container disappearing from
+  // under it.
+  const cards = useExitList(shown, (c) => `${c.changeId}|${c.rowRef}|${c.columnName}`);
+  if (cards.length === 0 && !offline) return null;
 
   return (
     <div
@@ -58,24 +74,26 @@ export function ChangeNotifications() {
       aria-label="Recent changes by other users"
     >
       {offline && (
-        <div className="pointer-events-auto rounded-lg border border-sdc-border bg-white px-3 py-2 text-[11px] text-sdc-gray-600 shadow-lg">
+        <div className="motion-toast-in pointer-events-auto rounded-lg border border-sdc-border bg-white px-3 py-2 text-note text-sdc-gray-600 shadow-lg">
           <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-sdc-red align-middle" />
           Live updates disconnected — reconnecting. Your edits are still being saved.
         </div>
       )}
 
-      {shown.map((c) => {
+      {cards.map(({ key, item: c, leaving }) => {
         const tone = TONE[c.changeType] ?? TONE.edited;
         return (
           <div
-            key={`${c.changeId}|${c.rowRef}|${c.columnName}`}
-            className="pointer-events-auto rounded-lg border border-sdc-border bg-white px-3 py-2 shadow-lg"
+            key={key}
+            className={`pointer-events-auto rounded-lg border border-sdc-border bg-white px-3 py-2 shadow-lg ${
+              leaving ? "motion-toast-out" : "motion-toast-in"
+            }`}
           >
             <div className="flex items-start gap-2">
               <span className={`mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full ${tone.dot}`} />
               <div className="min-w-0 flex-1">
-                <p className="text-[11px] leading-snug text-sdc-navy">{c.message}</p>
-                <p className="mt-0.5 text-[10px] text-sdc-gray-500">
+                <p className="text-note leading-snug text-sdc-navy">{c.message}</p>
+                <p className="mt-0.5 text-label text-sdc-gray-500">
                   {tone.label} · {clockTime(c.at)}
                 </p>
               </div>
@@ -83,7 +101,7 @@ export function ChangeNotifications() {
                 type="button"
                 onClick={() => dismissChange(c.changeId, c.rowRef, c.columnName)}
                 aria-label="Dismiss notification"
-                className="shrink-0 rounded px-1 text-[13px] leading-none text-sdc-gray-400 hover:text-sdc-navy"
+                className="motion-interactive shrink-0 rounded px-1 text-sm leading-none text-sdc-gray-400 hover:text-sdc-navy"
               >
                 ×
               </button>
@@ -96,7 +114,7 @@ export function ChangeNotifications() {
         <button
           type="button"
           onClick={dismissAllChanges}
-          className="pointer-events-auto rounded-lg border border-sdc-border bg-sdc-gray-100 px-3 py-1.5 text-[10.5px] text-sdc-gray-600 shadow hover:bg-white"
+          className="motion-interactive motion-toast-in pointer-events-auto rounded-lg border border-sdc-border bg-sdc-gray-100 px-3 py-1.5 text-label tabular-nums text-sdc-gray-600 shadow hover:bg-white"
         >
           + {hidden} more change{hidden === 1 ? "" : "s"} — clear all
         </button>

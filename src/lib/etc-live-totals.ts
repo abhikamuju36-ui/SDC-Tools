@@ -114,9 +114,65 @@ const listeners = new Set<() => void>();
 // useSyncExternalStore can tell "same data" from "recomputed".
 let version = 0;
 
+// ── Notifications are coalesced to one per frame (§38.4, measured 2026-08-04) ─
+//
+// This used to notify synchronously inside every publish, and that single line was the
+// worst performance defect in the app.
+//
+// Every New ETC cell publishes itself on mount. On July's grid that is ~880 publishes
+// inside one commit, and each one notified every listener immediately. One of those
+// listeners is EtcLiveTotals' painter, which is not React: it walks the grid's rollup
+// cells, READS their text and WRITES new text and classes. So ~880 synchronous
+// DOM-read-then-write passes over ~150 cells, each forcing a style recalculation, plus
+// ~880 re-render notifications to the KPI strip and the Standard Fees columns whose
+// subtree is the whole grid.
+//
+// Measured on the production build, July 2026, before this change:
+//
+//   /etc     first paint 60ms, then ONE long task of 4,347ms (total blocking ~4.5s)
+//   /quoted  1,194 inputs — almost exactly the same DOM — worst long task 159ms
+//
+// The page painted in 60ms and then ignored every click for four and a half seconds.
+// That is the whole of the reported "the app freezes / my first click does nothing":
+// not the cell count (Projects has as many inputs and is 27× cheaper), but the fact
+// that mounting N cells cost N full repaints.
+//
+// The version counter still bumps SYNCHRONOUSLY — a reader between a publish and the
+// notification must see the new figures, so `snapshot()` cannot be allowed to serve a
+// stale cache. Only the notification waits, which is legal for useSyncExternalStore
+// (React re-reads the snapshot when it renders, so nothing can tear) and is the right
+// moment for a paint anyway: one per frame, aligned with the browser's own.
+let notifyScheduled = false;
+
+// requestAnimationFrame in a browser; a microtask under node, where the tests run and
+// where there are no frames. Both coalesce a burst into one notification.
+const scheduleNotify: (fn: () => void) => void =
+  typeof requestAnimationFrame === "function"
+    ? (fn) => {
+        requestAnimationFrame(fn);
+      }
+    : (fn) => {
+        queueMicrotask(fn);
+      };
+
 function emit() {
   version += 1;
-  for (const l of listeners) l();
+  if (notifyScheduled) return;
+  notifyScheduled = true;
+  scheduleNotify(() => {
+    notifyScheduled = false;
+    // Copied before iterating: a listener may unsubscribe (a cell unmounting during a
+    // month switch) while the set is being walked.
+    for (const l of [...listeners]) l();
+  });
+}
+
+// Notify now rather than next frame. For tests and for anything that must observe the
+// coalesced notification without waiting on a frame — not needed by the app itself.
+export function flushEtcLiveTotals(): void {
+  if (!notifyScheduled) return;
+  notifyScheduled = false;
+  for (const l of [...listeners]) l();
 }
 
 export function publishEtcCell(cellKey: string, cell: LiveCell): void {

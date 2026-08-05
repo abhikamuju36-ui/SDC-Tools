@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { nextParams, notePendingParams } from "@/lib/url-params";
+import { usePendingWatchdog } from "@/components/usePendingWatchdog";
 import { useTransition } from "react";
 
 // Shared behaviour for the Projects toolbar's bucketed dropdowns (Filters,
@@ -24,11 +25,25 @@ import { useTransition } from "react";
 // with a "Applies when you close this menu" line as the only explanation. Users
 // reasonably read that as the filter not working.
 //
-// Now: the tick is instant AND the grid follows on its own, ~250ms later. The
-// delay is a debounce, not a wait for anything — it exists so that ticking five
-// customers in a row costs ONE navigation instead of five, which is the whole
-// reason the apply-on-close version existed. Closing the menu flushes anything
-// still on the timer, so a change can never be lost by closing fast.
+// ── Why the first tick no longer waits at all (§32.7, 2026-08-04) ───────────
+//
+// The version in between was a TRAILING debounce: every tick restarted a 250ms
+// timer and the navigation went out once the user paused. That collapses a burst
+// into one navigation, which is the point — but it also charged the 250ms to the
+// case that does not need it. Ticking ONE box is by far the most common thing
+// anyone does in these menus, and it sat there for a quarter of a second before
+// the server was even asked. §32.7 says outright not to debounce checkboxes, and
+// this is why: the delay is pure added latency on the single-selection case.
+//
+// Leading edge plus trailing, now. The first tick navigates on the same frame it
+// lands. Further ticks inside the window do NOT each navigate — they mark the
+// draft dirty and one trailing navigation goes out when the window closes, so a
+// burst of five still costs two round-trips rather than five, and the grid is
+// never left disagreeing with the boxes.
+//
+// The two together are what the spec asks for from a multi-select: results update
+// incrementally, the menu stays open, and nothing waits on a timer that exists for
+// somebody else's burst.
 //
 // Handles SEVERAL params per menu, because the buckets each cover more than one:
 // Filters owns customers/types/statuses/billables, Sections owns cols/hide.
@@ -38,7 +53,33 @@ import { useTransition } from "react";
 // every tick makes it actively wrong: a remount rebuilds the <details> element,
 // which slams the menu shut on the first click, and throws away the search box's
 // text along with it.
+
+// How long after a navigation further ticks are collapsed rather than sent one by
+// one. Not a delay on the first tick — see above.
 const DEFAULT_DEBOUNCE_MS = 250;
+
+/**
+ * When the navigation for the current draft should go out: `0` means now, on this
+ * frame; a positive number is the trailing delay in milliseconds.
+ *
+ * Pure and exported so the property that matters — a lone tick waits for nothing —
+ * is pinned by a test rather than left to be re-derived from the effect below. The
+ * whole complaint this addresses is a filter that "does not apply immediately", so
+ * a regression to a trailing-only debounce should fail a test, not a code review.
+ */
+export function applyDelayMs(
+  msSinceLastNavigation: number,
+  navigationInFlight: boolean,
+  windowMs: number,
+): number {
+  // A navigation is still rendering: sending another now would race it for no
+  // gain, so let it land and carry this change on the trailing edge.
+  if (navigationInFlight) return windowMs;
+  // Outside the burst window with nothing in flight — this tick is on its own.
+  if (msSinceLastNavigation >= windowMs) return 0;
+  // Inside the window: wait out the remainder, and let a further tick restart it.
+  return windowMs - msSinceLastNavigation;
+}
 
 export function useDraftParamsMenu<K extends string>({
   committed,
@@ -57,6 +98,10 @@ export function useDraftParamsMenu<K extends string>({
   const searchParams = useSearchParams();
   const detailsRef = useRef<HTMLDetailsElement>(null);
   const [pending, startTransition] = useTransition();
+  // See the note on the returned `pending` below. `pending` itself is still used for the
+  // scheduling decision (a navigation genuinely IS in flight, whatever the indicator
+  // says), so only the value handed to callers is bounded.
+  const { busy: menuBusy } = usePendingWatchdog(pending);
   const [draft, setDraft] = useState<Record<K, string[]>>(() => ({ ...committed }));
 
   // Comparison key only, never a URL. JSON-encoded rather than comma-joined so a
@@ -102,6 +147,17 @@ export function useDraftParamsMenu<K extends string>({
   // The push itself. Reads `draft` from the closure of whichever render
   // scheduled it, which is exactly right: the debounce is restarted on every
   // change, so the call that survives is always the newest one.
+  // The query string most recently pushed, so the identical one is never pushed
+  // twice in a row (§32.3: one action, one request). The leading-edge scheduling
+  // below can otherwise ask twice for a single tick — the trailing timer fires
+  // while the leading navigation is still rendering, `dirty` is still true because
+  // `committed` has not caught up yet, and nothing else would notice that the URL
+  // being built is the one already in flight.
+  //
+  // Only CONSECUTIVE repeats are refused, so ticking a box off and back on still
+  // navigates both times: by then the recorded value is the intermediate one.
+  const lastPushedRef = useRef<string | null>(null);
+
   function apply() {
     if (!dirty) return; // opened, looked, closed — no need to reload the grid
     // nextParams, not searchParams directly: inside a transition that hook
@@ -113,34 +169,57 @@ export function useDraftParamsMenu<K extends string>({
     const qs = nextParams(current);
     buildParams(draft, qs);
     const q = qs.toString();
+    if (lastPushedRef.current === q) return;
+    lastPushedRef.current = q;
     notePendingParams(current, q); // before the push, so the next tick sees it
     startTransition(() => {
       router.push(q ? `${pathname}?${q}` : pathname, { scroll: false });
     });
   }
 
-  // Debounced auto-apply. The cleanup is what makes it a debounce: a change
-  // arriving before the timer fires cancels the previous one, so a burst of
-  // ticks collapses into a single navigation once the user pauses.
+  // Leading-edge-then-trailing auto-apply.
   //
   // Keyed on draftKey rather than the draft object so a resync that produces an
   // equal value doesn't restart the clock. `dirty` is false on mount and false
   // again once a push commits, which is what keeps this from firing on either.
   // apply() closes over this render's draft and query string, and it is a new
-  // function every render, so it can't go in the debounce's dependency list
-  // without restarting the timer on every unrelated re-render. The ref is the
-  // standard way out — refreshed in its own effect rather than during render,
-  // which React forbids, and declared FIRST so it is always up to date by the
-  // time the debounce effect below runs.
+  // function every render, so it can't go in the dependency list without
+  // re-running on every unrelated re-render. The ref is the standard way out —
+  // refreshed in its own effect rather than during render, which React forbids,
+  // and declared FIRST so it is always up to date by the time this effect runs.
   const applyRef = useRef(apply);
   useEffect(() => {
     applyRef.current = apply;
   });
+  // When the last navigation was ISSUED. The window is measured from here, so a
+  // deliberate tick after a pause is always instant and only a genuine burst is
+  // collapsed.
+  const lastAppliedAtRef = useRef(0);
   useEffect(() => {
     if (!dirty) return;
-    const t = window.setTimeout(() => applyRef.current(), debounceMs);
+    const since = Date.now() - lastAppliedAtRef.current;
+    const wait = applyDelayMs(since, pending, debounceMs);
+    // Leading edge: nothing went out recently and nothing is in flight, so this
+    // tick is the burst's first and there is nobody to wait for. This is the
+    // single-selection case, and it is now as fast as the round-trip allows.
+    if (wait === 0) {
+      lastAppliedAtRef.current = Date.now();
+      applyRef.current();
+      return;
+    }
+    // Inside the window, or a navigation is still rendering: one trailing
+    // navigation carries whatever the draft ends up being. Restarted by each
+    // further tick (the cleanup), so five ticks in a row still cost one.
+    const t = window.setTimeout(() => {
+      lastAppliedAtRef.current = Date.now();
+      applyRef.current();
+    }, wait);
     return () => window.clearTimeout(t);
-  }, [draftKey, dirty, debounceMs]);
+    // `pending` is deliberately a dependency: when a navigation finishes with the
+    // draft still dirty, that is exactly the moment to send the change that
+    // arrived during it. It cannot loop — apply() refuses a URL identical to the
+    // one it last pushed, and a committed push clears `dirty`.
+  }, [draftKey, dirty, debounceMs, pending]);
 
   useEffect(() => {
     function onClickOutside(e: MouseEvent) {
@@ -158,7 +237,15 @@ export function useDraftParamsMenu<K extends string>({
     setValues,
     toggleValue,
     dirty,
-    pending,
+    // Bounded, not the raw transition flag (§35.5: "do not show `Up to date` while a
+    // newer request is still pending", and its converse — do not show "Applying…"
+    // forever). Every menu that spreads this renders a spinner from it, so a transition
+    // that never settles would leave a permanent spinner in the toolbar exactly as
+    // "Show all" got stuck. The watchdog reports busy only while the wait is credible.
+    //
+    // Note the menus are NOT disabled by this: a checkbox stays tickable throughout, so
+    // a stuck navigation can never lock the filter panel. Only the indicator is gated.
+    pending: menuBusy,
     detailsRef,
     // Spread onto the OUTER <details>.
     detailsProps: {

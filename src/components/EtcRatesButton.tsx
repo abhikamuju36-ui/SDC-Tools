@@ -89,7 +89,7 @@ export function EtcRatesButton({
         ETC Rates
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-64 rounded-lg border border-sdc-border bg-white p-3 shadow-lg">
+        <div className="motion-menu-panel absolute left-0 top-full z-30 mt-1 w-64 rounded-lg border border-sdc-border bg-white p-3 shadow-lg">
           <p className="mb-2 text-xs font-semibold text-sdc-navy">ETC Rates (applied to all jobs)</p>
           <div className="space-y-2">
             <label className="flex items-center justify-between gap-2 text-sm text-sdc-navy">

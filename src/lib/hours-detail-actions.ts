@@ -3,6 +3,8 @@
 import { auth } from "@/lib/auth";
 import { isValidMonth } from "@/lib/etc";
 import { getEtcMonthHoursDetail, type JobHoursDetail } from "@/lib/job-hours-detail";
+import { getPartsSpentDetail, type PartsSpentDetail } from "@/lib/parts-spent";
+import { getJobPartsCost, type JobPartsCost } from "@/lib/sync-totaleto";
 
 // The punch drill-through behind the Monthly ETC cards, fetched WHEN IT IS OPENED.
 //
@@ -42,4 +44,39 @@ export async function loadEtcMonthHoursDetail(month: string, jobIds: number[]): 
   const ids = jobIds.filter((n) => Number.isInteger(n) && n > 0).slice(0, 500);
   if (ids.length === 0) return { rows: [], total: 0, sections: [], truncated: false };
   return getEtcMonthHoursDetail(month, ids);
+}
+
+// The same treatment for the "Parts spent" card, which until now was the one figure on
+// the strip with nothing behind it. Fetched on open, scoped to the jobs the grid is
+// rendering, and validated identically — a server action is a public endpoint whatever
+// the component that calls it looks like.
+export async function loadPartsSpentDetail(month: string, jobIds: number[]): Promise<PartsSpentDetail> {
+  const session = await auth();
+  if (!session?.user) throw new Error("Not signed in.");
+  if (!isValidMonth(month)) throw new Error(`Invalid month "${month}".`);
+  const ids = jobIds.filter((n) => Number.isInteger(n) && n > 0).slice(0, 500);
+  return getPartsSpentDetail(month, ids);
+}
+
+// ── The SECOND level: what one job's parts money was actually spent on ───────
+//
+// "Job 1142 spent $1,065,713" is where the first level stops, and it is not where the
+// question stops — the next thing anybody asks is what was bought. This returns the
+// purchase-order lines behind that figure, straight from TotalETO: supplier, part
+// number, description, quantity, unit price, and what has been invoiced.
+//
+// Reuses getJobPartsCost, which the Job Hour Details page already renders — so the
+// deeper drill and that page cannot tell different stories about the same job.
+//
+// Note what this is NOT scoped to: the MONTH. getJobPartsCost returns the job's whole
+// purchase history, because a part invoiced in July may have been ordered in March and
+// the PO is the thing being examined. The panel says so rather than implying the lines
+// sum to the month's figure.
+export async function loadJobPartsLines(jobNumber: string): Promise<JobPartsCost> {
+  const session = await auth();
+  if (!session?.user) throw new Error("Not signed in.");
+  // Job numbers are digits in this app ("1142"); anything else is a crafted request,
+  // and this value reaches a SQL parameter.
+  if (!/^\d{1,10}$/.test(jobNumber)) throw new Error(`Invalid job number "${jobNumber}".`);
+  return getJobPartsCost(jobNumber);
 }

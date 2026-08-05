@@ -1,7 +1,7 @@
 "use client";
 
 import Image from "next/image";
-import Link from "next/link";
+import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import {
   applyNavOrder,
@@ -95,6 +95,34 @@ function Icon({ children }: { children: React.ReactNode }) {
     <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.6">
       {children}
     </svg>
+  );
+}
+
+// ── "Did my click land?" (§36.4, §36.19) ────────────────────────────────────
+//
+// Every tab in this app is dynamically rendered (the (app) layout awaits auth(), see
+// its note), so a click is followed by a real server round trip. The destination now
+// paints a skeleton for that wait — but the skeleton belongs to the CONTENT AREA, and
+// the thing the user's cursor is on is this link. §36.19 wants a response within
+// ~100ms; this is it.
+//
+// useLinkStatus (next/link, 15.3+) reports the pending state of the enclosing <Link>,
+// which is why this has to be its own component rendered inside one. Its own docs warn
+// that inline indicators "can easily introduce layout shifts" and recommend a
+// fixed-size, always-rendered element toggled by opacity — which is exactly what this
+// is: the 6px dot occupies its slot in every state, and only `data-pending` changes.
+// The 120ms reveal delay lives in the CSS (.motion-link-hint), shared with the page
+// skeleton, so a prefetched route that lands immediately shows neither.
+function NavPendingHint() {
+  const { pending } = useLinkStatus();
+  return (
+    <span
+      aria-hidden
+      data-pending={pending ? "true" : "false"}
+      className="motion-link-hint ml-auto flex h-1.5 w-1.5 shrink-0 items-center justify-center"
+    >
+      <span className="h-1.5 w-1.5 rounded-full bg-[#4C8DE8]" />
+    </span>
   );
 }
 
@@ -375,7 +403,13 @@ export default function Sidebar({
       // authored at fixed sizes, so the sidebar now holds its proportions while
       // Text size keeps doing its real job on the grids.
       className={`sticky top-0 z-20 flex h-screen max-h-screen shrink-0 flex-col self-start border-r border-[#12314F] bg-[#061D39] ${
-        dragWidth === null ? "transition-[width] duration-150" : ""
+        // motion-panel-size is the ONE justified width animation in the app (§36.15
+        // discourages animating width, and rightly): the sidebar's width IS the thing
+        // changing when it collapses, and no transform expresses that without leaving
+        // the page content overlapped. Suppressed entirely while the user is dragging
+        // the resize handle — a transition there would lag the pointer by a frame and
+        // feel like the drag was fighting back.
+        dragWidth === null ? "motion-panel-size" : ""
       } ${collapsed ? "w-16" : ""}`}
     >
       {!collapsed && (
@@ -393,8 +427,8 @@ export default function Sidebar({
         </div>
         {!collapsed && (
           <div className="min-w-0">
-            <p className="truncate text-[13.5px] font-semibold leading-tight tracking-[-0.005em] text-[#F3F6FA]">SDC Projects Reports</p>
-            <p className="truncate text-[11.5px] text-[#7E93AC]">Steven Douglas Corp.</p>
+            <p className="truncate text-sm font-semibold leading-tight tracking-[-0.005em] text-[#F3F6FA]">SDC Projects Reports</p>
+            <p className="truncate text-note text-[#7E93AC]">Steven Douglas Corp.</p>
           </div>
         )}
       </div>
@@ -415,9 +449,9 @@ export default function Sidebar({
               }}
               placeholder="Search reports"
               aria-label="Filter navigation"
-              className="min-w-0 flex-1 bg-transparent text-[12.5px] text-[#C3D1E0] placeholder:text-[#7189A3] focus:outline-none"
+              className="min-w-0 flex-1 bg-transparent text-xs text-[#C3D1E0] placeholder:text-[#7189A3] focus:outline-none"
             />
-            {query === "" && <span className="ml-auto font-mono text-[10px] tracking-[0.04em] text-[#6E86A0]">Ctrl K</span>}
+            {query === "" && <span className="ml-auto font-mono text-label tracking-[0.04em] text-[#6E86A0]">Ctrl K</span>}
           </div>
         </div>
       )}
@@ -427,7 +461,7 @@ export default function Sidebar({
           <button
             onClick={handleBack}
             title="Go back to the previous page"
-            className={`flex h-8 w-full items-center gap-[10px] rounded-[7px] text-[12.5px] text-[#A9BCD0] hover:bg-[#0E3157] hover:text-[#F3F6FA] ${
+            className={`flex h-8 w-full items-center gap-[10px] rounded-[7px] text-xs text-[#A9BCD0] hover:bg-[#0E3157] hover:text-[#F3F6FA] ${
               collapsed ? "justify-center px-0" : "px-[10px]"
             }`}
           >
@@ -448,7 +482,7 @@ export default function Sidebar({
         {groups.map((group) => (
           <div key={group.label} className="flex flex-col gap-[3px]">
             {!collapsed && (
-              <p className="px-[10px] pb-[7px] font-mono text-[9.5px] tracking-[0.16em] text-[#6E88A5] uppercase">
+              <p className="px-[10px] pb-[7px] font-mono text-micro tracking-[0.16em] text-[#6E88A5] uppercase">
                 {group.label}
               </p>
             )}
@@ -505,9 +539,24 @@ export default function Sidebar({
                     // Active state is a raised white "card" (ring + 1px shadow)
                     // with a 2px inset accent bar, not a filled block — the mock's
                     // way of marking the current page on a light panel.
-                    className={`relative flex h-9 items-center gap-[11px] rounded-[7px] px-[10px] text-[13px] transition-colors ${
-                      collapsed ? "justify-center" : ""
-                    } ${
+                    // ── No justify-center toggle (§36.12: "icons and labels must not
+                    // jump") ────────────────────────────────────────────────────
+                    //
+                    // It used to add `justify-center` when collapsed, which is what made
+                    // collapsing lurch: the class applies on the frame of the click while
+                    // the aside is still 276px wide, so the icon leapt to the middle of a
+                    // wide panel and the panel then narrowed around it.
+                    //
+                    // Removing it changes nothing about the settled collapsed state — and
+                    // that is measured in the running app, not assumed. The rail is w-16,
+                    // which is 60px here because the root font-size is 15px (see
+                    // AppTextSize); the nav pads 14px and the link 10px, so a 15px icon
+                    // starts at 24px and is centred at 31.5px against the rail's own
+                    // centre of 30px. One and a half pixels, against the 114px leap
+                    // `justify-center` caused mid-collapse. Verified afterwards: the icon
+                    // sits at x=24 expanded, mid-collapse and collapsed — it does not
+                    // move horizontally at all.
+                    className={`relative flex h-9 items-center gap-[11px] rounded-[7px] px-[10px] text-sm motion-interactive ${
                       active
                         ? "bg-[#0E3159] font-medium text-[#FFFFFF] shadow-[inset_0_0_0_1px_#1B4270,0_1px_2px_rgba(0,0,0,0.45)]"
                         : "text-[#C3D1E0] hover:bg-[#0E3157]"
@@ -517,11 +566,20 @@ export default function Sidebar({
                       isOver ? "shadow-[inset_0_2px_0_0_#4C8DE8]" : ""
                     }`}
                   >
-                    {active && <span className="absolute top-[9px] bottom-[9px] left-0 w-[2px] rounded-r-[2px] bg-[#4C8DE8]" />}
+                    {/* The active-page accent bar fades in rather than appearing (§36.12:
+                        "the active-tab indicator must transition cleanly"). It is
+                        absolutely positioned, so it has never affected the row's layout —
+                        only its arrival was abrupt. */}
+                    {active && <span className="motion-fade absolute top-[9px] bottom-[9px] left-0 w-[2px] rounded-r-[2px] bg-[#4C8DE8]" />}
                     <span className={`flex h-[15px] w-[15px] shrink-0 items-center justify-center ${active ? "text-[#4C8DE8]" : "text-[#8FA6BE]"}`}>
                       {item.icon}
                     </span>
-                    {!collapsed && <span className="truncate">{item.label}</span>}
+                    {!collapsed && (
+                      <>
+                        <span className="truncate">{item.label}</span>
+                        <NavPendingHint />
+                      </>
+                    )}
                   </Link>
                 );
               })}
@@ -535,7 +593,7 @@ export default function Sidebar({
           <button
             type="button"
             onClick={clearNavOrder}
-            className="self-start px-[10px] text-[10px] text-[#6E88A5] underline decoration-dotted underline-offset-2 hover:text-[#C3D1E0]"
+            className="self-start px-[10px] text-label text-[#6E88A5] underline decoration-dotted underline-offset-2 hover:text-[#C3D1E0]"
             title="Put the sidebar links back in their default order"
           >
             Reset order
@@ -550,14 +608,14 @@ export default function Sidebar({
         {schedulerProjectsUrl && (
           <div className="flex flex-col gap-[3px]">
             {!collapsed && (
-              <p className="px-[10px] pb-[7px] font-mono text-[9.5px] tracking-[0.16em] text-[#6E88A5] uppercase">Apps</p>
+              <p className="px-[10px] pb-[7px] font-mono text-micro tracking-[0.16em] text-[#6E88A5] uppercase">Apps</p>
             )}
             <a
               href={schedulerProjectsUrl}
               target="_blank"
               rel="noopener noreferrer"
               title="Open the SDC Scheduler's Projects page in a new tab"
-              className={`flex h-9 items-center gap-[11px] rounded-[7px] px-[10px] text-[13px] text-[#C3D1E0] transition-colors hover:bg-[#0E3157] ${
+              className={`flex h-9 items-center gap-[11px] rounded-[7px] px-[10px] text-sm text-[#C3D1E0] motion-interactive hover:bg-[#0E3157] ${
                 collapsed ? "justify-center" : ""
               }`}
             >
@@ -600,21 +658,30 @@ export default function Sidebar({
               behind. It now runs the one application-wide pass, from every page, and the
               reload it replaces is unnecessary because the action revalidates the routes
               and broadcasts to the other tabs. */}
-          {/* Hidden on Monthly ETC, where the button now sits in the page toolbar
-              beside the month picker (§29). Same component and the same single action
-              either way — this is about there being ONE button on screen, not one
-              refresh path. Two buttons for one action is the confusion §25 removed. */}
-          {pathname !== "/etc" && (
-            <RefreshDataButton
-              compact={collapsed}
-              className="flex h-[30px] flex-1 items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] px-2 text-[12px] whitespace-nowrap text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157] disabled:opacity-60"
-            />
-          )}
+          {/* ── One Refresh Data, and it lives here (§41.16, 2026-08-05) ────────
+              This was hidden on /etc from §29 until 2026-08-05, because §29 had moved a
+              second copy into the Monthly ETC toolbar on the reasoning that "the sidebar
+              collapses to a rail, and a control nobody can find is not a control".
+              §41.16 reverses that and asks for one application-wide control here. The
+              discoverability worry §29 raised is real but is answered by the rail rather
+              than by a second button: `compact={collapsed}` keeps it visible as an icon
+              with its label as a tooltip, so it never disappears — and the ETC toolbar
+              copy is gone, so there is exactly ONE on screen on every route.
+              There was only ever one refresh PATH (lib/refresh-actions ->
+              refresh-service -> runAllSyncs); this was always about how many buttons
+              point at it. */}
+          <RefreshDataButton
+            compact={collapsed}
+            // This button is `flex-1` beside Collapse — 128px at the default sidebar
+            // width. `dense` keeps its label to what fits (see the note on the prop).
+            dense
+            className="motion-interactive flex h-[30px] flex-1 items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] px-2 text-xs whitespace-nowrap text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157] disabled:opacity-60"
+          />
 
           <button
             onClick={toggleCollapsed}
             title={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
-            className="flex h-[30px] flex-1 items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] text-[12px] text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157]"
+            className="flex h-[30px] flex-1 items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] text-xs text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157]"
           >
             <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
               <Icon>
@@ -630,12 +697,12 @@ export default function Sidebar({
         </div>
 
         <div className={`flex items-center gap-[10px] border-t border-[#12314F] pt-2.5 ${collapsed ? "justify-center" : "px-[10px]"}`}>
-          <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-[#123B66] text-[11px] font-semibold text-[#4C8DE8]">
+          <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-[#123B66] text-note font-semibold text-[#4C8DE8]">
             {userEmail?.[0]?.toUpperCase() ?? "?"}
           </div>
           {!collapsed && (
             <div className="min-w-0 flex-1">
-              <p className="truncate text-[11.5px] text-[#C3D1E0]">{userEmail}</p>
+              <p className="truncate text-note text-[#C3D1E0]">{userEmail}</p>
               <form action={signOutAction}>
                 <button
                   onClick={(e) => {
@@ -643,7 +710,7 @@ export default function Sidebar({
                       e.preventDefault();
                     }
                   }}
-                  className="text-[11px] text-[#7189A3] hover:text-[#C3D1E0] hover:underline"
+                  className="text-note text-[#7189A3] hover:text-[#C3D1E0] hover:underline"
                 >
                   Sign out
                 </button>
@@ -660,7 +727,7 @@ export default function Sidebar({
             `title` keeps it reachable for a bug report either way. */}
         {!collapsed && (
           <div
-            className="border-t border-[#12314F] px-[10px] pt-2 text-[10.5px] text-[#5A7391]"
+            className="border-t border-[#12314F] px-[10px] pt-2 text-label text-[#5A7391]"
             title={`SDC Projects Reports ${appVersionLabel()}`}
           >
             {appVersionLabel()}

@@ -167,11 +167,11 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
     <details ref={detailsRef} className="group relative inline-block">
       <summary className="flex w-72 cursor-pointer list-none items-center justify-between gap-2 rounded-md border border-sdc-border bg-white px-3 py-2 text-sm font-medium text-sdc-navy shadow-sm hover:bg-sdc-blue-light">
         <span className="truncate">{summary}</span>
-        <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" className="shrink-0 opacity-70 transition-transform duration-150 group-open:rotate-180">
+        <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" className="shrink-0 opacity-70 motion-interactive group-open:rotate-180">
           <path d="M3.5 6 L8 10.5 L12.5 6" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
       </summary>
-      <div className="absolute right-0 top-full z-40 mt-2 w-80 rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
+      <div className="motion-menu-panel absolute right-0 top-full z-40 mt-2 w-80 rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
         {/* Selected jobs live INSIDE the panel, not beside the closed control:
             the page header lays this out in a tight flex row, and a growing row
             of chips out there would shove the title around as you select. */}
@@ -234,7 +234,7 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
                       fill="none"
                       stroke="currentColor"
                       strokeWidth="2.2"
-                      className={`shrink-0 opacity-60 transition-transform duration-150 ${open ? "rotate-90" : ""}`}
+                      className={`shrink-0 opacity-60 motion-interactive ${open ? "rotate-90" : ""}`}
                     >
                       <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
                     </svg>

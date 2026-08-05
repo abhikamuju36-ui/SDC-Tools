@@ -55,7 +55,7 @@ export default function AppError({
             Go to Dashboard
           </Link>
         </div>
-        {error.digest && <p className="mt-3 text-[11px] text-sdc-gray-400">Reference: {error.digest}</p>}
+        {error.digest && <p className="mt-3 text-note text-sdc-gray-400">Reference: {error.digest}</p>}
       </div>
     </div>
   );

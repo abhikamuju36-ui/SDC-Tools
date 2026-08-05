@@ -46,7 +46,7 @@ export function SaveStatusChip({
       <span
         role="status"
         aria-live="polite"
-        className="flex items-center gap-1.5 rounded-md border border-sdc-red-border bg-sdc-red-bg px-2 py-1 text-[11px] font-medium text-sdc-red-text"
+        className="flex items-center gap-1.5 rounded-md border border-sdc-red-border bg-sdc-red-bg px-2 py-1 text-note font-medium text-sdc-red-text"
         title="A cell holds a value this column does not accept. It has not been saved and is not counted in any total — hover the red cell to see what it expects."
       >
         <WarnIcon />
@@ -60,7 +60,7 @@ export function SaveStatusChip({
 
   if (status === "error") {
     return (
-      <span className="flex items-center gap-1.5 rounded-md border border-sdc-red-border bg-sdc-red-bg px-2 py-1 text-[11px] font-medium text-sdc-red-text">
+      <span className="flex items-center gap-1.5 rounded-md border border-sdc-red-border bg-sdc-red-bg px-2 py-1 text-note font-medium text-sdc-red-text">
         <WarnIcon />
         {label}
         {onRetry && (
@@ -76,7 +76,7 @@ export function SaveStatusChip({
     <span
       role="status"
       aria-live="polite"
-      className={`flex items-center gap-1.5 text-[11px] font-medium ${
+      className={`flex items-center gap-1.5 text-note font-medium ${
         status === "saved" ? "text-sdc-green-text" : "text-sdc-gray-600"
       }`}
     >

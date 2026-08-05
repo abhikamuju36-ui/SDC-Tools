@@ -45,7 +45,7 @@ export function NewProjectRows({
               ×
             </button>
           </td>
-          <td className="frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden bg-sdc-yellow-bg px-2 py-1.5 text-center align-middle font-mono text-[10px] whitespace-nowrap">
+          <td className="frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden bg-sdc-yellow-bg px-2 py-1.5 text-center align-middle font-mono text-label whitespace-nowrap">
             <input
               type="number"
               step="1"
@@ -60,7 +60,7 @@ export function NewProjectRows({
           {show("job") && (
             <td
               style={{ width: "var(--job-col-width, 280px)", minWidth: "var(--job-col-width, 280px)" }}
-              className="frozen-col frozen-col-last sticky left-[7rem] z-10 overflow-hidden border-l border-r border-sdc-border bg-sdc-yellow-bg px-2 py-1.5 text-left align-middle text-[10px] font-medium whitespace-nowrap text-sdc-navy"
+              className="frozen-col frozen-col-last sticky left-[7rem] z-10 overflow-hidden border-l border-r border-sdc-border bg-sdc-yellow-bg px-2 py-1.5 text-left align-middle text-label font-medium whitespace-nowrap text-sdc-navy"
             >
               <input
                 type="text"
@@ -74,13 +74,13 @@ export function NewProjectRows({
           {show("customer") && (
             <td
               style={{ width: "var(--customer-col-width, 120px)", minWidth: "var(--customer-col-width, 120px)", maxWidth: "var(--customer-col-width, 120px)" }}
-              className="overflow-hidden whitespace-nowrap px-2 py-1.5 text-left align-middle text-[10px] text-sdc-gray-600"
+              className="overflow-hidden whitespace-nowrap px-2 py-1.5 text-left align-middle text-label text-sdc-gray-600"
             >
               <input type="text" name={`newRow__${tempId}__customer`} placeholder="—" aria-label="New project Customer" className="w-full text-left" />
             </td>
           )}
           {show("type") && (
-            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px] text-sdc-gray-600">
+            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-label text-sdc-gray-600">
               <select name={`newRow__${tempId}__type`} defaultValue="" aria-label="New project Type" className="text-center">
                 <option value="">—</option>
                 {VALID_JOB_TYPES.map((t) => (
@@ -92,7 +92,7 @@ export function NewProjectRows({
             </td>
           )}
           {show("billable") && (
-            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px]">
+            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-label">
               <select name={`newRow__${tempId}__billable`} defaultValue="Billable" aria-label="New project Billable" className="text-center">
                 <option value="Billable">Billable</option>
                 <option value="Non-Billable">Non-Billable</option>
@@ -100,7 +100,7 @@ export function NewProjectRows({
             </td>
           )}
           {show("status") && (
-            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-[10px] font-medium text-sdc-blue-dark">
+            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-label font-medium text-sdc-blue-dark">
               <select name={`newRow__${tempId}__status`} defaultValue="Active" aria-label="New project Status" className="text-center">
                 {allStatuses.map((st) => (
                   <option key={st} value={st}>
@@ -111,12 +111,12 @@ export function NewProjectRows({
             </td>
           )}
           {show("startDate") && (
-            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500">
+            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-label text-sdc-gray-500">
               <input {...dateCellProps({ name: `newRow__${tempId}__startDate`, defaultValue: "", ariaLabel: "New project Start Date" })} />
             </td>
           )}
           {show("completeDate") && (
-            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-[10px] text-sdc-gray-500">
+            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-label text-sdc-gray-500">
               <input {...dateCellProps({ name: `newRow__${tempId}__completeDate`, defaultValue: "", ariaLabel: "New project Complete Date" })} />
             </td>
           )}
@@ -124,7 +124,7 @@ export function NewProjectRows({
             g.sections.length ? (
               <Fragment key={g.phase}>
                 {g.sections.map((s) => (
-                  <td key={s.code} className="overflow-hidden border-l border-sdc-border px-1 py-1.5 text-center align-middle font-mono text-[10px] whitespace-nowrap text-sdc-gray-600">
+                  <td key={s.code} className="overflow-hidden border-l border-sdc-border px-1 py-1.5 text-center align-middle font-mono text-label whitespace-nowrap text-sdc-gray-600">
                     <input
                       type="number"
                       step="1"
@@ -148,7 +148,7 @@ export function NewProjectRows({
             data-total="eng"
             data-job={`${NEW_ROW_PREFIX}${tempId}`}
             data-actual="0"
-            className="overflow-hidden border-l border-sdc-border bg-sdc-blue-light/60 px-1 py-1.5 text-center align-middle font-mono text-[10px] font-medium whitespace-nowrap text-sdc-navy"
+            className="overflow-hidden border-l border-sdc-border bg-sdc-blue-light/60 px-1 py-1.5 text-center align-middle font-mono text-label font-medium whitespace-nowrap text-sdc-navy"
           >
             <span data-total-quoted>0</span>
           </td>
@@ -156,11 +156,11 @@ export function NewProjectRows({
             data-total="shop"
             data-job={`${NEW_ROW_PREFIX}${tempId}`}
             data-actual="0"
-            className="overflow-hidden border-l border-sdc-border bg-sdc-blue-light/60 px-1 py-1.5 text-center align-middle font-mono text-[10px] font-medium whitespace-nowrap text-sdc-navy"
+            className="overflow-hidden border-l border-sdc-border bg-sdc-blue-light/60 px-1 py-1.5 text-center align-middle font-mono text-label font-medium whitespace-nowrap text-sdc-navy"
           >
             <span data-total-quoted>0</span>
           </td>
-          <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-2 py-1.5 text-center align-middle text-[10px] font-medium text-sdc-navy">
+          <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-2 py-1.5 text-center align-middle text-label font-medium text-sdc-navy">
             <div className="flex items-center justify-center gap-0.5">
               <span className="text-sdc-gray-400">$</span>
               <MoneyCell
@@ -171,7 +171,7 @@ export function NewProjectRows({
               />
             </div>
           </td>
-          <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-2 py-1.5 text-center align-middle text-[10px] text-sdc-gray-600">
+          <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-2 py-1.5 text-center align-middle text-label text-sdc-gray-600">
             <div className="flex items-center justify-center gap-0.5">
               <span className="text-sdc-gray-400">$</span>
               <MoneyCell

@@ -23,6 +23,9 @@ import type { SaveQuotedResult } from "@/lib/quoted-actions";
 // didn't have: every visible cell resubmits on every save, so "no changes" is a
 // completely normal outcome and pretending otherwise trains people to ignore the
 // banner.
+// How many refused cells the banner lists before collapsing the rest into a count.
+const CONFLICTS_SHOWN = 6;
+
 function describe(r: Extract<SaveQuotedResult, { ok: true }>): string {
   const parts: string[] = [];
   if (r.created > 0) parts.push(`${r.created} new project${r.created === 1 ? "" : "s"}`);
@@ -115,6 +118,36 @@ export function SaveQuotedHoursButton() {
             )}
             <span className="min-w-0 break-words">
               {shown.result.ok ? describe(shown.result) : `Not saved — ${shown.result.error}`}
+              {/* ── The two figures §33.4 requires, per cell ────────────────────
+                  A count alone ("2 cells were changed by another user") tells the
+                  manager something went wrong but not WHICH cells, what is stored
+                  now, or what their own value was — so there is nothing to act on
+                  and no way to decide whether to re-enter it. The detail is already
+                  returned by the action; it was simply never displayed.
+
+                  Capped, because one Save can refuse a whole column and a banner
+                  that grows past the viewport hides its own dismiss button. */}
+              {shown.result.ok && shown.result.conflictDetail.length > 0 && (
+                <span className="mt-1.5 block font-normal">
+                  {shown.result.conflictDetail.slice(0, CONFLICTS_SHOWN).map((line) => (
+                    <span key={line} className="block tabular-nums">
+                      {line}
+                    </span>
+                  ))}
+                  {shown.result.conflictDetail.length > CONFLICTS_SHOWN && (
+                    <span className="block opacity-70">
+                      …and {shown.result.conflictDetail.length - CONFLICTS_SHOWN} more
+                    </span>
+                  )}
+                  {/* The retry path, said out loud. Those cells were deliberately
+                      left dirty (see QuotedSaveForm), and requestLiveRefresh has
+                      already pulled the current figures in — so pressing Save again
+                      now writes against what is actually stored. */}
+                  <span className="mt-1 block opacity-80">
+                    The current values are now on screen. Re-enter what you need and press Save again.
+                  </span>
+                </span>
+              )}
             </span>
             {shown.result.ok && (
               <span className="shrink-0 font-normal opacity-70">

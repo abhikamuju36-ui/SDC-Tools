@@ -3,6 +3,10 @@
 import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
+// The one place a cell change is both recorded and announced. Every write below goes
+// through it — see the §33.1 notes at each call site.
+import { recordChanges, classifyChange, type CellChange } from "@/lib/change-log";
+import { sectionName } from "@/lib/off-grid-hours";
 import { VALID_JOB_TYPES, JOB_STATUSES, isSdcCustomer } from "@/lib/job-filters";
 import { assertProjectsEditable } from "@/lib/projects-edit-mode";
 import { CELL_SPECS, parseCell } from "@/lib/cell-rules";
@@ -203,20 +207,48 @@ async function saveHoursCells(formData: FormData): Promise<{ written: number; co
 
   // Refuse the ones whose page was out of date — see beliefIsStale. The grid
   // renders whole hours, so the belief is compared as a whole number too.
+  // Job NUMBERS for every job in this batch, fetched once. Needed by both the
+  // conflict messages and the change events below — "job 47" is a primary key and
+  // means nothing to the manager reading the banner.
+  const jobNumbers = new Map(
+    (await prisma.job.findMany({ where: { id: { in: editJobIds } }, select: { id: true, jobId: true } })).map((j) => [j.id, j.jobId]),
+  );
+  const cellLabel = (e: { jobId: number; section: string }) =>
+    `Job ${jobNumbers.get(e.jobId) ?? e.jobId} · ${sectionName(e.section) ?? e.section}`;
+
   const conflicts: string[] = [];
   // The control NAMES, so the client can leave exactly those cells dirty instead of
   // re-baselining a value the server never wrote.
   const conflictFields: string[] = [];
   const changed: typeof candidates = [];
+  // Refused writes, recorded as such (§33.4/§33.12). recordChanges supports a
+  // "rejected" change type precisely so a refusal leaves a trail — otherwise the only
+  // evidence that a manager's value was thrown away is a banner they can dismiss.
+  const refusedChanges: CellChange[] = [];
   for (const e of candidates) {
     const current = Math.round(existingByKey.get(`${e.jobId}::${e.section}`) ?? 0);
     if (beliefIsStale(e.believed, current, (raw) => (raw === "" ? 0 : Math.round(Number(raw))))) {
-      conflicts.push(`job ${e.jobId} ${e.section}: stored ${current}, this page believed ${e.believed}`);
+      // Both figures §33.4 asks for, in the order a person needs them: what is
+      // actually stored now, and what they tried to put there. The old wording gave
+      // "stored 40, this page believed 72" — the BASELINE, not the attempted value,
+      // so it never actually told anyone what their own edit was.
+      conflicts.push(`${cellLabel(e)}: now ${current}, your ${e.quotedHours} was not saved`);
       conflictFields.push(`${HOURS_PREFIX}${e.jobId}__${e.section}`);
+      refusedChanges.push({
+        tab: "Projects",
+        rowRef: `Job ${jobNumbers.get(e.jobId) ?? e.jobId}`,
+        columnName: `${sectionName(e.section) ?? e.section} Quoted Hours`,
+        previousValue: String(e.quotedHours), // what was attempted
+        newValue: String(current), // what stands instead
+        changeType: "rejected",
+        entityType: "EstimatedHours",
+        entityId: `${e.jobId}::${e.section}`,
+      });
       continue;
     }
     changed.push(e);
   }
+  if (refusedChanges.length > 0) await recordChanges(refusedChanges, { action: "quoted.saveQuotedHours.refused" });
 
   if (changed.length === 0) {
     if (conflicts.length > 0) {
@@ -255,6 +287,40 @@ async function saveHoursCells(formData: FormData): Promise<{ written: number; co
       (conflicts.length > 0 ? ` — REFUSED ${conflicts.length} stale write(s) already changed by another user` : ""),
     metadata: { changed, conflicts },
   });
+
+  // ── Announce them (§33.1) ─────────────────────────────────────────────────
+  //
+  // This is what was missing: the Projects grid saved correctly and told nobody. Only
+  // the ETC grid's save path called recordChanges, so a colleague's quoted-hours edit
+  // was invisible until someone reloaded — which is the whole of the "changes are not
+  // appearing live for other users" report.
+  //
+  // `jobNumbers` is the map built above the conflict loop — one query for the whole
+  // batch, shared by the refusal messages and these events.
+  await recordChanges(
+    changed.map((e) => {
+      const previous = String(Math.round(existingByKey.get(`${e.jobId}::${e.section}`) ?? 0));
+      const next = String(e.quotedHours);
+      return {
+        tab: "Projects",
+        rowRef: `Job ${jobNumbers.get(e.jobId) ?? e.jobId}`,
+        // The section's human name, falling back to its code — the banner should say
+        // "Design & Drawings", not "10-312".
+        columnName: `${sectionName(e.section) ?? e.section} Quoted Hours`,
+        previousValue: previous,
+        newValue: next,
+        // On this column an unquoted section IS 0, so clearing a cell back to zero is
+        // a removal rather than an edit-to-zero. See classifyChange.
+        changeType: classifyChange(previous, next, { emptyIsBlank: true }),
+        entityType: "EstimatedHours",
+        entityId: `${e.jobId}::${e.section}`,
+        // The form-field name, so a receiving browser can put the value straight into
+        // this one cell instead of refetching the route.
+        cellKey: `${HOURS_PREFIX}${e.jobId}__${e.section}`,
+      };
+    }),
+    { action: "quoted.saveQuotedHours" },
+  );
 
   return { written: changed.length, conflicts, conflictFields };
 }
@@ -316,6 +382,9 @@ async function saveJobFields(formData: FormData): Promise<{ written: number; con
     where: { id: { in: jobIds } },
     select: {
       id: true,
+      // The human job number ("1165"), for the change banner's rowRef. `id` is the
+      // primary key and means nothing to a reader.
+      jobId: true,
       jobName: true,
       customer: true,
       type: true,
@@ -348,7 +417,14 @@ async function saveJobFields(formData: FormData): Promise<{ written: number; con
     const stale = <T,>(field: string, stored: T, parse: (raw: string) => T): boolean => {
       const believed = bases?.get(field) ?? null;
       if (!beliefIsStale(believed, stored, parse)) return false;
-      conflicts.push(`job ${jobId} ${field}: stored ${String(stored)}, this page believed ${believed}`);
+      // Same wording as the hours cells (§33.4): the value that stands now, and the
+      // one this page tried to write. `fields.get(field)` is what the user actually
+      // typed — the old message reported `believed`, which is the baseline and told
+      // nobody what their own edit had been.
+      const attempted = fields.get(field) ?? "";
+      conflicts.push(
+        `Job ${current.jobId} · ${JOB_FIELD_LABELS[field] ?? field}: now ${stored === null || stored === "" ? "(blank)" : String(stored)}, your "${attempted}" was not saved`,
+      );
       conflictFields.push(`${FIELD_PREFIX}${jobId}__${field}`);
       return true;
     };
@@ -453,7 +529,68 @@ async function saveJobFields(formData: FormData): Promise<{ written: number; con
     metadata: { changed: changedFieldSummaries, conflicts },
   });
 
+  // Announce every field that actually moved (§33.1). One event per CELL, not per
+  // job: the banner names a column, and a receiving browser updates one input.
+  const fieldChanges: CellChange[] = [];
+  for (const u of updates) {
+    const before = currentById.get(u.id);
+    if (!before) continue;
+    for (const [field, nextRaw] of Object.entries(u.data)) {
+      // Bookkeeping flags, not cells anyone edits or reads.
+      if (field.endsWith("ManuallyEdited")) continue;
+      const label = JOB_FIELD_LABELS[field];
+      if (!label) continue; // an internal field with no cell on the grid
+      const previousValue = formatJobFieldValue(field, (before as Record<string, unknown>)[field]);
+      const newValue = formatJobFieldValue(field, nextRaw);
+      if (previousValue === newValue) continue; // nothing a reader would see
+      fieldChanges.push({
+        tab: "Projects",
+        rowRef: `Job ${before.jobId}`,
+        columnName: label,
+        previousValue,
+        newValue,
+        // 0 is a real figure in a money column and "" is not, so the default rule
+        // applies here — only a genuinely blank value counts as a removal.
+        changeType: classifyChange(previousValue, newValue),
+        entityType: "Job",
+        entityId: u.id,
+        cellKey: `${FIELD_PREFIX}${u.id}__${field}`,
+      });
+    }
+  }
+  await recordChanges(fieldChanges, { action: "quoted.saveJobFields" });
+
   return { written: updates.length, conflicts, conflictFields };
+}
+
+// Column names as a human reads them on the Projects grid. A field absent from this
+// map is deliberately not announced — it has no cell for a notification to point at.
+const JOB_FIELD_LABELS: Record<string, string> = {
+  jobName: "Job Name",
+  customer: "Customer",
+  status: "Status",
+  type: "Type",
+  billable: "Billable",
+  startDate: "Start Date",
+  completeDate: "Complete Date",
+  costQuoted: "Cost Quoted",
+  costActualHistorical: "Cost Actual (Historical)",
+};
+
+// Stringify a job field the way its CELL displays it, so a `previousValue`/`newValue`
+// pair reads like the grid and a receiving browser can put `newValue` straight into
+// the input. A Date rendered with toString() would say "Tue Jul 22 2026 00:00:00
+// GMT+0000…" in the banner; the cell shows 2026-07-22.
+function formatJobFieldValue(field: string, value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  if (field === "billable") return value ? "Billable" : "Non-Billable";
+  if (value instanceof Date) return value.toISOString().slice(0, 10);
+  // Prisma Decimal for the money columns — Number() first so "1200" and "1200.00"
+  // cannot read as a change.
+  if (typeof value === "object" && value !== null && "toString" in value) return String(Number(String(value)));
+  if (typeof value === "number") return String(value);
+  const s = String(value);
+  return s === "" ? null : s;
 }
 
 // Creates every "+ Add Project" blank row the manager filled in. Job Id is

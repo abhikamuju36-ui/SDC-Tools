@@ -111,13 +111,16 @@ export function ExportMenu({
         onClick={() => setOpen((v) => !v)}
         title="Download this table as it is currently filtered"
       >
-        {busy ? "Preparing…" : "Export"}
+        {/* Reserved slot: "Export" and "Preparing…" are different widths, and this button
+            sits mid-toolbar — swapping them shifted every control to its right (§36.3,
+            §36.14). */}
+        <span className="inline-flex min-w-[4.5rem] items-center justify-center">{busy ? "Preparing…" : "Export"}</span>
       </button>
       {open && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-56 rounded-lg border border-sdc-border bg-white p-1 shadow-lg">
+        <div className="motion-menu-panel absolute left-0 top-full z-30 mt-1 w-56 rounded-lg border border-sdc-border bg-white p-1 shadow-lg">
           {/* Says what the export contains, because "Export" alone leaves the reader
               guessing whether it is the filtered view or everything. */}
-          <p className="px-2 py-1 text-[10px] leading-snug text-sdc-gray-500">
+          <p className="px-2 py-1 text-label leading-snug text-sdc-gray-500">
             Exports the table as currently filtered, with every column — including the ones off-screen.
           </p>
           <button
@@ -127,7 +130,7 @@ export function ExportMenu({
             className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm text-sdc-navy hover:bg-sdc-blue-light disabled:opacity-50"
           >
             Export to Excel
-            <span className="text-[10px] text-sdc-gray-400">{busy === "xlsx" ? "preparing…" : ".xlsx"}</span>
+            <span className="text-label text-sdc-gray-400">{busy === "xlsx" ? "preparing…" : ".xlsx"}</span>
           </button>
           <button
             type="button"
@@ -136,7 +139,7 @@ export function ExportMenu({
             className="flex w-full items-center justify-between rounded px-2 py-1.5 text-left text-sm text-sdc-navy hover:bg-sdc-blue-light disabled:opacity-50"
           >
             Export to CSV
-            <span className="text-[10px] text-sdc-gray-400">{busy === "csv" ? "preparing…" : ".csv"}</span>
+            <span className="text-label text-sdc-gray-400">{busy === "csv" ? "preparing…" : ".csv"}</span>
           </button>
         </div>
       )}

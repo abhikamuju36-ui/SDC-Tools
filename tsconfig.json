@@ -42,11 +42,20 @@
     ".next-verify/types/**/*.ts",
     ".next-verify/dev/types/**/*.ts",
     ".next-buildcheck/types/**/*.ts",
-    ".next-buildcheck/dev/types/**/*.ts"
+    ".next-buildcheck/dev/types/**/*.ts",
+    ".next-motioncheck/types/**/*.ts",
+    ".next-motioncheck/dev/types/**/*.ts",
+    ".next-verify3/types/**/*.ts",
+    ".next-verify3/dev/types/**/*.ts",
+    ".next-perf/types/**/*.ts",
+    ".next-perf/dev/types/**/*.ts"
   ],
   "exclude": [
     "node_modules",
     ".next-preview",
-    ".next-preview2"
+    ".next-preview2",
+    ".next-verify",
+    ".next-verify2",
+    ".next-buildcheck"
   ]
 }

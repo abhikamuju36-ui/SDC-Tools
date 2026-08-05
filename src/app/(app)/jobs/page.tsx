@@ -87,7 +87,7 @@ export default async function JobsPage({
             <Link
               key={f.key}
               href={f.href}
-              className={`rounded-md px-4 py-1.5 text-[13px] font-semibold whitespace-nowrap transition-colors ${
+              className={`motion-interactive rounded-md px-4 py-1.5 text-sm font-semibold whitespace-nowrap ${
                 f.active ? "bg-sdc-blue text-white shadow-sm" : "text-sdc-gray-600 hover:text-sdc-navy"
               }`}
             >
@@ -100,7 +100,7 @@ export default async function JobsPage({
       <div className={`${card("p-0")} overflow-x-auto`}>
         <div className="grid min-w-[900px] grid-cols-[40px_76px_minmax(240px,1fr)_180px_110px_120px] items-center gap-4 border-b border-sdc-border-soft bg-sdc-gray-50/60 px-6 py-3">
           {["#", "Job Id", "Job Name", "Customer", "Type", "Status"].map((h) => (
-            <span key={h} className="text-center text-[10px] font-semibold tracking-wider text-sdc-gray-400 uppercase">
+            <span key={h} className="text-center text-label font-semibold tracking-wider text-sdc-gray-400 uppercase">
               {h}
             </span>
           ))}
@@ -113,7 +113,7 @@ export default async function JobsPage({
             <Link
               key={job.id}
               href={`/jobs/${job.id}`}
-              className="grid min-w-[900px] grid-cols-[40px_76px_minmax(240px,1fr)_180px_110px_120px] items-center gap-4 px-6 py-3 text-center text-[10px] transition-colors hover:bg-sdc-blue-light/40"
+              className="motion-interactive grid min-w-[900px] grid-cols-[40px_76px_minmax(240px,1fr)_180px_110px_120px] items-center gap-4 px-6 py-3 text-center text-label hover:bg-sdc-blue-light/40"
             >
               <span className="text-sdc-gray-400 tabular-nums">{i + 1}</span>
               <span className="font-mono text-sdc-gray-500 tabular-nums">{job.jobId}</span>
@@ -122,7 +122,7 @@ export default async function JobsPage({
                 {noUpstreamData && (
                   <span
                     title="No TotalETO or Power BI data has synced for this job yet — check the Job Id matches upstream, or try syncing again."
-                    className="shrink-0 rounded-full bg-sdc-yellow-bg px-2 py-0.5 text-[10px] font-semibold whitespace-nowrap text-sdc-yellow-text"
+                    className="shrink-0 rounded-full bg-sdc-yellow-bg px-2 py-0.5 text-label font-semibold whitespace-nowrap text-sdc-yellow-text"
                   >
                     No PBI/ETO data yet
                   </span>
@@ -131,7 +131,7 @@ export default async function JobsPage({
               <span className="truncate text-sdc-gray-600" title={job.customer ?? undefined}>{job.customer ?? "—"}</span>
               <span className="text-sdc-gray-600">{job.type ?? "—"}</span>
               <span
-                className={`flex items-center justify-center gap-1.5 text-[10px] font-semibold ${
+                className={`flex items-center justify-center gap-1.5 text-label font-semibold ${
                   job.status === "Complete"
                     ? "text-sdc-green-text"
                     : job.status === "HeadStart"

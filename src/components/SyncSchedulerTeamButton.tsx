@@ -71,7 +71,7 @@ export function SyncSchedulerTeamButton() {
                     <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#8A6D00]">
                       In ETC, not matched on the Scheduler ({result.unmatchedEtc.length})
                     </p>
-                    <p className="mb-1 text-[11px] text-sdc-gray-500">
+                    <p className="mb-1 text-note text-sdc-gray-500">
                       Rename these to match the Scheduler exactly (e.g. Michael → Mike) and re-run, or they simply aren&apos;t on the Scheduler roster.
                     </p>
                     <p className="text-sm text-sdc-gray-700">{result.unmatchedEtc.join(", ")}</p>

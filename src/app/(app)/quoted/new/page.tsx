@@ -65,7 +65,7 @@ export default function NewProjectPage() {
       <PageTitle className="mb-6">Add Project</PageTitle>
       <form action={createProject} className="space-y-4">
         <div className={`${card("p-5")} grid grid-cols-2 gap-4`}>
-          <p className="col-span-2 text-[11px] font-semibold uppercase tracking-wide text-sdc-gray-400">
+          <p className="col-span-2 text-note font-semibold uppercase tracking-wide text-sdc-gray-400">
             Project Info
           </p>
           <div>
@@ -133,7 +133,7 @@ export default function NewProjectPage() {
         </div>
 
         <div className={`${card("p-5")} space-y-4`}>
-          <p className="text-[11px] font-semibold uppercase tracking-wide text-sdc-gray-400">
+          <p className="text-note font-semibold uppercase tracking-wide text-sdc-gray-400">
             Quoted Hours by Section
           </p>
           {PHASE_GROUPS.map((g) => (
@@ -144,7 +144,7 @@ export default function NewProjectPage() {
                   <div key={s.code}>
                     <label className={LABEL}>
                       {s.name}
-                      <span className="ml-1 font-mono text-[10px] text-sdc-gray-400">{s.code}</span>
+                      <span className="ml-1 font-mono text-label text-sdc-gray-400">{s.code}</span>
                     </label>
                     <input
                       type="number"

@@ -19,8 +19,8 @@ import type { PunchIssue } from "@/lib/data-quality";
 // The menu is portaled to <body>: these tables scroll inside a fixed-height box,
 // and an absolutely-positioned menu would be clipped by it.
 
-const TH = "px-2 py-1.5 text-left text-[10px] font-bold uppercase tracking-wide text-white";
-const TD = "px-2 py-1 text-left text-[11px] text-sdc-navy";
+const TH = "px-2 py-1.5 text-left text-label font-bold uppercase tracking-wide text-white";
+const TD = "px-2 py-1 text-left text-note text-sdc-navy";
 
 export function DataQualityDrill({ rows, showCompleted }: { rows: PunchIssue[]; showCompleted?: boolean }) {
   const router = useRouter();
@@ -59,7 +59,7 @@ export function DataQualityDrill({ rows, showCompleted }: { rows: PunchIssue[]; 
   }
 
   const ITEM =
-    "flex w-full items-center gap-2 px-3 py-1.5 text-left text-[11px] text-sdc-navy hover:bg-sdc-gray-100 focus:bg-sdc-gray-100 focus:outline-none";
+    "flex w-full items-center gap-2 px-3 py-1.5 text-left text-note text-sdc-navy hover:bg-sdc-gray-100 focus:bg-sdc-gray-100 focus:outline-none";
 
   return (
     <>
@@ -88,14 +88,14 @@ export function DataQualityDrill({ rows, showCompleted }: { rows: PunchIssue[]; 
                 title="Click for this job's hours · right-click to drill by employee"
                 className={`cursor-pointer hover:bg-sdc-blue-light/50 ${i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}`}
               >
-                <td className={`${TD} whitespace-nowrap font-mono text-[10px]`}>{r.date}</td>
+                <td className={`${TD} whitespace-nowrap font-mono text-label`}>{r.date}</td>
                 <td className={TD}>{r.employee}</td>
                 <td className={`${TD} text-sdc-gray-500`}>{r.department}</td>
                 <td className={TD} title={r.jobName}>
-                  <span className="font-mono text-[10px] text-sdc-gray-500">{r.jobId}</span> {r.jobName}
+                  <span className="font-mono text-label text-sdc-gray-500">{r.jobId}</span> {r.jobName}
                 </td>
-                {showCompleted && <td className={`${TD} whitespace-nowrap font-mono text-[10px] text-sdc-gray-500`}>{r.completeDate ?? "—"}</td>}
-                <td className={`${TD} font-mono text-[10px]`}>{r.section}</td>
+                {showCompleted && <td className={`${TD} whitespace-nowrap font-mono text-label text-sdc-gray-500`}>{r.completeDate ?? "—"}</td>}
+                <td className={`${TD} font-mono text-label`}>{r.section}</td>
                 <td className={`${TD} text-right font-mono tabular-nums`}>{r.hours}</td>
               </tr>
             ))}
@@ -111,7 +111,7 @@ export function DataQualityDrill({ rows, showCompleted }: { rows: PunchIssue[]; 
             style={{ position: "fixed", left: Math.min(menu.x, window.innerWidth - 240), top: Math.min(menu.y, window.innerHeight - 120), zIndex: 60 }}
             className="min-w-[220px] overflow-hidden rounded-md border border-sdc-border bg-white py-1 shadow-lg"
           >
-            <div className="truncate border-b border-sdc-border px-3 py-1 font-mono text-[10px] text-sdc-gray-500">
+            <div className="truncate border-b border-sdc-border px-3 py-1 font-mono text-label text-sdc-gray-500">
               {menu.row.jobId} · {menu.row.date}
             </div>
             <button type="button" role="menuitem" className={ITEM} onClick={() => openJob(menu.row)}>
@@ -182,7 +182,7 @@ function EmployeePanel({ detail, onClose }: { detail: EmployeePunchDetail; onClo
             {detail.name ?? `Payroll ID #${detail.employeeId}`}
             {detail.department && <span className="ml-2 text-xs font-normal text-sdc-gray-500">{detail.department}</span>}
           </p>
-          <p className="text-[11px] text-sdc-gray-500">
+          <p className="text-note text-sdc-gray-500">
             {detail.rows.length.toLocaleString()} punches · {Math.round(detail.total).toLocaleString()}h
             {detail.truncated && " (most recent 500)"}
             {/* An unresolved ID is the finding itself, so name it here too rather
@@ -210,12 +210,12 @@ function EmployeePanel({ detail, onClose }: { detail: EmployeePunchDetail; onClo
           <tbody>
             {detail.rows.map((r, i) => (
               <tr key={`${r.date}-${r.jobId}-${r.section}-${i}`} className={i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}>
-                <td className={`${TD} whitespace-nowrap font-mono text-[10px]`}>{r.date}</td>
+                <td className={`${TD} whitespace-nowrap font-mono text-label`}>{r.date}</td>
                 <td className={TD} title={r.jobName}>
-                  <span className="font-mono text-[10px] text-sdc-gray-500">{r.jobId}</span> {r.jobName}
+                  <span className="font-mono text-label text-sdc-gray-500">{r.jobId}</span> {r.jobName}
                 </td>
                 <td className={`${TD} text-sdc-gray-500`}>{r.jobStatus}</td>
-                <td className={`${TD} font-mono text-[10px]`} title={r.sectionName}>
+                <td className={`${TD} font-mono text-label`} title={r.sectionName}>
                   {r.section}
                 </td>
                 <td className={`${TD} text-right font-mono tabular-nums`}>{r.hours}</td>

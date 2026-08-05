@@ -6,6 +6,7 @@ import { encodeParamList } from "@/lib/quoted-display-prefs";
 import { MenuStatus, MenuApplyHint, MenuGroup, MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
 import { RESTRICTED_SECTION_CODES } from "@/lib/sections";
 import { useProjectsEditMode } from "@/components/ProjectsEditMode";
+import { useGridView } from "@/components/GridViewProvider";
 import { useRouter } from "next/navigation";
 import { useRef } from "react";
 
@@ -21,7 +22,7 @@ import { useRef } from "react";
 
 export type PhaseSpec = { phase: string; sections: { code: string; name: string }[] };
 export type InfoColumn = { key: string; label: string };
-type Key = "cols" | "hide";
+type Key = "cols";
 
 // The remount-on-change wrapper this used to have is gone — the hook resyncs
 // its own draft, and with every tick applying immediately a remount would close
@@ -30,27 +31,40 @@ export function ProjectsSectionsMenu({
   phases,
   visibleCodes,
   infoColumns,
-  hiddenInfo,
 }: {
   phases: PhaseSpec[];
   visibleCodes: string[];
   infoColumns: InfoColumn[];
-  hiddenInfo: string[];
+  // `hiddenInfo` used to be a prop: the server told this menu which info columns it had
+  // omitted, and the menu echoed it back as a navigation. Gone — the info-column boxes
+  // read GridViewProvider directly, and the server's answer reaches the provider as
+  // `initialHidden` instead.
 }) {
+  // ── `cols` navigates; `hide` does not (§40.2, 2026-08-04) ───────────────────
+  //
+  // Both used to be on this hook, so toggling an INFO column paid a full route
+  // navigation: measured on the production build at 3,330 DOM mutations and ~440ms of
+  // blocked main thread to stop showing one column that was already rendered.
+  //
+  // Info columns are now pure presentation — the grid prints them always and
+  // GridViewProvider hides them with one stylesheet rule, so a tick costs no request
+  // and no re-render (see lib/projects-view.ts).
+  //
+  // `cols` stays here on purpose. Hiding a SECTION column changes the Engineering and
+  // Shop hour totals, which the page sums server-side over the visible sections only.
+  // Hiding those with CSS would leave both totals counting columns that are no longer
+  // on screen — a wrong number rather than a slow one.
   const { draft, setValues, toggleValue, dirty, pending, detailsRef, detailsProps } = useDraftParamsMenu<Key>({
-    committed: { cols: visibleCodes, hide: hiddenInfo },
+    committed: { cols: visibleCodes },
     buildParams: (d, qs) => {
       // `cols` is always set, even empty: absent means "first visit, use the
       // default section set", not "the user hid everything".
       qs.set("cols", encodeParamList(d.cols ?? []));
-      // `hide` is deleted when empty so a default URL stays clean and shareable.
-      const hide = d.hide ?? [];
-      if (hide.length === 0) qs.delete("hide");
-      // Ordered by the column list rather than click order, so the same visible
-      // set always produces the same URL.
-      else qs.set("hide", encodeParamList(infoColumns.filter((c) => hide.includes(c.key)).map((c) => c.key)));
     },
   });
+
+  // The info columns' half: instant, no request, no pending state to show.
+  const { hidden: hiddenSet, toggle: toggleInfo, setHidden: setHiddenInfo } = useGridView();
 
   // ── Fetch the restricted sections only when they're actually wanted ────────
   //
@@ -78,7 +92,8 @@ export function ProjectsSectionsMenu({
   }
 
   const cols = draft.cols ?? [];
-  const hidden = draft.hide ?? [];
+  // Read from the instant store, not a draft — this moves on the click's own frame.
+  const hidden = infoColumns.filter((c) => hiddenSet.has(c.key)).map((c) => c.key);
   const allSections = phases.flatMap((p) => p.sections);
   const shownCount = allSections.filter((s) => cols.includes(s.code)).length;
   const allShown = shownCount === allSections.length && hidden.length === 0;
@@ -110,7 +125,7 @@ export function ProjectsSectionsMenu({
         {` (${shownCount}/${allSections.length})`}
         <MenuStatus pending={pending} />
       </summary>
-      <div className="styled-scrollbar absolute left-0 top-full z-30 mt-2 max-h-[70vh] w-72 overflow-y-auto rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
+      <div className="motion-menu-panel styled-scrollbar absolute left-0 top-full z-30 mt-2 max-h-[70vh] w-72 overflow-y-auto rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
         {phases.map((p) => {
           const phaseCodes = p.sections.map((s) => s.code);
           const on = phaseCodes.filter((c) => cols.includes(c)).length;
@@ -142,15 +157,15 @@ export function ProjectsSectionsMenu({
           label="Info columns"
           count={`${infoColumns.length - hidden.length}/${infoColumns.length}`}
         >
-          <MenuBulkActions onAll={() => setValues("hide", [])} onNone={() => setValues("hide", infoColumns.map((c) => c.key))} />
+          <MenuBulkActions onAll={() => setHiddenInfo([])} onNone={() => setHiddenInfo(infoColumns.map((c) => c.key))} />
           {infoColumns.map((c) => (
             <MenuCheckbox
               key={c.key}
               label={c.label}
-              // The draft tracks HIDDEN keys to match the param; inverted once
+              // The store tracks HIDDEN keys to match the param; inverted once
               // here rather than twice on the way to the URL.
-              checked={!hidden.includes(c.key)}
-              onChange={() => toggleValue("hide", c.key)}
+              checked={!hiddenSet.has(c.key)}
+              onChange={() => toggleInfo(c.key)}
             />
           ))}
         </MenuGroup>

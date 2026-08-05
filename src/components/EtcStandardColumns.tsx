@@ -1,6 +1,7 @@
 "use client";
 
 import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { usd as currency, usdExact as currencyExact } from "@/components/ui/format";
 import {
   calcTotalEtcDollars,
   calcPercentOfTotal,
@@ -14,15 +15,9 @@ import { useEtcLiveTotals } from "@/lib/etc-live-totals";
 // Same weight/treatment as the Monthly ETC grid's other block dividers.
 const STD_EDGE = "border-l-8! border-l-[#808080]!";
 
-function currency(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
-// Cents-precision counterpart to currency() above, for tooltips — the grid
-// display rounds to whole dollars, but the underlying math (rates entered to
-// cents, contingency amounts, etc.) is not.
-function currencyExact(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+// Money formatting comes from ui/format (§39.13): `usd` for whole dollars and
+// `usdExact` for the cents-precision figure behind it. These were two local copies
+// of both — three files had the identical pair, under the identical names.
 function percent(n: number): string {
   return (n * 100).toLocaleString(undefined, { maximumFractionDigits: 2 }) + "%";
 }
@@ -354,7 +349,7 @@ export function EtcStandardCells({ job }: { job: StandardJobBase }) {
   const std = getComputed(job.jobId);
   if (!std) return null;
 
-  const cell = (edge: boolean) => `${edge ? STD_EDGE : "border-l border-sdc-border"} px-2 py-1 text-center text-[10px] text-sdc-navy`;
+  const cell = (edge: boolean) => `${edge ? STD_EDGE : "border-l border-sdc-border"} px-2 py-1 text-center text-label text-sdc-navy`;
 
   return (
     <>
@@ -376,7 +371,7 @@ export function EtcStandardCells({ job }: { job: StandardJobBase }) {
       <td className={`${cell(true)} bg-sdc-yellow-bg/60 font-medium`} title={`${currencyExact(std.totalStandardFees)} = Total ETC $ + Standard Fees + (Contingency × Contingency Rate)`}>
         {currency(std.totalStandardFees)}
       </td>
-      <td className={`${STD_EDGE} px-2 py-1 text-center text-[10px] text-sdc-gray-500 whitespace-nowrap`} title={job.notes}>
+      <td className={`${STD_EDGE} px-2 py-1 text-center text-label text-sdc-gray-500 whitespace-nowrap`} title={job.notes}>
         <ContingencyNotesInputs jobId={job.jobId} field="notes" jobName={job.jobName} contingency={job.contingencyAmount} notes={job.notes} editable={editable} />
       </td>
     </>
@@ -461,7 +456,7 @@ function ContingencyNotesInputs({
         onBlur={save}
         aria-label={`Notes, ${jobName}`}
         placeholder="—"
-        className="w-28 border-none bg-transparent text-center text-[10px] outline-none focus:bg-white"
+        className="w-28 border-none bg-transparent text-center text-label outline-none focus:bg-white"
       />
     );
   }
@@ -492,7 +487,7 @@ function ContingencyNotesInputs({
       }}
       aria-label={`Contingency amount, ${jobName}`}
       placeholder="—"
-      className="w-20 border-none bg-transparent text-center text-[10px] outline-none focus:bg-white"
+      className="w-20 border-none bg-transparent text-center text-label outline-none focus:bg-white"
     />
   );
 }
@@ -509,19 +504,19 @@ export function StandardGrandCells() {
 
   return (
     <>
-      <td className={`${STD_EDGE} bg-sdc-gray-100 px-2 py-2.5 text-center text-[10px] text-sdc-navy`} title={currencyExact(grand.totalEtcDollars)}>
+      <td className={`${STD_EDGE} bg-sdc-gray-100 px-2 py-2.5 text-center text-label text-sdc-navy`} title={currencyExact(grand.totalEtcDollars)}>
         {currency(grand.totalEtcDollars)}
       </td>
-      <td className="border-l border-sdc-border bg-sdc-gray-100 px-2 py-2.5 text-center text-[10px] text-sdc-navy" title={`${(grand.percentOfTotal * 100).toFixed(6)}%`}>
+      <td className="border-l border-sdc-border bg-sdc-gray-100 px-2 py-2.5 text-center text-label text-sdc-navy" title={`${(grand.percentOfTotal * 100).toFixed(6)}%`}>
         {percent(grand.percentOfTotal)}
       </td>
-      <td className={`${STD_EDGE} bg-sdc-gray-100 px-2 py-2.5 text-center text-[10px] text-sdc-navy`} title={currencyExact(grand.standardFees)}>
+      <td className={`${STD_EDGE} bg-sdc-gray-100 px-2 py-2.5 text-center text-label text-sdc-navy`} title={currencyExact(grand.standardFees)}>
         {currency(grand.standardFees)}
       </td>
-      <td className={`${STD_EDGE} bg-sdc-gray-100 px-2 py-2.5 text-center text-[10px] text-sdc-navy`} title={grand.contingencyAmount ? currencyExact(grand.contingencyAmount) : undefined}>
+      <td className={`${STD_EDGE} bg-sdc-gray-100 px-2 py-2.5 text-center text-label text-sdc-navy`} title={grand.contingencyAmount ? currencyExact(grand.contingencyAmount) : undefined}>
         {grand.contingencyAmount ? currency(grand.contingencyAmount) : "—"}
       </td>
-      <td className={`${STD_EDGE} bg-sdc-gray-100 px-2 py-2.5 text-center text-[10px] font-semibold text-sdc-navy`} title={currencyExact(grand.totalStandardFees)}>
+      <td className={`${STD_EDGE} bg-sdc-gray-100 px-2 py-2.5 text-center text-label font-semibold text-sdc-navy`} title={currencyExact(grand.totalStandardFees)}>
         {currency(grand.totalStandardFees)}
       </td>
       <td className={`${STD_EDGE} bg-sdc-gray-100 px-2 py-2.5 text-center`} />

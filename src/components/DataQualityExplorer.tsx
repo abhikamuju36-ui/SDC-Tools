@@ -19,15 +19,15 @@ import type { PunchExplorer } from "@/lib/data-quality";
 // belongs in the browser.
 
 const SELECT = "h-8 rounded-lg border border-sdc-border bg-white px-2 text-xs text-sdc-navy outline-none focus:border-sdc-blue";
-const TH = "px-2 py-1.5 text-left text-[10px] font-bold uppercase tracking-wide text-white whitespace-nowrap";
-const TD = "px-2 py-1 text-left text-[11px] text-sdc-navy whitespace-nowrap";
+const TH = "px-2 py-1.5 text-left text-label font-bold uppercase tracking-wide text-white whitespace-nowrap";
+const TD = "px-2 py-1 text-left text-note text-sdc-navy whitespace-nowrap";
 
 function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <div className="flex-1 rounded-lg bg-sdc-blue px-4 py-3 text-white">
       <p className="font-heading text-xl font-bold tabular-nums">{value}</p>
-      <p className="mt-0.5 text-[10px] font-bold uppercase tracking-wide text-white/80">{label}</p>
-      {sub && <p className="text-[10px] text-white/60">{sub}</p>}
+      <p className="mt-0.5 text-label font-bold uppercase tracking-wide text-white/80">{label}</p>
+      {sub && <p className="text-label text-white/60">{sub}</p>}
     </div>
   );
 }
@@ -174,16 +174,16 @@ export function DataQualityExplorer({ data }: { data: PunchExplorer }) {
                 {data.rows.map((r, i) => (
                   <tr key={`${r.employeeId}-${r.date}-${r.section}-${r.jobId}-${i}`} className={i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}>
                     <td className={`${TD} text-sdc-gray-500`}>{r.department}</td>
-                    <td className={`${TD} font-mono text-[10px]`}>{r.employeeId}</td>
+                    <td className={`${TD} font-mono text-label`}>{r.employeeId}</td>
                     <td className={TD}>{r.employee}</td>
-                    <td className={`${TD} font-mono text-[10px]`}>{r.date}</td>
-                    <td className={`${TD} font-mono text-[10px]`}>{r.jobId}</td>
+                    <td className={`${TD} font-mono text-label`}>{r.date}</td>
+                    <td className={`${TD} font-mono text-label`}>{r.jobId}</td>
                     <td className={TD} title={r.jobName}>
                       <span className="block max-w-[16rem] truncate">{r.jobName}</span>
                     </td>
                     <td className={`${TD} text-sdc-gray-500`}>{r.jobStatus}</td>
-                    <td className={`${TD} font-mono text-[10px] text-sdc-gray-500`}>{r.completeDate ?? "—"}</td>
-                    <td className={`${TD} font-mono text-[10px]`}>{r.section}</td>
+                    <td className={`${TD} font-mono text-label text-sdc-gray-500`}>{r.completeDate ?? "—"}</td>
+                    <td className={`${TD} font-mono text-label`}>{r.section}</td>
                     <td className={`${TD} text-right font-mono tabular-nums`}>{r.hours}</td>
                     {/* The reason, not just true/false: "invalid" on its own
                         sends someone back to the rule list to work out which one
@@ -204,7 +204,7 @@ export function DataQualityExplorer({ data }: { data: PunchExplorer }) {
             </table>
           </div>
           {data.truncated && (
-            <p className="border-t border-sdc-border px-3 py-2 text-[11px] text-sdc-gray-400">
+            <p className="border-t border-sdc-border px-3 py-2 text-note text-sdc-gray-400">
               Showing the most recent 3,000 of {data.kpis.totalPunches.toLocaleString()} punches. The cards and the chart cover the
               whole selection — narrow the dates to see the rest here.
             </p>
@@ -214,7 +214,7 @@ export function DataQualityExplorer({ data }: { data: PunchExplorer }) {
         {/* Hours by department, stacked per employee. */}
         <div className={card("p-4")}>
           <p className="mb-1 font-heading text-sm font-bold tracking-tight text-sdc-navy">Hours by department</p>
-          <p className="mb-2 text-[11px] text-sdc-gray-500">
+          <p className="mb-2 text-note text-sdc-gray-500">
             Stacked by employee. &quot;(undefined)&quot; is the tell — hours whose employee or department the roster can&apos;t resolve.
           </p>
           <EChart height={340} option={chartOption} />

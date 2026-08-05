@@ -94,8 +94,8 @@ export function ProjectsDateFilter({
         {active && ` (${FIELD_LABEL[field].replace(" Date", "")})`}
         <MenuStatus pending={pending} />
       </summary>
-      <div className="absolute left-0 top-full z-30 mt-2 w-60 rounded-lg border border-sdc-border bg-white p-2.5 shadow-lg">
-        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-sdc-gray-600">Filter on</p>
+      <div className="motion-menu-panel absolute left-0 top-full z-30 mt-2 w-60 rounded-lg border border-sdc-border bg-white p-2.5 shadow-lg">
+        <p className="mb-1.5 text-note font-semibold uppercase tracking-wide text-sdc-gray-600">Filter on</p>
         <div className="mb-2.5 flex gap-1">
           {(Object.keys(FIELD_LABEL) as DateFilterField[]).map((f) => (
             <button
@@ -106,7 +106,7 @@ export function ProjectsDateFilter({
               key={f}
               onClick={() => setValues("dateField", [f])}
               aria-pressed={draftField === f}
-              className={`flex-1 rounded-md border px-2 py-1 text-[11px] font-medium transition-colors ${
+              className={`flex-1 rounded-md border px-2 py-1 text-note font-medium motion-interactive ${
                 draftField === f
                   ? "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark"
                   : "border-sdc-border bg-white text-sdc-navy hover:bg-sdc-blue-light"
@@ -117,7 +117,7 @@ export function ProjectsDateFilter({
           ))}
         </div>
 
-        <label className="mb-1.5 flex items-center justify-between gap-2 text-[11px] text-sdc-gray-600">
+        <label className="mb-1.5 flex items-center justify-between gap-2 text-note text-sdc-gray-600">
           From
           <input
             type="date"
@@ -127,7 +127,7 @@ export function ProjectsDateFilter({
             aria-label={`${FIELD_LABEL[draftField]} from`}
           />
         </label>
-        <label className="flex items-center justify-between gap-2 text-[11px] text-sdc-gray-600">
+        <label className="flex items-center justify-between gap-2 text-note text-sdc-gray-600">
           To
           <input
             type="date"
@@ -138,7 +138,7 @@ export function ProjectsDateFilter({
           />
         </label>
 
-        {backwards && <p className="mt-2 text-[11px] font-medium text-sdc-red-text">&quot;From&quot; is after &quot;To&quot; — no job can match.</p>}
+        {backwards && <p className="mt-2 text-note font-medium text-sdc-red-text">&quot;From&quot; is after &quot;To&quot; — no job can match.</p>}
 
         <div className="mt-2.5 flex items-center justify-between gap-2">
           <button
@@ -148,7 +148,7 @@ export function ProjectsDateFilter({
               setValues("to", []);
             }}
             disabled={!draftFrom && !draftTo}
-            className="rounded px-1.5 py-0.5 text-[11px] font-medium text-sdc-blue hover:bg-sdc-blue-light disabled:cursor-not-allowed disabled:opacity-40"
+            className="rounded px-1.5 py-0.5 text-note font-medium text-sdc-blue hover:bg-sdc-blue-light disabled:cursor-not-allowed disabled:opacity-40"
           >
             Clear
           </button>
@@ -157,7 +157,7 @@ export function ProjectsDateFilter({
         {/* Jobs with no date in the chosen field can't satisfy a range, so they
             drop out. Said here because "50 jobs" quietly becoming 31 with no
             explanation is how people conclude the grid is broken. */}
-        <p className="mt-2 text-[10px] leading-relaxed text-sdc-gray-400">
+        <p className="mt-2 text-label leading-relaxed text-sdc-gray-400">
           Jobs with no {FIELD_LABEL[draftField].toLowerCase()} are hidden while a range is set.
         </p>
       </div>

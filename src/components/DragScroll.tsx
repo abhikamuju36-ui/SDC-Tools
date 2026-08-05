@@ -23,11 +23,25 @@ import { useRef, type ReactNode } from "react";
 //   press on a cell pans, and once you are actually editing that cell, dragging
 //   inside it selects text as usual.
 //
-// A single click no longer opens a cell for editing — DOUBLE-click does, as in a
-// spreadsheet. Every cell on these grids is an input, so "grab the page to drag
-// it" and "click into a field" were the same gesture, and any drag that fell
-// short of the 3px threshold dropped a caret into live data. Requiring the
-// second click separates panning from editing outright.
+// ── The first click focuses the cell again (§38.1, 2026-08-04) ───────────────
+//
+// This used to call preventDefault() on every mousedown over an unfocused cell input,
+// to stop a pan-that-turned-out-to-be-a-click from dropping a caret into live data.
+// The cost of that was the first symptom §38 reports: a single click on a cell did
+// NOTHING VISIBLE. Focus is this grid's only selection model — the input IS the cell —
+// so suppressing focus suppressed selection, and the user had to click again (or
+// double-click) to get anywhere. §38.1 forbids exactly that ("the first click must
+// never be ignored"), and §38.16 #3 asks for the opposite behaviour outright.
+//
+// The gesture is separated by MOVEMENT instead of by click count, which is what
+// actually distinguishes a pan from a click:
+//
+//   press, don't move  -> the browser focuses the cell. It is selected, immediately.
+//   press, move >3px   -> blur, drop the text selection, and pan.
+//
+// A caret in a cell is not an edit — nothing is written until a value changes — and it
+// is exactly what "selecting a cell" looks like on a grid whose cells are inputs.
+// Double-click still selects the whole value, as a spreadsheet does.
 const NEVER_PAN = [
   "select",
   "button",
@@ -41,12 +55,39 @@ const NEVER_PAN = [
   "input[type='radio']",
 ].join(",");
 
+/**
+ * What a mousedown on this grid means. Pure, and exported, because getting it wrong in
+ * either direction is a reported bug: too eager and a `<select>` never opens or a
+ * focused cell cannot be text-selected, too shy and the grid stops panning.
+ *
+ *   "ignore"  — not ours: a control whose mousedown IS the interaction, or a grid with
+ *               nothing to scroll.
+ *   "editing" — a text input that already has focus. Leave the press completely alone
+ *               so selecting inside the value still works.
+ *   "pan"     — anything else. Track for movement; the browser is left to do its own
+ *               focusing, so a press that never moves is a plain click on a cell.
+ *
+ * The §34.2 stale-border rule that used to live here is GONE, along with the
+ * preventDefault that made it necessary: focus now transfers the way the browser
+ * transfers it, so no cell can be left outlined after the pointer has moved on.
+ */
+export type PressKind = "ignore" | "editing" | "pan";
+
+export function pressKindFor(opts: {
+  neverPan: boolean;
+  scrollable: boolean;
+  isTextish: boolean;
+  alreadyFocused: boolean;
+}): PressKind {
+  if (opts.neverPan) return "ignore";
+  if (!opts.scrollable) return "ignore";
+  if (opts.isTextish && opts.alreadyFocused) return "editing";
+  return "pan";
+}
+
 export function DragScroll({ className, children }: { className?: string; children: ReactNode }) {
   const ref = useRef<HTMLDivElement>(null);
   const moved = useRef(false);
-  // The input whose focus we suppressed, to hand back if this turns out to be a
-  // click and not a pan.
-  const pendingFocus = useRef<HTMLElement | null>(null);
 
   const scrollable = (el: HTMLElement) => el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight;
 
@@ -60,47 +101,50 @@ export function DragScroll({ className, children }: { className?: string; childr
   function onMouseDown(e: React.MouseEvent) {
     if (e.button !== 0) return; // left button only
     const target = e.target as HTMLElement;
-    if (target.closest(NEVER_PAN)) return;
-
     const el = ref.current;
-    if (!el || !scrollable(el)) return;
+    if (!el) return;
 
-    // A text/number input that already has focus is being edited — leave the
-    // press alone so selecting inside it still works.
     const textish = target.closest("input,textarea") as HTMLElement | null;
-    if (textish && document.activeElement === textish) return;
+    const kind = pressKindFor({
+      neverPan: target.closest(NEVER_PAN) !== null,
+      scrollable: scrollable(el),
+      isTextish: textish !== null,
+      alreadyFocused: textish !== null && document.activeElement === textish,
+    });
+    if (kind !== "pan") return;
 
-    pendingFocus.current = null;
-    if (textish) {
-      // Suppress the focus and the drag-select that would otherwise come with
-      // this press; handed back on release if nothing moved.
-      e.preventDefault();
-      pendingFocus.current = textish;
-    }
-
+    // ── No preventDefault (§38.1, §38.5) ────────────────────────────────────
+    //
+    // The press is left entirely alone, so the browser focuses the cell itself and
+    // the click registers on the FIRST press. Everything below only watches for
+    // movement; nothing here delays or suppresses the interaction.
     const startX = e.clientX;
     const startY = e.clientY;
     const startLeft = el.scrollLeft;
     const startTop = el.scrollTop;
     moved.current = false;
-    el.style.cursor = "grabbing";
 
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
-      if (!moved.current && (Math.abs(dx) > 3 || Math.abs(dy) > 3)) moved.current = true;
+      if (!moved.current) {
+        if (Math.abs(dx) <= 3 && Math.abs(dy) <= 3) return; // still a click, not a pan
+        moved.current = true;
+        // NOW it is a pan: take focus off the cell the press landed in and drop the
+        // text selection the browser started, so dragging scrolls the grid instead of
+        // sweeping a selection through a value. Doing it here rather than on mousedown
+        // is the whole fix — on mousedown it also cancelled the click.
+        el.style.cursor = "grabbing";
+        if (document.activeElement instanceof HTMLElement && el.contains(document.activeElement)) {
+          document.activeElement.blur();
+        }
+        window.getSelection()?.removeAllRanges();
+      }
       el.scrollLeft = startLeft - dx;
       el.scrollTop = startTop - dy;
     };
     const onUp = () => {
-      el.style.cursor = "";
-      // Deliberately does NOT hand focus back on a plain click any more. A
-      // single click on a grid full of inputs is how people grab the page to
-      // pan it, and landing in an editable cell every time they missed the drag
-      // threshold produced exactly the accidental edits this was reported for.
-      // Double-click opens the cell instead (see onDoubleClick) — the same
-      // gesture a spreadsheet uses to go from selecting to editing.
-      pendingFocus.current = null;
+      el.style.cursor = scrollable(el) ? "grab" : "";
       window.removeEventListener("mousemove", onMove);
       window.removeEventListener("mouseup", onUp);
     };
@@ -118,9 +162,10 @@ export function DragScroll({ className, children }: { className?: string; childr
     }
   }
 
-  // Double-click to edit. Focus is suppressed on the way in (onMouseDown), so
-  // this is what actually opens a cell — select-all included, matching the
-  // focus behaviour ExcelCellFocus gives a cell reached by keyboard.
+  // Double-click SELECTS THE WHOLE VALUE, the way a spreadsheet does. It is no longer
+  // what focuses the cell — the single click does that now (see onMouseDown) — so this
+  // is the "replace this value" gesture rather than the only way in, and it matches the
+  // select-all ExcelCellFocus gives a cell reached by keyboard.
   function onDoubleClick(e: React.MouseEvent) {
     const target = e.target as HTMLElement;
     const textish = target.closest("input,textarea") as HTMLInputElement | HTMLTextAreaElement | null;

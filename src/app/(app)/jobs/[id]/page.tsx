@@ -7,7 +7,7 @@ import { PageTitle, SectionTitle } from "@/components/ui/Typography";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 import { PillLinks } from "@/components/ui/PillLinks";
 import { card, INPUT, BUTTON_PRIMARY, BUTTON_SECONDARY, LABEL, TABLE_HEADER_ROW, TABLE_GRID, TABLE_CARD } from "@/components/ui/classnames";
-import { hours as fmtHours } from "@/components/ui/format";
+import { hours as fmtHours, usd } from "@/components/ui/format";
 import { saveJobTask, deleteJobTask } from "@/lib/jobtask-actions";
 import { ProjectReleasePanel } from "@/components/ProjectReleasePanel";
 import { ConfirmSubmit } from "@/components/ConfirmSubmit";
@@ -53,8 +53,8 @@ export default async function JobDetailPage({
     prisma.projectRelease.findUnique({ where: { jobId } }),
   ]);
 
-  const currency = (n: number | null) =>
-    n == null ? "—" : n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
+  // ui/format owns money formatting (§39.13) — this was a seventh local copy.
+  const currency = (n: number | null) => (n == null ? "—" : usd(n));
   const formatDate = (d: Date | null) => (d ? d.toISOString().slice(0, 10) : "—");
 
   const availableMonths = await prisma.etcEntry.findMany({
@@ -174,11 +174,11 @@ export default async function JobDetailPage({
         {(job.costQuoted != null || job.costActualHistorical != null) && (
           <div className="grid grid-cols-2 gap-3">
             <div className="rounded-lg border border-sdc-border-soft p-3">
-              <p className="text-[11px] text-sdc-gray-400">QUOTED COST</p>
+              <p className="text-note text-sdc-gray-400">QUOTED COST</p>
               <p className="font-mono text-lg font-bold text-sdc-navy">{currency(job.costQuoted ? Number(job.costQuoted) : null)}</p>
             </div>
             <div className="rounded-lg border border-sdc-border-soft p-3">
-              <p className="text-[11px] text-sdc-gray-400">ACTUAL COST</p>
+              <p className="text-note text-sdc-gray-400">ACTUAL COST</p>
               <p className="font-mono text-lg font-bold text-sdc-navy">
                 {currency(job.costActualHistorical ? Number(job.costActualHistorical) : null)}
               </p>
@@ -194,7 +194,7 @@ export default async function JobDetailPage({
           <a
             key={t.key}
             href={t.href}
-            className={`rounded-md px-3.5 py-2 text-sm font-medium transition-colors ${
+            className={`rounded-md px-3.5 py-2 text-sm font-medium motion-interactive ${
               t.active ? "bg-white text-sdc-blue-dark shadow-sm" : "text-sdc-gray-600 hover:text-sdc-navy"
             }`}
           >
@@ -343,21 +343,21 @@ export default async function JobDetailPage({
                 <tbody>
                   {monthlyActualHours.map((m, i) => (
                     <tr key={m.id} className={i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}>
-                      <td className="px-4 py-2 text-center text-[10px] font-medium text-sdc-navy align-top">{m.month}</td>
-                      <td className="px-4 py-2 text-center text-[10px] align-top">
+                      <td className="px-4 py-2 text-center text-label font-medium text-sdc-navy align-top">{m.month}</td>
+                      <td className="px-4 py-2 text-center text-label align-top">
                         {m.actualHours.toString()}
                         {m.overridden && (
-                          <span className="ml-2 rounded-full bg-sdc-yellow-bg px-2 py-0.5 text-[10px] font-medium text-sdc-yellow-text">
+                          <span className="ml-2 rounded-full bg-sdc-yellow-bg px-2 py-0.5 text-label font-medium text-sdc-yellow-text">
                             Overridden
                           </span>
                         )}
-                        {m.overriddenNote && <p className="mt-0.5 text-[10px] text-sdc-gray-400">{m.overriddenNote}</p>}
+                        {m.overriddenNote && <p className="mt-0.5 text-label text-sdc-gray-400">{m.overriddenNote}</p>}
                       </td>
-                      <td className="px-4 py-2 text-center text-[10px] align-top">
+                      <td className="px-4 py-2 text-center text-label align-top">
                         {m.overridden ? (
                           <form action={revertOverride}>
                             <input type="hidden" name="rowId" value={m.id} />
-                            <button type="submit" className="text-[10px] text-sdc-gray-500 underline hover:text-sdc-navy">
+                            <button type="submit" className="text-label text-sdc-gray-500 underline hover:text-sdc-navy">
                               Revert to Power BI
                             </button>
                           </form>
@@ -369,15 +369,15 @@ export default async function JobDetailPage({
                               step="0.01"
                               name="newHours"
                               defaultValue={m.actualHours.toString()}
-                              className={`${INPUT} w-24 py-1 text-[10px]`}
+                              className={`${INPUT} w-24 py-1 text-label`}
                             />
                             <input
                               type="text"
                               name="note"
                               placeholder="Reason (optional)"
-                              className={`${INPUT} w-36 py-1 text-[10px]`}
+                              className={`${INPUT} w-36 py-1 text-label`}
                             />
-                            <button type="submit" className={`${BUTTON_PRIMARY} px-2.5 py-1 text-[10px]`}>
+                            <button type="submit" className={`${BUTTON_PRIMARY} px-2.5 py-1 text-label`}>
                               Override
                             </button>
                           </form>
@@ -414,10 +414,10 @@ export default async function JobDetailPage({
                 <tbody>
                   {estimatedHours.map((eh, i) => (
                     <tr key={eh.id} className={i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}>
-                      <td className="px-4 py-2 text-center text-[10px] font-medium text-sdc-navy" title={SECTION_NAME_BY_CODE.get(eh.section)}>{eh.section}</td>
-                      <td className="px-4 py-2 text-center text-[10px]">{eh.quotedHours.toString()}</td>
-                      <td className="px-4 py-2 text-center text-[10px]">{eh.actualHistoricalHours.toString()}</td>
-                      <td className="px-4 py-2 text-center text-[10px]">{eh.estimateToCompleteHours.toString()}</td>
+                      <td className="px-4 py-2 text-center text-label font-medium text-sdc-navy" title={SECTION_NAME_BY_CODE.get(eh.section)}>{eh.section}</td>
+                      <td className="px-4 py-2 text-center text-label">{eh.quotedHours.toString()}</td>
+                      <td className="px-4 py-2 text-center text-label">{eh.actualHistoricalHours.toString()}</td>
+                      <td className="px-4 py-2 text-center text-label">{eh.estimateToCompleteHours.toString()}</td>
                     </tr>
                   ))}
                 </tbody>
@@ -453,7 +453,7 @@ export default async function JobDetailPage({
                         defaultValue={t.taskName}
                         required
                         form={`task-${t.id}`}
-                        className={`${INPUT} w-full px-2 py-1 text-center text-[10px] font-medium`}
+                        className={`${INPUT} w-full px-2 py-1 text-center text-label font-medium`}
                         aria-label={`Task name, slot ${t.slot}`}
                       />
                     </td>
@@ -465,19 +465,19 @@ export default async function JobDetailPage({
                         min="0"
                         defaultValue={t.estimateToCompleteHours.toString()}
                         form={`task-${t.id}`}
-                        className={`${INPUT} w-28 px-2 py-1 text-center text-[10px]`}
+                        className={`${INPUT} w-28 px-2 py-1 text-center text-label`}
                         aria-label={`Hours, slot ${t.slot}`}
                       />
                     </td>
                     <td className="px-4 py-2 text-center">
                       <div className="flex justify-center gap-2">
-                        <button type="submit" form={`task-${t.id}`} className={`${BUTTON_SECONDARY} px-2.5 py-1 text-[10px]`}>
+                        <button type="submit" form={`task-${t.id}`} className={`${BUTTON_SECONDARY} px-2.5 py-1 text-label`}>
                           Save
                         </button>
                         <ConfirmSubmit
                           form={`task-del-${t.id}`}
                           message={`Delete task "${t.taskName}"? This can't be undone.`}
-                          className={`${BUTTON_SECONDARY} px-2.5 py-1 text-[10px] text-sdc-red-text`}
+                          className={`${BUTTON_SECONDARY} px-2.5 py-1 text-label text-sdc-red-text`}
                         >
                           Delete
                         </ConfirmSubmit>
@@ -487,7 +487,7 @@ export default async function JobDetailPage({
                 ))}
                 {tasks.length === 0 && (
                   <tr>
-                    <td colSpan={3} className="px-4 py-5 text-center text-[10px] text-sdc-gray-400">
+                    <td colSpan={3} className="px-4 py-5 text-center text-label text-sdc-gray-400">
                       No task assignments for this job yet — add one below.
                     </td>
                   </tr>

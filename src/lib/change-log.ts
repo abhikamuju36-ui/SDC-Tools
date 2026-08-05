@@ -90,6 +90,30 @@ async function currentActor(): Promise<{ userId: number | null; userEmail: strin
   }
 }
 
+// ── added / edited / removed, decided in ONE place ──────────────────────────
+//
+// The banner's wording depends on this (§33.9: "Abhi changed New ETC from 60 to 55"
+// vs "Abhi removed the New ETC value of 60"), so every caller must classify the same
+// way or the same kind of edit reads differently depending on which tab it came from.
+//
+// `emptyIsBlank` is for columns where 0 and blank are the same thing — Projects'
+// quoted hours treats an unquoted section as 0, so clearing such a cell is a REMOVAL,
+// not an edit to zero. On columns where 0 is a real figure distinct from blank (a
+// deliberate zero New ETC, which this app is careful about elsewhere), leave it off
+// and a 0 classifies as an ordinary edit.
+export function classifyChange(
+  previousValue: string | null,
+  newValue: string | null,
+  opts: { emptyIsBlank?: boolean } = {},
+): ChangeType {
+  const blank = (v: string | null) => v === null || v === "" || (opts.emptyIsBlank === true && v === "0");
+  const had = !blank(previousValue);
+  const has = !blank(newValue);
+  if (!had && has) return "added";
+  if (had && !has) return "removed";
+  return "edited";
+}
+
 // One human-readable line per change, the same wording the banner shows. Built
 // here so the audit summary and the notification cannot describe the same event
 // differently.

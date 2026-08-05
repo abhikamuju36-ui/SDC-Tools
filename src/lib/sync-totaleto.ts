@@ -49,11 +49,210 @@ SELECT
     ,[EC].[APDocDate] as [Invoiced Date]
 FROM [dbo].[vwCostingExtraCostsDetailed] [EC] WITH(NOLOCK)`;
 
-// Parts Cost "Money Spent this month" per job, straight from TotalETO —
+// ── Money Spent Month, by PURCHASED date (§30, 2026-08-04) ──────────────────
+//
+// Replaces the invoiced-date basis below. The rule, as decided: a part belongs to the
+// month it was PURCHASED, because parts are routinely invoiced months after the buy
+// and the ETC month is about what was committed in it.
+//
+// Three deliberate choices, each of which changes the figure:
+//
+//   * DATE — POH.PurchaseDate, the purchase-order header date. Not the receiver date
+//     (when it arrived) and not APDocDate (when it was billed).
+//
+//   * AMOUNT — PurchaseQty × PurchasePrice × PurchaseCurrRate. This is NOT the
+//     [Total Price] the invoiced-date query uses. That one is
+//     `remaining-uninvoiced-balance + everything-invoiced-to-date`, a point-in-time
+//     snapshot that cannot be attributed to any single date: window it by PO date and
+//     a month's figure would keep MOVING as invoices landed against POs placed in it,
+//     retroactively changing months that had already been submitted. The committed
+//     PO value is stable — once a PO is placed, its contribution to that month never
+//     changes again, which is the property a closed month needs.
+//     The currency rate stays: without it a foreign-currency PO would be counted in
+//     its own units.
+//
+//   * SCOPE — Part Costs ONLY. The Extra Costs branch (shipping, fees, tariffs) comes
+//     from vwCostingExtraCostsDetailed, which carries no purchase date at all, so
+//     there is nothing to window it on. Excluded outright rather than silently kept on
+//     the invoiced-date basis, which would put two different rules in one total.
+//
+// Consequence worth stating: this figure no longer matches Power BI's
+// [Part Cost Purchased], which the invoiced-date query was verified against to the
+// dollar on 2026-07-19. The two now measure different things on purpose.
+//
+// Locked months are protected by syncPartsCost's own isMonthLocked guard, so applying
+// this rule cannot rewrite a submitted month's stored figures.
+export async function getPartsCostPurchasedByJob(monthStart: Date, monthEndExclusive: Date): Promise<Map<string, number>> {
+  const pool = await sql.connect({ ...config, requestTimeout: 120000 });
+  try {
+    const result = await pool
+      .request()
+      .input("start", sql.DateTime, monthStart)
+      .input("end", sql.DateTime, monthEndExclusive)
+      .query(
+        `SELECT [P].[ProjectID] AS JobId,
+                SUM(POD.PurchaseQty * POD.PurchasePrice * POH.PurchaseCurrRate) AS Purchased
+           FROM tblPurchaseOrderHeader POH WITH(NOLOCK)
+                INNER JOIN tblPurchaseOrderDetails POD WITH(NOLOCK) ON POH.PurchaseOrderID = POD.PurchaseOrderID
+                LEFT JOIN tblSpec S WITH(NOLOCK) ON S.SpecID = POD.SpecID AND S.ProjectID = POD.ProjectID
+                LEFT JOIN tblProjects P WITH(NOLOCK) ON S.ProjectID = P.ProjectID
+          WHERE POH.PurchaseDate >= @start
+            AND POH.PurchaseDate <  @end
+            AND [P].[ProjectID] IS NOT NULL
+          GROUP BY [P].[ProjectID]`,
+      );
+    const map = new Map<string, number>();
+    for (const r of result.recordset) {
+      const purchased = Number(r.Purchased);
+      // A null/NaN sum is a data problem, not a zero — skipping keeps it out of the
+      // month rather than silently reporting nothing bought (§30.14).
+      if (Number.isFinite(purchased)) map.set(String(Number(r.JobId)), purchased);
+    }
+    return map;
+  } finally {
+    await pool.close();
+  }
+}
+
+// ── Money Spent Month, reconciled to the Total ETO report (§41) ──────────────
+//
+// THE authoritative Money Spent Month figure. Everything else in this file that looks
+// like a monthly spend is either a different measure or superseded; see below.
+//
+// Reconciled 2026-08-05 against the Total ETO pivot for July 2026 ("Sum of Debit Amt /
+// Sum of Credit Amt / Sum of Net DR/CR"): 31 of 35 jobs to the dollar, total $420,616
+// against the pivot's $420,656 — a 0.0095% residual on four jobs. The proof is
+// re-runnable: scripts/parts-spent-recon.ts.
+//
+// ── The two formulas this replaces, and why each was wrong ──────────────────
+//
+// 1. `getPartsCostSpentByJob` sums `[Total Price]`, which is
+//    "remaining-uninvoiced-balance + everything-invoiced-to-date". That is a
+//    point-in-time PO snapshot, not a monthly flow: a job carrying a large open PO
+//    contributes the PO's whole undelivered value to any month it was touched in.
+//    Job 1142, July 2026: $1,065,713 reported against the pivot's $113,101.
+//
+// 2. `getPartsCostPurchasedByJob` (§30) sums the committed PO value on POH.PurchaseDate.
+//    Stable and defensible, and it is what the app shipped with — but it is not what the
+//    business's own report measures, and it was off by $30,117 for the month and by
+//    multiples on individual jobs (1160: app $103,231 vs pivot $17,427).
+//
+// ── The definitions, spelled out (§41.4) ────────────────────────────────────
+//
+//   DATE    APBD.APDocDate — the AP document date, on the BATCH DOCUMENT table.
+//           This is what the pivot windows on. NOTE FOR WHOEVER READS §41.3: the
+//           business calls this the "Purchased Date", but it is NOT
+//           POH.PurchaseDate. A part bought in June and billed in July lands in
+//           JULY on this basis. That is the reference report's rule, not a choice
+//           made here.
+//   AMOUNT  APDocQty x APDocUnitPrice x (1 - APDocItemPctDisc) x APDocCurrRate.
+//           Qty, price and line discount are on the DETAIL row; the currency rate
+//           and the date are on the BATCH DOCUMENT. Mixing those up fails with
+//           "Invalid column name 'APDocCurrRate'".
+//   SIGN    Kept. A credit memo is a negative line and nets off, which is exactly
+//           what the pivot's Credit column does ($2,584 across 7 jobs in July;
+//           job 1127's $1,300 credit reconciles to the cent).
+//   JOB     APDD.ProjectID, straight off the AP line — not the PO -> Spec -> Project
+//           chain the other queries walk. In July 2026 every AP line carried one, so
+//           nothing is silently unattributed; `unmatchedLines` reports it if that
+//           ever stops being true.
+//   SCOPE   Part-cost AP lines only. Extra Costs (shipping, fees, tariffs) are
+//           EXCLUDED, and that is now a measured fact rather than a convenience:
+//           July had $39,987 of them across 23 jobs, and including any of it would
+//           have moved the four residual jobs the wrong way (1153 carries $624.85 of
+//           extra costs while sitting $2 BELOW the pivot).
+//   DEDUPE  None needed, and none applied. The grain is the AP document line
+//           (APDocDetailID), which is already one row per booked line, so there is
+//           nothing to collapse — and deduping on amount+date would destroy genuine
+//           repeat purchases (§41.7).
+//   ARCHIVED  NOT filtered. `Archived = 1` on 774 of July's 818 lines, so it plainly
+//           does not mean "void"; filtering it would have reported $39,987 instead
+//           of $491,206.
+export type PartsBookedByJob = {
+  /** job number -> net booked amount for the month (credits already netted off). */
+  net: Map<string, number>;
+  /** Debits and credits kept apart, so a reconciliation can compare all three columns. */
+  debit: Map<string, number>;
+  credit: Map<string, number>;
+  /** AP lines in the window carrying no ProjectID — nobody's spend. Should stay 0. */
+  unmatchedLines: number;
+  unmatchedAmount: number;
+};
+
+const AP_LINE_AMOUNT =
+  "(APDD.APDocQty * APDD.APDocUnitPrice * (1 - APDD.APDocItemPctDisc) * APBD.APDocCurrRate)";
+
+export async function getPartsCostBookedByJob(
+  monthStart: Date,
+  monthEndExclusive: Date,
+): Promise<PartsBookedByJob> {
+  const pool = await sql.connect({ ...config, requestTimeout: 180000 });
+  try {
+    const amt = AP_LINE_AMOUNT;
+    const result = await pool
+      .request()
+      .input("start", sql.DateTime, monthStart)
+      .input("end", sql.DateTime, monthEndExclusive)
+      .query(
+        `SELECT APDD.ProjectID AS JobId,
+                SUM(CASE WHEN ${amt} > 0 THEN ${amt} ELSE 0 END) AS DebitAmt,
+                SUM(CASE WHEN ${amt} < 0 THEN -(${amt}) ELSE 0 END) AS CreditAmt,
+                SUM(${amt}) AS NetAmt
+           FROM tblAPDocumentDetails APDD WITH(NOLOCK)
+                INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID
+          WHERE APBD.APDocDate >= @start AND APBD.APDocDate < @end
+            AND APDD.ProjectID IS NOT NULL
+          GROUP BY APDD.ProjectID`,
+      );
+    const net = new Map<string, number>();
+    const debit = new Map<string, number>();
+    const credit = new Map<string, number>();
+    for (const r of result.recordset) {
+      const job = String(Number(r.JobId));
+      const n = Number(r.NetAmt);
+      // A null/NaN sum is a data problem, not a zero — skipping keeps it out of the month
+      // rather than silently reporting nothing bought (§30.14).
+      if (!Number.isFinite(n)) continue;
+      net.set(job, n);
+      debit.set(job, Number(r.DebitAmt) || 0);
+      credit.set(job, Number(r.CreditAmt) || 0);
+    }
+
+    // Anything the month booked that no job will ever show. Reported rather than
+    // dropped silently (§41.6) — a purchase must never be reassigned to another job.
+    const un = await pool
+      .request()
+      .input("start", sql.DateTime, monthStart)
+      .input("end", sql.DateTime, monthEndExclusive)
+      .query(
+        `SELECT COUNT(*) AS Lines, ISNULL(SUM(${amt}), 0) AS Amt
+           FROM tblAPDocumentDetails APDD WITH(NOLOCK)
+                INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID
+          WHERE APBD.APDocDate >= @start AND APBD.APDocDate < @end
+            AND APDD.ProjectID IS NULL`,
+      );
+    return {
+      net,
+      debit,
+      credit,
+      unmatchedLines: Number(un.recordset[0]?.Lines ?? 0),
+      unmatchedAmount: Number(un.recordset[0]?.Amt ?? 0),
+    };
+  } finally {
+    await pool.close();
+  }
+}
+
+// Parts Cost cumulative "Parts Cost Actual" per job, straight from TotalETO —
 // SUM(Total Price) for rows whose Invoiced Date falls in [monthStart,
 // monthEndExclusive). Keyed by numeric Job Id string (e.g. "1150"), matching
 // how the rest of the app keys jobs. A longer request timeout than the
 // project sync since this query fans out across the full PO/AP history.
+//
+// NOT Money Spent Month — see getPartsCostBookedByJob above for that. `[Total Price]`
+// includes each PO's uninvoiced remaining balance, which is meaningful for the Projects
+// grid's lifetime-to-date column (called with a 1990-2100 window) and badly wrong for a
+// single month. Do not window this by month and call it a monthly spend.
 export async function getPartsCostSpentByJob(monthStart: Date, monthEndExclusive: Date): Promise<Map<string, number>> {
   const pool = await sql.connect({ ...config, requestTimeout: 120000 });
   try {

@@ -273,19 +273,28 @@ export function ProjectsEditModeToggle() {
           editing ? "border-sdc-yellow bg-sdc-yellow-bg text-sdc-navy" : "border-sdc-border bg-white text-sdc-gray-600 hover:bg-sdc-blue-light"
         } disabled:cursor-wait`}
       >
-        <span aria-hidden className={`relative h-3.5 w-6 shrink-0 rounded-full transition-colors ${editing ? "bg-sdc-yellow" : "bg-sdc-gray-100"}`}>
-          <span className={`absolute top-0.5 h-2.5 w-2.5 rounded-full bg-white shadow transition-all ${editing ? "left-3" : "left-0.5"}`} />
+        {/* The knob slides on `transform`, not `left` (§36.15: "avoid frequent
+            animation of … left"). It was `transition-all` between left-0.5 and left-3,
+            which animates a layout property AND every other property the knob has,
+            including its shadow. translate-x moves it on the compositor instead —
+            same 10px, no layout work, and now at the shared press/hover duration. */}
+        <span aria-hidden className={`relative h-3.5 w-6 shrink-0 rounded-full motion-interactive ${editing ? "bg-sdc-yellow" : "bg-sdc-gray-100"}`}>
+          <span
+            className={`motion-interactive absolute top-0.5 left-0.5 h-2.5 w-2.5 rounded-full bg-white shadow ${
+              editing ? "translate-x-[10px]" : "translate-x-0"
+            }`}
+          />
         </span>
         {editing ? "Editing" : "Read-only"}
         {/* The cells are already live/locked by now; this only says the column
             set is still catching up, so the switch doesn't look stuck. */}
-        {pending && <span className="text-[10px] font-normal opacity-60">updating columns…</span>}
+        {pending && <span className="text-label font-normal opacity-60">updating columns…</span>}
       </button>
 
       {open && !editing && (
-        <div className="absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border border-sdc-border bg-white p-3 shadow-lg">
+        <div className="motion-menu-panel absolute left-0 top-full z-30 mt-1 w-72 rounded-lg border border-sdc-border bg-white p-3 shadow-lg">
           <p className="mb-1 text-xs font-semibold text-sdc-navy">Enter password to edit</p>
-          <p className="mb-2 text-[11px] leading-relaxed text-sdc-gray-600">
+          <p className="mb-2 text-note leading-relaxed text-sdc-gray-600">
             Unlocks the cells and shows the PM, Manufacturing and Warranty (Engineering &amp; Shop) sections — in the grid and in
             the Sections filter.
           </p>

@@ -105,6 +105,22 @@ export function readRemoteEtcValue(cellKey: string): string | null {
   return remote.has(cellKey) ? remote.get(cellKey)! : null;
 }
 
+// Every cell that has had a value announced for it.
+//
+// The ETC grid does not need this — each of its ~1,180 cells subscribes for its OWN
+// key through useRemoteEtcValue, which is what keeps one event from waking the other
+// 1,179. The Projects grid is the opposite shape: its cells are server-rendered and
+// uncontrolled, so there is no per-cell subscriber to ask, and one component patches
+// the named cells in the DOM instead (components/ProjectsRemoteCells.tsx). That
+// component needs to know WHICH cells were named.
+//
+// A fresh array each call, deliberately NOT a live view of the Map: a caller iterating
+// this while something else applies a batch would otherwise see the collection change
+// under it. It is only ever called from an event handler, so the copy is cheap.
+export function remoteCellKeys(): string[] {
+  return [...remote.keys()];
+}
+
 // Exported as well as used by the hook below: the "no spurious notifications"
 // property is a performance claim (every notification wakes ~1,180 cells), so it is
 // worth being able to assert it.

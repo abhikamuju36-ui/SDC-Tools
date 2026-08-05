@@ -16,6 +16,7 @@
 // formulas.
 
 import { useState } from "react";
+import { usd as currency, usdExact as currencyExact } from "@/components/ui/format";
 import { useStandardPoolCell, useStandardPoolTotals, useStandardPoolDirty } from "@/components/EtcStandardColumns";
 import { PoolAutosave } from "@/components/PoolAutosave";
 import { SubmitReportAction } from "@/components/SubmitReportAction";
@@ -74,13 +75,9 @@ const groupEdge = (c: PoolColumn) => (c.category === WAR_COLUMNS[0]?.category ? 
 function whole(n: number): string {
   return Math.round(n).toLocaleString();
 }
-function currency(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
-}
-// Cents-precision counterpart to currency() above, for tooltips.
-function currencyExact(n: number): string {
-  return n.toLocaleString(undefined, { style: "currency", currency: "USD", minimumFractionDigits: 2, maximumFractionDigits: 2 });
-}
+// Money formatting comes from ui/format (§39.13): `usd` for whole dollars and
+// `usdExact` for the cents-precision figure behind it. These were two local copies
+// of both — three files had the identical pair, under the identical names.
 function num(s: string): number {
   const n = Number(s);
   return Number.isFinite(n) ? n : 0;
@@ -142,8 +139,16 @@ export function StandardPoolPanel({
 
   if (!open) {
     // Collapsed: fold sideways into a thin vertical rail instead of up.
+    //
+    // motion-fade, not the `transition-[width] duration-200` that used to be on both
+    // asides. That transition could never have run: collapsed and expanded are two
+    // DIFFERENT elements, swapped by this early return, and a transition needs one
+    // element whose width changes. So it was 200ms of dead code — and animating this
+    // panel's width for real would be the wrong fix anyway, because it sits beside the
+    // Monthly ETC grid and every frame of a width change would relayout 4,150 cells
+    // (§36.15). A crossfade on the swap is the honest version of what it intended.
     return (
-      <aside className="w-9 shrink-0 self-start overflow-hidden border border-sdc-border border-t-[#808080] bg-[#D6E4F0] shadow-sm transition-[width] duration-200">
+      <aside className="motion-fade w-9 shrink-0 self-start overflow-hidden border border-sdc-border border-t-[#808080] bg-[#D6E4F0] shadow-sm">
         <button
           type="button"
           onClick={() => setOpen(true)}
@@ -159,7 +164,7 @@ export function StandardPoolPanel({
   }
 
   return (
-    <aside className="w-[320px] shrink-0 self-start overflow-hidden border border-sdc-border border-t-[#808080] bg-white shadow-sm transition-[width] duration-200">
+    <aside className="motion-fade w-[320px] shrink-0 self-start overflow-hidden border border-sdc-border border-t-[#808080] bg-white shadow-sm">
       <div className="flex items-center justify-between gap-2 border-b border-sdc-border bg-[#D6E4F0] px-3 py-2">
         <button
           type="button"
@@ -171,7 +176,7 @@ export function StandardPoolPanel({
           <span className="truncate">Standard Fees — {month}</span>
         </button>
         {isSubmitted ? (
-          <span className="rounded bg-sdc-navy px-2 py-0.5 text-[10px] font-semibold text-white">Locked</span>
+          <span className="rounded bg-sdc-navy px-2 py-0.5 text-label font-semibold text-white">Locked</span>
         ) : (
           // The panel's own "Refresh" button is gone (§26.11, 2026-08-04). It recomputed
           // only these four pools — precisely the partial refresh that the one
@@ -180,7 +185,7 @@ export function StandardPoolPanel({
           // would put the pools back in the state §25 was written to end: refreshed on
           // their own clock, beside figures on another.
           <span
-            className="text-[10px] text-sdc-gray-500"
+            className="text-label text-sdc-gray-500"
             title="These pools refresh with the rest of the app — use Refresh Data in the sidebar."
           >
             Refreshed with the app
@@ -191,7 +196,7 @@ export function StandardPoolPanel({
       {open && (
         <>
           {carriedFrom && !isSubmitted && (
-            <p className="border-b border-sdc-border bg-sdc-yellow-bg/60 px-3 py-2 text-[11px] text-sdc-gray-600">
+            <p className="border-b border-sdc-border bg-sdc-yellow-bg/60 px-3 py-2 text-note text-sdc-gray-600">
               No pool figures computed for {month} yet — showing {carriedFrom}&apos;s as an estimate.{" "}
               {/* Points at "Refresh Data", not at a panel button that no longer exists
                   (§26.11). The pools ARE computed by that pass — standard_pools is one
@@ -239,7 +244,7 @@ export function StandardPoolPanel({
                       are computed from — so an unsaved pool was both a data-loss risk
                       and the thing that used to block submitting the month. */}
                   <PoolAutosave formId="standard-pool-form" saveAction={savePoolsAction} />
-                  <p className="pb-2 text-center text-[10px] text-sdc-gray-400">
+                  <p className="pb-2 text-center text-label text-sdc-gray-400">
                     Grid Standard Fees update live; these cells save on their own.
                   </p>
                 </div>
@@ -262,7 +267,7 @@ export function StandardPoolPanel({
               independently either way. */}
           <SubmitReportAction month={month} monthName={monthName} initialStatus={initialStatus} locked={isSubmitted} />
           {poolsDirty && !isSubmitted && (
-            <p className="border-t border-sdc-border bg-sdc-gray-50 px-3 pb-3 text-center text-[10px] font-medium text-sdc-yellow-text">
+            <p className="border-t border-sdc-border bg-sdc-gray-50 px-3 pb-3 text-center text-label font-medium text-sdc-yellow-text">
               Unsaved pool edits — they save on their own within a second, and the submission waits for them.
             </p>
           )}
@@ -287,7 +292,7 @@ function PoolDeptRow({ row, poolsEditable }: { row: PoolPanelRow; poolsEditable:
 
   return (
     <div className="border-b border-sdc-border px-3 py-2">
-      <p className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-sdc-gray-500">{row.dept}</p>
+      <p className="mb-1 text-note font-semibold uppercase tracking-wide text-sdc-gray-500">{row.dept}</p>
       <dl className="space-y-0.5 text-xs">
         <Line label="Previous Month Pulled Hours" value={whole(row.previousMonthPulledHours)} title={exactHours(row.previousMonthPulledHours)} />
         <Line label="New Hours Added this Month" value={whole(row.newHoursAddedThisMonth)} title={exactHours(row.newHoursAddedThisMonth)} />
@@ -363,13 +368,13 @@ function NewProjects({
     <div className="border-t border-sdc-border">
       <div className="flex items-baseline justify-between gap-2 bg-sdc-gray-50 px-3 py-1.5">
         <p className="text-xs font-semibold text-sdc-navy">New projects this month</p>
-        <p className="shrink-0 text-[11px] tabular-nums text-sdc-gray-500">
+        <p className="shrink-0 text-note tabular-nums text-sdc-gray-500">
           {projects.length === 0 ? "none" : `${projects.length} · ${whole(total)} h`}
         </p>
       </div>
 
       {projects.length === 0 ? (
-        <p className="px-3 py-2.5 text-[11px] leading-relaxed text-sdc-gray-400">
+        <p className="px-3 py-2.5 text-note leading-relaxed text-sdc-gray-400">
           No job has a Start Date in {month}, so nothing was added to the pools — every department&apos;s New Hours Added above is
           zero.
         </p>
@@ -379,12 +384,12 @@ function NewProjects({
               columns already fill 320px), so sorted-by-start-date would
               otherwise look like no order at all. The exact date is on each
               row's tooltip. */}
-          <p className="px-3 pt-2 text-[10px] leading-relaxed text-sdc-gray-400">
+          <p className="px-3 pt-2 text-label leading-relaxed text-sdc-gray-400">
             Jobs whose Start Date falls in {month}, earliest first. Their quoted hours are what &quot;New Hours Added this
             Month&quot; is made of.
           </p>
           {!reconciles && (
-            <p className="mx-3 mt-1.5 rounded border border-sdc-yellow bg-sdc-yellow-bg/60 px-2 py-1.5 text-[10px] leading-relaxed text-sdc-gray-600">
+            <p className="mx-3 mt-1.5 rounded border border-sdc-yellow bg-sdc-yellow-bg/60 px-2 py-1.5 text-label leading-relaxed text-sdc-gray-600">
               These add to <strong>{whole(total)} h</strong>, but the New Hours Added figures above total{" "}
               <strong>{whole(storedNewHours)} h</strong>.{" "}
               {isSubmitted
@@ -400,7 +405,7 @@ function NewProjects({
 
               The job NAME isn't a column — five columns already fill a 320px
               panel — so it rides on the row's tooltip instead. */}
-          <table className="mt-1.5 w-full border-collapse text-[10px]">
+          <table className="mt-1.5 w-full border-collapse text-label">
             {/* Two header rows: Job/PM/Mfg span both, and "War" spans the two
                 warranty columns named beneath it. */}
             <thead>
