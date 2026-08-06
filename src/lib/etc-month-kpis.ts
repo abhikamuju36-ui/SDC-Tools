@@ -54,9 +54,12 @@ export type EtcMonthKpis = {
   engineering: GroupKpi;
   shop: GroupKpi;
   parts: { prior: number; spent: number; moneyLeft: number; newEtc: number; diff: number; plannedMoneyLeft: number; plannedNewEtc: number };
-  // Distinct people across both groups — NOT engineering.people + shop.people,
-  // since anyone who booked to both would otherwise be counted twice.
-  peopleTotal: number;
+  // There was a `peopleTotal` here — distinct people across BOTH groups, which is
+  // deliberately not engineering.people + shop.people (someone who booked to both
+  // would be double-counted). It was the "People booked" KPI's headline; that block
+  // was retired in §64 and the field went unread, so it was removed in §66 rather
+  // than left as a computation nothing consumes. The per-group counts that DID
+  // survive are GroupKpi.people on engineering/shop.
   // False when JobHoursDetail holds nothing for this month, so the cards can say
   // "no punch data" rather than showing a confident zero.
   hasPunchData: boolean;
@@ -118,9 +121,12 @@ export async function getEtcMonthKpis(
     }
   }
 
-  // Headcount, per group and overall, from the punch rows. Restricted to the
-  // same jobs so it can't count someone who only booked to a job the grid is
-  // filtering out.
+  // Headcount PER GROUP, from the punch rows. Restricted to the same jobs so it
+  // can't count someone who only booked to a job the grid is filtering out.
+  //
+  // Per-group only since §66: the distinct-across-both-groups total was the
+  // retired "People booked" card's headline and nothing reads it now, so the
+  // third Set that accumulated it is gone with it.
   const jobIds = jobs.map((j) => j.id);
   const punches = jobIds.length
     ? await prisma.jobHoursDetail.findMany({
@@ -130,10 +136,8 @@ export async function getEtcMonthKpis(
     : [];
   const engPeople = new Set<string>();
   const shopPeople = new Set<string>();
-  const allPeople = new Set<string>();
   for (const p of punches) {
     if (!p.employeeId) continue;
-    allPeople.add(p.employeeId);
     const group = SECTION_GROUP.get(p.section);
     if (group === "Engineering") engPeople.add(p.employeeId);
     else if (group === "Shop") shopPeople.add(p.employeeId);
@@ -170,7 +174,6 @@ export async function getEtcMonthKpis(
       plannedMoneyLeft: round2(parts.plannedLeft),
       plannedNewEtc: round2(parts.plannedNewEtc),
     },
-    peopleTotal: allPeople.size,
     hasPunchData: punches.length > 0,
   };
 }

@@ -22,7 +22,6 @@ const SERVER = {
   engineering: { ...group({ prior: 1000, worked: 400, hoursLeft: 600, newEtc: 500, diff: 100, diffUnplanned: 40 }), people: 12 },
   shop: { ...group({ prior: 800, worked: 300, hoursLeft: 500, newEtc: 450, diff: 50, diffUnplanned: 10 }), people: 9 },
   parts: { prior: 20000, spent: 5000, moneyLeft: 15000, newEtc: 12000, diff: 3000, plannedMoneyLeft: 9000, plannedNewEtc: 6000 },
-  peopleTotal: 18,
   hasPunchData: true,
 };
 
@@ -162,9 +161,9 @@ test("synced figures are never overwritten by the live store", () => {
   assert.equal(out.engineering.prior, 1000);
   assert.equal(out.engineering.hoursLeft, 600);
   assert.equal(out.engineering.people, 12);
+  assert.equal(out.shop.people, 9);
   assert.equal(out.parts.spent, 5000);
   assert.equal(out.parts.moneyLeft, 15000);
-  assert.equal(out.peopleTotal, 18);
   assert.equal(out.hasPunchData, true);
 });
 

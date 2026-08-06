@@ -55,7 +55,6 @@ const KPIS: EtcMonthKpis = {
   engineering: group({ prior: 3000, worked: 2980, hoursLeft: 620, newEtc: 500, diff: 120, people: 12 }),
   shop: group({ prior: 2800, worked: 2675, hoursLeft: 500, newEtc: 540, diff: -40, people: 9 }),
   parts: { prior: 1_500_000, spent: 1_432_857, moneyLeft: 67_143, newEtc: 90_000, diff: -22_857, plannedMoneyLeft: 67_143, plannedNewEtc: 90_000 },
-  peopleTotal: 18,
   hasPunchData: true,
 };
 
@@ -153,7 +152,7 @@ test("no punch data means no confident headcount", () => {
   // §64: the headcount now lives on the hours blocks themselves. With no punch rows at
   // all there is nothing to count, so countLabel (and the link) are absent rather than
   // a confident "0 engineers".
-  const bs = blocks({ kpis: { ...KPIS, hasPunchData: false, peopleTotal: 0 } });
+  const bs = blocks({ kpis: { ...KPIS, hasPunchData: false } });
   assert.equal(byId(bs, "engineering").countLabel, null);
   assert.equal(byId(bs, "shop").countLabel, null);
   assert.equal(byId(bs, "engineering").hint, null);
@@ -419,7 +418,6 @@ test("the whole card is built from one snapshot, so it cannot mix vintages", () 
     engineering: group({ ...KPIS.engineering, worked: 3100, people: 13 }),
     shop: group({ ...KPIS.shop, worked: 2700, people: 10 }),
     parts: { ...KPIS.parts, spent: 1_500_000 },
-    peopleTotal: 19,
   };
   const after = blocks({ kpis: refreshed, importIssues: [{ label: "NOT DEFINED", rows: 1, hours: 4 }], offGridJobs: [] });
   assert.equal(byId(after, "engineering").value, "3100");

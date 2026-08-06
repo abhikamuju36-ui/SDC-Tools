@@ -4652,6 +4652,10 @@ to remove, and the ticket's own caution runs the other way — "do not remove sh
 employee-count calculations if still required" — so it stays rather than being pruned as a
 guess at a second request that was not made.
 
+> **Superseded by §66 (2026-08-06):** that request was subsequently made — both this and
+> §57's `designToDebugRatio` were removed. The paragraph above is kept as the reasoning that
+> applied at the time, not as current state.
+
 ---
 
 ## 45. Hours off the grid drill: description gone, controls moved up (§65, 2026-08-06)
@@ -4675,3 +4679,51 @@ re-headered to Section/Jobs/Hours, Total row intact). The small "Hours only — 
 money and is not counted here" footnote below the table — not part of the circled text —
 stays untouched. Close/Hide is on the KPI row itself (unaffected either way, since it was
 never inside this panel). 765 tests pass, types clean, lint clean.
+
+---
+
+## 46. The two dead computations removed (§66, 2026-08-06)
+
+§57 removed the "Eng Design-to-Debug Ratio" card and §64 removed the "People booked" card,
+but both left their backing computation in place — each was reported at the end of its own
+section as deliberately-kept, on the reasoning that a request to delete UI is not a request to
+delete a calculation. Asked to finish the job, so both are gone now.
+
+| Removed | Was | Why it was dead |
+|---|---|---|
+| `EtcMonthKpis.peopleTotal` + the `allPeople` Set | distinct employees across BOTH groups (49 on 2026-07) | was the People booked card's headline (§64) |
+| `JobHoursDashboard.kpis.designToDebugRatio` + its `design`/`debug` accumulator loop | PBI DAX measure: §10 Eng actual ÷ §40 Eng actual, blank under 200 debug hours | was the ratio card's only reader (§57) |
+
+Both removals reach further than the one field each, which is the point of doing them
+properly rather than just deleting a line:
+
+* `peopleTotal` was accumulated by a **third `Set`** in the punch loop (`allPeople`, beside
+  `engPeople`/`shopPeople`). The per-group Sets stay — they feed the headcount labels §64 put
+  on the Engineering and Shop rows — but the loop no longer builds a Set nobody reads.
+* `designToDebugRatio` was the sole consumer of a **whole `for` loop** over `sections`
+  accumulating `design` and `debug`. That loop is gone too; the section-level `actual` figures
+  it summed are untouched and still drive the charts.
+
+Both fields were also in three test fixtures (`etc-kpi-strip.test.ts`, `etc-kpi-live.test.ts`),
+which is why removing a "dead" field is a typed change rather than a silent one: `tsc` named
+every fixture that still declared it. In `etc-kpi-live.test.ts` the assertion that
+`peopleTotal` survives a live edit was replaced with the same assertion on `shop.people` —
+the per-group counts are what still need that guarantee, so the test keeps its point rather
+than just losing a line.
+
+Nothing about behaviour changed, and that is the claim worth checking rather than asserting:
+`/etc`'s five KPI rows still read `24 engineers` / `21 shop` with their variances and totals
+intact, and `/job-hours`'s four-card header row still renders (Active Jobs / Hours Refreshed
+Thru / Latest ETC Month, plus the project-title card) with all three charts present. Verified
+in a **clean browser tab** on both pages, plus every Monthly ETC drill opened, grouped by
+Employee and closed: **zero console errors.**
+
+Worth recording, because it cost some time to chase: the long-lived tab used for the whole
+session's editing was showing two `Encountered two children with the same key` warnings, and
+they are **not real** — a fresh tab reproduces none of them on `/employees`, `/etc`,
+`/job-hours` single-job, `/job-hours` multi-job, or across all five drills. They are Turbopack
+HMR artifacts from ~40 component edits accumulating in one page instance. A console warning in
+a tab that has been hot-reloaded all day is not evidence about shipped code; re-check in a new
+tab before believing one.
+
+765 tests pass, types clean, lint clean on all four touched files.

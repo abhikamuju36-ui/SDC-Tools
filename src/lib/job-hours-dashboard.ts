@@ -38,7 +38,12 @@ export type JobHoursDashboard = {
     activeJobs: number;
     hoursRefreshedThru: string | null;
     latestEtcMonth: string | null;
-    designToDebugRatio: number | null;
+    // There was a `designToDebugRatio` here — the PBI DAX measure (Section 10
+    // Engineering actual / Section 40 Engineering actual, blank under 200 debug
+    // hours). Its card was removed from the header row in §57 and nothing read the
+    // field afterwards, so it was removed in §66 rather than left computing a
+    // figure with no consumer. The section-level `actual` hours it derived from are
+    // untouched and still drive the charts.
   };
   sections: SectionHours[];
   phaseGroups: { phase: string; count: number }[];
@@ -180,16 +185,6 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
   }
   const billingGroups = ["Engineering", "Shop"].map((g) => ({ group: g, ...(bgMap.get(g) ?? { quoted: 0, etc: 0, actual: 0 }) }));
 
-  // Engineering Design-to-Debug Ratio (PBI DAX): Section 10 Engineering actual /
-  // Section 40 Engineering actual; blank when debug < 200.
-  let design = 0, debug = 0;
-  for (const s of sections) {
-    if (s.billingGroup !== "Engineering") continue;
-    if (s.code.startsWith("10-")) design += s.actual;
-    else if (s.code.startsWith("40-")) debug += s.actual;
-  }
-  const designToDebugRatio = debug < 200 ? null : design / debug;
-
   return {
     job,
     jobRefs,
@@ -197,7 +192,6 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
       activeJobs,
       hoursRefreshedThru: freshness?.refreshedThrough ? freshness.refreshedThrough.toISOString().slice(0, 10) : null,
       latestEtcMonth: latestMonth,
-      designToDebugRatio,
     },
     sections,
     phaseGroups: PHASE_GROUPS,
