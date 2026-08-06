@@ -78,7 +78,7 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastCtx.Provider value={{ toast }}>
       {children}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-80 max-w-[calc(100vw-2rem)] flex-col gap-2" aria-live="polite" aria-atomic="false">
+      <div className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-80 max-w-[calc(var(--app-vw)_-_2rem)] flex-col gap-2" aria-live="polite" aria-atomic="false">
         {shown.map(({ key, item: t, leaving }) => (
           <div
             key={key}

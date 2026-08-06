@@ -676,7 +676,7 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
         <button type="button" onClick={() => setCollapsed(new Set(allKeys))} className={ghostBtn}>Collapse All</button>
       </div>
 
-      <DragScroll className="max-h-[78vh] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
+      <DragScroll className="max-h-[calc(var(--app-vh)_*_0.78)] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
         <div className="min-w-[846px]">
           {bom.roots.map((section) => (
             <div key={section.key}>
@@ -1247,7 +1247,7 @@ function PartRowCells({
         return <span className="block truncate text-note font-semibold text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>;
       case "parent":
         return (
-          <span className={`block truncate font-mono text-label font-medium ${p.parentPN ? "text-sdc-navy" : "italic text-sdc-gray-500"}`} title={parentLine}>
+          <span className={`block truncate font-mono text-label font-medium ${p.parentPN ? "text-sdc-navy" : "italic text-sdc-muted"}`} title={parentLine}>
             {parentLine}
           </span>
         );
@@ -1382,7 +1382,7 @@ function PartsTableView({
   };
 
   return (
-    <DragScroll className="max-h-[74vh] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
+    <DragScroll className="max-h-[calc(var(--app-vh)_*_0.74)] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
       <table className="table-fixed border-collapse text-left" style={{ width: totalWidth, minWidth: "100%" }}>
         <colgroup>
             {cols.map((c) => (
@@ -1565,7 +1565,7 @@ function PartsCardView({
 
   return (
     <div
-      className="grid max-h-[74vh] gap-3 overflow-y-auto styled-scrollbar"
+      className="grid max-h-[calc(var(--app-vh)_*_0.74)] gap-3 overflow-y-auto styled-scrollbar"
       style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
     >
       {vendorGroups.map((v) => {
@@ -1764,7 +1764,7 @@ function PoPanel({
       />
       {/* Panel */}
       <aside
-        className={`absolute right-0 top-0 flex h-full w-[440px] max-w-[92vw] flex-col bg-white shadow-xl motion-interactive ${open ? "translate-x-0" : "translate-x-full"}`}
+        className={`absolute right-0 top-0 flex h-full w-[440px] max-w-[calc(var(--app-vw)_*_0.92)] flex-col bg-white shadow-xl motion-interactive ${open ? "translate-x-0" : "translate-x-full"}`}
       >
         {/* Header */}
         <div className="flex flex-col gap-3 border-b border-sdc-border-soft p-4">
@@ -1943,7 +1943,7 @@ function SidePanel({ title, subtitle, onClose, children }: { title: string; subt
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={title}>
       <div onClick={requestClose} className={`absolute inset-0 bg-sdc-navy/40 motion-interactive ${open ? "opacity-100" : "opacity-0"}`} />
-      <aside className={`absolute right-0 top-0 flex h-full w-[560px] max-w-[94vw] flex-col bg-white shadow-xl motion-interactive ${open ? "translate-x-0" : "translate-x-full"}`}>
+      <aside className={`absolute right-0 top-0 flex h-full w-[560px] max-w-[calc(var(--app-vw)_*_0.94)] flex-col bg-white shadow-xl motion-interactive ${open ? "translate-x-0" : "translate-x-full"}`}>
         <div className="flex items-center justify-between gap-3 border-b border-sdc-border-soft p-4">
           <div className="min-w-0">
             <div className="truncate text-base font-bold text-sdc-navy">{title}</div>

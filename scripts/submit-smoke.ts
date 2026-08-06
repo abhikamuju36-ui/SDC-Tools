@@ -105,6 +105,7 @@ async function main() {
   const emptyValidation = {
     ok: false, issues: [], totalIssues: 1, sections: ["Monthly ETC" as const],
     counts: { entries: 0, jobs: 0, missingNewEtc: 0, standardJobs: 0 },
+    incompleteDepartments: [],
   };
   try {
     const now = new Date();

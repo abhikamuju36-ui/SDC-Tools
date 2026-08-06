@@ -7,7 +7,6 @@ import {
   offGridTotalHours,
   undefinedHoursTotals,
   KPI_GRID_CLASS,
-  KPI_BLOCK_MIN_PX,
   type DrillScope,
   type KpiBlock,
   type KpiBlockId,
@@ -452,10 +451,14 @@ test("the blocks fill one row when they fit and wrap when they do not", () => {
   // §41.13, in the only form a unit test can check: the layout is auto-fit on a measured
   // per-block minimum, so a row holds as many blocks as fit at a readable width and wraps
   // the rest. No horizontal scrolling, and nothing removed at any width.
-  assert.ok(
-    KPI_GRID_CLASS.includes(`[grid-template-columns:repeat(auto-fit,minmax(${KPI_BLOCK_MIN_PX}px,1fr))]`),
-    `auto-fit on the measured per-block minimum; got: ${KPI_GRID_CLASS}`,
-  );
+  // Changed 2026-08-05, by request: six blocks across became one block per ROW. That old
+  // shape forced every compromise inside MetricBlock — at six across on a 1280px screen
+  // each block got ~169px, so the value and its status could not share a line, the label
+  // needed truncating, and three reserved min-heights existed purely to stop the card
+  // resizing as figures changed. Stacked, the values right-align WITH EACH OTHER down the
+  // card, which six columns cannot do.
+  assert.match(KPI_GRID_CLASS, /grid-cols-1/, `one column; got: ${KPI_GRID_CLASS}`);
+  assert.ok(!/auto-fit|auto-fill/.test(KPI_GRID_CLASS), "a stacked card must not re-flow into columns");
   // NO viewport breakpoints. They were the §41.13 defect: `xl` is a 1280px VIEWPORT, but
   // this card is inset by the sidebar, so a 1440px laptop gave it ~1089px and it fell
   // back to two rows on exactly the desktop width the requirement is about. The card's
@@ -463,7 +466,6 @@ test("the blocks fill one row when they fit and wrap when they do not", () => {
   assert.ok(!/(sm|md|lg|xl|2xl):/.test(KPI_GRID_CLASS), "must not depend on viewport breakpoints");
   // No fixed column count either: the block count varies with the off-grid block, so a
   // hardcoded 6 wraps the seventh and a hardcoded 7 leaves a gap every normal month.
-  assert.ok(!/grid-cols-\d/.test(KPI_GRID_CLASS));
 });
 
 test("the per-block minimum is the measured one, not a round number", () => {
@@ -471,7 +473,11 @@ test("the per-block minimum is the measured one, not a round number", () => {
   // overflow: nothing clips at 180px; at 154px "24 eng · 21 shop" and "5 jobs not listed"
   // both do. Anything at or above ~175 is safe, and 1fr lets blocks grow past it so a row
   // is exactly filled and every block in it is equal width.
-  assert.ok(KPI_BLOCK_MIN_PX >= 160 && KPI_BLOCK_MIN_PX <= 180, `${KPI_BLOCK_MIN_PX}px must sit in the measured-safe band`);
+  // Retired with the parallel layout: a stacked row takes the card's full width, so
+  // there is no per-block minimum left to protect. The measurement it recorded (nothing
+  // clips at 180px; "24 eng · 21 shop" and "5 jobs not listed" both clip at 154px) is
+  // kept here because it is the evidence for why the columns were abandoned.
+  assert.ok(true);
 });
 
 test("the dividers are gaps, not per-block borders", () => {

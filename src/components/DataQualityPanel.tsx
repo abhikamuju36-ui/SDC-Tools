@@ -39,7 +39,7 @@ function Finding({
           {/* The rule in plain words. A finding nobody can check is a finding
               nobody acts on — and these came from someone else's model, so the
               definition travels with the number. */}
-          <p className="mt-1 text-xs leading-relaxed text-sdc-gray-500">{rule}</p>
+          <p className="mt-1 text-xs leading-relaxed text-sdc-muted">{rule}</p>
         </div>
         <div className="shrink-0 text-right">
           <p className={`font-heading text-2xl font-bold tabular-nums ${clean ? "text-sdc-green-text" : "text-sdc-yellow-text"}`}>
@@ -68,7 +68,7 @@ export function DataQualityPanel({ dq, explorer }: { dq: DataQuality; explorer: 
     <div className="space-y-5">
       <div className={card("p-5")}>
         <SectionTitle>Data Quality</SectionTitle>
-        <p className="mt-1 text-xs leading-relaxed text-sdc-gray-500">
+        <p className="mt-1 text-xs leading-relaxed text-sdc-muted">
           The punch checks from the Power BI report&apos;s Data Quality page, run against this app&apos;s own hours data. Everything is
           judged against <strong>Hours Refreshed Thru</strong>
           {dq.refreshedThrough ? (

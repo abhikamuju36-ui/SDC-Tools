@@ -395,8 +395,21 @@ export function kpiDetailState(
 // one outer border, no nested card borders). It also survives wrapping, which a
 // per-block border cannot: a left border on every block leaves a stray line at the
 // start of each wrapped row.
-export const KPI_GRID_CLASS =
-  "grid gap-px [grid-template-columns:repeat(auto-fit,minmax(175px,1fr))]";
-
-/** The measured floor below which a block's status line clips. See KPI_GRID_CLASS. */
-export const KPI_BLOCK_MIN_PX = 175;
+// ── One block per ROW, not a parallel strip (2026-08-05, by request) ────────
+//
+// This was `repeat(auto-fit, minmax(175px, 1fr))` — six blocks side by side, wrapping
+// by container width. That layout had a real cost the stacked one does not: at six
+// across on a 1280px screen each block got ~169px, which is why the value and its
+// status had to be put on separate lines, why the label needed `truncate`, and why
+// three reserved min-heights exist to stop the card resizing as figures change.
+//
+// A row per metric gives the label its natural width and puts the label, the status,
+// the figure and the Detail link on one line, right-aligned and aligned WITH EACH OTHER
+// down the card — which is the thing a parallel strip cannot do: six values in six
+// columns never line up, so they cannot be compared by eye.
+//
+// gap-px still draws the dividers, for the same reason as before: the rows are opaque
+// and this container's background shows through the 1px gaps, so there is one outer
+// border and no nested ones (§37.7). It survives a row being added or removed, which a
+// per-row border does not (the last row would carry a stray line).
+export const KPI_GRID_CLASS = "grid grid-cols-1 gap-px";

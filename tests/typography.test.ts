@@ -62,14 +62,15 @@ const SCALE_PX: Record<string, number> = {
 };
 
 test("no component sets a font size in raw pixels", () => {
-  // The whole point of §39.10. A raw `text-[10px]` is invisible to the theme AND to the
-  // text-size control, which is how the app came to have twenty-two sizes.
+  // The whole point of §39.10. A raw `text-[10px]` is invisible to the theme, which is
+  // how the app came to have twenty-two sizes.
+  //
+  // The `length:var(…)` exemption this used to carry is gone with the thing it exempted:
+  // the ETC grid's own Text size stepper wrote --etc-font-size, and §45 replaced it and
+  // the other four density controls with one application-wide zoom.
   const offenders: string[] = [];
   for (const file of COMPONENT_FILES) {
-    const body = code(file);
-    // `text-[length:var(--etc-font-size,10px)]` is exempt: that is the ETC grid's own
-    // user-controlled density variable, not a hardcoded size.
-    for (const match of body.matchAll(/text-\[(?!length:var)[^\]]*px[^\]]*\]/g)) {
+    for (const match of code(file).matchAll(/text-\[[^\]]*px[^\]]*\]/g)) {
       offenders.push(`${file.replace(SRC, "src")}: ${match[0]}`);
     }
   }
@@ -233,23 +234,31 @@ test("a third-party grid is told to inherit the app font, not given one", () => 
   assert.match(grid, /fontFamily:\s*"inherit"/, "the grid must inherit the app font");
 });
 
-// ── The root size, and the shift it used to cause (§39.18) ──────────────────
+// ── The root size, and the shift it used to cause (§39.18, §45) ─────────────
 
-test("the default root font size is declared in CSS, not only in JavaScript", () => {
-  // It used to be applied only by AppTextSize's mount effect and by the pre-paint script
-  // — and the script only runs when a SAVED preference exists. So a first visit rendered
-  // the whole app at the browser's 16px and then snapped to 15px on hydration: a 6.7%
-  // reflow of every page, which is the font-related layout shift §39.18 forbids.
+test("the root font size is declared in CSS and set from nowhere else", () => {
+  // Two bugs guarded by one assertion.
+  //
+  // §39.18: the root size used to be applied ONLY by JavaScript — AppTextSize's mount
+  // effect, plus a pre-paint script that ran only when a saved preference existed. So a
+  // first visit rendered the whole app at the browser's 16px and snapped to 15px on
+  // hydration: a 6.7% reflow of every page.
+  //
+  // §45: the root size is now a CONSTANT. It was the app's size control (12–20px), which
+  // reached rem and ignored px; `zoom` replaced it and scales both. The type scale in
+  // this file is measured against 15px — every SCALE_PX number above assumes it — so
+  // anything reintroducing a JS writer to `documentElement.style.fontSize` would silently
+  // invalidate the whole suite rather than fail it.
   const css = readFileSync(CSS, "utf8");
   const match = css.match(/html\s*\{[\s\S]*?font-size:\s*(\d+)px/);
-  assert.ok(match, "globals.css must declare the default root font size");
-  const declared = Number(match[1]);
-  const appDefault = readFileSync(join(SRC, "components", "AppTextSize.tsx"), "utf8").match(/const DEFAULT = (\d+)/);
-  assert.ok(appDefault, "AppTextSize must state its default");
-  assert.equal(
-    declared,
-    Number(appDefault[1]),
-    "the CSS default and the control's default must be the same number, or the first paint shifts",
+  assert.ok(match, "globals.css must declare the root font size");
+  assert.equal(Number(match[1]), 15, "the scale above is measured against a 15px root");
+
+  const offenders = COMPONENT_FILES.filter((f) => /style\.fontSize|fontSize\s*=/.test(code(f)));
+  assert.deepEqual(
+    offenders.map((f) => f.replace(SRC, "src")),
+    [],
+    "the root font size is a constant — size the app with the zoom control (lib/app-zoom.ts)",
   );
 });
 

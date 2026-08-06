@@ -29,7 +29,7 @@ export function ReconcileRosterButton() {
 
       {r && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setR(null)}>
-          <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-xl border border-sdc-border bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[calc(var(--app-vh)_*_0.8)] w-full max-w-lg overflow-auto rounded-xl border border-sdc-border bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
             {!r.ok ? (
               <>
                 <p className="mb-2 font-heading text-lg font-bold text-sdc-navy">Reconciliation unavailable</p>

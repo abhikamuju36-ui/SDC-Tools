@@ -63,7 +63,7 @@ export function ProjectReleasePanel({
 
       {!release ? (
         <div className="text-center">
-          <p className="mb-1 text-sm text-sdc-gray-500">
+          <p className="mb-1 text-sm text-sdc-muted">
             No Project Release loaded for <span className="font-semibold">{jobName}</span> yet.
           </p>
           <p className="mb-4 text-xs text-sdc-gray-400">

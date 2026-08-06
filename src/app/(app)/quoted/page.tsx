@@ -19,8 +19,7 @@ import { ProjectsRemoteCells } from "@/components/ProjectsRemoteCells";
 import { ProjectsSectionsMenu } from "@/components/ProjectsSectionsMenu";
 import { ProjectsGridView } from "@/components/ProjectsGridView";
 import { PROJECTS_INFO_COLUMNS } from "@/lib/projects-view";
-import { ProjectsDisplayMenu } from "@/components/ProjectsDisplayMenu";
-import { ProjectsShowAllSwitch } from "@/components/ProjectsShowAllSwitch";
+import { ProjectsShowActualsSwitch } from "@/components/ProjectsShowActualsSwitch";
 import { SortButton } from "@/components/SortButton";
 import { AddProjectButton } from "@/components/AddProjectButton";
 import { NewProjectRows } from "@/components/NewProjectRows";
@@ -57,17 +56,23 @@ const PHASE_HEADER_COLOR: Record<string, string> = {
   "Teardown & Install": "bg-sdc-green text-white", // #74C415
   Warranty: "bg-sdc-yellow text-sdc-navy", // #FFDE51 (dark text for contrast)
 };
-// Row height / column width density controls (GridZoomControls, in the
-// toolbar) work by setting --quoted-row-py/--quoted-col-px on the document
-// root. Row height applies to every body cell uniformly (they're already a
-// consistent py-1.5 today, so nothing changes until a user clicks +/-).
-// Column width only targets cells marked with the "qc" ("quoted column")
-// class below — the repeated per-section header/data columns, which are
-// already a consistent px-1 — deliberately excluding the sticky #/Job Id/Job/
-// Cost columns (own fixed widths) and the optional metadata columns
-// (Customer/Type/Status/Dates, px-2) and phase/group banner headers, whose
-// padding isn't a "column width" in the same sense.
-const ZOOM_CONTROLS = "[&_td]:py-[var(--quoted-row-py,6px)] [&_.qc]:px-[var(--quoted-col-px,4px)]";
+// ── The grid's cell padding, which used to be two user controls (§45) ───────
+//
+// These gave every body cell one uniform vertical padding and every repeated data
+// column one uniform horizontal padding. They read --quoted-row-py /
+// --quoted-col-px, which the Display menu's Row height and Column width steppers
+// wrote (0–16px, persisted, this tab only) — and Monthly ETC had its own matching
+// pair, so the two grids could sit at different densities in the same app. §45
+// replaced all four with the one sidebar Zoom, which scales these paddings along
+// with everything else, so what is left is the constants the steppers defaulted to:
+// 6px and 4px at the 15px root, written in rem for the reason in §39.14.
+//
+// The horizontal rule still targets only cells marked "qc" ("quoted column") — the
+// repeated per-section header/data columns, all at one padding — deliberately
+// excluding the sticky #/Job Id/Job/Cost columns (own fixed widths), the optional
+// metadata columns (Customer/Type/Status/Dates, px-2) and the phase/group banner
+// headers, whose padding isn't a "column width" in the same sense.
+const CELL_PADDING = "[&_td]:py-[0.4rem] [&_.qc]:px-[0.2667rem]";
 
 // Every repeated data column — the per-section quoted/actual cells and the two
 // grand-total columns — renders at ONE uniform width, so the grid reads as an
@@ -75,15 +80,10 @@ const ZOOM_CONTROLS = "[&_td]:py-[var(--quoted-row-py,6px)] [&_.qc]:px-[var(--qu
 // `w-[40px] min-w-[40px]` only set a floor, so each column still stretched to
 // its own content and no two matched; these three properties together pin it.
 //
-// The width is `content + padding`, not a flat number, because the Grid Size
-// control drives this column's horizontal padding (--quoted-col-px) anywhere
-// from 0 to 16px per side. A flat width would hand the same box to a 4px and a
-// 16px padding and let the larger one crush the text — and, since the width is
-// pinned with max-width, the column could no longer grow to absorb it the way
-// the old min-width-only rule did. Folding the padding into the width instead
-// keeps the CONTENT box constant at 4.7rem at every density, so raising Grid
-// Size genuinely widens the column (what it says it does) rather than
-// squeezing the words inside it.
+// The width is `content + padding` rather than a flat number, so the CONTENT box
+// stays a constant 4.7rem: a flat width would let the horizontal padding eat into the
+// words, and since the width is pinned with max-width the column could not grow to
+// absorb it the way the old min-width-only rule did.
 //
 // 4.7rem is measured against the real font, which matters more than it sounds:
 // the app renders in Montserrat, where the longest header word "SOFTWARE" is
@@ -92,17 +92,22 @@ const ZOOM_CONTROLS = "[&_td]:py-[var(--quoted-row-py,6px)] [&_.qc]:px-[var(--qu
 // how this column got sized too narrow the first time, so if these names ever
 // change, re-measure in Montserrat.
 //
-// Deliberately rem, not px: table text is 0.68rem and scales with the sidebar
-// "Text size" control, so a px width would start breaking words again the
-// moment anyone raised it — the same rem-vs-px trap the frozen columns hit.
-// max(4.7rem, 72px), not a bare 4.7rem: the column scales with the sidebar's Text
-// size control (root 12–20px) while the header LABEL is a fixed 10px, so the two
-// shrink at different rates. At Text size 12 the column offered 56.4px of content
-// while "SOFTWARE" needs 63.7px (measured in Montserrat in the running app) — the
-// word no longer breaks, so it would simply be clipped. The px floor is that
-// longest word plus room to breathe; above ~14px root the rem value wins and
-// nothing changes.
-const DATA_COL = "calc(max(4.7rem, 72px) + 2 * var(--quoted-col-px, 4px))";
+// ── What the two odd-looking parts of this expression are for (§45) ─────────
+//
+// `max(4.7rem, 72px)` and the `+ 2 * …` both date from the old sidebar Text size
+// control, which moved the ROOT FONT SIZE between 12 and 20px. That made the rem
+// value and the fixed-10px header label shrink at DIFFERENT rates: at Text size 12 the
+// column offered 56.4px of content while "SOFTWARE" needed 63.7px, so the word could
+// not break and was simply clipped. The px floor was that longest word plus room to
+// breathe. The padding term was the Column width stepper's 0–16px.
+//
+// §45 replaced both controls with `zoom`, which scales the column, the label and the
+// padding by the same factor — so the rates can no longer diverge and the floor can
+// never bind differently than it does at 100%. Both parts are kept anyway: at the 15px
+// root `max()` resolves to the 72px floor (4.7rem = 70.5px) and the padding term to
+// 8px, which is exactly the width this column has today. Rewriting it as the single
+// number it now equals would change nothing on screen and lose the measurement.
+const DATA_COL = "calc(max(4.7rem, 72px) + 2 * 0.2667rem)";
 const DATA_COL_STYLE = { width: DATA_COL, minWidth: DATA_COL, maxWidth: DATA_COL } as const;
 
 // The two money columns (Parts Cost Quoted / Parts Cost Actual). Right-aligned, unlike the
@@ -522,7 +527,7 @@ export default async function QuotedPage({
       <p className="mb-2 text-sm text-sdc-gray-600">
         {jobs.length} jobs — quoted hours by section, quoted vs. actual cost. Click a phase to choose which section columns to show.
       </p>
-      <p className="mb-5 flex items-center gap-4 text-xs text-sdc-gray-500">
+      <p className="mb-5 flex items-center gap-4 text-xs text-sdc-muted">
         <span className="flex items-center gap-1.5">
           <span className="font-mono font-semibold text-sdc-blue-dark">000</span> = Quoted hours
         </span>
@@ -571,22 +576,25 @@ export default async function QuotedPage({
           visibleCodes={visibleCodes}
           infoColumns={[...TOGGLE_COLUMNS]}
         />
-        <ProjectsDisplayMenu />
+        {/* "Display ▾" is gone (§47.4). Its only remaining control was an "Actual hours
+            in cells" checkbox writing the same `actuals` param the switch below now owns
+            — two ways to the same view, one of them a navigation. Its density steppers
+            had already gone with §45. */}
         <ProjectViewsMenu sharedViews={sharedViews} teamDefault={teamDefault} />
         {/* Downloads exactly this view — the menu forwards the page's own query string
             to /api/export/projects, which builds the WHERE clause with the same code
             this page does (lib/projects-query.ts). See §24. */}
         <ExportMenu report="projects" className={BUTTON_SECONDARY} />
-        {/* Show all / Reset — last, and visually a switch rather than another
-            dropdown, because it's the only binary control here. */}
-        <ProjectsShowAllSwitch
-          allCustomers={allCustomers}
-          allTypes={allTypes}
-          allStatuses={allStatuses}
-          allBillables={BILLABLE_OPTIONS}
-          // Locked, "Show all" must not be a one-click way past the gate.
-          allSectionCodes={visibleSections.map((s) => s.code)}
-        />
+        {/* Show Actuals — last, and visually a switch rather than another dropdown,
+            because it is the only binary control here (§47.1).
+
+            It replaced "Show all", which also rewrote customers/types/statuses/billables/
+            cols and so quietly changed WHICH PROJECTS were listed on the way to showing
+            actual hours. The rows now stay the page's default — Active + HeadStart,
+            Billable — in both states (§47.3); changing scope is Filters ▾'s job, which
+            offers statuses and billables explicitly. It takes no props at all now: it
+            reads the one param it owns and writes it back without navigating. */}
+        <ProjectsShowActualsSwitch />
       </div>
 
       {/* Keeps ENG/SHOP TOTAL in step with the section cells as they are typed —
@@ -605,7 +613,7 @@ export default async function QuotedPage({
       {/* One delegated handler for every date cell — see GridDateCells. */}
       <GridDateCells />
       <ProjectsEditFieldset>
-      <DragScroll className={`max-h-[calc(100vh-170px)] min-w-[480px] ${GRID_SCROLLER}`}>
+      <DragScroll className={`max-h-[calc(var(--app-vh)_-_170px)] min-w-[480px] ${GRID_SCROLLER}`}>
         {/* quiet-controls: hide the per-row dropdown chevrons (Type/Billable/
             Status) and date calendar icons until the cell is hovered/focused —
             see globals.css. Scoped to this table so other grids (Employees)
@@ -616,7 +624,7 @@ export default async function QuotedPage({
             halves and hiding them a frame later (see globals.css). It also
             widens the quoted input back out — with the suffix gone, there's a
             whole cell for it. */}
-        <table data-grid="projects" className={`quiet-controls w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS} ${showActuals ? "" : "hide-actuals"}`}>
+        <table data-grid="projects" className={`quiet-controls w-full text-sm ${TABLE_GRID} ${CELL_PADDING} ${showActuals ? "" : "hide-actuals"}`}>
           <thead className="sticky top-0 z-20 bg-sdc-gray-100">
             <tr className={TABLE_HEADER_ROW}>
               <th rowSpan={3} className="frozen-col sticky left-0 z-10 w-8 min-w-8 bg-sdc-gray-100 px-1 py-2 text-center align-bottom">
@@ -965,7 +973,7 @@ export default async function QuotedPage({
                       className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-center align-middle text-label"
                     >
                       {isSdc ? (
-                        <span className="text-sdc-gray-500" aria-label={`Billable, ${job.jobName}`} title="SDC's own projects are always non-billable">
+                        <span className="text-sdc-muted" aria-label={`Billable, ${job.jobName}`} title="SDC's own projects are always non-billable">
                           Non-Billable
                         </span>
                       ) : (
@@ -975,7 +983,7 @@ export default async function QuotedPage({
                           defaultValue={job.billable ? "Billable" : "Non-Billable"}
                           data-baseline={job.billable ? "Billable" : "Non-Billable"}
                           aria-label={`Billable, ${job.jobName}`}
-                          className={`text-center ${job.billable ? "text-sdc-green-text" : "text-sdc-gray-500"}`}
+                          className={`text-center ${job.billable ? "text-sdc-green-text" : "text-sdc-muted"}`}
                         >
                           <option value="Billable">Billable</option>
                           <option value="Non-Billable">Non-Billable</option>
@@ -1014,7 +1022,7 @@ export default async function QuotedPage({
                   {show("startDate") && (
                     <td data-col="startDate"
                       style={{ width: "var(--startdate-col-width, 92px)", minWidth: "var(--startdate-col-width, 92px)", maxWidth: "var(--startdate-col-width, 92px)" }}
-                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-label text-sdc-gray-500"
+                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-label text-sdc-muted"
                     >
                       <input
                         {...dateCellProps({
@@ -1028,7 +1036,7 @@ export default async function QuotedPage({
                   {show("completeDate") && (
                     <td data-col="completeDate"
                       style={{ width: "var(--completedate-col-width, 92px)", minWidth: "var(--completedate-col-width, 92px)", maxWidth: "var(--completedate-col-width, 92px)" }}
-                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-label text-sdc-gray-500"
+                      className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-label text-sdc-muted"
                     >
                       <input
                         {...dateCellProps({
@@ -1081,8 +1089,17 @@ export default async function QuotedPage({
                                 aria-label={`Quoted hours, ${job.jobName}, ${s.name}`}
                                 className="text-center font-semibold text-sdc-blue-dark"
                               />
-                              <span className="actual-suffix text-sdc-gray-400">
-                                /<span className="font-semibold text-sdc-green-text">{wholeHours(actual)}</span>
+                              {/* "quoted / actual" — the pair, whenever Show Actuals is on
+                                  (§50). It rides INSIDE the quoted cell rather than in a
+                                  column of its own, which is what keeps the grid's column
+                                  count (and the phase header colSpans) identical in both
+                                  states.
+                                  The separator is its own element so `.hide-actuals` takes
+                                  it away with the figure it belongs to; a bare "/" text
+                                  node would be stranded there. */}
+                              <span className="actual-suffix text-sdc-muted">
+                                <span className="actual-sep">/</span>
+                                <span className="font-semibold text-sdc-green-text">{wholeHours(actual)}</span>
                               </span>
                             </td>
                           );
@@ -1117,7 +1134,7 @@ export default async function QuotedPage({
                           title={`${label} — Quoted ${exactHours(q) ?? "0"} / Actual ${exactHours(a) ?? "0"}`}
                         >
                           <span data-total-quoted className="font-semibold text-sdc-blue-dark">{wholeHours(q)}</span>
-                          <span className="actual-suffix text-sdc-gray-400"> /<span className="font-semibold text-sdc-green-text"> {wholeHours(a)}</span></span>
+                          <span className="actual-suffix text-sdc-muted"><span className="actual-sep"> /</span><span className="font-semibold text-sdc-green-text"> {wholeHours(a)}</span></span>
                         </td>
                       );
                     };

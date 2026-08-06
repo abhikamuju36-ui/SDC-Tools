@@ -1,5 +1,6 @@
 "use client";
 
+import { useEffect, useMemo } from "react";
 import { dismissAllChanges, dismissChange, useRealtimeChanges, useRealtimeStatus } from "@/components/RealtimeProvider";
 import { useExitList } from "@/components/useMotion";
 
@@ -33,7 +34,25 @@ function clockTime(iso: string): string {
   return d.toLocaleTimeString(undefined, { hour: "numeric", minute: "2-digit" });
 }
 
-const VISIBLE = 4;
+const VISIBLE = 3;
+
+// ── Keeping the stack quiet (2026-08-05, by request) ────────────────────────
+//
+// Reported as "sometimes these are too many, it gets noisy" — with a screenshot of four
+// cards describing what were really two cells being edited back and forth.
+//
+// Two causes, and they need different answers:
+//
+//   1. REPETITION. Toggling one cell 0 -> 1 -> 0 is three events about the same cell,
+//      and three cards saying so is two cards too many. Collapsed below: one card per
+//      cell, newest wording, with a count.
+//   2. PERSISTENCE. Nothing left the stack until it was dismissed by hand, so a busy
+//      ten minutes accumulated into a wall. They now expire on their own.
+//
+// A REFUSED change is exempt from both. It means somebody's edit was rejected because
+// another user got there first, which is the one notification here that is asking the
+// reader to do something — it stays until dismissed.
+const AUTO_DISMISS_MS = 7000;
 
 export function ChangeNotifications() {
   const changes = useRealtimeChanges();
@@ -45,8 +64,48 @@ export function ChangeNotifications() {
   // is careful not to imply edits are being lost.
   const offline = status === "offline";
 
-  const shown = changes.slice(0, VISIBLE);
-  const hidden = changes.length - shown.length;
+  // ── One card per CELL, not per event ──────────────────────────────────────
+  //
+  // Keyed on tab+row+column, which is the cell. `changes` is newest-first, so the first
+  // event seen for a key is the one to show and the rest only add to its count. The
+  // members are kept so dismissing the card dismisses every event behind it — otherwise
+  // the card would reappear a frame later showing the second-newest.
+  const groups = useMemo(() => {
+    const byCell = new Map<string, { head: (typeof changes)[number]; members: typeof changes; refused: boolean }>();
+    for (const c of changes) {
+      const key = `${c.tab}|${c.rowRef}|${c.columnName}`;
+      const g = byCell.get(key);
+      if (g) {
+        g.members.push(c);
+        g.refused ||= c.changeType === "rejected";
+      } else {
+        byCell.set(key, { head: c, members: [c], refused: c.changeType === "rejected" });
+      }
+    }
+    return [...byCell.values()];
+  }, [changes]);
+
+  // ── They expire on their own ──────────────────────────────────────────────
+  //
+  // One timer per render pass over the current groups, cleared on the next — not a timer
+  // per card held across renders, which would leak on a stack that changes every few
+  // seconds. A refused change is never scheduled: it is the one card that is asking for
+  // a decision, so it waits for one.
+  useEffect(() => {
+    const expiring = groups.filter((g) => !g.refused).slice(0, VISIBLE);
+    if (expiring.length === 0) return;
+    const timers = expiring.map((g) =>
+      setTimeout(() => {
+        for (const m of g.members) dismissChange(m.changeId, m.rowRef, m.columnName);
+      }, AUTO_DISMISS_MS),
+    );
+    return () => timers.forEach(clearTimeout);
+  }, [groups]);
+
+  const shown = groups.slice(0, VISIBLE);
+  // Counted in CELLS, matching what the cards are — "+2 more changes" beside three cards
+  // that each already stand for several events was describing a different unit.
+  const hidden = groups.length - shown.length;
   // ── Cards enter and leave, rather than blinking (§36.13) ──────────────────
   //
   // A change event arriving used to insert a card instantly and pop the stack; a
@@ -61,15 +120,24 @@ export function ChangeNotifications() {
   // Called BEFORE the early return below — a hook cannot be conditional, and this is
   // also what lets the last card animate out instead of the container disappearing from
   // under it.
-  const cards = useExitList(shown, (c) => `${c.changeId}|${c.rowRef}|${c.columnName}`);
+  const cards = useExitList(shown, (g) => `${g.head.tab}|${g.head.rowRef}|${g.head.columnName}`);
   if (cards.length === 0 && !offline) return null;
 
   return (
     <div
-      // pointer-events-none on the container, auto on the cards: the banner sits
-      // over the grid's bottom-right corner and must not swallow clicks meant for
-      // the cells underneath it.
-      className="pointer-events-none fixed right-4 bottom-4 z-40 flex w-[320px] flex-col gap-2"
+      // pointer-events-none on the container, auto on the cards: the banner must not
+      // swallow clicks meant for whatever is underneath it.
+      //
+      // TOP-right since 2026-08-05, by request (was bottom-right). The bottom-right
+      // corner is where the grid's own horizontal scrollbar and its last rows are, so
+      // the stack sat on top of the part of the table people scroll to. The top-right
+      // of this app is empty — the header and toolbar are left-aligned — so the cards
+      // now cover nothing.
+      //
+      // top-20, not top-4: the page header and the toolbar row occupy the first ~5rem,
+      // and a card overlapping the month picker or Export would be trading one
+      // obstruction for another.
+      className="pointer-events-none fixed right-4 top-20 z-40 flex w-[320px] flex-col gap-2"
       aria-live="polite"
       aria-label="Recent changes by other users"
     >
@@ -80,8 +148,10 @@ export function ChangeNotifications() {
         </div>
       )}
 
-      {cards.map(({ key, item: c, leaving }) => {
+      {cards.map(({ key, item: g, leaving }) => {
+        const c = g.head;
         const tone = TONE[c.changeType] ?? TONE.edited;
+        const repeats = g.members.length;
         return (
           <div
             key={key}
@@ -93,13 +163,19 @@ export function ChangeNotifications() {
               <span className={`mt-1 inline-block h-1.5 w-1.5 shrink-0 rounded-full ${tone.dot}`} />
               <div className="min-w-0 flex-1">
                 <p className="text-note leading-snug text-sdc-navy">{c.message}</p>
-                <p className="mt-0.5 text-label text-sdc-gray-500">
+                <p className="mt-0.5 text-label text-sdc-muted">
                   {tone.label} · {clockTime(c.at)}
+                  {/* The events this card stands for. Without it, collapsing would hide
+                      that a cell was changed repeatedly — which is exactly the thing
+                      somebody watching this stack would want to know. */}
+                  {repeats > 1 && <> · {repeats} changes to this cell</>}
                 </p>
               </div>
               <button
                 type="button"
-                onClick={() => dismissChange(c.changeId, c.rowRef, c.columnName)}
+                // Dismisses every event behind the card, not just the one being shown —
+                // otherwise it would reappear a frame later showing the next-newest.
+                onClick={() => g.members.forEach((m) => dismissChange(m.changeId, m.rowRef, m.columnName))}
                 aria-label="Dismiss notification"
                 className="motion-interactive shrink-0 rounded px-1 text-sm leading-none text-sdc-gray-400 hover:text-sdc-navy"
               >
@@ -116,7 +192,7 @@ export function ChangeNotifications() {
           onClick={dismissAllChanges}
           className="motion-interactive motion-toast-in pointer-events-auto rounded-lg border border-sdc-border bg-sdc-gray-100 px-3 py-1.5 text-label tabular-nums text-sdc-gray-600 shadow hover:bg-white"
         >
-          + {hidden} more change{hidden === 1 ? "" : "s"} — clear all
+          + {hidden} more cell{hidden === 1 ? "" : "s"} changed — clear all
         </button>
       )}
     </div>

@@ -16,13 +16,17 @@ import {
 // "Views ▾" for the Projects grid — ported from the Scheduler's shared
 // column-views. A view snapshots the grid's URL state (which section columns
 // show, hidden info columns, sort, and the Customer/Type/Status/Billable
-// filters) plus the client-side Grid Size and Actuals toggle. Three tiers:
+// filters) plus the Actuals toggle. Three tiers:
 //   • Team Default — one pinned view for everybody (server-side).
 //   • Shared — named views anyone published, with the owner's name (server-side).
 //   • My views — private to this browser (localStorage); ★ promotes one to Shared.
+//
+// It used to snapshot this tab's Grid Size (row height + column width) too. §45
+// retired those steppers for one application-wide Zoom, and zoom is deliberately NOT
+// part of a view: a view is about which figures you are looking at, and picking one
+// should not resize somebody's whole application. Views saved before this still carry
+// a `grid` field; it is ignored (see ViewConfig).
 const MY_VIEWS_KEY = "quoted-my-views";
-const GRID_ROW_KEY = "quoted-grid-row-py";
-const GRID_COL_KEY = "quoted-grid-col-px";
 // The exact set of /quoted query params a view captures (columns + filters +
 // the Actuals toggle, which used to be a localStorage flag restored separately).
 const VIEW_PARAMS = ["cols", "hide", "sort", "dir", "customers", "types", "statuses", "billables", "actuals"] as const;
@@ -41,8 +45,9 @@ function writeMyViews(v: MyViews) {
   window.localStorage.setItem(MY_VIEWS_KEY, JSON.stringify(v));
 }
 
-// Snapshot the CURRENT grid state into a ViewConfig — URL params + the two
-// client-side prefs (Grid Size, Actuals) that live in localStorage.
+// Snapshot the CURRENT grid state into a ViewConfig — the URL params, and nothing
+// else. It used to also read this tab's two Grid Size keys out of localStorage; see
+// the note above for why zoom is not part of a view.
 function snapshotView(): ViewConfig {
   const params: Record<string, string> = {};
   const sp = new URLSearchParams(window.location.search);
@@ -50,45 +55,23 @@ function snapshotView(): ViewConfig {
     const val = sp.get(k);
     if (val !== null) params[k] = val;
   }
-  const rowRaw = window.localStorage.getItem(GRID_ROW_KEY);
-  const colRaw = window.localStorage.getItem(GRID_COL_KEY);
-  const grid =
-    rowRaw !== null || colRaw !== null
-      ? { ...(rowRaw !== null ? { rowPy: Number(rowRaw) } : {}), ...(colRaw !== null ? { colPx: Number(colRaw) } : {}) }
-      : null;
   // `actuals` rides along in params now. The ViewConfig field is kept only so
   // views saved before that change still restore their Actuals setting — see
   // applyView.
-  return { params, grid };
+  return { params };
 }
 
-// Apply a view: restore the density prefs into localStorage, then hard-navigate
-// to /quoted with the saved params so ProjectsDisplayMenu re-initialises from
-// localStorage on mount (it restores density there).
-// A SOFT navigation since 2026-08-03. This used to end in window.location.assign
-// — a full browser reload, refetching the document and the JS bundles and
-// re-hydrating the whole app shell, which made picking a view the slowest control
-// on this toolbar by a wide margin.
+// Apply a view: a SOFT navigation to /quoted with the saved params.
 //
-// The reload existed for one reason: ProjectsDisplayMenu restores grid density
-// from localStorage in a MOUNT effect, so only a fresh page picked up the values
-// written just below. Solved by applying them here too — they are two CSS custom
-// properties on <html>, and setting them directly is exactly what that effect
-// does. localStorage is still written so the choice survives a real reload.
+// It used to end in window.location.assign — a full browser reload, refetching the
+// document and the JS bundles and re-hydrating the whole app shell, which made
+// picking a view the slowest control on this toolbar by a wide margin. That reload
+// existed for one reason: ProjectsDisplayMenu restored grid density from localStorage
+// in a MOUNT effect, so only a fresh page picked up the values a view had just
+// written. 2026-08-03 fixed it by writing the two CSS custom properties here as well;
+// §45 removed the density prefs altogether, so there is nothing left to restore and
+// this is a plain router.push.
 function applyView(name: string, config: ViewConfig, router: { push: (href: string) => void }) {
-  // The same clamp the density stepper enforces, so a hand-edited saved view
-  // can't set an absurd row height.
-  const clamp = (n: number) => Math.min(16, Math.max(0, n));
-  if (config.grid?.rowPy != null) {
-    const v = clamp(config.grid.rowPy);
-    window.localStorage.setItem(GRID_ROW_KEY, String(v));
-    document.documentElement.style.setProperty("--quoted-row-py", `${v}px`);
-  }
-  if (config.grid?.colPx != null) {
-    const v = clamp(config.grid.colPx);
-    window.localStorage.setItem(GRID_COL_KEY, String(v));
-    document.documentElement.style.setProperty("--quoted-col-px", `${v}px`);
-  }
   const sp = new URLSearchParams();
   for (const [k, v] of Object.entries(config.params)) sp.set(k, v);
   // Views saved before Actuals moved into the URL carry it as a config field
@@ -134,7 +117,7 @@ export function ProjectViewsMenu({
   };
 
   function handleSaveMine() {
-    const name = window.prompt("Name this view — it saves the visible columns, filters, sort, grid size and Actuals toggle. It stays private to you until you ★ share it.");
+    const name = window.prompt("Name this view — it saves the visible columns, filters, sort and Actuals toggle. It stays private to you until you ★ share it.");
     if (!name || !name.trim()) return;
     const next = { ...readMyViews(), [name.trim()]: snapshotView() };
     writeMyViews(next);

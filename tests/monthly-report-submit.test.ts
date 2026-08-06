@@ -34,6 +34,7 @@ const READY: MonthlyReportValidation = {
   totalIssues: 0,
   sections: ["Monthly ETC", "Standard Sheet", "Standard Card"],
   counts: { entries: 438, jobs: 61, missingNewEtc: 0, standardJobs: 42 },
+  incompleteDepartments: [],
 };
 
 const MISSING_NEW_ETC: MonthlyReportValidation = {
@@ -44,6 +45,7 @@ const MISSING_NEW_ETC: MonthlyReportValidation = {
   totalIssues: 12,
   sections: ["Monthly ETC", "Standard Sheet", "Standard Card"],
   counts: { entries: 438, jobs: 61, missingNewEtc: 12, standardJobs: 42 },
+  incompleteDepartments: [],
 };
 
 const POOLS_STALE: MonthlyReportValidation = {
@@ -52,6 +54,21 @@ const POOLS_STALE: MonthlyReportValidation = {
   totalIssues: 1,
   sections: ["Monthly ETC", "Standard Sheet", "Standard Card"],
   counts: { entries: 438, jobs: 61, missingNewEtc: 0, standardJobs: 42 },
+  incompleteDepartments: [],
+};
+
+// §50 — two departments outstanding on an otherwise clean month. The one case the
+// readiness line must name people rather than counting cells.
+const DEPTS_OUTSTANDING: MonthlyReportValidation = {
+  ok: false,
+  issues: [
+    { section: "Monthly ETC", rowRef: "2026-07", department: "CE", column: "Department ETC Complete", reason: "CE has not marked its ETC review complete." },
+    { section: "Monthly ETC", rowRef: "2026-07", department: "Wire", column: "Department ETC Complete", reason: "Wire has not marked its ETC review complete." },
+  ],
+  totalIssues: 2,
+  sections: ["Monthly ETC", "Standard Sheet", "Standard Card"],
+  counts: { entries: 438, jobs: 61, missingNewEtc: 0, standardJobs: 42 },
+  incompleteDepartments: ["CE", "Wire"],
 };
 
 function ctx(over: Partial<SubmitContext> = {}): SubmitContext {
@@ -129,6 +146,48 @@ test("other outstanding items are named alongside the New ETC count", () => {
 test("issues that are not New ETC report as a plain count", () => {
   const line = readinessLine(ctx({ phase: "blocked", validation: POOLS_STALE }));
   assert.equal(line.text, "1 item still requires attention");
+});
+
+// ── Department sign-off blocks the submission (§50) ─────────────────────────
+
+test("outstanding departments are named, in §50's words", () => {
+  const line = readinessLine(ctx({ phase: "blocked", validation: DEPTS_OUTSTANDING }));
+  assert.equal(line.tone, "blocked");
+  assert.equal(line.text, "Submission blocked: CE and Wire have not completed their ETC review.");
+});
+
+test("a month waiting only on departments says every other check has passed", () => {
+  // Otherwise the manager has no way to tell "two departments away" from "two
+  // departments away plus whatever else I have not found yet".
+  const only = { ...DEPTS_OUTSTANDING, totalIssues: 0 };
+  assert.match(readinessLine(ctx({ phase: "blocked", validation: only })).detail ?? "", /Every other check has passed/);
+});
+
+test("departments lead the message even when cells are missing too", () => {
+  // Deliberate order: an unfinished department is a message to send to a person, where a
+  // missing cell is something to go and type. The longer pole leads — and the cells are
+  // not hidden, they ride in the detail line.
+  const both = { ...DEPTS_OUTSTANDING, counts: { ...DEPTS_OUTSTANDING.counts, missingNewEtc: 12 }, totalIssues: 14 };
+  const line = readinessLine(ctx({ phase: "blocked", validation: both }));
+  assert.match(line.text, /^Submission blocked: CE and Wire/);
+  assert.match(line.detail ?? "", /14 other items/);
+});
+
+test("a completed checklist does not by itself make a month ready", () => {
+  // §50: "do not treat the checkbox alone as proof that all cells are valid." Every box
+  // ticked and twelve cells missing is still blocked, by the rule it always was.
+  const ticked = { ...MISSING_NEW_ETC, incompleteDepartments: [] };
+  const line = readinessLine(ctx({ phase: "blocked", validation: ticked }));
+  assert.equal(line.text, "Submission blocked: 12 required New ETC values are missing");
+});
+
+test("an old submission record with no department field does not crash the line", () => {
+  // MonthlyReportSubmission stores the validation as JSON. Rows written before §50 have
+  // no `incompleteDepartments`, and the receipt view reads them back.
+  const legacy = { ...READY } as Record<string, unknown>;
+  delete legacy.incompleteDepartments;
+  const line = readinessLine(ctx({ validation: legacy as unknown as MonthlyReportValidation }));
+  assert.equal(line.tone, "ok");
 });
 
 test("readiness is not guessed before the server has answered", () => {

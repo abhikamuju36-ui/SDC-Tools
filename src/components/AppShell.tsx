@@ -2,20 +2,51 @@ import Sidebar from "@/components/Sidebar";
 import ExcelCellFocus from "@/components/ExcelCellFocus";
 import ColumnResize from "@/components/ColumnResize";
 import { ToastProvider } from "@/components/ui/Toast";
+import { DEFAULT_PREFS, sidebarWidthCss, type SidebarPrefs } from "@/lib/sidebar-prefs";
 
 export default function AppShell({
   children,
   userEmail,
   signOutAction,
   schedulerProjectsUrl,
+  sidebar = DEFAULT_PREFS,
 }: {
   children: React.ReactNode;
   userEmail?: string | null;
   signOutAction: () => Promise<void>;
   schedulerProjectsUrl?: string;
+  /** Resolved from cookies in the (app) layout, so the first paint is already correct. */
+  sidebar?: SidebarPrefs;
 }) {
+  // --app-vh rather than `min-h-screen`: `zoom` (§45) scales `vh` along with every
+  // other length while the viewport itself does not scale, so a raw 100vh would be a
+  // screen and a half at 150%. See the note on that variable in globals.css.
+  //
+  // ── --sidebar-w, the shared layout variable (§46.9) ────────────────────────
+  //
+  // §46.9 asks for "a shared layout variable for the current sidebar width instead of
+  // hardcoded margins in individual pages". The good news, confirmed by audit: no page
+  // has ever had such a margin — this is a flex row, the aside is `shrink-0` at its own
+  // width and `main` is `flex-1`, so the content offset IS the sidebar width by
+  // construction and cannot be computed from a stale one.
+  //
+  // The variable is published anyway, and earns its place twice. It is the value the
+  // SERVER resolved, so it is what the first paint agrees on before any client store
+  // exists. And anything that later needs the sidebar's width (a fixed-position panel, a
+  // popover boundary) now has one place to read it rather than a second copy of the
+  // number.
+  //
+  // `data-app-shell` is how the Sidebar finds this element to keep the variable in step
+  // when the user toggles — see the effect there. Without that, a client-side collapse
+  // would leave this at the width the SERVER rendered, which is precisely the "stale
+  // expanded-sidebar dimension" §46.9 forbids. Both writers derive the value from
+  // sidebarWidthCss, so there is one formula and not two.
   return (
-    <div className="flex min-h-screen">
+    <div
+      data-app-shell
+      className="flex min-h-[var(--app-vh)]"
+      style={{ "--sidebar-w": sidebarWidthCss(sidebar) } as React.CSSProperties}
+    >
       {/* Keyboard/AT skip-link — jumps past the sidebar to the page content.
           Visually hidden until focused. */}
       <a
@@ -24,7 +55,7 @@ export default function AppShell({
       >
         Skip to content
       </a>
-      <Sidebar userEmail={userEmail} signOutAction={signOutAction} schedulerProjectsUrl={schedulerProjectsUrl} />
+      <Sidebar userEmail={userEmail} signOutAction={signOutAction} schedulerProjectsUrl={schedulerProjectsUrl} initial={sidebar} />
       <main id="main-content" className="min-w-0 flex-1 bg-background">
         <ToastProvider>{children}</ToastProvider>
       </main>

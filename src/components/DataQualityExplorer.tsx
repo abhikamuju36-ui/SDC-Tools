@@ -173,7 +173,7 @@ export function DataQualityExplorer({ data }: { data: PunchExplorer }) {
               <tbody>
                 {data.rows.map((r, i) => (
                   <tr key={`${r.employeeId}-${r.date}-${r.section}-${r.jobId}-${i}`} className={i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}>
-                    <td className={`${TD} text-sdc-gray-500`}>{r.department}</td>
+                    <td className={`${TD} text-sdc-muted`}>{r.department}</td>
                     <td className={`${TD} font-mono text-label`}>{r.employeeId}</td>
                     <td className={TD}>{r.employee}</td>
                     <td className={`${TD} font-mono text-label`}>{r.date}</td>
@@ -181,8 +181,8 @@ export function DataQualityExplorer({ data }: { data: PunchExplorer }) {
                     <td className={TD} title={r.jobName}>
                       <span className="block max-w-[16rem] truncate">{r.jobName}</span>
                     </td>
-                    <td className={`${TD} text-sdc-gray-500`}>{r.jobStatus}</td>
-                    <td className={`${TD} font-mono text-label text-sdc-gray-500`}>{r.completeDate ?? "—"}</td>
+                    <td className={`${TD} text-sdc-muted`}>{r.jobStatus}</td>
+                    <td className={`${TD} font-mono text-label text-sdc-muted`}>{r.completeDate ?? "—"}</td>
                     <td className={`${TD} font-mono text-label`}>{r.section}</td>
                     <td className={`${TD} text-right font-mono tabular-nums`}>{r.hours}</td>
                     {/* The reason, not just true/false: "invalid" on its own
@@ -214,7 +214,7 @@ export function DataQualityExplorer({ data }: { data: PunchExplorer }) {
         {/* Hours by department, stacked per employee. */}
         <div className={card("p-4")}>
           <p className="mb-1 font-heading text-sm font-bold tracking-tight text-sdc-navy">Hours by department</p>
-          <p className="mb-2 text-note text-sdc-gray-500">
+          <p className="mb-2 text-note text-sdc-muted">
             Stacked by employee. &quot;(undefined)&quot; is the tell — hours whose employee or department the roster can&apos;t resolve.
           </p>
           <EChart height={340} option={chartOption} />

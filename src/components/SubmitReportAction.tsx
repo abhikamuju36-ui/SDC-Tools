@@ -387,7 +387,7 @@ export function SubmitReportAction({
           <dl className="space-y-0.5 text-label leading-snug text-sdc-gray-600">
             {receiptLines(receipt).map((l) => (
               <div key={l.label} className="flex justify-between gap-2">
-                <dt className="shrink-0 text-sdc-gray-500">{l.label}</dt>
+                <dt className="shrink-0 text-sdc-muted">{l.label}</dt>
                 <dd className={`truncate text-right ${l.label === "Submission ID" ? "font-mono text-micro text-sdc-gray-400" : ""}`} title={l.value}>
                   {l.value}
                 </dd>
@@ -395,7 +395,7 @@ export function SubmitReportAction({
             ))}
             {receipt.entriesSubmitted > 0 && (
               <div className="flex justify-between gap-2">
-                <dt className="shrink-0 text-sdc-gray-500">Frozen</dt>
+                <dt className="shrink-0 text-sdc-muted">Frozen</dt>
                 <dd className="text-right">
                   {receipt.entriesSubmitted} ETC entries · {receipt.standardRows} Standard Fees rows
                 </dd>
@@ -403,7 +403,7 @@ export function SubmitReportAction({
             )}
           </dl>
         )}
-        <p className="text-label leading-relaxed text-sdc-gray-500">
+        <p className="text-label leading-relaxed text-sdc-muted">
           Use &ldquo;Reopen for editing&rdquo; in the toolbar above if a correction is needed — it unfreezes the whole month.
         </p>
       </div>

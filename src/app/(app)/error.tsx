@@ -24,7 +24,7 @@ export default function AppError({
   }, [error]);
 
   return (
-    <div className="flex min-h-[60vh] w-full items-center justify-center p-8">
+    <div className="flex min-h-[calc(var(--app-vh)_*_0.6)] w-full items-center justify-center p-8">
       <div className="max-w-md rounded-xl border border-sdc-border bg-white p-6 text-center shadow-sm">
         <div className="mx-auto mb-3 flex h-11 w-11 items-center justify-center rounded-full bg-red-50 text-red-600">
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="2">

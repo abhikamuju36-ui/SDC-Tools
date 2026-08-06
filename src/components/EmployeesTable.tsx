@@ -132,7 +132,7 @@ export function EmployeesTable({ rows }: { rows: EmployeeRow[] }) {
                 } ${p.active ? "" : "bg-sdc-gray-50/60"}`}
               >
                 <span className="w-4 shrink-0 text-right tabular-nums text-sdc-gray-400">{i + 1}</span>
-                <span className={`min-w-0 flex-1 truncate font-medium ${p.active ? "text-sdc-navy" : "text-sdc-gray-500"}`}>
+                <span className={`min-w-0 flex-1 truncate font-medium ${p.active ? "text-sdc-navy" : "text-sdc-muted"}`}>
                   {p.name}
                 </span>
                 {/* Supervisor, not discipline: inside a team card the discipline
@@ -146,7 +146,7 @@ export function EmployeesTable({ rows }: { rows: EmployeeRow[] }) {
                   {p.supervisor === DASH ? "" : p.supervisor}
                 </span>
                 {!p.active && (
-                  <span className="shrink-0 rounded bg-sdc-gray-100 px-1 text-micro font-semibold text-sdc-gray-500">Inactive</span>
+                  <span className="shrink-0 rounded bg-sdc-gray-100 px-1 text-micro font-semibold text-sdc-muted">Inactive</span>
                 )}
               </li>
             ))}

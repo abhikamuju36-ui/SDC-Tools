@@ -10,6 +10,7 @@ import {
   rebaselineEtcFields,
   registerEtcAutosaveFlush,
 } from "@/lib/etc-dirty-tracker";
+import { subscribeAutosaveFlush } from "@/lib/autosave";
 import { useAutosave } from "@/components/useAutosave";
 import { setCellSaveState } from "@/lib/etc-save-state";
 import { SaveStatusChip } from "@/components/SaveStatusChip";
@@ -62,7 +63,7 @@ export function EtcAutosave({ formId, month, locked }: { formId: string; month: 
   // the manager the figure they now have to reconcile against.
   useEffect(() => registerRefreshBlocker(() => hasUnrefusedEtcEdits()), []);
 
-  const { status, schedule, retry } = useAutosave({
+  const { status, schedule, retry, flush } = useAutosave({
     enabled,
     // The value-based tracker, so a cell typed and put back the way it was
     // doesn't trigger a write.
@@ -152,6 +153,24 @@ export function EtcAutosave({ formId, month, locked }: { formId: string; month: 
     form.addEventListener("input", onEdit);
     return () => form.removeEventListener("input", onEdit);
   }, [enabled, schedule]);
+
+  // ── Leaving a cell commits it now, not in 800ms (§43) ─────────────────────
+  //
+  // A cell asks for this on blur. The debounce is there to batch keystrokes inside one
+  // cell; once focus has left there is nothing to batch, and the remaining wait is pure
+  // delay before the value can be saved — and therefore before it can be broadcast to
+  // anyone else's screen. That wait was the whole of the reported "it arrives, but late".
+  //
+  // Guarded on isEtcDirty: blur fires constantly (every arrow key that moves the caret
+  // out of a cell), and a flush with nothing dirty would post an empty payload on each
+  // one. The guard is the same one the debounced path uses, so the two cannot disagree
+  // about whether there is anything to save.
+  useEffect(() => {
+    if (!enabled) return;
+    return subscribeAutosaveFlush(() => {
+      if (isEtcDirty()) void flush();
+    });
+  }, [enabled, flush]);
 
   if (!enabled) return null;
   // The one chip that speaks for the grid's cells — so it, and only it, reports a cell

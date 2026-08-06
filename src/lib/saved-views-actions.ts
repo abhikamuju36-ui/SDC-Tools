@@ -5,12 +5,20 @@ import { revalidatePath } from "next/cache";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 
-// A saved Projects-grid view — the URL state (columns + filters) plus the
-// client-side Grid Size and Actuals toggle. Mirrors the Scheduler's shared
-// column-views. `params` are the raw /quoted query values; empty/absent keys
-// simply aren't stored.
+// A saved Projects-grid view — the URL state (columns + filters + the Actuals
+// toggle). Mirrors the Scheduler's shared column-views. `params` are the raw /quoted
+// query values; empty/absent keys simply aren't stored.
+//
+// `grid` is a GRAVEYARD FIELD, kept deliberately. It held this tab's own row height
+// and column width, which §45 replaced with one application-wide zoom that a view does
+// not carry. Views published before that are rows in the database and JSON blobs in
+// people's browsers, and both still contain it. Declaring it (deprecated) means such a
+// view still parses and re-publishes without a type error, while nothing reads or
+// writes it — dropping the field outright would make `parseConfig`'s cast lie about
+// what is in the JSON.
 export type ViewConfig = {
   params: Record<string, string>;
+  /** @deprecated Retired with the Grid Size steppers (§45). Read from old views, never written. */
   grid?: { rowPy?: number; colPx?: number } | null;
   actuals?: boolean;
 };

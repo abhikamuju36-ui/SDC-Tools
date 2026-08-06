@@ -8,8 +8,10 @@ import {
   BUTTON_COMPACT_DANGER,
   BUTTON_MENU_LINK,
   BTN_H_STANDARD,
+  BTN_MIN_H_STANDARD,
   BTN_H_COMPACT,
   TOOLBAR_BTN,
+  TOOLBAR_MIN_W,
   GRID_SCROLLER,
   GRID_LINE_BORDER,
   TABLE_CARD,
@@ -21,6 +23,16 @@ import {
 // drifted: two controls in the same row getting their height from different places.
 
 const read = (p: string) => readFileSync(new URL(`../${p}`, import.meta.url), "utf8");
+/**
+ * Declarations only. These files' comments QUOTE the geometry they replaced — that is
+ * the point of the comments — so a test that greps the raw source fails on its own
+ * explanation. (It did, first run.)
+ */
+const code = (s: string) =>
+  s
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/[^\n]*$/gm, "");
 const heightClasses = (s: string) => s.match(/(^|\s)h-\[[^\]]+\]|(^|\s)h-\d+(\.\d+)?/g)?.map((m) => m.trim()) ?? [];
 
 test("everything that shares a toolbar row shares ONE height token", () => {
@@ -55,6 +67,49 @@ test("the standard height clears §41.20's floor at the default root font", () =
   // And rem, not px, or the sidebar's Text size control desyncs the box from its label.
   assert.match(BTN_H_STANDARD, /rem\]$/, "must be rem so it scales with the root font");
   assert.match(BTN_H_COMPACT, /rem\]$/);
+});
+
+test("the min-height variant is the SAME height as the fixed one", () => {
+  // BTN_MIN_H_STANDARD exists for a strip that must match the toolbar's height but is
+  // allowed to wrap (the department checklist — a fixed `h-` would clip its second row).
+  // Two literals in one file is the only way Tailwind's scanner can see both class names,
+  // so the thing worth guarding is that they never drift apart — which is the whole
+  // failure §41.21 documented, arriving by a different route.
+  assert.equal(
+    BTN_MIN_H_STANDARD.replace("min-h-", "h-"),
+    BTN_H_STANDARD,
+    "the floor and the fixed height must be the same number",
+  );
+});
+
+test("every control in the Monthly ETC toolbar row shares the tokens", () => {
+  // Measured before this pass: 169 / 76 / 76 / 95 / 131 / 95 px wide, at 34px and 36px
+  // tall, with rounded-md next to rounded-lg. The View menu and the month/year selects
+  // had never adopted TOOLBAR_BTN / BTN_H_STANDARD and were hand-rolling their own
+  // geometry — which is exactly what §41.21 found the first time, in a row it did not
+  // reach. A row is only as even as its least-adopted control.
+  for (const [file, mustHave] of [
+    ["src/components/EtcViewMenu.tsx", ["TOOLBAR_BTN", "TOOLBAR_MIN_W"]],
+    ["src/components/MonthYearSelect.tsx", ["BTN_H_STANDARD", "TOOLBAR_MIN_W"]],
+    ["src/components/EtcRatesButton.tsx", ["TOOLBAR_MIN_W"]],
+  ] as const) {
+    const src = read(file);
+    for (const token of mustHave) {
+      assert.ok(src.includes(token), `${file} must take its geometry from ${token}`);
+    }
+    // And must not go back to declaring its own height or radius inline.
+    assert.ok(
+      !/rounded-md border px-3\.5 py-1\.5/.test(code(src)),
+      `${file}: no hand-rolled toolbar geometry`,
+    );
+  }
+});
+
+test("the toolbar width floor is a floor, not a fixed width", () => {
+  // "Hide Standards" needs 131px. A fixed width would clip it, and clipping a label is a
+  // worse answer to "make them even" than one control being wider than the rest.
+  assert.match(TOOLBAR_MIN_W, /^min-w-/, "must be a minimum, so a long label still fits");
+  assert.match(TOOLBAR_MIN_W, /rem\]$/, "rem, so it scales with the root font like the heights");
 });
 
 test("a compact control is still an accessible target", () => {

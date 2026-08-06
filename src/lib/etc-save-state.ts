@@ -186,8 +186,20 @@ export function cellSaveStateStyle(s: CellSaveState | null): { ring: string; tit
     case "saved":
       return { ring: "ring-1 ring-inset ring-sdc-green-text/60", title: "Saved" };
     case "failed":
+      // ── Distinct from "invalid", which it used to be identical to (§42.25) ──
+      //
+      // Both were `ring-2 ring-inset ring-sdc-red`, so two states demanding opposite
+      // responses looked the same: "invalid" means the value is wrong and the user has
+      // to change it; "failed" means the value is FINE and the save did not land, so
+      // the right response is to wait or press Retry. Rendering them identically told
+      // people to edit a cell that had nothing wrong with it.
+      //
+      // §42.25 requires error and conflict states to be visually distinct; this is the
+      // same requirement one level down, between two kinds of error. The softer border
+      // red keeps it unmistakably an error while separating it from the solid ring that
+      // means "act on this now", and the tooltips say which is which.
       return {
-        ring: "ring-2 ring-inset ring-sdc-red",
+        ring: "ring-2 ring-inset ring-sdc-red-border",
         title: "This value could not be saved. It is still here — it will be retried, and Retry in the toolbar forces it.",
       };
     case "conflict":

@@ -1,5 +1,7 @@
+import { cookies } from "next/headers";
 import { auth, signOut } from "@/lib/auth";
 import AppShell from "@/components/AppShell";
+import { COLLAPSED_COOKIE, WIDTH_COOKIE, parseSidebarPrefs } from "@/lib/sidebar-prefs";
 import { LiveRefresh } from "@/components/LiveRefresh";
 import { RealtimeProvider } from "@/components/RealtimeProvider";
 import { ChangeNotifications } from "@/components/ChangeNotifications";
@@ -15,6 +17,19 @@ import { withSchedulerSso } from "@/lib/scheduler-sso";
 export default async function AppGroupLayout({ children }: { children: React.ReactNode }) {
   const session = await auth();
 
+  // ── The sidebar's state, resolved SERVER-side (§46.14) ──────────────────────
+  //
+  // It used to live in localStorage, which the server cannot see — so a collapsed
+  // sidebar was rendered EXPANDED (measured: `<aside style="width:276px">` with every
+  // label, the search field and the version string) and snapped to the 60px rail after
+  // hydration. One flash per page load, on every route.
+  //
+  // Reading it here costs nothing that isn't already being paid: `auth()` above reads
+  // cookies, which is what makes every route under this layout dynamic. See
+  // lib/sidebar-prefs.ts for why this preference — and only this one — is a cookie.
+  const jar = await cookies();
+  const sidebar = parseSidebarPrefs(jar.get(COLLAPSED_COOKIE)?.value, jar.get(WIDTH_COOKIE)?.value);
+
   async function handleSignOut() {
     "use server";
     await signOut({ redirectTo: "/login" });
@@ -28,6 +43,9 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
     <AppShell
       userEmail={session?.user?.email}
       signOutAction={handleSignOut}
+      // What the server rendered with. The client store reads the same two cookies, so
+      // the value React hydrates with is the value already on screen.
+      sidebar={sidebar}
       // Carries a 60-second signed assertion of who is signed in here, so the
       // Scheduler can start its own session instead of showing a login modal to
       // someone the app already authenticated. No secret configured, or no

@@ -166,7 +166,7 @@ export default async function JobDetailPage({
           </p>
         )}
         {job.startDate && (
-          <p className="mb-4 text-xs text-sdc-gray-500">
+          <p className="mb-4 text-xs text-sdc-muted">
             Start: {formatDate(job.startDate)}
             {job.completeDate && <> · Complete: {formatDate(job.completeDate)}</>} · Source: {job.source}
           </p>
@@ -221,7 +221,7 @@ export default async function JobDetailPage({
           </div>
 
           <div className="mb-6 flex flex-wrap items-center gap-2">
-            <span className="text-xs font-medium text-sdc-gray-500">Month:</span>
+            <span className="text-xs font-medium text-sdc-muted">Month:</span>
             {availableMonths.length === 0 && <span className="text-xs text-sdc-gray-400">no ETC history yet</span>}
             <PillLinks
               items={availableMonths.map((m) => ({
@@ -244,7 +244,7 @@ export default async function JobDetailPage({
                 <div key={entry.id} className="flex items-center justify-between gap-4 px-5 py-3 text-sm">
                   <div>
                     <p className="font-medium text-sdc-navy">{entry.section}</p>
-                    <p className="text-sdc-gray-500">
+                    <p className="text-sdc-muted">
                       Prior ETC <span className="font-mono font-medium text-sdc-navy">{entry.priorEtc.toString()}</span> − Worked{" "}
                       <span className="font-mono font-medium text-sdc-navy">{entry.hoursWorked.toString()}</span> = Suggested{" "}
                       <span className="font-mono font-medium text-sdc-navy">{entry.hoursLeftCalc.toString()}</span>
@@ -357,7 +357,7 @@ export default async function JobDetailPage({
                         {m.overridden ? (
                           <form action={revertOverride}>
                             <input type="hidden" name="rowId" value={m.id} />
-                            <button type="submit" className="text-label text-sdc-gray-500 underline hover:text-sdc-navy">
+                            <button type="submit" className="text-label text-sdc-muted underline hover:text-sdc-navy">
                               Revert to Power BI
                             </button>
                           </form>

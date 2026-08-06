@@ -110,8 +110,44 @@ export function isPresenceLive(lastSeen: number, now: number, ttlMs: number = PR
 
 type Subscriber = (envelope: Envelope) => void;
 
-const subscribers = new Map<string, Subscriber>(); // sessionId -> send
-const presence = new Map<string, PresenceEntry>(); // cellKey+session -> entry
+// ── One hub per PROCESS, not one per bundle (§43, 2026-08-05) ───────────────
+//
+// These two Maps used to be plain module scope, and that is why saved values never
+// reached anybody's screen while presence did.
+//
+// Three things import this module, and they are not all bundled together:
+//
+//   api/realtime/stream/route.ts    route handler  — holds the subscribers
+//   api/realtime/presence/route.ts  route handler  — same bundle, so presence WORKED
+//   lib/change-log.ts               server action  — a DIFFERENT bundle
+//
+// Next builds server actions and route handlers separately, so each got its own
+// instance of this module. `publishChanges`, reached from a server action, was
+// broadcasting to an empty `subscribers` Map while the stream route sat holding the
+// real one. Nothing errored — the loop simply had nothing to iterate.
+//
+// That is the exact reported signature: the presence marker appears instantly (route
+// handler to route handler), a saved value never arrives over SSE at all, and it shows
+// up "late" only when LiveRefresh's poll or a window focus re-fetches the route. It
+// also explains why shortening the autosave debounce changed nothing: the broadcast was
+// never reaching a subscriber, so saving sooner only made a message nobody received.
+//
+// globalThis is the standard remedy and the one this repo already uses for Prisma
+// (lib/prisma.ts) — with one difference: Prisma only pins it outside production,
+// because there the concern is HMR. Here the concern is bundling, which applies in
+// production too, so this is unconditional.
+//
+// This makes the hub one per PROCESS. It is still not shared ACROSS processes, so the
+// pre-existing caveat stands: PM2 must run this app with a single instance, or two
+// browsers can land on different processes and never see each other. It runs as one
+// today (checked 2026-08-05).
+type HubState = { subscribers: Map<string, Subscriber>; presence: Map<string, PresenceEntry> };
+const globalForHub = globalThis as unknown as { __sdcRealtimeHub?: HubState };
+const hub: HubState = (globalForHub.__sdcRealtimeHub ??= {
+  subscribers: new Map<string, Subscriber>(), // sessionId -> send
+  presence: new Map<string, PresenceEntry>(), // cellKey+session -> entry
+});
+const { subscribers, presence } = hub;
 
 function presenceKey(sessionId: string, cellKey: string): string {
   return `${sessionId}::${cellKey}`;
@@ -217,6 +253,12 @@ export function leaveAll(sessionId: string): void {
 // showing the same month needs the update as much as anybody's.
 export function publishChanges(events: ChangeEvent[]): void {
   if (events.length === 0) return;
+  // Logged because "the broadcast reached nobody" is invisible from the outside — the
+  // save succeeds, the audit row is written, and the loop over an empty subscriber map
+  // does nothing at all. A count of 0 here while browsers are demonstrably connected is
+  // the signature of the bundling split described at the top of this file, and is worth
+  // being able to read straight out of the PM2 log rather than re-deducing.
+  console.log(`[realtime] publishing ${events.length} change event(s) to ${subscribers.size} connected session(s)`);
   broadcast({ type: "changes", events });
 }
 

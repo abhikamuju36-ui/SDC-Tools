@@ -27,11 +27,11 @@ export default function RootLayout({
     <html
       lang="en"
       className={`${montserrat.variable} h-full antialiased`}
-      // The pre-paint script below writes to this element's `style` attribute
-      // (root font-size + the five grid density vars) before React hydrates, so
-      // React's expected <html> — which has no style attribute at all — can never
-      // match the DOM. That logged a hydration error on EVERY page, ending in
-      // "This won't be patched up", which buries any real mismatch in noise.
+      // The pre-paint script below writes to this element's `style` attribute (the
+      // zoom level) before React hydrates, so React's expected <html> — which has no
+      // style attribute at all — can never match the DOM. That logged a hydration
+      // error on EVERY page, ending in "This won't be patched up", which buries any
+      // real mismatch in noise.
       //
       // This is the React-sanctioned escape for a deliberate, unavoidable
       // server/client difference, and the same thing next-themes does for the
@@ -45,26 +45,24 @@ export default function RootLayout({
       // request. Not worth it for a display preference.
       suppressHydrationWarning>
       <body className="min-h-full flex flex-col">
-        {/* Restore every persisted display preference BEFORE first paint.
-            Tailwind sizes are rem, so the root font-size scales the whole UI
-            proportionally (see AppTextSize); the five grid vars drive row
-            height, column width and cell text on the Monthly ETC and Projects
-            grids (EtcViewMenu, ProjectsDisplayMenu / GridZoomControls).
+        {/* Restore the saved zoom level BEFORE first paint (§45).
+            ONE preference now, where there used to be six: a root font-size and five
+            grid density vars, each with its own key. See lib/app-zoom.ts.
 
-            The grid vars used to be applied in mount effects, which is one
-            frame too late: the grid painted at the default density and then
-            visibly jumped to the saved one on every page load. The root
-            font-size was already handled here — this just extends the same
-            treatment to the rest, since a preference restored after paint is
-            a preference the user watches being restored.
+            Inline and blocking on purpose: it has to run before the first paint,
+            which rules out an effect and rules out `defer`. A zoom applied after
+            paint is a zoom the user watches being applied — the whole interface
+            would visibly jump on every page load.
 
-            Inline and blocking on purpose: it has to run before the first
-            paint, which rules out an effect and rules out `defer`. Wrapped in
-            try/catch because localStorage throws outright in some privacy
-            modes, and a preference is never worth a blank page. */}
+            The 0.75/1.5 bounds are ZOOM_STEPS' first and last entries, duplicated
+            here because this string cannot import anything.
+            tests/app-zoom.test.ts asserts the two agree, so widening the range
+            without touching this line fails the suite rather than silently
+            clamping. Wrapped in try/catch because localStorage throws outright in
+            some privacy modes, and a preference is never worth a blank page. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var d=document.documentElement,s=localStorage.getItem('app-font-px');if(s)d.style.fontSize=parseFloat(s)+'px';var v=[['etc-grid-font-size','--etc-font-size'],['etc-grid-row-py','--etc-row-py'],['etc-grid-col-px','--etc-col-px'],['quoted-grid-row-py','--quoted-row-py'],['quoted-grid-col-px','--quoted-col-px']];for(var i=0;i<v.length;i++){var r=localStorage.getItem(v[i][0]);if(r!=null&&r!==''){var n=parseFloat(r);if(!isNaN(n))d.style.setProperty(v[i][1],n+'px');}}}catch(e){}`,
+            __html: `try{var r=localStorage.getItem('sdc-app-zoom-v1');if(r){var n=parseFloat(r);if(!isNaN(n))document.documentElement.style.setProperty('--app-zoom',String(Math.min(1.5,Math.max(0.75,n))));}}catch(e){}`,
           }}
         />
         <SessionProvider>{children}</SessionProvider>

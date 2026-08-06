@@ -51,6 +51,8 @@ import {
 export type { ReportSection, ValidationIssue, MonthlyReportValidation } from "@/lib/monthly-report-flow";
 import type { ReportSection, ValidationIssue, MonthlyReportValidation } from "@/lib/monthly-report-flow";
 import { MAX_REPORTED_ISSUES } from "@/lib/monthly-report-flow";
+import { departmentIssues } from "@/lib/etc-departments";
+import { readIncompleteDepartments } from "@/lib/etc-department-status";
 
 const sectionLabel = (code: string) =>
   code === PARTS_COST_SECTION ? "Parts Cost" : (SECTIONS.find((s) => s.code === code)?.name ?? code);
@@ -66,6 +68,7 @@ export async function validateMonthlyReport(month: string): Promise<MonthlyRepor
     totalIssues: 0,
     sections: [],
     counts: { entries: 0, jobs: 0, missingNewEtc: 0, standardJobs: 0 },
+    incompleteDepartments: [],
   };
   if (!isValidMonth(month)) {
     return { ...empty, issues: [{ section: "Monthly ETC", rowRef: month, reason: `"${month}" is not a valid month.` }], totalIssues: 1 };
@@ -191,6 +194,25 @@ export async function validateMonthlyReport(month: string): Promise<MonthlyRepor
     });
   }
 
+  // ── Department sign-off (§50) ─────────────────────────────────────────────
+  //
+  // Six checkboxes above the KPI card; the month cannot be submitted until all six are
+  // ticked. Added as real validation issues so the confirmation dialog's blocked list
+  // shows them beside the missing cells rather than in a second place with its own rules.
+  //
+  // §50 is explicit that this is an ADDITIONAL gate, not a substitute: "do not treat the
+  // checkbox alone as proof that all cells are valid. Continue validating required ETC
+  // cells, formulas, pending saves, and conflicts." Nothing above this line changed — a
+  // month with all six ticked and a missing New ETC is still refused, by the same rule
+  // it always was.
+  //
+  // Two lines, and both halves are tested without a database: readIncompleteDepartments
+  // over the real table, and departmentIssues as a pure function. This function itself
+  // can only run inside Next, so keeping the judgement out of it is what makes the
+  // judgement checkable.
+  const incompleteDepartments = await readIncompleteDepartments(month);
+  issues.push(...departmentIssues(month, incompleteDepartments));
+
   const totalIssues =
     missingNewEtc +
     issues.filter((i) => i.column !== "New ETC").length;
@@ -206,6 +228,10 @@ export async function validateMonthlyReport(month: string): Promise<MonthlyRepor
       missingNewEtc,
       standardJobs: jobsForStandard.length,
     },
+    // Carried out separately as well as being issues, because `issues` is capped at
+    // MAX_REPORTED_ISSUES — see the note on the field. The readiness line names these
+    // even on a month with 200 unfilled cells.
+    incompleteDepartments,
   };
 }
 

@@ -236,7 +236,7 @@ export default async function Home({
         </div>
 
         {lastRun && (
-          <p className="mt-2 text-xs text-sdc-gray-500">
+          <p className="mt-2 text-xs text-sdc-muted">
             Last refresh: {lastRun.completedAt ? timeAgo(lastRun.completedAt) : "still running"}
             {lastRun.userName ? ` — started by ${lastRun.userName}` : " — scheduled"}
             {lastRun.completedAt && ` · ${lastRun.sourcesOk}/${lastRun.sourcesOk + lastRun.sourcesFailed} sources ok`}

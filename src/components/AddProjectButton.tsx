@@ -45,7 +45,7 @@ export function AddProjectButton({ className }: { className: string }) {
             onClick={() => { setOpen(false); addNewProjectRow(); }}
           >
             <span className="text-sm font-medium text-sdc-navy">Manual entry</span>
-            <span className="text-xs text-sdc-gray-500">Add a blank row and type it in</span>
+            <span className="text-xs text-sdc-muted">Add a blank row and type it in</span>
           </button>
           <button
             type="button"
@@ -54,7 +54,7 @@ export function AddProjectButton({ className }: { className: string }) {
             onClick={() => { setOpen(false); inputRef.current?.click(); }}
           >
             <span className="text-sm font-medium text-sdc-navy">From Release</span>
-            <span className="text-xs text-sdc-gray-500">Upload an SDC Project Release (.pdf / .docx)</span>
+            <span className="text-xs text-sdc-muted">Upload an SDC Project Release (.pdf / .docx)</span>
           </button>
         </div>
       )}

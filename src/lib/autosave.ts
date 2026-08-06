@@ -20,6 +20,34 @@ export type AutosaveStatus = "idle" | "pending" | "saving" | "saved" | "error";
 // now. 800ms does that and takes "it didn't save immediately" off the table.
 export const AUTOSAVE_DELAY_MS = 800;
 
+// ── Leaving a cell commits it immediately (§43, 2026-08-05) ─────────────────
+//
+// Reported as "the value arrives on the other screen, but late". It was not a realtime
+// fault — the SSE path, the cellKey and the fan-out are all correct and were verified.
+// The delay was in front of all of it: nothing is SAVED until the debounce expires, and
+// nothing can be broadcast until it is saved. Type "20", tab to the next cell, and the
+// other screen waits out the full 800ms before the change even leaves the browser.
+//
+// The debounce exists to stop four saves while somebody types "1420", and that reason
+// only holds WHILE THEY ARE STILL IN THE CELL. Moving off it is the unambiguous "I am
+// done with this one" signal — it is the point Excel commits an edit — so the debounce
+// has nothing left to protect and is pure latency.
+//
+// A module signal rather than a prop: the cells and the autosave component are siblings
+// under a Server Component, the same shape as etc-live-totals and etc-drill-request.
+// Blur is a very frequent event, so this is deliberately only a REQUEST — the autosave
+// still decides whether anything is actually dirty before posting.
+const flushListeners = new Set<() => void>();
+
+export function requestAutosaveFlush(): void {
+  for (const l of [...flushListeners]) l();
+}
+
+export function subscribeAutosaveFlush(cb: () => void): () => void {
+  flushListeners.add(cb);
+  return () => flushListeners.delete(cb);
+}
+
 // Should a scheduled autosave actually run right now?
 //
 // ── Is a save in flight anywhere on the page? ───────────────────────────────

@@ -10,19 +10,29 @@ import { ExportMenu } from "@/components/ExportMenu";
 import { getEtcMonthJobWhere } from "@/lib/etc-month-jobs";
 import { getEtcMonthKpis } from "@/lib/etc-month-kpis";
 import { EtcMonthKpiCards } from "@/components/EtcMonthKpiCards";
+import { auth } from "@/lib/auth";
+import { DepartmentEtcChecklist } from "@/components/DepartmentEtcChecklist";
+import { readDepartmentCompletions } from "@/lib/etc-department-status";
+import { manageableDepartments, parseDepartmentOwners, DEPARTMENT_OWNERS_ENV } from "@/lib/etc-departments";
+import { EtcIssuesIndicator } from "@/components/EtcIssuesIndicator";
+// From lib/, not from the component beside it: this page renders on the SERVER, and a
+// function exported from a "use client" module cannot be called there.
+import { buildEtcIssues } from "@/lib/etc-issues";
 import { PartsCostNewEtcCell } from "@/components/PartsCostNewEtcCell";
 import { EtcSectionCells } from "@/components/EtcSectionCells";
 import { StandardRatesProvider, EtcStandardCells, StandardGrandCells } from "@/components/EtcStandardColumns";
 import type { StandardJobBase, StandardRates, FrozenStandardRow, PoolRowInput } from "@/components/EtcStandardColumns";
 import { EtcRatesButton } from "@/components/EtcRatesButton";
-import { StandardPoolPanel } from "@/components/StandardPoolPanel";
+import { StandardsGate } from "@/components/StandardsGate";
+import { StandardFeesCard } from "@/components/StandardFeesCard";
+import { POOL_PANEL_META } from "@/lib/pool-panel-meta";
 import type { PoolPanelRow, NewProjectRow } from "@/components/StandardPoolPanel";
 import { newProjectsEnteringMonth } from "@/lib/standard-pool-local";
 import { savePools } from "@/lib/standard-sheet-actions";
 // ONE submission and ONE reopen for the whole month — see lib/monthly-report.ts.
 import { reopenMonthlyReport, checkMonthlyReport } from "@/lib/monthly-report-actions";
 import { ETC_SECTIONS, PARTS_COST_SECTION } from "@/lib/sections";
-import { calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, round2, workingDaysInMonth, effectiveNewEtc, newEtcDiff, newEtcSeedText, isNewEtcCellDecided, type NewEtcCellState } from "@/lib/etc";
+import { calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, round2, workingDaysInMonth, effectiveNewEtc, newEtcDiff, newEtcSeedText, isNewEtcCellDecided, rollupNewEtc, type NewEtcCellState, type NewEtcRollupCell } from "@/lib/etc";
 import { ReopenMonthButton } from "@/components/ReopenMonthButton";
 import { EtcAutosave } from "@/components/EtcAutosave";
 import { EtcLiveTotals } from "@/components/EtcLiveTotals";
@@ -35,7 +45,7 @@ import { MonthYearSelect } from "@/components/MonthYearSelect";
 import { JobCellMenuHost } from "@/components/JobCellMenuHost";
 import { jobCellMenuProps } from "@/lib/job-cell-menu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
-import { BUTTON_SECONDARY, TABLE_HEADER_ROW, TABLE_GRID, GRID_SCROLLER, ETC_COL_W, PARTS_COL_W } from "@/components/ui/classnames";
+import { BUTTON_SECONDARY, TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_MIN_W, TABLE_HEADER_ROW, TABLE_GRID, GRID_SCROLLER, ETC_COL_W, PARTS_COL_W } from "@/components/ui/classnames";
 import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
@@ -46,6 +56,19 @@ import { DragScroll } from "@/components/DragScroll";
 const SUB_COLUMNS = ["Prior ETC", "Hours Worked Month", "Hours Left", "New ETC", "Diff"] as const;
 const PARTS_COST_SUB_COLUMNS = ["Prior ETC", "Money Spent Month", "Money Left", "New ETC", "Diff"] as const;
 const TOTAL_SUB_COLUMNS = ["Prior ETC", "Hours Worked", "Hours Left", "Total New ETC", "Diff"] as const;
+
+// Why a Total (New ETC) cell is blank (§51). A blank with no explanation reads as
+// missing data or a broken formula; naming the sections still waiting turns it into a
+// list of things to go and do. Says "0 counts" outright, because the one thing a
+// manager will try when a rollup refuses to appear is typing a zero, and it works.
+function rollupPendingTitle(pending: string[]): string {
+  if (pending.length === 0) return "";
+  const list = pending.length <= 4 ? pending.join(", ") : `${pending.slice(0, 4).join(", ")} and ${pending.length - 4} more`;
+  return (
+    `Waiting on ${pending.length} ${pending.length === 1 ? "section" : "sections"}: ${list}. ` +
+    `Total New ETC and Diff appear once every section here has a New ETC — 0 counts as an answer.`
+  );
+}
 
 
 // The sheet's 5-level header above the column labels: Phase -> billing group
@@ -279,14 +302,9 @@ const STANDARD_LEAF_COLUMNS = [
   "Notes",
 ] as const;
 
-// Category → billing group / department, in the sheet's print order — drives
-// the read-only "Standard Fees By Department" side panel.
-const POOL_PANEL_META = [
-  { category: "ENGINEERING_PM", group: "Engineering", dept: "PM" },
-  { category: "ENGINEERING_WARRANTY", group: "Engineering", dept: "Warranty" },
-  { category: "SHOP_MANUFACTURING", group: "Shop", dept: "Mfg" },
-  { category: "SHOP_WARRANTY", group: "Shop", dept: "Warranty" },
-] as const;
+// Category → billing group / department, in the sheet's print order — drives the
+// read-only "Standard Fees By Department" side panel. Moved to lib/pool-panel-meta.ts
+// (§48) so the client-side card build reads the same list; see the note there.
 
 // The department pools for `month`, or — if that month was never refreshed —
 // the most recent PRIOR month's pools as a labeled fallback (so Standard Fees
@@ -320,46 +338,43 @@ const PHASE_EDGE = "border-l-8! border-l-[#808080]!";
 const GROUP_EDGE = "border-l-8! border-l-[#808080]!";
 const SUBGROUP_EDGE = "border-l-8! border-l-[#808080]!";
 
-// Row height / column width density controls (GridZoomControls, in the
-// toolbar) work by setting --etc-row-py/--etc-col-px on the document root;
-// these two blanket rules are what actually consume them. Same specificity
-// trick as TABLE_GRID (a class+element descendant selector beats a plain
-// utility class on the cell itself) so no `!` is needed here — the fallback
-// (4px) reproduces the grid's current py-1/px-1 exactly, so nothing changes
-// until a user clicks +/-. `:not sticky` keeps the frozen #/Job Id/Job Name
-// columns — which own their own fixed widths — out of the column control.
-// Row height also scales the in-cell inputs' vertical padding + collapses line
-// height, so at the minimum the rows shrink right down to the gridlines instead
-// of bottoming out at the inputs' own py-1. Column width scales cell + input
-// horizontal padding.
+// ── The grid's cell padding, which used to be two user controls (§45) ───────
 //
-// ── The Text size stepper, which did nothing at all (§39.14) ────────────────
+// These blanket rules gave every body cell and in-cell input one uniform padding.
+// They read --etc-row-py / --etc-col-px, which the View menu's Row height and Column
+// width steppers wrote (0–16px, persisted, this tab only) — and a matching pair on
+// Projects wrote --quoted-row-py / --quoted-col-px, so the two grids could sit at
+// different densities in the same app. §45 replaced all four with the one sidebar
+// Zoom, which scales these paddings along with everything else, so what is left here
+// is the constant the steppers defaulted to.
 //
-// --etc-font-size used to be applied here as three
-// `[&_td…]:text-[length:var(--etc-font-size,10px)]` utilities, on the reasoning that
-// a descendant selector beats each cell's own size class "with no `!`". True of the
-// cell's class — and irrelevant, because globals.css carries an un-layered
-// `table, table * { font-size: … !important }` for app-wide table uniformity, and an
-// important declaration outside any layer beats a normal one inside @layer utilities
-// whatever its specificity. Measured live 2026-08-04: setting --etc-font-size to 22px
-// moved a cell from 10.2px to 10.2px. The stepper had never worked.
+// 0.2667rem, not 4px: 4px at the 15px root, and rem is what keeps a padding in step
+// with the type scale (§39.14) and reachable by the browser's own text-size setting.
+// Nothing on screen moved — that is checked live, and the DEVLOG section for §45
+// records the measurement.
 //
-// It is applied by a rule of the same weight instead — `table[data-grid="etc"] *` in
-// globals.css, which is why this table carries that attribute — so the stepper's value
-// resolves through the !important rather than losing to it. Its fallback is the same
-// default every other table uses, so a grid with no saved preference renders exactly
-// as it did before. See the note on that rule for why the variable is referenced
-// directly rather than fed through --table-font-size.
+// Same specificity trick as TABLE_GRID (a class+element descendant selector beats a
+// plain utility class on the cell itself) so no `!` is needed. `:not sticky` keeps the
+// frozen #/Job Id/Job Name columns — which own their own fixed widths — off the
+// horizontal rule.
 //
-// The stepper also bumps --etc-row-py / --etc-col-px in step, so rows and columns grow
-// to fit larger text rather than clipping it.
-// Row height is scoped to TBODY on purpose. It used to hit every `td`, which
-// included the grand-total row — so that row's own py-2.5 was overridden down to
-// 4px and it read as a hairline strip under the data (reported 2026-07-30:
-// "bottom header too thin"). Horizontal padding and font size stay grid-wide,
-// because the totals must keep column alignment with the rows above them.
-const ZOOM_CONTROLS =
-  "[&_tbody_td]:py-[var(--etc-row-py,4px)] [&_tbody_td]:leading-none [&_td_input]:py-[var(--etc-row-py,4px)] [&_td_input]:leading-none [&_td:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_th:not([class*='sticky'])]:px-[var(--etc-col-px,4px)] [&_td_input:not([class*='sticky'])]:px-[var(--etc-col-px,4px)]";
+// leading-none stays: it collapses the line box so the row height is the padding plus
+// the glyphs rather than the font's own generous default.
+//
+// Row height is scoped to TBODY on purpose. It used to hit every `td`, which included
+// the grand-total row — so that row's own py-2.5 was overridden down to 4px and it read
+// as a hairline strip under the data (reported 2026-07-30: "bottom header too thin").
+// Horizontal padding stays grid-wide, because the totals must keep column alignment
+// with the rows above them.
+//
+// The grid also carried a "Font size" box writing --etc-font-size, which had NEVER
+// worked (globals.css's un-layered `table, table * { font-size: … !important }` beat
+// it; measured 2026-08-04 — setting it to 22px moved a cell from 10.2px to 10.2px).
+// §39.14 fixed it with a `table[data-grid="etc"]` rule; §45 removed the control, and
+// that rule with it. `data-grid="etc"` stays on the table — GridViewProvider scopes
+// its generated column-hiding CSS by it.
+const CELL_PADDING =
+  "[&_tbody_td]:py-[0.2667rem] [&_tbody_td]:leading-none [&_td_input]:py-[0.2667rem] [&_td_input]:leading-none [&_td:not([class*='sticky'])]:px-[0.2667rem] [&_th:not([class*='sticky'])]:px-[0.2667rem] [&_td_input:not([class*='sticky'])]:px-[0.2667rem]";
 
 
 function currentMonth() {
@@ -686,6 +701,23 @@ export default async function MonthlyEtcPage({
   }
 
   const hiddenJobHours = [...hiddenByJob.values()]
+    // ── Nothing booked, nothing to report (2026-08-05, by request) ───────────
+    //
+    // A job with 0 hours is not hours off the grid. This block exists to account for
+    // time that reaches no total below, and a job that booked none is not part of that
+    // shortfall — it was padding a list whose headline is a number of HOURS.
+    //
+    // This reverses the HeadStart rule added on 2026-08-03 ("listed always, even at 0
+    // hours, so one that starts booking time is seen"). The intent there is preserved
+    // for free: the moment such a job books an hour it clears this filter and appears
+    // on its own. What is lost is the standing reminder that the job exists at all —
+    // which is the Projects tab's job, not this block's.
+    //
+    // Filtered HERE, at the single source, rather than in the panel: the KPI card, the
+    // issues chip and the drill all read this array, so filtering downstream would have
+    // left the card counting 5 while the drill listed 4. (The chip was already applying
+    // its own `hours > 0` filter to work around exactly that, and can now stop.)
+    .filter((j) => j.hours > 0)
     // Sections in the Monthly ETC grid's own column order, not by hours (2026-08-03,
     // by request) — see compareSections. Jobs stay ordered by hours, biggest first.
     .map(({ sectionHours, ...j }) => ({
@@ -877,6 +909,32 @@ export default async function MonthlyEtcPage({
   const allEntries = jobs.flatMap((j) => j.etcEntries);
   const started = allEntries.length > 0;
   const locked = isMonthLocked(allEntries);
+
+  // ── The department ETC sign-off checklist (§50) ────────────────────────────
+  //
+  // One row per department, read for THIS month — switching the picker re-renders with the other
+  // month's statuses, which is the property §50 asks for and the one a component
+  // holding its own state would quietly break.
+  //
+  // The manageable map is computed here from the SAME policy the server action enforces
+  // (canManageDepartment), purely so a box the server would refuse arrives greyed out.
+  // It is not the permission check: §50 is explicit that frontend disabling is not
+  // authorization, and lib/etc-department-actions.ts re-derives all of this per call.
+  const departmentCompletions = await readDepartmentCompletions(month);
+  const deptSession = await auth();
+  const manageableDepts = manageableDepartments(
+    {
+      email: deptSession?.user?.email ?? null,
+      role: (deptSession?.user as { role?: string } | undefined)?.role ?? null,
+    },
+    parseDepartmentOwners(process.env[DEPARTMENT_OWNERS_ENV]),
+  );
+  // "2026-07" -> "JULY 2026", parsed as local parts. `new Date("2026-07")` is UTC
+  // midnight and prints as the PREVIOUS month west of Greenwich — this server is UTC-4,
+  // so every heading would be a month early. Same trap, same fix, as EtcMonthKpiCards.
+  const monthHeading = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1, 1)
+    .toLocaleString("en-US", { month: "long", year: "numeric" })
+    .toUpperCase();
   // Submission readiness, permission and the month's data fingerprint, for the Standard
   // Fees card's status line (§26.4). Computed here so the card's first paint already says
   // whether the month can be submitted; the client re-checks on mount and whenever a
@@ -907,6 +965,35 @@ export default async function MonthlyEtcPage({
   const monthComplete =
     locked || isHistoricalMonth || (hoursRefreshedThrough != null && hoursRefreshedThrough >= monthEndDate);
 
+  // ── Every finding the banners used to carry, as data (§44) ────────────────
+  //
+  // Built from the SAME queries the banners used, so nothing new is fetched and nothing
+  // is checked differently — only the presentation changed. buildEtcIssues owns the
+  // ordering and the "don't report the same outage twice" rule, so the page does not
+  // re-derive either.
+  const stamp = (d: Date | null | undefined) => (d ? d.toISOString().slice(0, 16).replace("T", " ") : null);
+  const failedDetail = (s: string | null | undefined) => (s ?? "").replace(/^Failed:\s*/, "");
+  const etcIssues = buildEtcIssues({
+    hoursSyncFailure: hoursActualFreshness?.status?.startsWith("Failed")
+      ? { detail: failedDetail(hoursActualFreshness.status), at: stamp(hoursActualFreshness.checkedAt) }
+      : null,
+    etcHoursSyncFailure: etcHoursFreshness?.status?.startsWith("Failed")
+      ? { detail: failedDetail(etcHoursFreshness.status), at: stamp(etcHoursFreshness.checkedAt) }
+      : null,
+    undefinedHours: {
+      hours: importIssues.reduce((s, i) => s + Number(i.hours), 0),
+      entries: importIssues.reduce((s, i) => s + i.rows, 0),
+    },
+    // No `hours > 0` filter here any more — hiddenJobHours is filtered at source now
+    // (see where it is built), so the chip, the KPI card and the drill count one list.
+    // This used to apply its own filter while the card did not, which is how the chip
+    // said "4 jobs" beside a card saying "5 jobs not listed".
+    offGrid: {
+      hours: hiddenJobHours.reduce((s, j) => s + j.hours, 0),
+      jobs: hiddenJobHours.length,
+    },
+  });
+
   // Grand totals footer, matching the real sheet's row 63 — accumulated as
   // each job row below computes its own values, then rendered once after.
   // No `decided` counter any more: newEtcDiff is live for every cell, so every
@@ -933,10 +1020,17 @@ export default async function MonthlyEtcPage({
         {`${visibleJobs.length}${billableFilterActive ? ` of ${jobs.length}` : ""} ${monthIsLocked ? "job" : "active job"}${visibleJobs.length === 1 ? "" : "s"} — replaces the "Managers Fill Out" sheet.`}
       </p>
 
-      {/* One toolbar: pick the month/year, Refresh Data pulls everything from
-          Power BI for it, then enter/confirm and Submit ETC. */}
-      <div className="mb-3 flex flex-wrap items-center gap-3">
-        <span className="text-xs font-medium text-sdc-gray-500">Report for:</span>
+      {/* ── Two rows, not three (2026-08-05, by request) ──────────────────────
+          This was ONE wrapping row holding the controls, the two status chips and the
+          sync metadata, plus the department checklist on a row of its own below it. At
+          the width the sidebar leaves, that is three lines of header above a grid people
+          come here to scroll.
+          Split by what a thing IS rather than by where it fit: everything you can PRESS
+          is on this row, everything the page is TELLING you is on the next one. The
+          checklist joins this row because ticking a box is an action.
+          `Report for:` went with the split — the select beside it reads "July — in
+          progress", which says what the label said, in the control itself. */}
+      <div className="mb-1.5 flex flex-wrap items-center gap-3">
         <MonthYearSelect
           months={distinctMonths.map((m) => m.month)}
           current={month}
@@ -957,7 +1051,7 @@ export default async function MonthlyEtcPage({
           report="etc"
           fixedParams={{ month }}
           flushBeforeExport
-          className={BUTTON_SECONDARY}
+          className={`${BUTTON_SECONDARY} ${TOOLBAR_MIN_W} justify-center`}
         />
         {/* No Save button (2026-08-04, §17). Every edit autosaves ~0.8s after the last
             keystroke — clearing a cell included — and the status chip below says where the
@@ -992,9 +1086,22 @@ export default async function MonthlyEtcPage({
             unlock cookie as the /standard-sheet tab. */}
         {showStandards ? (
           <>
+            {/* ── "Standards", not "Hide Standards" (2026-08-05) ─────────────
+                The label names the thing; the ACTIVE colour says it is on, which is
+                exactly how View reports being filtered two controls to the left, and
+                how ProjectsShowActualsSwitch reports its state ("a switch already says
+                which way it is set — so the label can just name the thing it
+                controls").
+                It is also what makes the row fit on one line when Standards is
+                unlocked: "Hide Standards" needs 131px against a 98px floor, and it was
+                the single control keeping the toolbar 25px over budget. */}
             <form action={lockStandardSheet}>
-              <button type="submit" className={BUTTON_SECONDARY}>
-                Hide Standards
+              <button
+                type="submit"
+                className={`${TOOLBAR_BTN} ${TOOLBAR_MIN_W} ${TOOLBAR_BTN_ACTIVE} justify-center`}
+                title="Standard Sheet columns are showing — click to hide them."
+              >
+                Standards
               </button>
             </form>
             <EtcRatesButton
@@ -1005,30 +1112,100 @@ export default async function MonthlyEtcPage({
               disabled={standardSheetSubmitted}
             />
           </>
-        ) : standardsRevealRequested ? (
-          <form action={unlockStandardSheet} className="flex items-center gap-2">
-            <input
-              type="password"
-              name="password"
-              placeholder="Password"
-              aria-label="Standard Sheet password"
-              className="w-32 rounded-md border border-sdc-border px-2 py-1.5 text-sm outline-none focus:border-sdc-blue"
-            />
-            <button type="submit" className={BUTTON_SECONDARY} title="Show the Standard Sheet columns for this month (requires password).">
-              Show Standards
-            </button>
-            {standardWrongPassword && <span className="text-xs text-red-600">Wrong password</span>}
-          </form>
-        ) : null}
+        ) : (
+          <>
+            {/* ── The no-JavaScript path, and only that (§48) ───────────────────
+                The `?standards=1` URL still renders a real <form action>, because behind
+                this control sits a whole page of confidential figures and losing the way
+                in to a bundle that failed to load would be a poor trade. It keeps the
+                error cookie and the revalidate, since without JavaScript there is nothing
+                else to carry either.
+
+                Nothing reaches it by gesture any more — see StandardsGate. */}
+            {standardsRevealRequested && (
+              <form action={unlockStandardSheet} className="flex items-center gap-2">
+                <input
+                  type="password"
+                  name="password"
+                  placeholder="Password"
+                  aria-label="Standard Sheet password"
+                  className="w-32 rounded-md border border-sdc-border px-2 py-1.5 text-sm outline-none focus:border-sdc-blue"
+                />
+                <button type="submit" className={`${BUTTON_SECONDARY} ${TOOLBAR_MIN_W} justify-center`} title="Show the Standard Sheet columns for this month (requires password).">
+                  Show Standards
+                </button>
+                {standardWrongPassword && <span className="text-note text-sdc-red-text">Wrong password</span>}
+              </form>
+            )}
+            {/* The fast path: local state, no route render to open and none to submit. */}
+            <StandardsGate initiallyUnlocked={false} />
+          </>
+        )}
+
+        {/* ── The sign-off checklist, on the controls row (§50, moved here) ────
+            It had a row to itself, which was the third line. It belongs here: five
+            checkboxes are five controls, and they now sit at the same 2.4rem as the
+            buttons beside them (BTN_MIN_H_STANDARD).
+            Rendered even before the month is started, unlike the KPI strip: a department
+            can legitimately sign off a month with nothing booked in it, and hiding the
+            checklist until the first refresh would make an empty month unsubmittable
+            with no visible reason. */}
+        <DepartmentEtcChecklist
+          month={month}
+          monthTitle={monthHeading}
+          initial={departmentCompletions}
+          manageable={manageableDepts}
+          locked={locked}
+        />
+      </div>
+
+      {/* ── Row two: what the page is telling you ────────────────────────────
+          State, not controls — the month's status, anything wrong with it, and how
+          fresh the data is. None of it is pressable except the issues chip, which is a
+          chip precisely because it reports something rather than doing something.
+          Smaller gaps than the row above: these read as one sentence about the month,
+          where the row above is a set of separate tools. */}
+      <div className="mb-3 flex flex-wrap items-center gap-x-3 gap-y-1">
         <StatusBadge variant={!started ? "notStarted" : locked ? "locked" : "needsReview"}>
           {!started ? "Not started" : locked ? "Locked (submitted)" : `In progress — ${needsReviewCount} pending`}
         </StatusBadge>
+
+        {/* Everything the four banners used to say, in one chip (§44). Renders nothing
+            at all when there is nothing wrong — an "0 issues" control is permanent
+            furniture that says the same thing every day, which is how people stop
+            reading it. See EtcIssuesIndicator. */}
+        <EtcIssuesIndicator issues={etcIssues} />
         <span className="text-xs text-sdc-gray-400">
           {lastPowerBiSync?.syncedAt
             ? `Last synced: ${lastPowerBiSync.syncedAt.toISOString().slice(0, 16).replace("T", " ")}`
             : "Never synced"}
+          {/* ── The data VINTAGE, and why it can lead Power BI (§43) ──────────
+              This date already existed, but as a bare figure it could not answer the
+              question it kept provoking: "the app says 3,154 Engineering hours and the
+              Power BI report says 3,020 — which is wrong?".
+              Neither. Reconciled 2026-08-05, both differences account for exactly:
+                +138.83h ENG / +22.77h SHOP — July punches Lisa's file has and the
+                  semantic model has not ingested yet, so the APP is the fresher of the two;
+                + 5.00h ENG /  +4.86h SHOP — Warranty (phase 70) and Service (phase 80),
+                  which Power BI folds into Engineering/Shop and the ETC grid's fixed
+                  9+4-code formula deliberately excludes (signed off 2026-07-31).
+              So the vintage is named, and the source with it, because the whole point is
+              that the two systems are at different ones. See PAYLOCITY-INGESTION.md §43. */}
           {hoursActualFreshness?.refreshedThrough && (
-            <> · Hours Refreshed Thru: {hoursActualFreshness.refreshedThrough.toISOString().slice(0, 10)}</>
+            <>
+              {" · "}
+              <span
+                title={
+                  `Hours are complete through ${hoursActualFreshness.refreshedThrough.toISOString().slice(0, 10)} — the latest work date in the ` +
+                  `Paylocity file. The Power BI report reads a semantic model that refreshes separately, so it can be a few days behind this ` +
+                  `page. When the two disagree on a current month, that gap is usually the reason. Power BI also counts Warranty and Service ` +
+                  `hours inside Engineering/Shop; this grid excludes them by design.`
+                }
+                className="underline decoration-dotted underline-offset-2"
+              >
+                Hours through {hoursActualFreshness.refreshedThrough.toISOString().slice(0, 10)}
+              </span>
+            </>
           )}
           {/* Same figure as the report's Working Days card — weekday count
               for the selected work month. */}
@@ -1037,89 +1214,23 @@ export default async function MonthlyEtcPage({
         </span>
       </div>
 
-      {/* A failing hours feed used to be invisible here: the "Hours Refreshed
-          Thru" date above just stopped advancing while every number on the page
-          quietly aged. Say so plainly instead — these are the hours managers
-          submit a month against. */}
-      {hoursActualFreshness?.status?.startsWith("Failed") && (
-        <p className="mb-4 rounded-lg border border-sdc-red-border bg-sdc-red-bg px-3 py-2 text-xs text-sdc-red-text">
-          <strong>Hours data may be stale.</strong> The last sync from Paylocity/SharePoint failed
-          {hoursActualFreshness.checkedAt ? ` (${hoursActualFreshness.checkedAt.toISOString().slice(0, 16).replace("T", " ")})` : ""}
-          , so Hours Worked below may not reflect recent time entries. {hoursActualFreshness.status.replace(/^Failed:\s*/, "")}
-        </p>
-      )}
+      {/* ── The four banners and the instruction paragraph are gone (§44) ──────
+          They stacked above the table and, on a month with a failed sync and bad job
+          numbers, pushed the first row of the grid most of the way down a laptop
+          screen. Two of them restated KPI blocks that were already on this page WITH
+          drill-throughs — the comment on EtcMonthKpiCards below still records that they
+          were built from the same rows precisely so the two could not disagree.
 
-      {/* The grid's OWN hours sync, reported separately. The feed above can be
-          perfectly healthy while this step fails, and then every Hours Worked
-          cell is stale behind a header that says the data is current — which is
-          what happened through 2026-07-30. Only shown when the feed itself is
-          fine, so a single outage does not stack two banners saying the same
-          thing. */}
-      {etcHoursFreshness?.status?.startsWith("Failed") && !hoursActualFreshness?.status?.startsWith("Failed") && (
-        <p className="mb-4 rounded-lg border border-sdc-red-border bg-sdc-red-bg px-3 py-2 text-xs text-sdc-red-text">
-          <strong>Hours Worked below may be out of date.</strong> The hours feed is healthy, but writing it into this
-          month&apos;s ETC rows last failed
-          {etcHoursFreshness.checkedAt ? ` (${etcHoursFreshness.checkedAt.toISOString().slice(0, 16).replace("T", " ")})` : ""}
-          . {etcHoursFreshness.status.replace(/^Failed:\s*/, "")}
-        </p>
-      )}
+          Nothing was dropped. Every issue is now an entry in `etcIssues`, rendered as
+          one compact chip in the header row above ("2 data issues"), and the two that
+          have a drill-through OPEN it rather than describing it in prose. The queries,
+          the validation and the submission gate are untouched — this changed how the
+          findings are PRESENTED, not what is checked.
 
-      {/* Time booked without a valid job number. It cannot appear anywhere on
-          this page — there is no job to put it against — so the shortfall is
-          stated rather than left for someone to notice as a gap between these
-          totals and payroll. */}
-      {importIssues.length > 0 && (
-        <p className="mb-4 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-xs text-amber-900">
-          <strong>
-            {wholeNum(importIssues.reduce((s, i) => s + Number(i.hours), 0))} hours this month were booked without a
-            valid job number
-          </strong>{" "}
-          and are not counted in any figure below:{" "}
-          {importIssues
-            .map((i) => `"${i.label}" — ${wholeNum(Number(i.hours))}h across ${i.rows} entries`)
-            .join("; ")}
-          . These need correcting in Paylocity before the month is submitted.
-        </p>
-      )}
-
-      {/* Hours on jobs this grid isn't showing — see the note where
-          hiddenJobHours is built. Red, not amber, because unlike the
-          unattributed hours above these are attached to a real job and are
-          scheduled to be DELETED by the next Refresh Data or Submit. */}
-      {hiddenJobHours.length > 0 && (
-        <p className="mb-4 rounded-lg border border-sdc-red-border bg-sdc-red-bg px-3 py-2 text-xs leading-relaxed text-sdc-red-text">
-          {/* Counts only jobs that actually carry hours. HeadStart jobs are listed
-              always, including at 0h (see where headStartJobs is queried), and a
-              headline of "181 hours across 5 jobs" when two of them booked nothing
-              would misdescribe its own list. */}
-          <strong>
-            {wholeNum(hiddenJobHours.reduce((s, j) => s + j.hours, 0))} hours this month are recorded against{" "}
-            {hiddenJobHours.filter((j) => j.hours > 0).length === 1 ? "a job" : "jobs"} this grid isn&apos;t showing
-          </strong>{" "}
-          — so they are missing from every total below:{" "}
-          {hiddenJobHours
-            .map((j) => `${j.jobId} ${j.jobName} (${j.status ?? "no status"}) — ${j.hours > 0 ? `${wholeNum(j.hours)}h` : "no hours booked"}`)
-            .join("; ")}
-          . The grid only lists <strong>Active, billable</strong> jobs, so anything else lands here: a job that moved status
-          or is non-billable, one already Complete, or a <strong>HeadStart</strong> job (no PO, so never planned in an ETC
-          month — listed always, even at 0 hours, so one that starts booking time is seen). To bring a job into the month set
-          it back to Active and billable, or accept the shortfall deliberately.{" "}
-          <strong>These hours are counted from the punch records</strong>, so they stay visible here and are not affected by
-          Refresh Data or Submit ETC — but they reach no figure in the grid below until the job qualifies.
-        </p>
-      )}
-
-      <p className="mb-4 text-xs text-sdc-gray-400">
-        {!started
-          ? `"Refresh Data" starts ${month}: it seeds the job rows and pulls the latest hours (Paylocity) and parts costs (TotalETO), just like the sheet.`
-          : locked
-            ? `${month} is submitted and locked — these numbers are frozen exactly as submitted. Pick a month above to view any past submission, or "Reopen for editing" to correct this one (the corrected New ETC carries forward into the next month's Prior ETC when you re-submit).`
-            // Rewritten 2026-08-04. It described an app that no longer exists on two
-            // counts: "Refresh Data" is application-wide, not month-scoped (§29), and
-            // "Submit ETC ... the Standard Fees panel submits its Standard Sheet
-            // separately" is the pair of half-submissions §26 replaced with one button.
-            : `"Refresh Data" pulls the latest hours (Paylocity), parts costs (TotalETO), jobs and pool figures for the whole application — the same pass the hourly schedule runs. It never touches what you have entered. Yellow New ETC cells are the ones still waiting on a figure — they turn plain as soon as you enter one (0 counts), and yellow again if you clear it. When every yellow cell is answered, "Submit ${monthNameOnly} Report" at the bottom of the Standard Fees panel freezes the whole month in one go.`}
-      </p>
+          The instruction paragraph went with them. It explained Refresh Data, yellow
+          cells and submission on every single visit, forever, to people who had read it
+          the first time; the StatusBadge already names the state and each control
+          already carries its own tooltip. */}
 
       {/* KPI strip. Computed from the same rows the grid's grand-total row sums
           (see getEtcMonthKpis), so the cards and the bottom of the table can't
@@ -1164,8 +1275,15 @@ export default async function MonthlyEtcPage({
               inputs. The month is finalised by SubmitMonthReportButton, which reads the
               database rather than this DOM. */}
           <form key={month} id="etc-month-form" className="min-w-0 flex-1">
-          <DragScroll className={`max-h-[calc(100vh-215px)] ${GRID_SCROLLER}`}>
-            <table data-grid="etc" className={`w-full text-sm ${TABLE_GRID} ${ZOOM_CONTROLS}`}>
+          {/* 215px -> 183px (§44). This is a FIXED subtraction, so removing the
+              instruction paragraph above would otherwise have moved the grid up and left
+              32px of dead space at the bottom rather than giving the table the room —
+              the height would not have changed, only its position. The paragraph was
+              unconditional (`text-xs` + `mb-4`, one line at its shortest), so that is
+              the constant recovered. The four banners were conditional and never part of
+              this figure. */}
+          <DragScroll className={`max-h-[calc(var(--app-vh)_-_183px)] ${GRID_SCROLLER}`}>
+            <table data-grid="etc" className={`w-full text-sm ${TABLE_GRID} ${CELL_PADDING}`}>
               <thead className="sticky top-0 z-20 bg-sdc-gray-100">
                 <tr className={TABLE_HEADER_ROW}>
                   <th rowSpan={5} className="sticky left-0 z-10 w-10 min-w-10 bg-sdc-gray-100 px-2 py-3 text-center align-bottom">
@@ -1437,27 +1555,64 @@ export default async function MonthlyEtcPage({
                   // formulas (SUM of the Engineering blocks' Prior/Worked/New ETC,
                   // separately for Shop) — not a manager-entered value.
                   //
-                  // Diff is summed PER CELL, over EVERY cell — not derived from
-                  // the group totals, and no longer restricted to cells a
-                  // manager has decided. newEtcDiff is live for every cell now
-                  // (2026-08-02), so this has to sum the same set the column
-                  // displays or the group total wouldn't equal the cells above
-                  // it. Per-cell rather than (totalPrior - totalWorked -
-                  // totalNewEtc) because the suggestion clamps at 0 per cell,
-                  // and that clamp can't be reproduced from the sums.
+                  // ── All-or-nothing since §51 ──────────────────────────────
+                  //
+                  // Prior and Worked are synced facts and always print. Total New ETC
+                  // and Diff print ONLY when every section in the group that needs an
+                  // answer has one — see rollupNewEtc in lib/etc.ts for what "needs an
+                  // answer" means and why a partial figure was unreadable.
+                  //
+                  // `decided` is judged from the text the CELL WOULD SHOW, not from the
+                  // stored draft: newEtcSeedText is what EtcSectionCells seeds its input
+                  // with, so the server's answer here and the browser's answer a frame
+                  // later are the same function of the same state. Anything else and the
+                  // block would flicker between two figures on every page load.
                   const totals = {
-                    Engineering: { prior: 0, worked: 0, newEtc: 0, diff: 0 },
-                    Shop: { prior: 0, worked: 0, newEtc: 0, diff: 0 },
+                    Engineering: { prior: 0, worked: 0 },
+                    Shop: { prior: 0, worked: 0 },
                   };
+                  const rollupCells: Record<"Engineering" | "Shop", NewEtcRollupCell[]> = {
+                    Engineering: [],
+                    Shop: [],
+                  };
+                  // The sections still waiting, by name, for the blank cell's tooltip.
+                  // A blank with no explanation reads as missing data; "waiting on
+                  // Software and Robot" reads as a list of things to go and do.
+                  const pending: Record<"Engineering" | "Shop", string[]> = { Engineering: [], Shop: [] };
                   for (const s of ETC_SECTIONS) {
                     const entry = entryByCode.get(s.code);
+                    // No row means the job was never quoted for this section: Prior 0,
+                    // Worked 0, nothing to decide. The client renders an editable cell
+                    // for it that publishes as decided, so both sides agree it does not
+                    // block.
                     if (!entry) continue;
+                    const prior = Number(entry.priorEtc);
+                    const worked = Number(entry.hoursWorked);
                     const t = totals[s.billingGroup];
-                    t.prior += Number(entry.priorEtc);
-                    t.worked += Number(entry.hoursWorked);
-                    t.newEtc += effectiveNewEtc(entry);
-                    t.diff += newEtcDiff(entry);
+                    t.prior += prior;
+                    t.worked += worked;
+                    const state = {
+                      priorEtc: prior,
+                      hoursWorked: worked,
+                      draft: entry.newEtcDraft != null ? Number(entry.newEtcDraft) : null,
+                      confirmed: entry.submittedAt != null ? round2(Number(entry.newEtc)) : null,
+                      cleared: entry.newEtcClearedAt != null,
+                      locked,
+                      monthComplete,
+                      precision: "whole",
+                    } satisfies NewEtcCellState;
+                    const decided = isNewEtcCellDecided(state, newEtcSeedText(state));
+                    if (!decided) pending[s.billingGroup].push(s.name);
+                    rollupCells[s.billingGroup].push({
+                      decided,
+                      hoursLeft: calcHoursLeft(prior, worked),
+                      newEtc: effectiveNewEtc(entry),
+                    });
                   }
+                  const rollup = {
+                    Engineering: rollupNewEtc(rollupCells.Engineering),
+                    Shop: rollupNewEtc(rollupCells.Shop),
+                  };
 
                   // No row-level hover:bg on the <tr> below — the hover wash is
                   // the `tbody tr:hover > td` rule in globals.css, which paints
@@ -1582,26 +1737,29 @@ export default async function MonthlyEtcPage({
                         // exact value still drives the tooltip.
                         const hoursLeftExact = totals[group].prior - totals[group].worked;
                         const hoursLeft = Math.round(totals[group].prior) - Math.round(totals[group].worked);
-                        // NOT hoursLeft − newEtc: Diff is summed PER CELL because
-                        // the suggestion clamps at zero per cell, and that clamp
-                        // cannot be reproduced from these two column sums. See the
-                        // note where `totals` is built.
-                        const diff = totals[group].diff;
+                        // Hours Left − Total New ETC, plainly, now that the block only
+                        // prints when every cell contributes to both (§51). null while
+                        // the group is incomplete — see rollupNewEtc.
+                        const diff = rollup[group].diff;
+                        const groupNewEtc = rollup[group].newEtc;
                         groupGrandTotals[group].prior += totals[group].prior;
                         groupGrandTotals[group].worked += totals[group].worked;
-                        groupGrandTotals[group].newEtc += totals[group].newEtc;
-                        groupGrandTotals[group].diff += totals[group].diff;
+                        // §51: the bottom totals sum only the rows that HAVE a figure.
+                        // An incomplete row contributes nothing — not zero, not its
+                        // Hours Left, not a fallback of any kind (§51 #7, #8).
+                        if (groupNewEtc != null) groupGrandTotals[group].newEtc += groupNewEtc;
+                        if (diff != null) groupGrandTotals[group].diff += diff;
                         return (
                           <Fragment key={group}>
                             <td data-col={group} className={`${gi === 0 ? PHASE_EDGE : "border-l border-sdc-border"} ${ETC_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`} title={String(round2(totals[group].prior))}>
                               {wholeNum(totals[group].prior)}
                             </td>
-                            <td data-col={group} className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-500`} title={String(round2(totals[group].worked))}>
+                            <td data-col={group} className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_WORKED_BG} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-muted`} title={String(round2(totals[group].worked))}>
                               {wholeNum(totals[group].worked)}
                             </td>
                             <td
                               data-col={group}
-                              className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-500`}
+                              className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-muted`}
                               title={`${round2(hoursLeftExact)} = Prior ETC (${round2(totals[group].prior)}) − Hours Worked (${round2(totals[group].worked)})`}
                             >
                               {wholeNum(hoursLeft)}
@@ -1612,15 +1770,22 @@ export default async function MonthlyEtcPage({
                                 EtcLiveTotals repaints them through these hooks —
                                 see lib/etc-live-totals.ts for why they can't just
                                 wait for a save. */}
+                            {/* Blank until the whole group is answered (§51). The
+                                tooltip is what stops a blank cell reading as broken
+                                data — it names how many sections are still waiting. */}
                             <td
                               data-live="newEtc"
                               data-group={group}
                               data-col={group}
                               data-job={job.id}
                               className={`border-l border-sdc-border ${ETC_COL_W} ${newEtcBg(true)} overflow-hidden px-1 py-1 text-center align-middle text-label font-bold whitespace-nowrap text-sdc-navy`}
-                              title={String(round2(totals[group].newEtc))}
+                              title={
+                                groupNewEtc != null
+                                  ? String(round2(groupNewEtc))
+                                  : rollupPendingTitle(pending[group])
+                              }
                             >
-                              {wholeNum(totals[group].newEtc)}
+                              {groupNewEtc != null ? wholeNum(groupNewEtc) : ""}
                             </td>
                             <td
                               data-live="diff"
@@ -1630,13 +1795,16 @@ export default async function MonthlyEtcPage({
                               className={`border-l border-sdc-border ${ETC_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`}
                               // A rollup of one billing group for one job, so it
                               // scales against the hours-TOTAL ceiling rather than a
-                              // single cell's.
-                              style={diffCellStyle(diff, DIFF_CEILING.hoursTotal)}
-                              title={`${round2(diff)} = the sum of (Hours Left − New ETC) across this job's ${
-                                group === "Engineering" ? "Engineering" : "Shop"
-                              } cells. A cell with no New ETC typed yet compares against the suggestion, so it reads 0 unless that section is already overspent.`}
+                              // single cell's. No tint at all while it is blank —
+                              // colouring an absent figure would imply one.
+                              style={diff != null ? diffCellStyle(diff, DIFF_CEILING.hoursTotal) : undefined}
+                              title={
+                                diff != null
+                                  ? `${round2(diff)} = Hours Left (${round2(hoursLeftExact)}) − Total New ETC (${round2(groupNewEtc ?? 0)})`
+                                  : rollupPendingTitle(pending[group])
+                              }
                             >
-                              {wholeNum(diff)}
+                              {diff != null ? wholeNum(diff) : ""}
                             </td>
                           </Fragment>
                         );
@@ -1725,7 +1893,7 @@ export default async function MonthlyEtcPage({
                               </span>
                             </td>
                             <td
-                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-500`}
+                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-muted`}
                               title={`${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(prior)}) − Money Spent (${currencyExact(spent)})`}
                             >
                               {currency(moneyLeft)}
@@ -1848,7 +2016,7 @@ export default async function MonthlyEtcPage({
                 )}
               </tbody>
               {/* tfoot, not the last row of tbody: it's what takes the totals out
-                  of the row-height variable's reach (see ZOOM_CONTROLS), and it
+                  of the body-row padding rule's reach (see CELL_PADDING), and it
                   lets the row pin to the bottom of the scroller so the grand
                   totals stay on screen while scrolling a 59-job month. */}
               <tfoot className="sticky bottom-0 z-20">
@@ -2021,20 +2189,36 @@ export default async function MonthlyEtcPage({
             </table>
           </DragScroll>
           </form>
-          {showStandards && (
-            <StandardPoolPanel
-              month={month}
-              carriedFrom={poolsCarriedFrom}
-              upstreamNote={poolsUpstreamNote}
-              rows={poolPanelRows}
-              newProjects={poolNewProjects}
-              isSubmitted={standardSheetSubmitted}
-              poolsEditable={!standardSheetSubmitted && !poolsCarriedFrom}
-              savePoolsAction={savePools.bind(null, month)}
-              monthName={monthNameOnly}
-              initialStatus={reportReadiness}
-            />
-          )}
+          {/* ── The Standard Fees card (§48) ─────────────────────────────────────
+              Rendered ALWAYS, and it decides for itself whether to show anything. That
+              is the whole point: revealing it used to require a server render of this
+              page (2,911ms / 190KB, measured), and now the reveal is a boolean in
+              lib/standards-reveal.ts.
+
+              `initialData` is the figures the server already computed — non-null only
+              when THIS request carried the unlock cookie, so an already-unlocked visitor
+              gets the card with no action call and no spinner, and a locked one is sent
+              nothing at all. When the password is accepted mid-session the card shows its
+              shell immediately and fetches only its own inputs. */}
+          <StandardFeesCard
+            month={month}
+            initialData={
+              showStandards
+                ? {
+                    month,
+                    monthName: monthNameOnly,
+                    carriedFrom: poolsCarriedFrom,
+                    upstreamNote: poolsUpstreamNote,
+                    rows: poolPanelRows,
+                    newProjects: poolNewProjects,
+                    isSubmitted: standardSheetSubmitted,
+                    poolsEditable: !standardSheetSubmitted && !poolsCarriedFrom,
+                    initialStatus: reportReadiness,
+                  }
+                : null
+            }
+            savePoolsAction={savePools.bind(null, month)}
+          />
         </div>
         </StandardRatesProvider>
       )}

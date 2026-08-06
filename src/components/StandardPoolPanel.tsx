@@ -185,7 +185,7 @@ export function StandardPoolPanel({
           // would put the pools back in the state §25 was written to end: refreshed on
           // their own clock, beside figures on another.
           <span
-            className="text-label text-sdc-gray-500"
+            className="text-label text-sdc-muted"
             title="These pools refresh with the rest of the app — use Refresh Data in the sidebar."
           >
             Refreshed with the app
@@ -216,7 +216,7 @@ export function StandardPoolPanel({
             // stays a <form> so PoolAutosave can read the named inputs with FormData,
             // exactly as the Save button used to.
             <form id="standard-pool-form">
-              <div className="max-h-[calc(100vh-330px)] overflow-auto styled-scrollbar">
+              <div className="max-h-[calc(var(--app-vh)_-_330px)] overflow-auto styled-scrollbar">
                 {groups.map((group) => (
                   <div key={group}>
                     <div className={`${GROUP_TINT[group] ?? "bg-sdc-gray-100"} border-b border-sdc-border px-3 py-1.5 text-xs font-semibold text-sdc-navy`}>
@@ -292,7 +292,7 @@ function PoolDeptRow({ row, poolsEditable }: { row: PoolPanelRow; poolsEditable:
 
   return (
     <div className="border-b border-sdc-border px-3 py-2">
-      <p className="mb-1 text-note font-semibold uppercase tracking-wide text-sdc-gray-500">{row.dept}</p>
+      <p className="mb-1 text-note font-semibold uppercase tracking-wide text-sdc-muted">{row.dept}</p>
       <dl className="space-y-0.5 text-xs">
         <Line label="Previous Month Pulled Hours" value={whole(row.previousMonthPulledHours)} title={exactHours(row.previousMonthPulledHours)} />
         <Line label="New Hours Added this Month" value={whole(row.newHoursAddedThisMonth)} title={exactHours(row.newHoursAddedThisMonth)} />
@@ -368,7 +368,7 @@ function NewProjects({
     <div className="border-t border-sdc-border">
       <div className="flex items-baseline justify-between gap-2 bg-sdc-gray-50 px-3 py-1.5">
         <p className="text-xs font-semibold text-sdc-navy">New projects this month</p>
-        <p className="shrink-0 text-note tabular-nums text-sdc-gray-500">
+        <p className="shrink-0 text-note tabular-nums text-sdc-muted">
           {projects.length === 0 ? "none" : `${projects.length} · ${whole(total)} h`}
         </p>
       </div>
@@ -410,9 +410,9 @@ function NewProjects({
                 warranty columns named beneath it. */}
             <thead>
               <tr className="border-t border-sdc-border bg-sdc-gray-50">
-                {/* sdc-gray-600, not the sdc-gray-500 used elsewhere in this
+                {/* sdc-gray-600, not the sdc-muted used elsewhere in this
                     file: only 50/100/400/600/700 are defined in globals.css's
-                    @theme block, so `text-sdc-gray-500` generates no class at
+                    @theme block, so `text-sdc-muted` generates no class at
                     all and silently inherits. */}
                 <th rowSpan={2} className="px-1.5 py-1 text-left align-bottom font-semibold text-sdc-gray-600">
                   Job

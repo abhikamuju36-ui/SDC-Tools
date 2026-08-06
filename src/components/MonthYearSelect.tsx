@@ -2,6 +2,7 @@
 
 import { useState, useTransition } from "react";
 import { useRouter } from "next/navigation";
+import { BTN_H_STANDARD, TOOLBAR_MIN_W } from "@/components/ui/classnames";
 import { isEtcDirty } from "@/lib/etc-dirty-tracker";
 
 const MONTH_NAMES = [
@@ -101,8 +102,17 @@ export function MonthYearSelect({
   const statusSuffix = (ym: string) =>
     !months.includes(ym) ? " (new)" : locked.has(ym) ? " — locked" : " — in progress";
 
+  // ── The same geometry as the buttons beside it (§41.21) ───────────────────
+  //
+  // `py-1.5` put these at 34px in a row of 36px buttons — the two-pixel mismatch that
+  // reads as a jagged toolbar rather than as anything nameable. BTN_H_STANDARD is the
+  // one height token; TOOLBAR_MIN_W keeps the YEAR select (which holds four characters)
+  // from sitting at 76px beside controls half again its width.
+  //
+  // The month select stays wider than the floor because its widest OPTION sets its
+  // width, and that is right: the thing it has to fit is "September · in progress".
   const selectClass =
-    "rounded-lg border border-sdc-border bg-white px-3 py-1.5 text-sm font-medium text-sdc-navy shadow-sm outline-none motion-interactive focus:border-sdc-blue disabled:cursor-wait";
+    `${BTN_H_STANDARD} ${TOOLBAR_MIN_W} rounded-lg border border-sdc-border bg-white px-3 text-sm font-medium text-sdc-navy shadow-sm outline-none motion-interactive focus:border-sdc-blue disabled:cursor-wait`;
 
   return (
     <span className="inline-flex items-center gap-2">
@@ -146,7 +156,7 @@ export function MonthYearSelect({
           it a disabled dropdown is indistinguishable from a broken one — the
           exact complaint this whole change is about. */}
       {pending && (
-        <span role="status" className="flex items-center gap-1.5 text-xs font-medium text-sdc-gray-500">
+        <span role="status" className="flex items-center gap-1.5 text-xs font-medium text-sdc-muted">
           <svg viewBox="0 0 16 16" width="12" height="12" className="animate-spin" aria-hidden>
             <circle cx="8" cy="8" r="6" fill="none" stroke="currentColor" strokeWidth="2" opacity="0.25" />
             <path d="M8 2 a6 6 0 0 1 6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />

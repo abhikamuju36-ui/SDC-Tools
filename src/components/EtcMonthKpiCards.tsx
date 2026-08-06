@@ -3,6 +3,11 @@
 import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { usd, hours as fmtHours } from "@/components/ui/format";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
+import { UndefinedHoursPanel } from "@/components/UndefinedHoursPanel";
+// The drill card's height ceiling and its one scrolling region (§49). The two panels
+// below are hand-rolled rather than DrillPanel, so they read the same two classes the
+// shared panel does — the alternative is four opinions about how tall a drill may be.
+import { DRILL_BODY, DRILL_CAP } from "@/components/ui/Drill";
 import { ETC_SECTIONS } from "@/lib/sections";
 import { offGridBySection, sectionName, type OffGridJob } from "@/lib/off-grid-hours";
 import type { EtcMonthKpis } from "@/lib/etc-month-kpis";
@@ -24,6 +29,7 @@ import { loadEtcMonthHoursDetail, loadPartsSpentDetail, loadJobPartsLines } from
 import type { PartsSpentDetail } from "@/lib/parts-spent";
 import type { JobPartsCost } from "@/lib/sync-totaleto";
 import { readKpiStripOpen, writeKpiStripOpen, subscribeKpiStrip } from "@/lib/kpi-strip-pref";
+import { subscribeKpiDrillRequest, readKpiDrillRequest, serverKpiDrillRequest } from "@/lib/etc-drill-request";
 // Newest-wins ordering and in-flight de-duplication for every drill fetch below
 // (§32.2). Replaces four hand-rolled request-id refs that each got the ordering
 // right and the DUPLICATION wrong — see the note on the fetch effects.
@@ -153,6 +159,13 @@ export function EtcMonthKpiCards({
   // same reason as the other client prefs: reading localStorage during render
   // hydrates differently from the server.
   const stripOpen = useSyncExternalStore(subscribeKpiStrip, readKpiStripOpen, () => true);
+  // "2026-07" -> "JULY 2026" for the card header. Parsed as local parts rather than
+  // `new Date("2026-07")`, which is parsed as UTC midnight and prints as the PREVIOUS
+  // month for anybody west of Greenwich — this server is UTC-4, so every card would have
+  // been titled a month early.
+  const monthTitle = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1, 1)
+    .toLocaleString("en-US", { month: "long", year: "numeric" })
+    .toUpperCase();
   const setStripOpen = writeKpiStripOpen;
   // The unattributed drill is fetched on click, not with the page: it re-parses
   // the hours export, which nobody should pay for unless they open it.
@@ -232,6 +245,25 @@ export function EtcMonthKpiCards({
   const toggleDrill = useCallback((scope: DrillScope) => {
     setDrill((current) => (current === scope ? null : scope));
   }, []);
+
+  // ── Opening a drill from outside this card (§44) ────────────────────────────
+  //
+  // The issues indicator in the page header replaced the full-width banners, and two of
+  // those banners described figures that already have a drill here. Rather than
+  // restating them in prose a second time, that indicator ASKS for the drill.
+  //
+  // Not a toggle: a request must always open. Someone clicking "Undefined hours" in the
+  // issues list means "show me", never "hide it if it happens to be showing" — and it
+  // opens the summary strip too, because a drill rendered inside a collapsed strip is a
+  // click that appears to do nothing.
+  const drillRequest = useSyncExternalStore(subscribeKpiDrillRequest, readKpiDrillRequest, serverKpiDrillRequest);
+  const lastHandledRequest = useRef(0);
+  useEffect(() => {
+    if (!drillRequest || drillRequest.n === lastHandledRequest.current) return;
+    lastHandledRequest.current = drillRequest.n;
+    setDrill(drillRequest.scope);
+    if (!readKpiStripOpen()) writeKpiStripOpen(true);
+  }, [drillRequest]);
 
   // ── Retry, per KPI (§37.9) ──────────────────────────────────────────────────
   //
@@ -401,7 +433,11 @@ export function EtcMonthKpiCards({
       {/* Collapsible, and remembered. Six boxes three lines tall pushed the grid —
           the thing people came for — below the fold on a laptop. Compact by
           default now, and hideable outright for anyone who never wants them. */}
-      <div className="mb-1.5 flex items-center justify-end">
+      {/* Collapsed, the toggle has no card to sit in, so it keeps its own row. Open, it
+          moves INTO the card header beside the month (see below) — which is where the
+          stacked layout wants it: a floating "Hide summary" above a bordered card reads
+          as belonging to the page rather than to the thing it hides. */}
+      <div className={`mb-1.5 flex items-center justify-end ${stripOpen ? "hidden" : ""}`}>
         <button
           type="button"
           onClick={() => setStripOpen(!stripOpen)}
@@ -410,7 +446,7 @@ export function EtcMonthKpiCards({
           // different widths, and without the reservation the control walked left and
           // right as it was used (§36.14: "avoid replacing text with differently sized
           // content").
-          className="motion-interactive min-w-[6.5rem] text-right text-label font-medium text-sdc-gray-500 underline decoration-dotted underline-offset-2 hover:text-sdc-navy"
+          className="motion-interactive min-w-[6.5rem] text-right text-label font-medium text-sdc-muted underline decoration-dotted underline-offset-2 hover:text-sdc-navy"
         >
           {stripOpen ? "Hide summary" : "Show summary"}
         </button>
@@ -427,13 +463,63 @@ export function EtcMonthKpiCards({
           would stagger six things the user asked for at once (§36.1).
           Labelled, so a screen reader announces what the region is before reading six
           figures out of it (§37.10). */}
+      {/* ── Card and drill SIDE BY SIDE (2026-08-05, by request) ────────────
+          The drill used to render BELOW the card, which pushed the grid down by the
+          height of a whole panel every time somebody looked at a figure — the same
+          complaint the banners caused, arriving by a different route. */}
+      {/* ── Two independent heights, aligned at the TOP (§49, by request) ────
+          This briefly ran on flex's default `stretch` — "the two cards must line up at
+          the top and at the bottom" — which is the same instruction read the other way,
+          and it made the summary card the loser: stretch gives a card the ROW's height
+          without giving it any more content, so five KPI rows sat above ~200px of empty
+          grey whenever a drill was open beside them. A card cannot be equal-height with
+          a table of forty-five jobs and still be a card.
+          So `items-start`, each card its own height, and the drill takes a ceiling of its
+          own instead (DRILL_CAP) — which is what stops "as tall as its content" from
+          meaning "as tall as it likes".
+
+          ── Wrapping, not a breakpoint ───────────────────────────────────────
+          `flex-wrap` with a flex-basis on the drill column, rather than `xl:flex-row`.
+          §26.2 is the reason: Tailwind's breakpoints measure the VIEWPORT and this row is
+          not the viewport — it is inset by a sidebar that is ~276px expanded, so `xl`
+          (1280px) fires on a card that is only ~1000px wide and the drill would be
+          squeezed to ~490px on exactly the "normal desktop" width the requirement is
+          about. Wrapping measures the actual box: the two sit side by side while both
+          fit, and the drill drops to its own full-width line when they do not. Browser
+          zoom needs no separate handling for the same reason. */}
+      <div className="flex flex-wrap items-start gap-3">
       {stripOpen && (
       <section
         aria-label={`${month} summary`}
         // @container: the block layout inside responds to THIS card's width rather than
         // the viewport's — see KPI_GRID_CLASS for why the viewport was the wrong box.
-        className="@container motion-fade overflow-hidden rounded-xl border border-sdc-border bg-sdc-border-soft shadow-sm"
+        // ── The card no longer spans the page (2026-08-05, by request) ──────
+        //
+        // Full width was right when this was six blocks in a row; stacked, it left a
+        // label at the far left and its figure ~1,200px away at the far right, which is
+        // a long way to travel to read one line. Capped at 34rem, which fits the widest
+        // label and the widest figure with room to spare, and the space it gives back is
+        // exactly where the drill now opens.
+        //
+        // shrink-0 so a wide drill table beside it cannot squeeze the card; the drill
+        // column takes the pressure instead (it has min-w-0 and scrolls).
+        className="@container motion-fade w-full max-w-[34rem] shrink-0 overflow-hidden rounded-xl border border-sdc-border bg-sdc-border-soft shadow-sm"
       >
+      {/* The card's own header: which month these figures are for, and the control that
+          puts them away. The month was previously nowhere on the card — the strip sat
+          under a month picker and inherited its meaning from position alone, which is
+          fine until somebody screenshots it. */}
+      <div className="flex items-baseline justify-between gap-3 border-b border-sdc-border bg-white px-3 py-2">
+        <h2 className="text-label font-semibold uppercase tracking-wide text-sdc-muted">{monthTitle}</h2>
+        <button
+          type="button"
+          onClick={() => setStripOpen(false)}
+          aria-expanded
+          className="motion-interactive shrink-0 text-label font-medium text-sdc-muted underline decoration-dotted underline-offset-2 hover:text-sdc-navy"
+        >
+          Hide summary
+        </button>
+      </div>
       <div className={KPI_GRID_CLASS}>
         {/* Every block, from the one place that decides what the blocks are. The
             labels, tones, drill scopes and the conditional off-grid block all live in
@@ -455,14 +541,36 @@ export function EtcMonthKpiCards({
       </div>
       </section>
       )}
+      {/* The drill column. min-w-0 is load-bearing: without it a flex child refuses to
+          shrink below its content, and one wide punch table would push the card off the
+          left edge instead of scrolling inside its own container. */}
+      {/* `basis-[28rem]` is what decides side-by-side against stacked, and it is a
+          BASIS rather than a min-width on purpose: the basis is the hypothetical size the
+          wrap decision is made on, so the drill drops to its own line once the summary
+          card no longer leaves it 28rem — but a min-width would also refuse to shrink
+          after wrapping, and on a genuinely narrow window that is horizontal page scroll
+          rather than a stacked layout.
+          No `[&>*]:h-full` any more (§49): that existed only to push the drill panel out
+          to the equal height stretch had given this column, and with `items-start` above
+          there is no row height to fill. It is what made a capped, internally scrolling
+          drill impossible — h-full overrode the ceiling with the row's height.
 
+          Rendered only when a drill is OPEN, which it did not need to be while it was
+          `flex-1`: an empty column simply took the slack. With a flex-basis it is 28rem
+          of hypothetical width, so on a narrower row an EMPTY column wrapped to a second
+          line and left a 12px row gap under the card — a phantom shift with nothing in
+          it, on a layout whose whole job is not to shift (§49 acceptance 7). */}
+      {drill != null && (
+      <div className="min-w-0 shrink grow basis-[28rem]">
       {drill === "Parts" ? (
         // ── Where the parts money went, by job ──────────────────────────────
         //
         // Every figure here comes from the same EtcEntry rows and the same functions
         // (effectiveNewEtc / newEtcDiff / calcHoursLeft) that getEtcMonthKpis uses, so
         // the footer IS the card rather than a second opinion about it (§28.15).
-        <div className="motion-panel rounded-xl border border-sdc-border bg-white p-4 shadow-sm">
+        // Capped, with the table as its one scrolling region (§49). The heading and the
+        // instruction above it stay put; forty-five job rows scroll underneath them.
+        <div className={`motion-panel flex ${DRILL_CAP} flex-col rounded-xl border border-sdc-border bg-white p-4 shadow-sm`}>
           <p className="mb-1 text-xs font-semibold text-sdc-navy">Parts spent — {month}, by job</p>
           <p className="mb-3 text-xs leading-relaxed font-medium text-sdc-gray-700">
             Money invoiced against each job this month, biggest first. Click a row to see the purchase-order lines behind it.
@@ -475,7 +583,10 @@ export function EtcMonthKpiCards({
           )}
 
           {!partsError && parts && parts.rows.length > 0 && (
-            <div className="styled-scrollbar max-h-[420px] overflow-auto">
+            // Was a flat 420px; now it takes whatever the card's ceiling leaves it (§49),
+            // so a tall window shows more rows and a short one shows fewer, rather than
+            // both showing 420px and the tall one wasting the rest.
+            <div className={DRILL_BODY}>
               {/* Two columns only, by request: the question this panel answers is
                   "where did the money go", and budget/plan columns were answering a
                   different one that the grid below already covers. */}
@@ -602,9 +713,19 @@ export function EtcMonthKpiCards({
           )}
         </div>
       ) : drill === "OffGrid" ? (
-        <div className="motion-panel rounded-xl border border-sdc-red-border bg-white p-4 shadow-sm">
+        // Capped, with the table as its one scrolling region (§49). The two explanatory
+        // paragraphs and the Split by toggle stay put — this is the one figure on the
+        // strip with an action attached, and scrolling the "what to do about it" out of
+        // view to read the rows would defeat the panel.
+        <div className={`motion-panel flex ${DRILL_CAP} flex-col rounded-xl border border-sdc-red-border bg-white p-4 shadow-sm`}>
           <p className="mb-1 text-xs font-semibold text-sdc-navy">
-            {fmtHours(offGridTotal)} hours on {offGridJobs.length} {offGridJobs.length === 1 ? "job" : "jobs"} the grid isn&apos;t listing
+            {/* The trailing space is explicit. It reads as an ordinary space between an
+                expression and the text after it, and on one line JSX does preserve that
+                — but it rendered as "5 jobsthe grid isn't listing" in a screenshot, and
+                a separator that depends on JSX whitespace rules is not worth defending.
+                {" "} cannot be collapsed by a formatter re-wrapping the line either. */}
+            {fmtHours(offGridTotal)} hours on {offGridJobs.length} {offGridJobs.length === 1 ? "job" : "jobs"}{" "}
+            the grid isn&apos;t listing
           </p>
           {/* The WHY and the WHAT-NOW, not just the number. This is the one figure
               on the strip with a deadline attached, and a drill that only restated
@@ -625,7 +746,7 @@ export function EtcMonthKpiCards({
           {/* Two readings of the same 181 hours. Both total identically — they have to,
               since the card above shows that figure too. */}
           <div className="mb-2 flex items-center gap-1.5">
-            <span className="text-label font-medium text-sdc-gray-500">Split by</span>
+            <span className="text-label font-medium text-sdc-muted">Split by</span>
             {(["job", "section"] as const).map((v) => (
               <button
                 key={v}
@@ -647,10 +768,12 @@ export function EtcMonthKpiCards({
               </button>
             ))}
           </div>
-          <div className="styled-scrollbar max-h-72 overflow-auto rounded-lg border border-sdc-border">
+          {/* Was a flat 18rem; now it takes whatever the card's ceiling leaves it (§49).
+              The footnote below stays outside it, so it cannot be scrolled away. */}
+          <div className={`${DRILL_BODY} rounded-lg border border-sdc-border`}>
             <table className="w-full border-collapse text-note">
               <thead className="sticky top-0 bg-sdc-gray-100">
-                <tr className="text-left text-label font-semibold uppercase tracking-wide text-sdc-gray-500">
+                <tr className="text-left text-label font-semibold uppercase tracking-wide text-sdc-muted">
                   {offGridView === "job" ? (
                     <>
                       <th className="px-2 py-1.5">Job</th>
@@ -731,7 +854,7 @@ export function EtcMonthKpiCards({
         </div>
       ) : drill === "Unattributed" ? (
         loadingUnattributed || (!unattributed && !unattributedError) ? (
-          <p className="motion-panel rounded-xl border border-sdc-border bg-white p-4 text-xs text-sdc-gray-500 shadow-sm">
+          <p className="motion-panel rounded-xl border border-sdc-border bg-white p-4 text-xs text-sdc-muted shadow-sm">
             Reading the hours export…
           </p>
         ) : unattributedError ? (
@@ -739,23 +862,16 @@ export function EtcMonthKpiCards({
             Could not load the undefined-hours detail — {unattributedError}
           </p>
         ) : (
-          <HoursDetailPanel
-            detail={unattributed!}
-            // The card counts what the last SYNC stored; these rows are read live
-            // from the export. Normally identical — but if the file has moved on,
-            // say so rather than letting a card and its own drill quietly differ.
-            note={
-              Math.abs(unattributed!.total - unattributed!.storedTotal) >= 1
-                ? `The card reads ${fmtHours(unattributed!.storedTotal)} from the last sync — the export now holds ${fmtHours(
-                    unattributed!.total,
-                  )}. Refresh Data to bring the stored figure up to date.`
-                : "These punches reach no figure on this page. Correct the job number in Paylocity, then Refresh Data."
-            }
-            // Matches the card that opened it — a drill panel titled with the old
-            // name would read as a different report.
-            title={`Undefined hours — ${month}`}
-            onClose={() => setDrill(null)}
-          />
+          // Its own panel since 2026-08-05 (§42.27), not HoursDetailPanel. That one is
+          // built for "who worked on this job" — a punch list grouped by
+          // department/employee/section. These rows are FAULTS to be corrected, so the
+          // panel leads with the reason breakdown and what to do about each, and states
+          // its reconciliation against the KPI outright (§42.28).
+          //
+          // The `note` that used to be passed here explained that the card and the drill
+          // might disagree, because they read two different sources. They no longer can:
+          // both come from one pass over one import. See lib/unattributed-hours.ts.
+          <UndefinedHoursPanel detail={unattributed!} month={month} onClose={() => setDrill(null)} />
         )
       ) : (
         drill &&
@@ -780,7 +896,7 @@ export function EtcMonthKpiCards({
             </button>
           </p>
         ) : scopedDetail == null ? (
-          <p className="motion-panel rounded-xl border border-sdc-border bg-white p-4 text-xs text-sdc-gray-500 shadow-sm">
+          <p className="motion-panel rounded-xl border border-sdc-border bg-white p-4 text-xs text-sdc-muted shadow-sm">
             Loading the punch detail…
           </p>
         ) : (
@@ -795,6 +911,9 @@ export function EtcMonthKpiCards({
           />
         ))
       )}
+      </div>
+      )}
+      </div>
     </div>
   );
 }
@@ -870,8 +989,23 @@ const MetricBlock = memo(function MetricBlock({
       // swaps between a variance, an unplanned figure and a neutral note as cells are
       // filled in, and without a floor the block changed height mid-typing and took the
       // whole card (and the grid below it) with it (§36.14, §37.7).
-      className={`motion-interactive min-w-0 px-2.5 py-2 ${changed ? "motion-flash" : ""} ${
-        tone === "danger" ? "bg-sdc-red-bg/70" : tone === "warn" ? "bg-sdc-yellow-bg/70" : "bg-white"
+      // A ROW now, not a column (2026-08-05, by request). Label and status on the left,
+      // figure and Detail right-aligned — so the figures line up down the card, which is
+      // the one thing six side-by-side columns could never do.
+      //
+      // `items-center` with no reserved heights: a row is as tall as its tallest line and
+      // every line here is a single line, so the status swapping between a variance and a
+      // note cannot change the row's height. The three min-h floors the column layout
+      // needed (§36.14) are gone with it.
+      className={`motion-interactive flex min-w-0 items-center gap-3 px-3 py-2 ${changed ? "motion-flash" : ""} ${
+        // A tone tints the row and adds a left accent — the accent is what makes a toned
+        // row findable when the card is scanned quickly, and unlike a full border it
+        // cannot double up against the gap-px dividers above and below.
+        tone === "danger"
+          ? "border-l-4 border-l-sdc-red bg-sdc-red-bg/70"
+          : tone === "warn"
+            ? "border-l-4 border-l-sdc-yellow bg-sdc-yellow-bg/70"
+            : "border-l-4 border-l-transparent bg-white"
       }`}
       title={hint ?? undefined}
       // A group per KPI, named by its own label, so a screen reader announces
@@ -886,7 +1020,7 @@ const MetricBlock = memo(function MetricBlock({
           link moved down beside the status instead, where the two together still fit
           with room to spare. `truncate` stays as the graceful fallback if the strip is
           ever asked to hold more blocks than this. */}
-      <p id={labelId} className="truncate text-label font-semibold uppercase tracking-wide text-sdc-gray-500">
+      <p id={labelId} className="min-w-0 flex-1 truncate text-label font-semibold uppercase tracking-wide text-sdc-muted">
         {/* The tone, said in something other than colour (§37.10). The glyph is
             decorative — the sr-only words here and the status line below are what
             carry the meaning. */}
@@ -906,10 +1040,10 @@ const MetricBlock = memo(function MetricBlock({
           gets ~155px on a 1280px screen, so one of the two had to clip, and §37.7/§37.8
           forbid clipping either. The reserved heights keep every block the same size
           whatever its figures do. */}
-      <p className="font-heading min-h-[1.4rem] truncate text-base leading-tight font-bold tabular-nums text-sdc-navy">
-        {value}
-      </p>
-      <div className="flex min-h-[1.05rem] items-baseline justify-between gap-1.5">
+      {/* Status BEFORE the figure and to its left, so the column of figures on the right
+          stays unbroken. It gets no reserved width: in a row there is space for it, and
+          the whole reason the column layout hid things was that there wasn't. */}
+      <div className="flex shrink-0 items-baseline justify-end gap-3">
         <p
           className={`min-w-0 truncate text-note font-semibold tabular-nums ${
             statusKind === "unplanned"
@@ -934,6 +1068,13 @@ const MetricBlock = memo(function MetricBlock({
             </span>
           )}
           {statusText}
+        </p>
+        {/* The figure. Right-aligned in a reserved width so every value on the card lines
+            up on the same edge regardless of how long the label beside it is — the
+            comparison this card exists for. Larger than it was, because a row has the
+            room the columns did not. */}
+        <p className="font-heading min-w-[5.5rem] text-right text-lg leading-tight font-bold tabular-nums text-sdc-navy">
+          {value}
         </p>
         {drill != null && (
           <button

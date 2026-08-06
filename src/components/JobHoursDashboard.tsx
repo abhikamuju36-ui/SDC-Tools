@@ -119,7 +119,7 @@ export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hours
               className={`rounded-full border px-3 py-1 text-xs motion-interactive ${
                 activePhases.has(p)
                   ? "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark"
-                  : "border-sdc-border-soft text-sdc-gray-500 hover:text-sdc-navy"
+                  : "border-sdc-border-soft text-sdc-muted hover:text-sdc-navy"
               }`}
             >
               {p}
@@ -130,7 +130,7 @@ export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hours
 
       {visible.length === 0 ? (
         <div className={card("p-8")}>
-          <p className="text-center text-sdc-gray-500">No hours recorded for this job yet.</p>
+          <p className="text-center text-sdc-muted">No hours recorded for this job yet.</p>
         </div>
       ) : (
       <>
@@ -155,6 +155,10 @@ export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hours
                   the monthly summary above it. */}
               <HoursDetailPanel
                 detail={hoursDetail}
+                // The panel's own `mt-4` moved out to its callers when the Monthly ETC
+                // card started rendering it side by side. Here it still sits BELOW the
+                // chart above it, so it still wants the gap.
+                className="mt-4"
                 initialSection={drillRow.code}
                 // The Actual bar above covers the job's whole life; this table
                 // only holds punches from the window the Paylocity export
@@ -231,7 +235,7 @@ function SectionHierarchyChart({
 
   const Bar = ({ value, color }: { value: number; color: string }) => (
     <div className="flex h-full flex-col items-center justify-end">
-      <span className="mb-0.5 text-micro leading-none text-sdc-gray-500">{value ? fmt(value) : ""}</span>
+      <span className="mb-0.5 text-micro leading-none text-sdc-muted">{value ? fmt(value) : ""}</span>
       {/* ── scaleY, not height (§36.2, §36.14, §36.15) ──────────────────────────
           This was `transition-[height] duration-500`, which broke three of §36's
           rules at once on a chart that can hold twenty bars:
@@ -314,7 +318,7 @@ function SectionHierarchyChart({
             style={{ left: hover.x, top: hover.y - 12 }}
           >
             <div className="mb-1 font-semibold text-sdc-navy">{hover.row.name}</div>
-            <div className="text-label text-sdc-gray-500">{hover.row.phase} · {hover.row.group}</div>
+            <div className="text-label text-sdc-muted">{hover.row.phase} · {hover.row.group}</div>
             <div className="mt-1 flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: SERIES.planned }} /><span className="text-sdc-gray-600">{plannedLabel}:</span> <span className="font-medium tabular-nums">{fmt(hover.row.planned)}</span></div>
             <div className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: SERIES.actual }} /><span className="text-sdc-gray-600">Actual:</span> <span className="font-medium tabular-nums">{fmt(hover.row.actual)}</span></div>
             <div className={`mt-0.5 font-semibold tabular-nums ${diff > 0 ? "text-red-600" : diff < 0 ? "text-sdc-green-text" : "text-sdc-gray-400"}`}>
@@ -386,7 +390,7 @@ function SectionDrill({
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-2">
         <div>
           <p className="text-sm font-bold text-sdc-navy">{row.name}</p>
-          <p className="text-note text-sdc-gray-500">
+          <p className="text-note text-sdc-muted">
             {row.phase} · {row.group} · {row.code}
           </p>
         </div>
@@ -414,7 +418,7 @@ function SectionDrill({
       {rowsWithRunning.length === 0 ? (
         // Distinct from "0 hours": a section can carry a quote and a historical
         // Excel actual with no month-by-month ETC history behind it at all.
-        <p className="text-xs text-sdc-gray-500">
+        <p className="text-xs text-sdc-muted">
           No month-by-month history for this section — its actual comes from the migrated Excel total, not from ETC tracking.
         </p>
       ) : (
@@ -436,7 +440,7 @@ function SectionDrill({
                   section went over, which is the whole point of the panel. */}
               <span
                 className={`text-right text-note tabular-nums ${
-                  row.planned > 0 && m.running > row.planned ? "font-semibold text-red-600" : "text-sdc-gray-500"
+                  row.planned > 0 && m.running > row.planned ? "font-semibold text-red-600" : "text-sdc-muted"
                 }`}
               >
                 {fmt(m.running)}

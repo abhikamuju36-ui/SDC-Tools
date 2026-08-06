@@ -157,14 +157,38 @@ export function PartsCostNewEtcCell({
     // Fixing it here fixes the cell, the row, the footer and the export at once,
     // because they all read this one published value.
     const diffNow = decidedNow ? left - Math.max(effective, 0) : 0;
-    // `decided` is published too, but the row Diff no longer prints "—" for an
-    // undecided cell — it prints the figure (see diffNow above). The flag is still
-    // carried because the yellow/neutral background reads from it.
+    // ── A total is the sum of the column above it (§44, 2026-08-05) ──────────
+    //
+    // This published `effective`, which for a BLANK box is the suggestion — Money Left.
+    // So the footer counted $181,366 for a cell displaying nothing, and typing $1 into
+    // it dropped the total by $181,365. Reported as a calculation bug, and it is one,
+    // though not in the summation: the sum is correct, it was summing a term the cell
+    // never showed.
+    //
+    // Any total containing invisible terms breaks the property that makes a total
+    // checkable — that entering $1 moves it by $1 — and once one figure on the page
+    // cannot be verified by eye, none of them can.
+    //
+    // Blank now contributes 0, which is what `diffNow` two lines above has done since
+    // 2026-08-04. Those were two columns of the same row disagreeing about what a blank
+    // cell means; this finishes the change that was already made to the adjacent one.
+    //
+    // ── What this does NOT change ────────────────────────────────────────────
+    //
+    // submitMonth still writes the SUGGESTION for a blank cell, and next month's Prior
+    // ETC still carries from it. This is what the footer DISPLAYS, not what Submit
+    // persists — conflating the two would silently zero out carry-forward values.
+    //
+    // The footer therefore no longer previews the submission while blanks remain. That
+    // costs nothing: Submit is blocked while any required New ETC is missing
+    // (monthly-report-flow.ts), so the two figures can only differ in a state where
+    // submitting is impossible. `plannedNewEtc` in etc-live-totals still carries the
+    // "if submitted now" figure for anyone who wants it mid-month.
     publishPartsCell(jobId, {
       prior: priorEtc,
       spent,
       left,
-      newEtc: effective,
+      newEtc: decidedNow ? Math.max(effective, 0) : 0,
       diff: diffNow,
       decided: decidedNow,
     });

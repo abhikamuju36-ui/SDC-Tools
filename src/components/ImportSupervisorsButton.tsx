@@ -39,7 +39,7 @@ export function ImportSupervisorsButton() {
 
       {result && (
         <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/30 p-4" onClick={() => setResult(null)}>
-          <div className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-xl border border-sdc-border bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
+          <div className="max-h-[calc(var(--app-vh)_*_0.8)] w-full max-w-lg overflow-auto rounded-xl border border-sdc-border bg-white p-5 shadow-xl" onClick={(e) => e.stopPropagation()}>
             {!result.ok ? (
               <>
                 <p className="mb-2 font-heading text-lg font-bold text-sdc-navy">Import failed</p>
@@ -77,7 +77,7 @@ export function ImportSupervisorsButton() {
                 )}
 
                 {result.notInEtc > 0 && (
-                  <p className="mb-2 text-note text-sdc-gray-500">
+                  <p className="mb-2 text-note text-sdc-muted">
                     {result.notInEtc} export rows had no matching active ETC employee (terminated / not tracked) — skipped.
                   </p>
                 )}

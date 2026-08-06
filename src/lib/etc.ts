@@ -92,6 +92,79 @@ export function newEtcDiff(entry: {
   return calcHoursLeft(Number(entry.priorEtc), Number(entry.hoursWorked)) - Math.max(effectiveNewEtc(entry), 0);
 }
 
+// ── The TOTAL (NEW ETC) rollup: all-or-nothing (§51) ────────────────────────
+//
+// The ENG and SHOP blocks at the right of the grid are a rollup of a job's section
+// cells. §51 makes them all-or-nothing: **a rollup with a required cell still blank
+// shows nothing at all**, rather than a partial figure that reads as a plan.
+//
+// ── Why the old behaviour had to go ─────────────────────────────────────────
+//
+// It printed three columns that invited a subtraction which did not hold. Measured on
+// job 1101 for 2026-07:
+//
+//     Hours Left 1,017    Total New ETC 205    Diff -22
+//
+// -22 was correct and unreadable. Total New ETC and Diff both counted only the four
+// sections somebody had planned (183 - 205 = -22); Hours Left counted all seven,
+// including 834 hours in three nobody had touched. Two columns meaning "planned" and
+// one meaning "everything", side by side, with no way to tell from the screen. Blank
+// says the true thing — *this rollup is not ready yet* — and once it is ready all
+// three columns agree, because every cell is then counted by all of them.
+//
+// ── What "required" means, and why zero is not blank ────────────────────────
+//
+// A cell needs an answer only when hours were booked to it this month
+// (isNewEtcDecisionRequired), and it HAS one as soon as it holds any text at all —
+// including "0", which is a real plan and the distinction hasNewEtcValue exists to
+// make. So the blocking set is exactly the YELLOW cells: a decision is required here
+// and the box is empty. Sections with nothing booked never block, which is what keeps
+// a rollup from being held hostage by the ~350 sections no job ever quoted.
+//
+// That is also the same set the submission gate counts as `missingNewEtc`, so "the
+// rollup is blank" and "the month cannot be submitted" are one fact with one cause.
+//
+// Deliberately scoped (§51's second half): this is the ENG/SHOP rollup and NOTHING
+// else. Section cells, Parts Cost, the Standard columns and the KPI cards all keep
+// their existing behaviour — a partial figure is right for a single cell, which is
+// only ever reporting itself.
+export type NewEtcRollupCell = {
+  /** Yellow is `!decided`: an answer is required here and the box is empty. */
+  decided: boolean;
+  hoursLeft: number;
+  /** The cell's effective New ETC. Only read when the whole group is complete. */
+  newEtc: number;
+};
+
+export type NewEtcRollup = {
+  complete: boolean;
+  /** Always a figure — Prior and Worked are synced facts, not decisions (§51). */
+  hoursLeft: number;
+  /** null until every required cell in the group has an answer. */
+  newEtc: number | null;
+  /** null whenever `newEtc` is null. Never a fallback, never 0 (§51 #8). */
+  diff: number | null;
+};
+
+export function rollupNewEtc(cells: Iterable<NewEtcRollupCell>): NewEtcRollup {
+  let hoursLeft = 0;
+  let newEtc = 0;
+  let complete = true;
+  for (const c of cells) {
+    hoursLeft += c.hoursLeft;
+    // Clamped per cell, matching what a cell publishes and what newEtcDiff compares
+    // against — a negative New ETC is not a negative plan.
+    newEtc += Math.max(c.newEtc, 0);
+    if (!c.decided) complete = false;
+  }
+  if (!complete) return { complete: false, hoursLeft, newEtc: null, diff: null };
+  // Once complete this is the plain subtraction §51 asks for — and it EQUALS the
+  // per-cell sum the block used before, because every cell now contributes to both
+  // operands. That equivalence is a test, not a hope: it is the reason this change
+  // can drop the per-cell rollup without changing any completed figure.
+  return { complete: true, hoursLeft, newEtc, diff: hoursLeft - newEtc };
+}
+
 // ── The yellow "needs attention" New ETC cell ───────────────────────────────
 //
 // Yellow means one thing: somebody still has to make a judgement call here, and

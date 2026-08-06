@@ -20,25 +20,18 @@ export function isActualsOn(params: { get(name: string): string | null }): boole
   return params.get(ACTUALS_PARAM) === "1";
 }
 
-// The view params the Projects grid's "Show all / Reset" switch owns. Listed
-// once so flipping to Reset can't miss one — a leftover param would leave the
-// grid half-reset, which is the failure nobody would report as a bug.
-// dateField/from/to are the "Dates ▾" range (ProjectsDateFilter) — listed here
-// so Reset clears them too. A date range left behind by a Reset is exactly the
-// "half-reset grid" this list exists to prevent, and the worst kind, because a
-// narrowed row count reads as missing data rather than as a filter.
-export const QUOTED_VIEW_PARAMS = [
-  "customers",
-  "types",
-  "statuses",
-  "billables",
-  "cols",
-  "hide",
-  "dateField",
-  "from",
-  "to",
-  ACTUALS_PARAM,
-] as const;
+// ── QUOTED_VIEW_PARAMS, isShowingAll and ShowAllOptions are gone (§47.4) ─────
+//
+// All three existed for the "Show all / Reset" switch, which set customers, types,
+// statuses, billables and cols to everything, deleted `hide`, and turned actuals on — in
+// one navigation. §47 replaced it with "Show Actuals", which owns exactly one param and
+// changes no scope at all, so there is no longer a set of params to clear together and
+// nothing to ask "is everything showing?".
+//
+// isShowingAll in particular is worth not resurrecting from memory if a Reset is ever
+// wanted again: its subtlety was that an ABSENT list param means "use the narrower
+// default" and so had to read as NOT-all, while an absent `hide` genuinely does mean
+// nothing is hidden. Those two asymmetric cases were the bug it was written to fix.
 
 // ── Multi-value params are comma-joined, and 16 of 88 customer names contain a
 // comma ("FIRST SOLAR, INC.", "Alcon Research, LTD", "Tarkett USA, Inc.") ────
@@ -67,36 +60,4 @@ export function decodeParamList(raw: string | null): string[] {
     .split(",")
     .filter(Boolean)
     .map((v) => v.replace(/%(25|2C)/g, (_m, hex) => (hex === "25" ? "%" : ",")));
-}
-
-export type ShowAllOptions = {
-  customers: string[];
-  types: string[];
-  statuses: string[];
-  billables: string[];
-  cols: string[];
-};
-
-// Is EVERYTHING currently visible? Pure, and separate from the component, because
-// the subtlety is worth testing: on this grid an absent param means "no choice
-// made yet, use the narrower default" — so absent must read as NOT-all, even
-// though an absent `hide` does mean nothing is hidden. Those two asymmetric
-// cases are exactly what a refactor would get wrong.
-// Takes anything with a `get`, so it accepts both a plain URLSearchParams (tests)
-// and Next's ReadonlyURLSearchParams (the component) without a cast.
-export function isShowingAll(params: { get(name: string): string | null }, all: ShowAllOptions): boolean {
-  if (!isActualsOn(params)) return false;
-  if (params.get("hide")) return false; // any hidden info column -> not all
-  // A "Dates ▾" range hides rows, so the switch must not claim everything is
-  // showing while one is set. Unlike the list params below, ABSENT is the
-  // permissive state here — no range means no date filtering — so this tests
-  // for presence rather than for coverage.
-  if (params.get("from") || params.get("to")) return false;
-  const covers = (param: keyof ShowAllOptions) => {
-    const raw = params.get(param);
-    if (raw === null) return false; // absent = the default, which is narrower
-    const have = new Set(decodeParamList(raw));
-    return all[param].every((v) => have.has(v));
-  };
-  return covers("customers") && covers("types") && covers("statuses") && covers("billables") && covers("cols");
 }

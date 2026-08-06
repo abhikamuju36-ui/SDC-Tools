@@ -111,12 +111,12 @@ export function NewProjectRows({
             </td>
           )}
           {show("startDate") && (
-            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-label text-sdc-gray-500">
+            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-label text-sdc-muted">
               <input {...dateCellProps({ name: `newRow__${tempId}__startDate`, defaultValue: "", ariaLabel: "New project Start Date" })} />
             </td>
           )}
           {show("completeDate") && (
-            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-label text-sdc-gray-500">
+            <td className="overflow-hidden whitespace-nowrap px-1 py-1.5 text-left align-middle text-label text-sdc-muted">
               <input {...dateCellProps({ name: `newRow__${tempId}__completeDate`, defaultValue: "", ariaLabel: "New project Complete Date" })} />
             </td>
           )}

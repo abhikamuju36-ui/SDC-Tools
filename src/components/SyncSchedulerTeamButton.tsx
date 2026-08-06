@@ -37,7 +37,7 @@ export function SyncSchedulerTeamButton() {
           onClick={() => setResult(null)}
         >
           <div
-            className="max-h-[80vh] w-full max-w-lg overflow-auto rounded-xl border border-sdc-border bg-white p-5 shadow-xl"
+            className="max-h-[calc(var(--app-vh)_*_0.8)] w-full max-w-lg overflow-auto rounded-xl border border-sdc-border bg-white p-5 shadow-xl"
             onClick={(e) => e.stopPropagation()}
           >
             {!result.ok ? (
@@ -59,7 +59,7 @@ export function SyncSchedulerTeamButton() {
                     <ul className="space-y-0.5 text-sm">
                       {result.updated.map((u) => (
                         <li key={u.name} className="text-sdc-navy">
-                          {u.name}: <span className="text-sdc-gray-500">{u.from ?? "—"}</span> → <span className="font-medium">{u.to}</span>
+                          {u.name}: <span className="text-sdc-muted">{u.from ?? "—"}</span> → <span className="font-medium">{u.to}</span>
                         </li>
                       ))}
                     </ul>
@@ -71,7 +71,7 @@ export function SyncSchedulerTeamButton() {
                     <p className="mb-1 text-xs font-semibold uppercase tracking-wide text-[#8A6D00]">
                       In ETC, not matched on the Scheduler ({result.unmatchedEtc.length})
                     </p>
-                    <p className="mb-1 text-note text-sdc-gray-500">
+                    <p className="mb-1 text-note text-sdc-muted">
                       Rename these to match the Scheduler exactly (e.g. Michael → Mike) and re-run, or they simply aren&apos;t on the Scheduler roster.
                     </p>
                     <p className="text-sm text-sdc-gray-700">{result.unmatchedEtc.join(", ")}</p>

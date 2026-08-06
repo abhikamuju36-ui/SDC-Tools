@@ -90,7 +90,7 @@ export function ReopenMonthButton({
           {/* Says what reopening actually costs. The carry-forward is the part
               people don't expect, and it's the reason this isn't reversible by
               just locking the month again. */}
-          <p className="mb-2 text-note leading-relaxed text-sdc-gray-500">
+          <p className="mb-2 text-note leading-relaxed text-sdc-muted">
             {hint ??
               "This unfreezes every entry in the month. Re-submitting it afterwards carries the corrected New ETC forward into the next month's Prior ETC."}
           </p>

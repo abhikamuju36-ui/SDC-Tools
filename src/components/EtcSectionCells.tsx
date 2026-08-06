@@ -15,6 +15,7 @@ import { registerEtcField, forgetEtcField, updateEtcField, adoptEtcFieldBaseline
 import { useRemoteEtcValue, forgetRemoteEtcValue } from "@/lib/etc-remote-values";
 import { useCellSaveState, cellSaveStateStyle, setCellInvalid, clearCellSaveState, useCellInvalidMessage } from "@/lib/etc-save-state";
 import { CELL_SPECS, parseCell, type FieldSpec } from "@/lib/cell-rules";
+import { requestAutosaveFlush } from "@/lib/autosave";
 
 // What this column accepts, from the registry (§27.2). Deliberately the SAME effective
 // spec the server applies in parseNewEtcField — 2 decimal places, no negatives — rather
@@ -369,7 +370,30 @@ export function EtcSectionCells({
   // and a render React discards must not be allowed to change what other
   // components read.
   useEffect(() => {
-    publishEtcCell(cellKey, { jobId, billingGroup, sectionCode, prior: priorEtc, worked, hoursLeft, effective, diff, decided: filled });
+    // ── `effective` is what SUBMIT would write; 0 is what the CELL shows (§44) ──
+    //
+    // The hours columns had the same defect the Parts Cost column did: a blank box
+    // published its suggestion (Hours Left) into the footer, so the total counted a
+    // figure the cell did not display and typing a value made the total FALL. See the
+    // long note in PartsCostNewEtcCell — same reasoning, same fix, and it lands here
+    // too because both columns feed one store.
+    //
+    // `filled` is the same flag `diff` above already uses to contribute nothing, so
+    // after this the two columns agree about a blank cell for the first time.
+    //
+    // Submit is unaffected: it re-derives the suggestion server-side from the stored
+    // row, and next month's Prior ETC still carries from it.
+    publishEtcCell(cellKey, {
+      jobId,
+      billingGroup,
+      sectionCode,
+      prior: priorEtc,
+      worked,
+      hoursLeft,
+      effective: filled ? Math.max(effective, 0) : 0,
+      diff,
+      decided: filled,
+    });
   }, [cellKey, jobId, billingGroup, sectionCode, priorEtc, worked, hoursLeft, effective, diff, filled]);
 
   // Unmount is what makes a month switch or a column filter self-cleaning: the
@@ -439,7 +463,7 @@ export function EtcSectionCells({
       </td>
       <td
         data-col={colKey}
-        className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-500`}
+        className={`border-l border-sdc-border ${ETC_COL_W} ${HOURS_LEFT_BG} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-muted`}
         title={`${round2(hoursLeft)} = Prior ETC (${round2(priorEtc)}) − Hours Worked (${worked})`}
       >
         {wholeNum(hoursLeftShown)}
@@ -514,7 +538,15 @@ export function EtcSectionCells({
               cellKey: fieldName,
             })
           }
-          onBlur={() => endEditingCell(fieldName)}
+          onBlur={() => {
+            endEditingCell(fieldName);
+            // Commit on leaving the cell rather than waiting out the debounce (§43).
+            // The 800ms exists to batch keystrokes WITHIN a cell; once focus has gone
+            // there is nothing left for it to batch, and every millisecond of it is
+            // delay before the value can be saved and broadcast to anybody else.
+            // A no-op when this cell is clean — see requestAutosaveFlush.
+            requestAutosaveFlush();
+          }}
           disabled={locked}
           aria-label={`New ETC override, ${jobName}, ${sectionName}`}
           className="w-full [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-label font-bold leading-none text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"

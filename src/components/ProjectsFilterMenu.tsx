@@ -69,7 +69,7 @@ export function ProjectsFilterMenu({ filters }: { filters: FilterSpec[] }) {
           ticked, never remounted (which is what useDraftParamsMenu exists to guarantee),
           so the animation cannot replay mid-selection and the internal scroll position
           survives. */}
-      <div className="motion-menu-panel styled-scrollbar absolute left-0 top-full z-30 mt-2 max-h-[70vh] w-64 overflow-y-auto rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
+      <div className="motion-menu-panel styled-scrollbar absolute left-0 top-full z-30 mt-2 max-h-[calc(var(--app-vh)_*_0.7)] w-64 overflow-y-auto rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
         {filters.map((f) => {
           const sel = draft[f.key] ?? [];
           const q = (query[f.key] ?? "").trim().toLowerCase();

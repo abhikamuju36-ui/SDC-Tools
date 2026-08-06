@@ -120,7 +120,7 @@ export function ExportMenu({
         <div className="motion-menu-panel absolute left-0 top-full z-30 mt-1 w-56 rounded-lg border border-sdc-border bg-white p-1 shadow-lg">
           {/* Says what the export contains, because "Export" alone leaves the reader
               guessing whether it is the filtered view or everything. */}
-          <p className="px-2 py-1 text-label leading-snug text-sdc-gray-500">
+          <p className="px-2 py-1 text-label leading-snug text-sdc-muted">
             Exports the table as currently filtered, with every column — including the ones off-screen.
           </p>
           <button

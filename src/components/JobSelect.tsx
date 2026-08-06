@@ -266,7 +266,7 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
                                 whether or not a row is the current one. */}
                             <span className="w-3 shrink-0 text-sdc-blue-dark">{isCurrent ? "✓" : ""}</span>
                             <span className="truncate">
-                              <span className="font-mono text-sdc-gray-500">{j.jobId}</span> — {j.jobName}
+                              <span className="font-mono text-sdc-muted">{j.jobId}</span> — {j.jobName}
                             </span>
                           </button>
                         );

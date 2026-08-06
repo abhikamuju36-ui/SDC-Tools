@@ -40,7 +40,7 @@ export default function AuditLogGridInner({ rows }: { rows: AuditRow[] }) {
   ];
 
   return (
-    <div style={{ height: "calc(100vh - 175px)", width: "100%" }}>
+    <div style={{ height: "calc(var(--app-vh) - 175px)", width: "100%" }}>
       <AgGridReact<AuditRow>
         theme={sdcTheme}
         rowData={rows}

@@ -110,7 +110,7 @@ export function PartsCostSummary({
       <div className="flex flex-col rounded-xl border border-sdc-border bg-white p-4 shadow-sm">
         <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3 gap-y-1">
           <p className="font-heading text-lg font-bold tracking-tight text-sdc-navy">Parts Cost</p>
-          <p className="text-xs text-sdc-gray-500">
+          <p className="text-xs text-sdc-muted">
             Purchased, planned and invoiced dollars
             {jobCount > 1 ? ` summed across all ${jobCount} selected jobs.` : " for the selected job."}
           </p>
@@ -164,7 +164,7 @@ export function PartsCostSummary({
           <div className="mt-auto border-t border-sdc-border pt-3">
             <div className="flex items-baseline justify-between gap-2">
               <p className="text-xs font-semibold text-sdc-gray-600">Projection vs Estimated</p>
-              <p className="font-heading text-sm font-bold text-sdc-gray-500">
+              <p className="font-heading text-sm font-bold text-sdc-muted">
                 No parts activity yet · {usd(estimate)} estimated
               </p>
             </div>
@@ -188,7 +188,7 @@ export function PartsCostSummary({
                 {/* Zero handled separately: "0.0% over" reads as a rounding
                     artefact where "on estimate" is unambiguous. */}
                 {Math.abs(variance.pct) < 0.0005 ? (
-                  <span className="text-sdc-gray-500">On estimate · {usd(variance.estimate)}</span>
+                  <span className="text-sdc-muted">On estimate · {usd(variance.estimate)}</span>
                 ) : (
                   <>
                     <span className={variance.dollars > 0 ? "text-sdc-red-text" : "text-sdc-green-text"}>
@@ -196,7 +196,7 @@ export function PartsCostSummary({
                     </span>
                     {/* The dollar figure alongside the percentage: 13% of a $30K
                         job and 13% of a $1.4M job are very different problems. */}
-                    <span className="text-sdc-gray-500">
+                    <span className="text-sdc-muted">
                       {" "}
                       ({variance.dollars > 0 ? "+" : "−"}
                       {usd(Math.abs(variance.dollars))})

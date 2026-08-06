@@ -118,10 +118,20 @@ export function EtcLiveTotals() {
         if (t.parts) writePartsRowDiff(String(jobId), t.parts.diff, t.parts.decided);
         for (const group of ["Engineering", "Shop"] as const) {
           const g = group === "Engineering" ? t.engineering : t.shop;
-          grand[group].newEtc += g.newEtc;
-          grand[group].diff += g.diff;
-          write(String(jobId), group, "newEtc", g.newEtc);
-          write(String(jobId), group, "diff", g.diff);
+          // ── The block is all-or-nothing (§51) ──────────────────────────
+          //
+          // `g.rollup` is null until every section in this group that needs a New ETC
+          // has one, and the two cells go blank with it. The grand total below sums
+          // only the rows that HAVE a figure — an incomplete row adds nothing, not a
+          // zero and not its Hours Left (§51 #7, #8).
+          //
+          // Deliberately NOT g.newEtc / g.diff, which stay exactly as they were: those
+          // feed the KPI strip, and §51 changes this block only.
+          const { newEtc, diff } = g.rollup;
+          if (newEtc != null) grand[group].newEtc += newEtc;
+          if (diff != null) grand[group].diff += diff;
+          write(String(jobId), group, "newEtc", newEtc);
+          write(String(jobId), group, "diff", diff);
         }
       }
       for (const group of ["Engineering", "Shop"] as const) {
@@ -167,11 +177,30 @@ export function EtcLiveTotals() {
       cell.style.fontWeight = "fontWeight" in style && style.fontWeight ? String(style.fontWeight) : "";
     };
 
-    const write = (job: string, group: string, kind: "newEtc" | "diff", value: number) => {
+    const write = (job: string, group: string, kind: "newEtc" | "diff", value: number | null) => {
       const cell = document.querySelector<HTMLElement>(`[data-live="${kind}"][data-group="${group}"][data-job="${job}"]`);
       if (!cell) return; // row filtered out, or this group's columns hidden
-      // A TOTAL always shows its sum (2026-08-04). It used to render "—" until the
-      // month's actuals were complete, which is why the bottom totals "were not
+      // ── null means BLANK, and blank is a state, not a missing render (§51) ──
+      //
+      // A row whose group still has an unanswered section shows nothing here. The
+      // colour has to be cleared with the text: a leftover tint on an empty cell is
+      // the same contradiction paintDiffColor was written to prevent, one step worse
+      // — it would imply a variance that is not being reported at all.
+      //
+      // The server render seeds the tooltip with WHICH sections are outstanding, so it
+      // is left alone rather than overwritten with a number that does not exist.
+      if (value == null) {
+        cell.textContent = "";
+        note(`${kind}|${group}|${job}`, cell, "");
+        if (kind === "diff") {
+          cell.style.backgroundColor = "";
+          cell.style.color = "";
+          cell.style.fontWeight = "";
+        }
+        return;
+      }
+      // A COMPLETE total always shows its sum (2026-08-04). It used to render "—" until
+      // the month's actuals were complete, which is why the bottom totals "were not
       // updating": on any in-progress month the New ETC totals were a dash that no
       // amount of typing could move. A total's contract is to equal the sum of the
       // values displayed above it — see the note in etc/page.tsx.

@@ -15,77 +15,52 @@ import {
 import { appVersionLabel } from "@/lib/app-version";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isEtcDirty } from "@/lib/etc-dirty-tracker";
+import { noteEtcClick } from "@/lib/standards-reveal";
 import { RefreshDataButton } from "@/components/RefreshDataButton";
-import { AppTextSize } from "@/components/AppTextSize";
+import { AppZoom } from "@/components/AppZoom";
+import {
+  COLLAPSED_WIDTH,
+  DEFAULT_PREFS,
+  MAX_WIDTH,
+  MIN_WIDTH,
+  readCollapsed,
+  readWidth,
+  sidebarWidthCss,
+  subscribeSidebar,
+  writeCollapsed,
+  writeWidth,
+  type SidebarPrefs,
+} from "@/lib/sidebar-prefs";
 
-const COLLAPSE_KEY = "sdc-etc-planner-sidebar-collapsed";
-const WIDTH_KEY = "sdc-etc-planner-sidebar-width";
-const DEFAULT_WIDTH = 276; // the Porcelain design's sidebar width (was 240)
-const MIN_WIDTH = 180;
-const MAX_WIDTH = 420;
+// ── Collapse and width now come from cookies (§46.14) ───────────────────────
+//
+// They used to be two module-level localStorage stores right here, each with a
+// `getServerSnapshot` that returned the EXPANDED default — because localStorage does
+// not exist on the server, so there was nothing else it could return. That is what
+// made every page load paint the full sidebar and then snap to the rail. See
+// lib/sidebar-prefs.ts for the measurement and for why this one preference is a
+// cookie while §45's zoom is not.
+//
+// The store shape is unchanged: useSyncExternalStore, a primitive snapshot, and a
+// server snapshot — except the server snapshot is now the value the server actually
+// rendered with, handed down as `initial`.
 
-// Minimal external store for the collapse toggle. Avoids setState-in-effect
-// (which would cause a hydration mismatch anyway, since localStorage isn't
-// available during SSR) — useSyncExternalStore is the correct primitive for
-// syncing a browser-only value into React with a safe server snapshot.
-let collapsedValue = false;
-let initialized = false;
-const listeners = new Set<() => void>();
+// ── Collapsed geometry, in one place each (§46.1, §46.6) ────────────────────
+//
+// The rail's own metrics, named rather than repeated: every collapsed control is
+// centred in RAIL_ITEM and every icon target is the same size, which is what §46.6's
+// "equal-sized click targets" and "centered in the collapsed sidebar" reduce to.
+//
+// Why the target is the full rail minus 6px: the nav used to pad 14px a side, so a
+// 60px rail gave its links 32px of width — a click 10px from the rail's edge, plainly
+// inside the sidebar and plainly on a row, hit nothing at all. RAIL_PAD is 3px so the
+// target spans 54 of the rail's 60px while the highlight still reads as a pill rather
+// than a full-bleed band.
+const RAIL_PAD = "px-[3px]";
+const RAIL_ITEM = "flex h-9 w-full items-center justify-center rounded-[7px]";
 
-function getSnapshot() {
-  if (!initialized) {
-    collapsedValue = window.localStorage.getItem(COLLAPSE_KEY) === "1";
-    initialized = true;
-  }
-  return collapsedValue;
-}
-
-function getServerSnapshot() {
-  return false;
-}
-
-function subscribe(callback: () => void) {
-  listeners.add(callback);
-  return () => listeners.delete(callback);
-}
-
-function setCollapsedValue(next: boolean) {
-  collapsedValue = next;
-  initialized = true;
-  window.localStorage.setItem(COLLAPSE_KEY, next ? "1" : "0");
-  listeners.forEach((cb) => cb());
-}
-
-// Same external-store pattern as the collapse toggle, for the drag-resized width.
-let widthValue = DEFAULT_WIDTH;
-let widthInitialized = false;
-const widthListeners = new Set<() => void>();
-
-function getWidthSnapshot() {
-  if (!widthInitialized) {
-    const stored = Number(window.localStorage.getItem(WIDTH_KEY));
-    widthValue = stored >= MIN_WIDTH && stored <= MAX_WIDTH ? stored : DEFAULT_WIDTH;
-    widthInitialized = true;
-  }
-  return widthValue;
-}
-
-function getServerWidthSnapshot() {
-  return DEFAULT_WIDTH;
-}
-
-function subscribeWidth(callback: () => void) {
-  widthListeners.add(callback);
-  return () => widthListeners.delete(callback);
-}
-
-function setWidthValue(next: number) {
-  const clamped = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, next));
-  widthValue = clamped;
-  widthInitialized = true;
-  window.localStorage.setItem(WIDTH_KEY, String(clamped));
-  widthListeners.forEach((cb) => cb());
-}
+/** So the collapse toggle can `aria-controls` the thing it collapses (§46.15). */
+const SIDEBAR_ID = "app-sidebar";
 
 type NavItem = { href: string; label: string; icon: React.ReactNode; isActive: (path: string) => boolean };
 type NavGroup = { label: string; items: NavItem[] };
@@ -228,6 +203,7 @@ export default function Sidebar({
   userEmail,
   signOutAction,
   schedulerProjectsUrl,
+  initial = DEFAULT_PREFS,
 }: {
   userEmail?: string | null;
   // No `role` prop any more — nothing in the sidebar is role-gated.
@@ -236,6 +212,10 @@ export default function Sidebar({
   // the layout (SCHEDULER_BASE_URL). Undefined hides the link rather than
   // rendering a dead one.
   schedulerProjectsUrl?: string;
+  // Collapse + width as the SERVER resolved them from cookies. This is the
+  // `getServerSnapshot` for both stores below, which is the whole fix for §46.14:
+  // the value React hydrates with is the value already painted.
+  initial?: SidebarPrefs;
 }) {
   const pathname = usePathname();
   const router = useRouter();
@@ -299,28 +279,33 @@ export default function Sidebar({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // Hidden entry point for the password-gated Standard Sheet columns: the box
-  // that reveals them is intentionally undiscoverable on the /etc page itself
-  // (only a few people are meant to know it exists). Clicking the "Monthly ETC"
-  // item three times in quick succession takes you to /etc with the secret flag
-  // that renders the password box; a normal single click just opens /etc.
-  const etcClickCount = useRef(0);
-  const etcClickTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
+  // ── The hidden Standard Fees entry point (§48) ──────────────────────────────
+  //
+  // Still undiscoverable — a double-click on the "Monthly ETC" item opens a password box
+  // that only a few people are meant to know exists — but it no longer goes anywhere to
+  // do it.
+  //
+  // It used to count three clicks and then `router.push("/etc?standards=1")`, and the
+  // item is a <Link href="/etc">, so all three counting clicks NAVIGATED. Measured before
+  // this change: 6,077ms and 8 requests from the first click to the box appearing, four
+  // full renders of the heaviest page in the app to show a text input.
+  //
+  // Now the gesture sets a boolean (lib/standards-reveal.ts) that the ETC toolbar's gate
+  // reads, and `preventDefault` stops the click navigating at all. Already on /etc there
+  // is no request whatsoever; arriving from elsewhere costs the one navigation the click
+  // was always going to make.
   function handleEtcClick(e: React.MouseEvent) {
-    etcClickCount.current += 1;
-    if (etcClickTimer.current) clearTimeout(etcClickTimer.current);
-    if (etcClickCount.current >= 3) {
-      etcClickCount.current = 0;
+    // Suppress the navigation FIRST, before the streak is even consulted. A click on the
+    // item you are already on is a wasted round trip whatever the streak does with it,
+    // and it is what made the old window too short to complete.
+    const onEtc = pathname === "/etc";
+    if (onEtc) e.preventDefault();
+    if (noteEtcClick()) {
+      // Gesture complete. The box is already open (the store is synchronous); all that
+      // is left is getting to the page it lives on, if we are not there.
       e.preventDefault();
-      router.push("/etc?standards=1");
-      return;
+      if (!onEtc) router.push("/etc");
     }
-    // Reset the streak if the next click doesn't land within the window. Kept
-    // generous so the third click reliably lands the first time — each click
-    // also navigates to /etc, so the window has to absorb that latency.
-    etcClickTimer.current = setTimeout(() => {
-      etcClickCount.current = 0;
-    }, 1500);
   }
 
   // Leaving /etc with unsaved New ETC values (typing alone doesn't autosave —
@@ -349,14 +334,37 @@ export default function Sidebar({
     if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Go back anyway?")) return;
     router.back();
   }
-  const collapsed = useSyncExternalStore(subscribe, getSnapshot, getServerSnapshot);
-  const persistedWidth = useSyncExternalStore(subscribeWidth, getWidthSnapshot, getServerWidthSnapshot);
+  // Both snapshots come from the cookies; both server snapshots come from what the
+  // server rendered. On hydration those agree by construction, so there is no frame at
+  // the wrong width and no label that appears and then vanishes (§46.14).
+  const collapsed = useSyncExternalStore(subscribeSidebar, readCollapsed, () => initial.collapsed);
+  const persistedWidth = useSyncExternalStore(subscribeSidebar, readWidth, () => initial.width);
   const [dragWidth, setDragWidth] = useState<number | null>(null);
   const width = dragWidth ?? persistedWidth;
 
   function toggleCollapsed() {
-    setCollapsedValue(!collapsed);
+    writeCollapsed(!collapsed);
   }
+
+  // ── Keep --sidebar-w honest (§46.9) ────────────────────────────────────────
+  //
+  // AppShell publishes the variable with the width the SERVER resolved from the cookie.
+  // That is right for the first paint and wrong from the first click onwards: a collapse
+  // is a client-side state change, so without this the variable would still read 276px
+  // while the rail measured 60 — a stale expanded-sidebar dimension, which is the thing
+  // §46.9 names.
+  //
+  // A DOM write rather than lifting the state into a client AppShell: `collapsed` belongs
+  // to this component, and making the shell a client component to carry one number would
+  // pull the whole app's children across the boundary. Both writers call
+  // sidebarWidthCss, so the value cannot be computed two ways.
+  //
+  // Runs on the settled width AND on dragWidth, so a drag-resize keeps it in step frame
+  // by frame exactly as the aside's own inline width does.
+  useEffect(() => {
+    const shell = document.querySelector<HTMLElement>("[data-app-shell]");
+    shell?.style.setProperty("--sidebar-w", sidebarWidthCss({ collapsed, width }));
+  }, [collapsed, width]);
 
   function startResize(e: React.MouseEvent) {
     e.preventDefault();
@@ -372,7 +380,7 @@ export default function Sidebar({
 
     function onMouseUp(ev: MouseEvent) {
       const next = Math.min(MAX_WIDTH, Math.max(MIN_WIDTH, startWidth + (ev.clientX - startX)));
-      setWidthValue(next);
+      writeWidth(next);
       setDragWidth(null);
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
@@ -386,23 +394,52 @@ export default function Sidebar({
 
   return (
     <aside
+      id={SIDEBAR_ID}
       aria-label="Primary navigation"
-      style={{ width: collapsed ? undefined : width }}
+      // ONE width, from ONE source (§46.1). It used to be an inline width when expanded
+      // and a `w-16` class when collapsed — two places to state the rail's size, and the
+      // class disagreed with what the server had reserved. Now both states come from
+      // here, and the collapsed value is the COLLAPSED_WIDTH token that
+      // lib/sidebar-prefs.ts also gives the server for --sidebar-w.
+      style={{ width: collapsed ? COLLAPSED_WIDTH : width }}
       // Pin the sidebar to the viewport height with its own internal scroll
       // (the nav is flex-1 overflow-y-auto below). Without this the aside
       // stretches to match the page content, so on tall tabs (Projects /
       // Monthly ETC grids) it grew very tall and pushed the bottom controls
-      // (Text size / Refresh / Collapse / user) far down the page — making the
-      // item positions appear to shift between tabs. sticky+h-screen keeps it
-      // fixed to the viewport regardless of how tall the page content is.
+      // (Zoom / Refresh / Collapse / user) far down the page — making the
+      // item positions appear to shift between tabs. sticky + one viewport
+      // height keeps it fixed regardless of how tall the page content is.
       // Dark navy sidebar (#061D39) — the "Porcelain" layout (design ref: SDC
       // Sidebar.html, variant 1B) recolored to the SDC brand navy.
-      // Sizes are in px, not rem, deliberately: the Text size control scales the
-      // root font-size to size the DATA GRIDS (commit 245ebe7), and letting the
-      // app chrome grow with it made the nav crowd the content. The design was
-      // authored at fixed sizes, so the sidebar now holds its proportions while
-      // Text size keeps doing its real job on the grids.
-      className={`sticky top-0 z-20 flex h-screen max-h-screen shrink-0 flex-col self-start border-r border-[#12314F] bg-[#061D39] ${
+      //
+      // ── The px sizes here, and why they are now fine (§45) ────────────────
+      //
+      // They used to be justified as "px, not rem, deliberately": the old Text size
+      // control moved the ROOT FONT SIZE, and letting the app chrome grow with it
+      // made the nav crowd the content, so the sidebar was pinned to fixed pixels to
+      // opt out. §45 asks for the opposite — one control that scales the sidebar
+      // WITH everything else — and `zoom` gives it without touching any of these
+      // numbers, because it scales px and rem alike. The design's proportions are
+      // preserved at every level instead of being frozen at one.
+      //
+      // --app-vh, not `h-screen`: `zoom` scales `vh` along with everything else while
+      // the viewport does not scale, so a 100vh sidebar hangs off the bottom of the
+      // screen at 125%. See the note on that variable in globals.css.
+      // ── bg-sdc-navy, not bg-[#061D39] (§46.15) ────────────────────────────
+      //
+      // The same colour either way — `--sdc-navy` IS #061d39 — but the class is
+      // load-bearing. globals.css carries
+      //
+      //     .bg-sdc-navy :focus-visible { outline-color: #fff }
+      //
+      // because the app's default focus ring is `--sdc-blue` (#1574c4), which on this
+      // navy panel is blue on navy: present, and very hard to see. That override was
+      // written for exactly this surface and had never applied to it, because the
+      // sidebar spelled its background as an arbitrary value instead of the token.
+      // Verified in the running app: `aside.closest('.bg-sdc-navy')` was null, so every
+      // focusable in the sidebar — fourteen of them in the rail, where the label is
+      // hidden and focus is the only cue — took the low-contrast ring.
+      className={`sticky top-0 z-20 flex h-[var(--app-vh)] max-h-[var(--app-vh)] shrink-0 flex-col self-start border-r border-[#12314F] bg-sdc-navy ${
         // motion-panel-size is the ONE justified width animation in the app (§36.15
         // discourages animating width, and rightly): the sidebar's width IS the thing
         // changing when it collapses, and no transform expresses that without leaving
@@ -410,7 +447,7 @@ export default function Sidebar({
         // the resize handle — a transition there would lag the pointer by a frame and
         // feel like the drag was fighting back.
         dragWidth === null ? "motion-panel-size" : ""
-      } ${collapsed ? "w-16" : ""}`}
+      }`}
     >
       {!collapsed && (
         <div
@@ -419,18 +456,26 @@ export default function Sidebar({
           className="absolute top-0 right-0 z-10 h-full w-1.5 -mr-0.5 cursor-col-resize hover:bg-white/[0.10] active:bg-white/[0.10]"
         />
       )}
-      <div className={`flex items-center gap-[11px] ${collapsed ? "justify-center px-0 pt-5 pb-[18px]" : "px-[18px] pt-5 pb-[18px]"}`}>
+      {/* ── Header (§46.8) ──────────────────────────────────────────────────────
+          The logo tile is 34px and `shrink-0` in BOTH states, so collapsing cannot
+          stretch or clip it and it does not move vertically — `pt-5 pb-[18px]` are the
+          same either way, which is what §46.8's "prevent the top controls from shifting
+          when the sidebar toggles" asks for. Only the horizontal padding changes, and
+          only to centre the tile in the rail.
+
+          The wordmark is now `sr-only` when collapsed rather than unmounted: it is the
+          application's name, and a screen reader should still be able to reach it from
+          the landmark (§46.15). */}
+      <div className={`flex items-center gap-[11px] pt-5 pb-[18px] ${collapsed ? "justify-center px-0" : "px-[18px]"}`}>
         {/* Slightly lifted tile so the white-on-navy SDC mark still reads as a
             distinct badge against the navy panel behind it. */}
         <div className="flex h-[34px] w-[34px] shrink-0 items-center justify-center rounded-lg bg-[#0D2A49] shadow-[inset_0_0_0_1px_#1B4270]">
           <Image src="/brand/sdc-logo-white.png" alt="SDC" width={26} height={14} unoptimized />
         </div>
-        {!collapsed && (
-          <div className="min-w-0">
-            <p className="truncate text-sm font-semibold leading-tight tracking-[-0.005em] text-[#F3F6FA]">SDC Projects Reports</p>
-            <p className="truncate text-note text-[#7E93AC]">Steven Douglas Corp.</p>
-          </div>
-        )}
+        <div className={collapsed ? "sr-only" : "min-w-0"}>
+          <p className="truncate text-sm font-semibold leading-tight tracking-[-0.005em] text-[#F3F6FA]">SDC Projects Reports</p>
+          <p className="truncate text-note text-[#7E93AC]">Steven Douglas Corp.</p>
+        </div>
       </div>
 
       {/* Search — the design shows this field, so it had to be real rather than
@@ -456,14 +501,19 @@ export default function Sidebar({
         </div>
       )}
 
+      {/* Back — the same RAIL_ITEM box as a nav icon when collapsed, so the top of the
+          rail is one column of equal, centred targets rather than three sizes (§46.8:
+          "keep the Back control centered and clearly separated"). */}
       {canGoBack && (
-        <div className={collapsed ? "px-0 pb-1" : "px-[14px] pb-1"}>
+        <div className={`pb-1 ${collapsed ? RAIL_PAD : "px-[14px]"}`}>
           <button
             onClick={handleBack}
             title="Go back to the previous page"
-            className={`flex h-8 w-full items-center gap-[10px] rounded-[7px] text-xs text-[#A9BCD0] hover:bg-[#0E3157] hover:text-[#F3F6FA] ${
-              collapsed ? "justify-center px-0" : "px-[10px]"
-            }`}
+            className={
+              collapsed
+                ? `${RAIL_ITEM} text-[#A9BCD0] hover:bg-[#0E3157] hover:text-[#F3F6FA]`
+                : "flex h-8 w-full items-center gap-[10px] rounded-[7px] px-[10px] text-xs text-[#A9BCD0] hover:bg-[#0E3157] hover:text-[#F3F6FA]"
+            }
           >
             <span className="flex h-4 w-4 shrink-0 items-center justify-center">
               <Icon>
@@ -472,20 +522,50 @@ export default function Sidebar({
               </Icon>
             </span>
             {/* "Back" not the mock's "Back to workspace": this runs router.back(),
-                so the honest label is the one that matches the behavior. */}
-            {!collapsed && <span>Back</span>}
+                so the honest label is the one that matches the behavior.
+                sr-only rather than unmounted when collapsed, so the button keeps its
+                accessible name from its own content and not only from `title`
+                (§46.15: "tooltips must not be the only source of accessible text"). */}
+            <span className={collapsed ? "sr-only" : ""}>Back</span>
           </button>
         </div>
       )}
 
-      <nav aria-label="Application sections" className="flex min-h-0 flex-1 flex-col gap-5 overflow-y-auto p-[14px]">
+      {/* ── The nav (§46.6) ─────────────────────────────────────────────────────
+          Two things change when collapsed, both measured problems:
+
+          PADDING. It was `p-[14px]` in both states, so a 60px rail gave its links 32px
+          of width. A click 10px inside the rail's edge — visibly on a row — hit nothing.
+          RAIL_PAD is 3px, so the target is 54px wide.
+
+          GROUP GAPS. `gap-5` between groups plus a heading inside each one reads
+          correctly when the headings are visible. With them hidden the gap remained and
+          the spacing went uneven: measured 36/37px between items in a group against
+          52/53px between groups, which §46.6's "consistent vertical spacing" rules out.
+          Collapsed, the gap collapses to the same 3px the items use, so the rail is one
+          evenly spaced column. The headings stay in the DOM as `sr-only`, so the groups
+          are still announced. */}
+      <nav
+        aria-label="Application sections"
+        // `rail-scroll` only when collapsed: it hides the scrollbar so the nav's content
+        // box stays the full rail width and the icons cannot drift off-centre when it
+        // overflows. See the rule in globals.css for the measurement. Expanded, the
+        // normal scrollbar is fine — there is width to spare and it is a useful cue.
+        className={`flex min-h-0 flex-1 flex-col overflow-y-auto ${
+          collapsed ? `rail-scroll gap-[3px] py-[14px] ${RAIL_PAD}` : "gap-5 p-[14px]"
+        }`}
+      >
         {groups.map((group) => (
           <div key={group.label} className="flex flex-col gap-[3px]">
-            {!collapsed && (
-              <p className="px-[10px] pb-[7px] font-mono text-micro tracking-[0.16em] text-[#6E88A5] uppercase">
-                {group.label}
-              </p>
-            )}
+            <p
+              className={
+                collapsed
+                  ? "sr-only"
+                  : "px-[10px] pb-[7px] font-mono text-micro tracking-[0.16em] text-[#6E88A5] uppercase"
+              }
+            >
+              {group.label}
+            </p>
             <div className="flex flex-col gap-[3px]">
               {group.items.map((item, index) => {
                 const active = item.isActive(pathname);
@@ -536,9 +616,15 @@ export default function Sidebar({
                       e.preventDefault(); // don't scroll the nav while moving an item
                       reorder(group.label, group.items, index, index + (e.key === "ArrowUp" ? -1 : 1));
                     }}
-                    // Active state is a raised white "card" (ring + 1px shadow)
-                    // with a 2px inset accent bar, not a filled block — the mock's
-                    // way of marking the current page on a light panel.
+                    // ── The current page, announced and not only coloured (§46.7, §46.15)
+                    //
+                    // `aria-current="page"` was missing app-wide. The active state was a
+                    // background tint, an icon colour and an accent bar — three visual
+                    // cues and nothing a screen reader could report, and in the rail the
+                    // label is not visible either, so there was no non-visual way at all to
+                    // tell which page you were on. This is the fix for §46.7's "do not rely
+                    // on color alone" as much as for §46.15.
+                    aria-current={active ? "page" : undefined}
                     // ── No justify-center toggle (§36.12: "icons and labels must not
                     // jump") ────────────────────────────────────────────────────
                     //
@@ -547,16 +633,15 @@ export default function Sidebar({
                     // the aside is still 276px wide, so the icon leapt to the middle of a
                     // wide panel and the panel then narrowed around it.
                     //
-                    // Removing it changes nothing about the settled collapsed state — and
-                    // that is measured in the running app, not assumed. The rail is w-16,
-                    // which is 60px here because the root font-size is 15px (see
-                    // AppTextSize); the nav pads 14px and the link 10px, so a 15px icon
-                    // starts at 24px and is centred at 31.5px against the rail's own
-                    // centre of 30px. One and a half pixels, against the 114px leap
-                    // `justify-center` caused mid-collapse. Verified afterwards: the icon
-                    // sits at x=24 expanded, mid-collapse and collapsed — it does not
-                    // move horizontally at all.
-                    className={`relative flex h-9 items-center gap-[11px] rounded-[7px] px-[10px] text-sm motion-interactive ${
+                    // The rail now centres its icons a different way — `justify-center` on
+                    // a FULL-WIDTH item (RAIL_ITEM), not on a 32px one — so the icon has
+                    // nowhere to leap to: the item is as wide as the box it is centred in
+                    // in both states. That also fixes the 1.5px offset the old note
+                    // measured and accepted, and makes the whole 54px row clickable
+                    // instead of only the icon (§46.6).
+                    className={`relative text-sm motion-interactive ${
+                      collapsed ? RAIL_ITEM : "flex h-9 items-center gap-[11px] rounded-[7px] px-[10px]"
+                    } ${
                       active
                         ? "bg-[#0E3159] font-medium text-[#FFFFFF] shadow-[inset_0_0_0_1px_#1B4270,0_1px_2px_rgba(0,0,0,0.45)]"
                         : "text-[#C3D1E0] hover:bg-[#0E3157]"
@@ -569,17 +654,23 @@ export default function Sidebar({
                     {/* The active-page accent bar fades in rather than appearing (§36.12:
                         "the active-tab indicator must transition cleanly"). It is
                         absolutely positioned, so it has never affected the row's layout —
-                        only its arrival was abrupt. */}
-                    {active && <span className="motion-fade absolute top-[9px] bottom-[9px] left-0 w-[2px] rounded-r-[2px] bg-[#4C8DE8]" />}
+                        only its arrival was abrupt.
+                        Not drawn in the rail: it is a 2px bar on the item's left edge,
+                        which when the item was 32px wide floated in the middle of the rail
+                        pointing at nothing. Collapsed, the tinted pill IS the indicator —
+                        §46.7 asks for "one compact highlight around the active icon", and
+                        one is what it now gets. */}
+                    {active && !collapsed && (
+                      <span className="motion-fade absolute top-[9px] bottom-[9px] left-0 w-[2px] rounded-r-[2px] bg-[#4C8DE8]" />
+                    )}
                     <span className={`flex h-[15px] w-[15px] shrink-0 items-center justify-center ${active ? "text-[#4C8DE8]" : "text-[#8FA6BE]"}`}>
                       {item.icon}
                     </span>
-                    {!collapsed && (
-                      <>
-                        <span className="truncate">{item.label}</span>
-                        <NavPendingHint />
-                      </>
-                    )}
+                    {/* The label is HIDDEN, not removed (§46.15). Unmounting it took the
+                        link's accessible name with it and left `title` as the only source,
+                        which is exactly what that clause forbids. */}
+                    <span className={collapsed ? "sr-only" : "truncate"}>{item.label}</span>
+                    {!collapsed && <NavPendingHint />}
                   </Link>
                 );
               })}
@@ -607,16 +698,20 @@ export default function Sidebar({
             mirror-image button back to here. */}
         {schedulerProjectsUrl && (
           <div className="flex flex-col gap-[3px]">
-            {!collapsed && (
-              <p className="px-[10px] pb-[7px] font-mono text-micro tracking-[0.16em] text-[#6E88A5] uppercase">Apps</p>
-            )}
+            <p
+              className={
+                collapsed ? "sr-only" : "px-[10px] pb-[7px] font-mono text-micro tracking-[0.16em] text-[#6E88A5] uppercase"
+              }
+            >
+              Apps
+            </p>
             <a
               href={schedulerProjectsUrl}
               target="_blank"
               rel="noopener noreferrer"
-              title="Open the SDC Scheduler's Projects page in a new tab"
-              className={`flex h-9 items-center gap-[11px] rounded-[7px] px-[10px] text-sm text-[#C3D1E0] motion-interactive hover:bg-[#0E3157] ${
-                collapsed ? "justify-center" : ""
+              title="Project Scheduler — opens the SDC Scheduler's Projects page in a new tab"
+              className={`text-sm text-[#C3D1E0] motion-interactive hover:bg-[#0E3157] ${
+                collapsed ? RAIL_ITEM : "flex h-9 items-center gap-[11px] rounded-[7px] px-[10px]"
               }`}
             >
               <span className="flex h-[15px] w-[15px] shrink-0 items-center justify-center text-[#8FA6BE]">
@@ -628,30 +723,50 @@ export default function Sidebar({
                   <line x1="3.5" y1="12.5" x2="10.5" y2="12.5" strokeLinecap="round" />
                 </Icon>
               </span>
+              <span className={collapsed ? "sr-only" : "truncate"}>Project Scheduler</span>
+              {/* External-link cue, matching the new-tab behavior. Dropped in the rail:
+                  there is no room for a second glyph beside the icon, and the tooltip
+                  and the sr-only label both say it opens in a new tab. */}
               {!collapsed && (
-                <>
-                  <span className="truncate">Project Scheduler</span>
-                  {/* External-link cue, matching the new-tab behavior. */}
-                  <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" className="ml-auto shrink-0 text-[#6E88A5]">
-                    <path d="M6 3 H13 V10" strokeLinecap="round" strokeLinejoin="round" />
-                    <line x1="13" y1="3" x2="6.5" y2="9.5" strokeLinecap="round" />
-                  </svg>
-                </>
+                <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.8" className="ml-auto shrink-0 text-[#6E88A5]">
+                  <path d="M6 3 H13 V10" strokeLinecap="round" strokeLinejoin="round" />
+                  <line x1="13" y1="3" x2="6.5" y2="9.5" strokeLinecap="round" />
+                </svg>
               )}
             </a>
           </div>
         )}
       </nav>
 
-      {/* Footer block — one bordered group holding Text size, the Refresh/
-          Collapse pair, and the account row, per the mock. */}
-      <div className={`flex flex-col border-t border-[#12314F] ${collapsed ? "px-0 pt-2.5 pb-3" : "px-[14px] pt-2.5 pb-3"}`}>
-        <AppTextSize collapsed={collapsed} />
+      {/* ── Footer block (§46.5, §46.11) ────────────────────────────────────────
+          One bordered group holding Zoom, Refresh, the collapse toggle and the account
+          row.
+
+          `shrink-0` is the fix for the reported clipping, and it is worth being precise
+          about what went wrong because the symptom did not look like a flex bug.
+
+          The aside is a fixed-height column: `h-[var(--app-vh)]` with the nav as
+          `flex-1 overflow-y-auto`. This footer had no `shrink-0`, and the two buttons
+          inside it carried `flex-1` — which they need SIDE BY SIDE when expanded, but
+          which in the collapsed `flex-col` becomes a rule about HEIGHT: `flex: 1 1 0%`
+          sets `flex-basis: 0`, and flex-basis beats `h-[30px]` on the main axis. So the
+          two 30px buttons rendered **14px tall**, with "Refresh Data" clipped to
+          "Refresh Dat" inside a 59px box.
+
+          Measured before the fix, in the running app: Refresh h=14, Expand h=14. That is
+          the screenshot. The fix is structural, not cosmetic — the footer refuses to
+          shrink, and `flex-1` is applied only in the state that wants it. */}
+      <div className={`flex shrink-0 flex-col border-t border-[#12314F] pt-2.5 pb-3 ${collapsed ? RAIL_PAD : "px-[14px]"}`}>
+        {/* THE size control for the whole application (§45). Here, and only here:
+            the Monthly ETC and Projects toolbars used to carry their own Text size,
+            Font size, Row height and Column width steppers, so the same app could
+            be at two densities on two tabs. See lib/app-zoom.ts. */}
+        <AppZoom collapsed={collapsed} />
 
         {/* Side-by-side in the mock rather than the two stacked full-width rows
             this used to be — it reclaims a row of vertical space. Stacks again
             when collapsed, where there's no width for two. */}
-        <div className={`flex gap-1.5 pt-1 pb-2.5 ${collapsed ? "flex-col" : ""}`}>
+        <div className={`flex gap-[3px] pt-1 pb-2.5 ${collapsed ? "flex-col" : "gap-1.5"}`}>
           {/* THE refresh control (§25). It used to be `window.location.reload()` —
               which, to anyone reading the label, was a second refresh button that
               refreshed no data at all: it re-read the same rows the last sync had left
@@ -672,16 +787,33 @@ export default function Sidebar({
               point at it. */}
           <RefreshDataButton
             compact={collapsed}
-            // This button is `flex-1` beside Collapse — 128px at the default sidebar
-            // width. `dense` keeps its label to what fits (see the note on the prop).
+            // `dense` keeps its label to what fits beside Collapse at 128px (see the note
+            // on the prop). Irrelevant when compact, which shows no label at all.
             dense
-            className="motion-interactive flex h-[30px] flex-1 items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] px-2 text-xs whitespace-nowrap text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157] disabled:opacity-60"
+            // `flex-1` ONLY when expanded — see the footer's note. In the rail it made
+            // this a 14px-tall sliver with a clipped label.
+            className={`motion-interactive flex h-[30px] items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] text-xs whitespace-nowrap text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157] disabled:opacity-60 ${
+              collapsed ? "w-full shrink-0" : "flex-1 px-2"
+            }`}
           />
 
+          {/* ── One toggle, one position (§46.4) ──────────────────────────────────
+              It is the same button in both states, in the same slot, so it cannot "move
+              unexpectedly when the sidebar content changes". Collapsed it is a
+              full-rail-width chevron pointing right (expand); expanded it is the
+              labelled Collapse button.
+
+              `aria-expanded` describes the SIDEBAR, and `aria-controls` names it, so the
+              button reports the state it controls rather than relying on the label
+              swapping (§46.15). */}
           <button
             onClick={toggleCollapsed}
-            title={collapsed ? "Expand the sidebar" : "Collapse the sidebar"}
-            className="flex h-[30px] flex-1 items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] text-xs text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157]"
+            aria-expanded={!collapsed}
+            aria-controls={SIDEBAR_ID}
+            title={collapsed ? "Expand sidebar" : "Collapse sidebar"}
+            className={`flex h-[30px] items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] text-xs text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157] ${
+              collapsed ? "w-full shrink-0" : "flex-1"
+            }`}
           >
             <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center">
               <Icon>
@@ -692,47 +824,79 @@ export default function Sidebar({
                 )}
               </Icon>
             </span>
-            {!collapsed && <span>Collapse</span>}
+            {/* Hidden, not removed: this is the button's accessible name, and it changes
+                with the state, which is exactly what a screen reader needs to hear. */}
+            <span className={collapsed ? "sr-only" : ""}>{collapsed ? "Expand sidebar" : "Collapse sidebar"}</span>
           </button>
         </div>
 
-        <div className={`flex items-center gap-[10px] border-t border-[#12314F] pt-2.5 ${collapsed ? "justify-center" : "px-[10px]"}`}>
-          <div className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-[#123B66] text-note font-semibold text-[#4C8DE8]">
+        {/* ── The account row, and the control that was missing entirely (§46.5) ──
+            Collapsed, this used to render the avatar and NOTHING else: the email and the
+            Sign out button were both inside a `{!collapsed && …}`. So there was no way to
+            sign out of the application without expanding the sidebar first — the one
+            control in the footer that had no rail form at all.
+
+            It now has one: a door-out icon beside the avatar, stacked in the rail. The
+            email survives as `sr-only` (and as the avatar's tooltip), so who is signed in
+            is still reachable without it taking a row it does not have. */}
+        <div
+          className={`flex border-t border-[#12314F] pt-2.5 ${
+            collapsed ? "flex-col items-center gap-[3px]" : "items-center gap-[10px] px-[10px]"
+          }`}
+        >
+          <div
+            className="flex h-[26px] w-[26px] shrink-0 items-center justify-center rounded-full bg-[#123B66] text-note font-semibold text-[#4C8DE8]"
+            title={collapsed ? (userEmail ?? "Signed in") : undefined}
+          >
             {userEmail?.[0]?.toUpperCase() ?? "?"}
           </div>
-          {!collapsed && (
-            <div className="min-w-0 flex-1">
-              <p className="truncate text-note text-[#C3D1E0]">{userEmail}</p>
-              <form action={signOutAction}>
-                <button
-                  onClick={(e) => {
-                    if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Sign out anyway?")) {
-                      e.preventDefault();
-                    }
-                  }}
-                  className="text-note text-[#7189A3] hover:text-[#C3D1E0] hover:underline"
-                >
-                  Sign out
-                </button>
-              </form>
-            </div>
-          )}
+          <div className={collapsed ? "contents" : "min-w-0 flex-1"}>
+            <p className={collapsed ? "sr-only" : "truncate text-note text-[#C3D1E0]"}>{userEmail}</p>
+            <form action={signOutAction} className={collapsed ? "w-full" : undefined}>
+              <button
+                onClick={(e) => {
+                  if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Sign out anyway?")) {
+                    e.preventDefault();
+                  }
+                }}
+                title={collapsed ? "Sign out" : undefined}
+                className={
+                  collapsed
+                    ? "flex h-[26px] w-full items-center justify-center rounded-[7px] text-[#7189A3] motion-interactive hover:bg-[#0E3157] hover:text-[#C3D1E0]"
+                    : "text-note text-[#7189A3] hover:text-[#C3D1E0] hover:underline"
+                }
+              >
+                {collapsed && (
+                  <span className="flex h-3.5 w-3.5 shrink-0 items-center justify-center" aria-hidden>
+                    <Icon>
+                      <path d="M6.5 2.5 H3.5 A1 1 0 0 0 2.5 3.5 V12.5 A1 1 0 0 0 3.5 13.5 H6.5" strokeLinecap="round" strokeLinejoin="round" />
+                      <line x1="6.5" y1="8" x2="13.5" y2="8" strokeLinecap="round" />
+                      <path d="M11 5.5 L13.5 8 L11 10.5" strokeLinecap="round" strokeLinejoin="round" />
+                    </Icon>
+                  </span>
+                )}
+                <span className={collapsed ? "sr-only" : ""}>Sign out</span>
+              </button>
+            </form>
+          </div>
         </div>
 
         {/* The running application version. In the sidebar, so it is on every tab
             without each page having to render it, and sourced from
             lib/app-version.ts — which reads the ONE value in package.json — so no
-            component can ever report a different number. Hidden when collapsed:
-            the rail is 26px of icons there and a version string would not fit.
-            `title` keeps it reachable for a bug report either way. */}
-        {!collapsed && (
-          <div
-            className="border-t border-[#12314F] px-[10px] pt-2 text-label text-[#5A7391]"
-            title={`SDC Projects Reports ${appVersionLabel()}`}
-          >
-            {appVersionLabel()}
-          </div>
-        )}
+            component can ever report a different number.
+            Collapsed it is `sr-only`: a version string does not fit in a 60px rail
+            (§46.2 lists it among the things that must not appear clipped), but it is the
+            first thing anyone is asked for in a bug report, so it stays reachable to a
+            screen reader and in the tooltip rather than being unmounted. */}
+        <div
+          className={
+            collapsed ? "sr-only" : "border-t border-[#12314F] px-[10px] pt-2 text-label text-[#5A7391]"
+          }
+          title={`SDC Projects Reports ${appVersionLabel()}`}
+        >
+          {appVersionLabel()}
+        </div>
       </div>
     </aside>
   );

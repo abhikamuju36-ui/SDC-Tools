@@ -121,8 +121,14 @@ export function RefreshDataButton({
 
       const at = new Date(outcome.completedAt).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
       const started = outcome.seededMonth ? ` ${outcome.seededMonth} was started.` : "";
+      // The data VINTAGE, not just the clock time (§43). "Refreshed at 2:15pm" answers
+      // when the app last asked; it does not answer what it now knows — and that is the
+      // question people actually have, because the Power BI report reads a model that
+      // refreshes on its own cadence and is routinely a few days behind this file. A
+      // manager comparing the two needs to see the two vintages, not two timestamps.
+      const through = outcome.hoursThrough ? ` Hours are complete through ${outcome.hoursThrough}.` : "";
       if (outcome.status === "ok") {
-        toast(`All application data was refreshed successfully at ${at}.${started}`, "success");
+        toast(`All application data was refreshed successfully at ${at}.${through}${started}`, "success");
       } else {
         // Explicitly NOT a success: names what failed, says what did update, and says
         // what happens next (§25.7).
@@ -252,10 +258,13 @@ export function RefreshDataButton({
       disabled={pendingBusy}
       aria-busy={running}
       onClick={run}
+      // §46.3 asks the collapsed control for "a tooltip labeled Refresh Data". The
+      // explanation follows the name rather than replacing it, so the icon-only form
+      // still says what it does on hover — and the full-size form reads identically.
       title={
         running
           ? busyDescription
-          : "Pull the latest hours, parts costs, jobs and pools from every source, for the whole app. Runs the same pass as the hourly schedule."
+          : "Refresh Data — pull the latest hours, parts costs, jobs and pools from every source, for the whole app. Runs the same pass as the hourly schedule."
       }
     >
       {/* The reservation, per caller. MEASURED in the running app, not derived from a
@@ -284,9 +293,31 @@ export function RefreshDataButton({
             <path d="M8 2 a6 6 0 0 1 6 6" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" />
           </svg>
         )}
+        {/* ── Compact is an ICON now, not text (§46.2, §46.3) ────────────────────
+            `compact` used to render the words "Refresh Data" — the full label, in the
+            60px collapsed rail. Measured: a 73px span inside a 59px button, clipped by
+            the button's own `overflow-hidden` to "Refresh Dat". That is the clipped label
+            §46.2 names and §46.3 asks to replace with "a compact refresh icon".
+
+            The circular arrow, and only when not running: the spinner above already
+            occupies this slot during a refresh, so the two never both appear and the
+            button's width does not change between states. Every other state is
+            untouched — the determinate progress bar, the disabled treatment, the tooltip
+            and the live region all work exactly as they do at full size (§46.3:
+            "preserve its normal, refreshing, success, and failure states"). */}
+        {compact && !running && (
+          <svg viewBox="0 0 16 16" width="14" height="14" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0" aria-hidden>
+            <path d="M13.5 8 A5.5 5.5 0 1 1 11.6 3.9" strokeLinecap="round" />
+            <path d="M13.8 1.8 V4.4 H11.2" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
+        )}
         {/* min-w-0 + truncate, so a caller narrower than the label clips instead of
-            overflowing — which is what the sidebar version did before. */}
-        <span className="min-w-0 truncate">{compact && !running ? "Refresh Data" : label}</span>
+            overflowing — which is what the sidebar version did before.
+            `sr-only` when compact rather than absent: the icon is not a name, and §46.15
+            forbids the tooltip being the only accessible text. This IS the button's
+            accessible name in the rail, and it still changes to "Refreshing…" so the
+            state is announced. */}
+        <span className={compact ? "sr-only" : "min-w-0 truncate"}>{label}</span>
         {/* tabular-nums so 9/12 and 10/12 are the same width: without it the counter
             re-centres the label every time a source completes. */}
         {step && <span className="shrink-0 tabular-nums opacity-80">{step}</span>}

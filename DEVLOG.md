@@ -2678,3 +2678,1412 @@ per-cell shadow or a blur.
   radius, compact < standard, the 36px floor, rem not px, frame colour equals gridline
   colour, square corners, both pages on the shared scroller). It cannot check rendered
   geometry — that was the browser measurement above.
+
+---
+
+## 28. Hours read from Lisa's workbook again; Undefined Hours reconciled (2026-08-05)
+
+Reported as "the refreshed hours, Undefined Hours KPI and its drill-through are not updating
+correctly" (§42), with an explicit instruction not to apply a frontend refresh workaround.
+That instruction was right, and for a reason nobody had established yet.
+
+Full report, including all seventeen §42.31 deliverables: **`PAYLOCITY-INGESTION.md`**.
+
+### 28.1 The app was never stale. The model it read was.
+
+Hours moved to Power BI's `Hours Actual` on 2026-08-03 (§12 territory), on the evidence that
+the two sources agreed on **1,127 of 1,127** job × section × month cells. That equivalence was
+real. It was also measured across **settled months only**, so it could not show the one
+property that mattered — the model lags the file:
+
+```
+                workbook      Power BI      database
+2026-06        7,357.98h     7,357.98h     7,358.01h      0 cells differ
+2026-07        6,823.60h     6,673.07h     6,673.07h     46 cells differ
+2026-08          293.50h         0.00h         0.00h     56 cells differ
+```
+
+Workbook latest work date 2026-08-04; Power BI latest 2026-07-31. **Power BI → database was
+exact.** The app imported faithfully; all the staleness was upstream of it. So no cache fix,
+no refetch, no UI change could have helped — the data was not there to fetch.
+
+June matching to the penny with **zero** differing cells is what made the switch back safe:
+for a settled month the file and the model are the same data, and the file is days earlier.
+
+### 28.2 Three traps, all of which present as "nearly right"
+
+**Punch segments are not duplicates.** 7,460 `(employee, date, job, section)` keys repeat, and
+only 21 differ by any other column. The rest look like `hours [1.5, 7.5]` — one clock-in/out
+pair each. A duplicate detector would have discarded 7,439 legitimate rows and understated
+every month. At this grain the file genuinely cannot distinguish a duplicate from two equal
+segments, so idempotency rests on the content hash and the replace-by-`(job, month)` write
+instead. Caught because the count looked absurd next to a June total that was nonetheless
+exact.
+
+**Aggregate-then-round versus round-then-aggregate, twice in one day.** First as a false
+alarm: comparing raw workbook sums against pre-rounded stored rows reported 31–47 differing
+cells a month while every month total agreed to within 0.07h on ~7,000h — six settled months
+flagged as history rewrites that were nothing of the kind. Then as a real defect: the KPI
+total was summed raw and rounded once while the drill summed individually-rounded rows,
+mismatching by +0.04h (2026-06) and +0.01h (2026-07). Small, but §42.11 makes any mismatch a
+calculation failure, and the new reconciliation banner duly showed it in red on its first live
+run. Round at the storage grain first, then sum.
+
+**`prisma migrate diff` wanted to `DROP COLUMN RefreshRun.currentStage`.** The column is live
+and used by raw SQL in `refresh-service.ts`, but had never been declared in `schema.prisma`.
+Applying the generated migration unreviewed would have broken refresh progress — the feature
+§42.15 asks to extend. Read the generated SQL before applying it.
+
+### 28.3 The shape now
+
+`lib/hours-feed.ts` is the single entry point. It reads `lib/paylocity-workbook.ts` (sheet
+`Report`, headers by name, sha256 identity, stat-read-stat atomicity, typed failure stages)
+and there is deliberately **no fallback to Power BI on failure** — the model runs behind, so
+falling back would overwrite fresh figures with stale ones, the "mixed old and new metrics"
+§42.19 forbids. `HOURS_SOURCE=power_bi` reverts by hand. Power BI still supplies the Function
+Hierarchy code→column map, which is static metadata rather than hours, and still owns
+2025-02…2025-12, which the workbook does not reach.
+
+`lib/undefined-hours-rules.ts` is THE Undefined Hours definition and has no I/O at all — that
+is what makes "one centralized definition" structural rather than a convention, and it is the
+only reason the rules are unit-testable at all (tests can import server-only modules only as
+erased `import type`). `UndefinedHoursRow` persists the punch rows and `HoursImportIssue` the
+totals, **written from one pass in one transaction**, so KPI = SUM(drill) by construction. The
+drill also stopped costing a live DAX round-trip per click.
+
+### 28.4 Verified
+
+```
+2026-07   6,673.07h -> 6,825.98h   (+152.91)
+2026-08       0.00h ->   520.23h   (+520.23)
+2025-12   5,964.29h -> 5,964.29h   (history untouched)
+
+KPI vs drill   2026-06  matches 240.47h    2026-07  matches 195.80h    2026-08  matches 8.00h
+idempotency    a second consecutive import: 0.00h delta on every month, status "unchanged"
+suite          621 tests, 621 pass
+```
+
+### 28.5 Not done
+
+The visual pass is partial. The Undefined Hours drill was rebuilt (`UndefinedHoursPanel`:
+reason breakdown with corrective actions, affected-employee count, reconciliation banner,
+per-reason filtering, source row numbers) and the `failed`/`invalid` cell states were
+separated — they had been rendering identically despite demanding opposite responses. **Not**
+done: the §42.24/§42.26 table, header and bottom-totals pass; §42.29 responsive and zoom
+testing, including of the new panel; §42.32 visual-regression tests, for which this repo has
+no harness.
+
+One unexplained thing worth chasing: a full `refreshAllData()` pass hung for over ten minutes
+on the TotalETO or Scheduler step. Both are external and unrelated to §42, so the hours path
+was verified on its own — but the hang is real and is not diagnosed.
+
+### 28.6 "The hours don't match Power BI" — they aren't supposed to (§43, same day)
+
+Reported hours later: the report shows July Engineering 3,020 / Shop 2,680 /
+Manufacturing 676; the grid footer shows 3,154 / 2,698. Asked to correct the formulas so
+the two match exactly.
+
+Nothing was corrected, because nothing was wrong. Both gaps close to the penny:
+
+```
+ENG    3,153.81  app        SHOP   2,697.91  app
+        +  5.00  Warranty            +  4.86  Warranty 4.78 + Service 0.08
+      = 3,158.81  ≙ PBI def         = 2,702.77  ≙ PBI def exactly
+        −138.83  freshness           − 22.77  freshness
+      = 3,020.00  the report        = 2,680.00  the report
+```
+
+Two causes, both correct behaviour. **Freshness:** the app reads Lisa's file (through
+08-04) while the report reads a model that refreshes separately (through 07-31), so the
+app is *ahead* by ~161h of July. **Definition:** Power BI buckets by FUNCTION regardless of
+phase, so Warranty and Service land inside its Engineering and Shop figures; the ETC grid's
+fixed 9+4-code formula excludes them, as signed off on 2026-07-31. Manufacturing is not
+missing either — all 688.62h is imported, off the grid by design in the
+`SHOP_MANUFACTURING` pool.
+
+The import itself is faithful to **0.02h**. No missing records, no duplicates, no mapping
+error.
+
+Two traps worth knowing before anyone reconciles these again. `Job.id` is an autoincrement
+surrogate and `Job.jobId` is the job number; `JobHoursDetail.jobId` references the
+surrogate while the workbook carries the number, so joining on the wrong one reports a
+clean **0.00h** rather than an error — it cost two runs. And the workbook must be parsed
+**raw** for this comparison: `readPaylocityWorkbook` has already applied
+`mapPunchToColumns`, and checking the app's mapping against itself proves nothing.
+
+Confirmed with the user: change neither difference. Instead the vintage is now stated —
+the ETC header reads "Hours through 2026-08-04" with a tooltip covering both causes, and
+the refresh toast says "Hours are complete through 2026-08-04". Full decomposition in
+`PAYLOCITY-INGESTION.md` §43.
+
+## 29. One universal zoom, and the six controls it replaced (2026-08-05)
+
+Reported as §45: "Replace all separate text-size and density controls with one universal app
+zoom control." One `− 100% +` in the sidebar, on every page, scaling *everything*.
+
+### 29.1 What was actually there: six axes, one of which was half a control
+
+| Control | Where | Wrote | Range |
+|---|---|---|---|
+| Text size | Sidebar footer | root `font-size` | 12–20px |
+| Font size | Monthly ETC → View | `--etc-font-size` | 4–24px |
+| Row height | Monthly ETC → View | `--etc-row-py` | 0–16px |
+| Column width | Monthly ETC → View | `--etc-col-px` | 0–16px |
+| Row height | Projects → Display | `--quoted-row-py` | 0–16px |
+| Column width | Projects → Display | `--quoted-col-px` | 0–16px |
+
+Six independent axes, five localStorage keys, five mount effects to restore them, and a sixth
+key for the root size. Four of the six were **per-tab**, which is the thing §45 names outright:
+Monthly ETC could sit at one density and Projects at another, in the same app, for the same
+user.
+
+And the sidebar "Text size" only ever did half its job. It moved the root font size, so it
+reached everything written in `rem` and **nothing** written in px — and this app's chrome is
+deliberately in px. Turning it up grew the grids and left the sidebar, the toolbars and the nav
+exactly where they were. The sidebar even carried a comment defending that: *"Sizes are in px,
+not rem, deliberately… letting the app chrome grow with it made the nav crowd the content."*
+Which is a sound argument against a root-font-size control, not for one.
+
+### 29.2 Why CSS `zoom`, decided by measurement rather than preference
+
+Three candidates. `transform: scale()` was ruled out on principle: it scales *after* layout, so
+sticky headers stop sticking where they should, scroll containers keep their unscaled
+`scrollHeight`, and hit-testing drifts from what you see — on an app that is two large frozen
+grids, that is not a trade-off, it is a break. A root-font-size control is what was already
+there, and §29.1 is its obituary.
+
+`zoom` participates in layout and scales the used value of *every* length — padding, borders,
+icon boxes, widths, gaps — not just the ones that happen to be in `rem`. So it is the only one
+of the three that is genuinely "one lever over all visible application content".
+
+Before writing any of it, a probe page measured what `zoom` on `<html>` actually does in this
+browser, because two things had to be true and one of them was not:
+
+```
+zoom   viewport   height:100vh   fixed inset-0
+1.0      720px        720px          720px      ✓
+0.75     720px        540px          720px      ← vh is NOT corrected
+1.25     720px        900px          720px      ← 180px below the fold
+1.5      720px       1080px          720px
+```
+
+`position: fixed` needs no help at all — a `fixed inset-0` overlay covers the viewport exactly
+at every level, so every modal, toast and notification stack was already correct. But **`vh`
+resolves against the unzoomed viewport and is then scaled with everything else**, so a
+`h-screen` sidebar hangs a quarter of a screen off the bottom at 125%.
+
+That is the whole catch, and it is fixed centrally:
+
+```css
+--app-zoom: 1;
+--app-vh: calc(100vh / var(--app-zoom));
+--app-vw: calc(100vw / var(--app-zoom));
+html { font-size: 15px; zoom: var(--app-zoom); }
+```
+
+Twenty-one viewport-relative lengths across sixteen files now read those two variables instead
+of `vh`/`vw` — the sidebar, both grid scrollers, the AG Grid host, four `JobProcurement`
+panels, three modals, two filter popovers, the pool panel, the password gate, the error and 404
+pages, the login page and the toast stack. `tests/app-zoom.test.ts` fails the build if a
+component reaches for a raw `vh`/`vw` again, because `h-screen` looks correct and is wrong at
+six of the seven levels.
+
+### 29.3 Nothing on screen moved at 100%
+
+The constraint that made this safe to ship: every retired variable is replaced by the value it
+already defaulted to, so 100% is the old app. Verified live, not assumed:
+
+| | before | after |
+|---|---|---|
+| ETC body cell padding | `var(--etc-row-py, 4px)` → 4px | `0.2667rem` → **4.0005px** |
+| Projects body cell padding | `var(--quoted-row-py, 6px)` → 6px | `0.4rem` → **6px** |
+| Projects data column | `calc(max(4.7rem,72px) + 2*4px)` → 80px | **80px** |
+| ETC grid text | `var(--etc-font-size, 0.68rem)` → 10.2px | **10.2px** |
+
+`--app-vh` is `calc(100vh / 1)` at the default, so every converted length is identical too: the
+ETC scroller still computes 537px against a 720px viewport.
+
+The `table[data-grid="etc"]` font-size rule went with the Font size box that §39.14 had added it
+for. Worth remembering *why* that rule existed: the stepper had never worked, because
+globals.css carries an un-layered `table, table * { font-size: … !important }` and an important
+declaration outside any layer beats a normal one inside `@layer utilities` whatever the
+specificity. Setting `--etc-font-size` to 22px moved a cell from 10.2px to 10.2px.
+
+### 29.4 Measured at all seven levels, on the real grids
+
+Monthly ETC (49 jobs × 83 columns), scrolled to (1200, 400) at each level:
+
+```
+zoom                 75%    80%    90%   100%   110%   125%   150%
+row height          17.2   18.3   20.4   22.7   24.9   28.2   34.3  px  (proportional)
+sidebar = viewport     ✓      ✓      ✓      ✓      ✓      ✓      ✓       (exactly one screen)
+column drift, rows     0      0      0      0      0      0      0  px  (first vs last row)
+column drift, totals   0      0      0      0      0      0      0  px  (tfoot vs body)
+frozen cols pinned   0.7    0.7    0.7    0.7    0.7    0.7    1.3  px  (= the 1px border)
+sticky header top    0.7    0.7    0.7    0.7    0.7    0.7    1.3  px
+page h-overflow        0      0      0      0      0      0      0  px
+```
+
+Frozen columns, the sticky header and the pinned totals row hold to **zero** drift at every
+level — the property `transform: scale()` would have cost.
+
+Also verified: **cell editing** at 125% — `elementFromPoint` at a cell's visual centre resolves
+to that cell's own input, the input still fills its `td` exactly, arrow keys move down and back
+within the column, typing is accepted. **Dropdowns** scale rather than drift (the View menu's
+panel sits 7.5px below its trigger at 100% and 11.3px at 150% — exactly ×1.5 — and stays inside
+the viewport). **The collapsed rail** keeps all three controls inside its 60px and they still
+work. **Persistence** across a client-side tab switch (90% held, one navigation entry, no
+reload) and across a hard reload (125% restored by the pre-paint script, `navType: "navigate"`).
+**KPI cards** wrap without a single element escaping `main`.
+
+And the requirement that matters most for how it feels — a full 75% → 150% → 100% sweep issued
+**zero network requests and zero navigations**. Zoom is one custom-property write on `<html>`;
+no React state, no re-render of a cell, no refetch.
+
+### 29.5 The one real bug it surfaced, and the one it did not
+
+The hours drill-through pushed a **138px horizontal scrollbar onto the whole page at 125%**. The
+cause was not zoom: a native `<select>` sizes itself to its widest option, and as a flex item it
+defaults to `min-width: auto`, so the job filter — whose longest option is a full job name —
+demanded 360px inside a ~500px column and could not shrink. `flex-wrap` on the row does not
+help; the row can wrap, one un-shrinkable item cannot.
+
+Proved pre-existing by reproducing it at **100% zoom in a 1090px window** (124px of overflow —
+the same available width). Zooming in narrows the effective viewport, which is why it surfaced
+there first; anyone on a small laptop already had it. Fixed with `min-w-0 max-w-[14rem]` on that
+control.
+
+At 150% in a 1360px window there is still ~229px of page overflow, and that one is **left alone
+deliberately**. 150% leaves the app ~907 layout px, and the same page overflows by 157px in a
+907px window at 100% zoom: the drill panel's two-column `flex gap-3` has no narrow-width layout
+to fall back to. Giving it one is a redesign of that panel, not a zoom fix. Nothing is clipped
+or unreachable — the page scrolls — and every other page is at zero overflow at every level.
+
+### 29.6 Two smaller decisions worth recording
+
+**The steppers step from the DOM, not from React state.** `useSyncExternalStore` gives the label
+and the two disabled ends, but a handler closed over that value holds whatever the last render
+saw — so two clicks landing before a re-render would both compute `stepZoom(sameValue, +1)` and
+the second would be swallowed. `currentZoom()` reads the applied custom property, which cannot
+be stale because setting it *is* the operation. The retired density steppers had reasoned this
+out already: *"the CSS variable itself is the only source of truth, read straight off the DOM on
+every click."*
+
+**Zoom is not part of a saved View.** `ProjectViewsMenu` used to snapshot Grid Size, and the
+temptation was to snapshot zoom in its place. A view is a claim about which figures you are
+looking at; loading one should not resize somebody's whole application. `ViewConfig.grid` is
+kept as a deprecated graveyard field so views already published still parse and re-publish
+without dropping data.
+
+Not taken: Ctrl+/Ctrl− key bindings. §45 asks that browser zoom keep working independently, and
+those are the browser's own shortcuts — they compose with this one for free.
+
+## 30. The collapsed sidebar, audited (2026-08-05)
+
+Reported as §46 from a screenshot: "controls are clipped, labels overlap, content begins too
+close to the sidebar, bottom controls are partially hidden". Audited in the running app before
+changing anything. Nine defects, four of them invisible in the screenshot.
+
+### 30.1 What was actually wrong
+
+| | Defect | Measured |
+|---|---|---|
+| D1 | Footer buttons `flex-1` inside a `flex-col` | Refresh **h=14**, Expand **h=14** (both declared `h-[30px]`) |
+| D2 | `RefreshDataButton` compact rendered the WORDS "Refresh Data" | 73px span in a 59px button → clipped to "Refresh Dat" |
+| D3 | Collapsed state in localStorage, invisible to the server | SSR returned `<aside style="width:276px">` with every label, the search field and the version |
+| D4 | Labels unmounted rather than hidden | link accessible name gone; `title` the only source |
+| D5 | Sign out and the user identity were expanded-only | **no way to sign out without expanding first** |
+| D6 | Nav padded `14px` a side in a 60px rail | click targets 31px wide; a click 10px inside the rail hit nothing |
+| D7 | Group `gap-5` kept after hiding the headings | 36/37px between items vs **52/53px** between groups |
+| D8 | Active accent bar on a 31px item's left edge | sat at x=14 — floating mid-rail, pointing at nothing |
+| D9 | No `aria-current` anywhere in the app | the current page was three visual cues and nothing else |
+
+D1 is the screenshot. It is worth stating precisely, because the symptom looks nothing like the
+cause: the aside is a fixed-height column (`h-[var(--app-vh)]`) with the nav as `flex-1`, and
+the two footer buttons carried `flex-1` so they could share a row when expanded. Collapsed, the
+footer becomes a `flex-col` — and there `flex-1` is a rule about HEIGHT. `flex: 1 1 0%` sets
+`flex-basis: 0`, which beats `h-[30px]` on the main axis. So both 30px buttons rendered 14px
+tall, and the label inside the shorter one was clipped by the button's own `overflow-hidden`.
+
+The fix is structural: the footer is `shrink-0`, and `flex-1` is applied only in the state that
+wants it. Both buttons now measure **h=30** in the rail.
+
+### 30.2 The state had to move to a cookie
+
+D3 cannot be fixed inside the component. The flash happens before any of it runs: the server
+does not know the sidebar is collapsed, so it renders the expanded one, and the rail appears
+when the store reads localStorage after hydration. §46.14 forbids exactly that ("do not briefly
+expand it during route transitions").
+
+So collapse and width are cookies now (`lib/sidebar-prefs.ts`), read in the (app) layout and
+handed to `AppShell` → `Sidebar` as the external store's **server snapshot**. The value React
+hydrates with is the value already painted. Verified: a request with the flag set now returns
+`<aside style="width:4rem">`, no search field, and the Refresh label as `sr-only` rather than a
+visible truncating span.
+
+§45's zoom preference deliberately stayed in localStorage, and that is not a contradiction. Zoom
+is applied by a pre-paint script writing one custom property — the HTML is identical at every
+level, so the server never needs to know. The sidebar changes the markup. And the cookie is
+free here: the (app) layout already awaits `auth()`, which reads cookies and is what makes every
+route under it dynamic.
+
+### 30.3 Two bugs the audit found that nobody had reported
+
+**The rail's scrollbar was un-centring the icons.** At 150% app zoom on an 820px viewport the
+nav overflows and scrolls — which is what §46.5 asks for. But a classic scrollbar takes its
+width out of the CONTENT box: measured `offsetWidth 59, clientWidth 49`, so every nav icon sat
+5px left of the rail's centre while the footer icons, in a container that does not scroll,
+stayed centred. Two columns of icons, visibly misaligned, and only when the rail happened to
+overflow. `.rail-scroll` hides the scrollbar so the content box is the full rail at all times;
+the wheel and Tab still scroll it. (`scrollbar-gutter: stable both-edges` centres correctly and
+was rejected: it reserves 2 × 10px permanently out of a 60px rail, which is less room than the
+32px targets D6 had just fixed.)
+
+**The sidebar had opted itself out of the app's focus ring.** globals.css carries
+`.bg-sdc-navy :focus-visible { outline-color: #fff }` because the default ring is `--sdc-blue`,
+which on this panel is blue on navy. The sidebar spelled its background as the arbitrary value
+`bg-[#061D39]` — the same colour as the token, `--sdc-navy: #061d39` — so the override had never
+matched it. Confirmed in the running app: `aside.closest('.bg-sdc-navy')` was `null`. One class
+change, no visual change to the panel (`rgb(6, 29, 57)` either way), and a real Tab press now
+reports `outline: solid 2px rgb(255, 255, 255)` on the focused rail link. That matters more in
+the rail than anywhere else in the app: the label is hidden there, so focus is the only cue.
+
+### 30.4 Hidden, never removed
+
+Every label that disappears in the rail is now `sr-only` instead of unmounted — nav labels, the
+wordmark, group headings, Back, the toggle, Sign out, the version string. §46.15 asks for it
+outright ("do not remove navigation labels from screen readers when visually hiding them"), and
+it also fixes D4's quieter consequence: a control whose text is gone has no accessible name but
+its `title`, which the same clause rules out.
+
+Added while there: `aria-current="page"` on the active link (D9 — missing app-wide, not just in
+the rail), and `aria-expanded` + `aria-controls` on the toggle. Result: 14 focusables in the
+rail, **0 without an accessible name**, DOM order matching visual order, no positive tabindex.
+
+### 30.5 Verified
+
+Collapsed, on all seven §45 zoom levels:
+
+```
+zoom              75%   80%   90%  100%  110%  125%  150%
+rail width         45    48    54    60    66    75    90  px
+escaping the rail   0     0     0     0     0     0     0
+overlapping         0     0     0     0     0     0     0
+past the viewport   0     0     0     0     0     0     0
+max off-centre    0.3   0.3   0.3   0.3   0.3   0.3   0.7  px
+nav scrollbar       0     0     0     0     0     0     0  px
+```
+
+At 150% the nav scrolls (14 of 16 controls on screen, the rest one wheel-tick away) and the
+footer stays fully visible — §46.5's "controlled internal sidebar scroll area without hiding
+essential actions". Same at a 600px-tall viewport: Zoom, Refresh, Expand and Sign out all
+fully visible, nav scrolling.
+
+All six pages collapsed — Dashboard, Employees, Projects, Monthly ETC, Job Hour Details, Audit
+Log — report rail 60px, 0 escaping, 0 overlaps, `main` at exactly 60 and **0 content elements
+overlapping the rail**, with the collapse surviving every client-side navigation.
+
+The transition (§46.10), frame by frame with the reduced-motion suppression lifted:
+`276 → 178 → 80 → 60` over ~200ms, and the gap between the aside's right edge and `main`'s left
+edge was **0 on every intermediate frame**. It cannot be otherwise — `main` is `flex-1` off the
+aside's width, so there is one animation and the content cannot lag it.
+
+Performance (§46.16), collapse + expand on Monthly ETC with 4,150 cells: **0 new requests, 0 SSE
+reconnects, scroll position preserved exactly (900, 250), identical cell count, and the
+scroller node never remounted.**
+
+`--sidebar-w` is published on the shell as §46.9 asks. Worth recording that the clause's real
+concern did not apply: no page has ever had a hardcoded sidebar margin — the offset is
+structural. The variable's own hazard was the one it warns about, and it was mine: rendered from
+the server's value, it would have read 276px forever after a client-side collapse. `Sidebar`
+updates it on change, and both writers derive it from `sidebarWidthCss` so there is one formula.
+
+### 30.6 Not changed
+
+The search field is still unmounted in the rail rather than `sr-only`. Everything else that
+disappears is static text; this is a focusable text input, and leaving a keyboard-reachable
+invisible field in a 60px rail — which Ctrl+K would then focus — is worse than not offering it.
+
+The 30px gap between the rail and page content is unchanged, and is the same gap the expanded
+sidebar has. It comes from each page's own padding, so content begins at the identical offset in
+both states, which is what §46.1 asks for.
+
+## 31. The drill-throughs, redesigned from the KPI reference (2026-08-05)
+
+Reference: `KPI Card Redesign/KPI Summary Card.dc.html`, with the drill panel screenshotted
+as the target. §47.
+
+### 31.1 The reference's palette is not in the app, deliberately
+
+The mockup is drawn in a warm-gray scheme — `#f4f4f2` ground, `#e2e0d9` borders, `#16233a`
+ink, `#2b5f8e` links — in Inter Tight and IBM Plex Mono. None of that shipped. This app has
+a committed brand palette and one type scale, both test-guarded (§39), and a second palette
+living inside one component is precisely the "duplicate theme definitions" §39.16 forbids —
+it is how the charts came to render in a different font from the rest of the app.
+
+So the reference's **structure, spacing, hierarchy and interaction** were adopted and its hex
+values were mapped:
+
+```
+#16233a ink        -> text-sdc-navy        #e2e0d9 panel border -> border-sdc-border
+#22221c row name   -> text-sdc-gray-700    #eeece5 section rule -> border-sdc-border
+#8b8b82 secondary  -> text-sdc-muted       #f3f2ec row hairline -> border-sdc-border-soft
+#2b5f8e link       -> text-sdc-blue-dark   #f4f3ee chip tray    -> bg-sdc-gray-100
+IBM Plex Mono      -> font-mono            Inter Tight          -> the app's font-sans
+```
+
+Two of its tiers were dropped rather than mapped. `#9a998f` (2.87:1) and `#a9a89f` (2.39:1)
+fail WCAG AA, and this panel renders financial figures at 10–11px; the mockup's own darker
+`#8b8b82` is 3.44:1 and also fails. Everything secondary uses one AA-passing tone instead.
+`tests/drill-design.test.ts` fails the build if any of those fourteen hex values appears in a
+drill component.
+
+### 31.2 The muted tone the app never had
+
+Applying the reference's hierarchy surfaced the reason it had never read that way:
+**`sdc-gray-500` was written 107 times across 39 files and was never declared.**
+
+Tailwind v4 needs a value in `:root` and a `--color-*` alias in `@theme`; `sdc-gray-500` had
+neither, so `.text-sdc-gray-500` emitted no CSS at all. Verified in the running app — the
+class matched no rule and the element inherited its parent's colour:
+
+```
+.text-sdc-gray-500 rule in stylesheet : (NONE)
+computed colour                       : rgb(35, 31, 32)   ← full body ink
+parent colour                         : rgb(35, 31, 32)
+```
+
+So every "secondary" line in the app — panel subtitles, group counts, helper text, the
+drill-throughs' entire second tier — had been rendering at the same weight as primary text.
+Not a subtle regression: the hierarchy those 107 call sites were asking for simply was not
+there, and no amount of restyling the drills would have produced it.
+
+It is **not** called `gray-500`. The neutral ramp runs 50 → 100 → 400 → 600 → 700
+light-to-dark, so a monotonic "500" would have to be darker than `#3d3d3d`, which is not
+muted at all — the name was the reason nobody noticed it was missing. It gets a semantic name
+like `--sdc-red-text` and `--sdc-yellow-text` already have, and the 107 call sites were
+renamed to `text-sdc-muted`.
+
+`#6e6a6b` is a literal tint of the brand Black toward the brand Gray, chosen by contrast
+rather than by eye: **5.33:1 on white, 5.11:1 on gray-50, 4.76:1 on gray-100** — AA on every
+surface the app puts it on, asserted arithmetically in the test rather than by a comment.
+
+### 31.3 Three drills, three designs, agreeing on none of five decisions
+
+| | HoursDetailPanel | UndefinedHoursPanel | DataQualityDrill |
+|---|---|---|---|
+| header row | navy fill, white bold caps | grey `TABLE_HEADER_ROW` | navy fill, white bold caps |
+| row separation | zebra stripes | hairlines | zebra stripes |
+| cell borders | `TABLE_GRID` — every cell | none | none |
+| caret | `▶` rotated | `▼`/`▶` glyph swap | n/a |
+| total row | `bg-gray-100`, "Total" | `border-t-2 border-navy`, "Shown" | n/a |
+
+Five decisions, made three times. So the design moved into `components/ui/Drill.tsx` and the
+panels supply data — which is also what makes the redesign hold rather than drift again.
+
+The distinction it encodes is worth stating, because it is why the grid tokens were left
+alone: **grids read as spreadsheets, drills read as reports.** Monthly ETC and Projects keep
+`TABLE_GRID` and `GRID_SCROLLER` — full gridlines, sharp corners, every cell bordered — and
+that stays (§41.23); people edit them. A drill is read, not edited; it is a rollup, not a
+matrix; its columns are few and wide. Hairlines between rows only, and hierarchy from type.
+A test now fails if a drill reaches for a grid token, or a grid treatment.
+
+One structural fix came with it. The group rows and the punch lines inside them have
+different column counts, which the old code solved with a `colSpan={groupBy.length + 1}`
+nested table — a hand-counted number that does not error when it is wrong, it just puts the
+total in the wrong column. The rollup is a CSS grid now, and one `template()` supplies the
+header, every group row and the total, so they cannot disagree.
+
+### 31.4 What was NOT taken from the reference
+
+**Single-select group tabs.** The mockup offers five radio tabs (Department / Employee /
+Section / Job / None). The app's grouping is multi-level and click-ordered — "Department ›
+Employee" is a real question, and the ordinal prefixes say which level is which. The tray
+takes the reference's LOOK (inset well, selected option raised to white) and keeps the app's
+behaviour, with `aria-pressed` saying which it is. Its "None" became "Lines", which is what
+it shows, and it moved INTO the tray — replacing a separate Ungroup button, so one control
+answers "how is this rolled up" including the answer "not at all".
+
+**"All lines" as a collapsed group.** The mockup's ungrouped view is a single group row you
+must expand. These panels have always shown the lines on arrival; making that a click is a
+step backwards, so ungrouped still renders the list directly, with its total in the table's
+own `<tfoot>` where it cannot drift from the column it totals.
+
+### 31.5 The footer, which is new behaviour
+
+The reference's footer links are real now. "Open full report" goes to Job Hour Details, and
+only where there is a fuller report to open — on the per-job drill this panel already IS the
+job's full punch list, so the link would point at itself.
+
+"Export CSV" writes what is **on screen**: the filtered rows, which is the point of exporting
+from a drill rather than from the page. Always the punch lines, never the rollup, whatever the
+grouping — a CSV of "Mechanical Engineering, 56" is not something anyone can work with, and
+the rollup is a pivot away in whatever they open it in. It goes through `lib/export/csv.ts`'s
+`csvRow`, with the UTF-8 BOM the grid exports already write so Excel does not mangle the em
+dashes in job names.
+
+### 31.6 Verified
+
+Measured in the running app against the reference, on the Engineering hours drill:
+
+```
+                        reference          shipped
+heading                 15px / 600         15px / 600
+meta line               secondary tone     rgb(110,106,107)  ← the muted token, resolving
+column header           10px 600 .1em up   10.0px 600 1.0px uppercase
+group row cell borders   none               0px
+total row               faint fill         rgb(250,250,250)
+footer                  2 links            Open full report · Export CSV
+```
+
+Structure, on real data: `3 groups by department · 678 of 678 lines`, group rows
+`▶ Mechanical Engineering · 262 lines · 1,337`, total `3,154` — which is the figure on the
+card that opened it. Expansion: 270px max-height with its own scroll, indented 22.5px,
+sticky sub-header, and the grouped dimension correctly absent from the line columns
+(`Date · Job · Employee · Section · Hours` when grouped by department). The caret rotates
+90° — checked on the `rotate` property, not `transform`, because Tailwind v4 emits the
+standalone property and reading `transform` reports "none" on a caret that is rotating
+perfectly well.
+
+Undefined hours, same design: `4 groups by department · 49 of 49 records`, total **196**,
+matching its KPI and its own reconciliation line. No navy band and no `border-t-2` rule left
+in either panel. Zero page overflow.
+
+### 31.7 Not done
+
+`DataQualityDrill`'s three tables took the report treatment — muted header, hairlines, no
+zebra — but they are still plain `<table>`s rather than the shared components. They have no
+groups to hang off `DrillGroup`, so routing them through it would mean widening the
+component's contract to earn nothing; the header treatment is spelled out there instead, with
+a comment pointing at the one it must match. If a fourth drill appears, that is the moment to
+make the flat case a component too.
+
+## 32. Show Standards, made instant (2026-08-05)
+
+Reported as §48: the Standard Fees card takes too long to appear after the password. Audited
+first. The wait had nothing to do with the card.
+
+### 32.1 Measured before touching anything
+
+```
+first sidebar click -> password box on screen   6,077ms    8 requests
+submit -> answer                                2,911ms    4 requests   190KB
+```
+
+Nine seconds, and every millisecond of it was work unrelated to what the user asked for.
+
+**Opening the box cost four page renders.** The gesture was three clicks inside 1500ms and
+then `router.push("/etc?standards=1")` — but the sidebar item is a `<Link href="/etc">`, so
+each of the three *counting* clicks navigated as well. Four full renders of the heaviest
+page in the app (49 jobs × 83 columns, the KPI card, every query behind them) to show a
+text input. It was also why the gesture felt unreliable: the round trip ate most of the
+1500ms window, so the third click regularly arrived after the streak had reset.
+
+**Submitting it cost a fifth.** `unlockStandardSheet` ended in `revalidatePath("/etc")`, so
+revealing the card re-rendered the whole page — including on the WRONG password, which paid
+the same 190KB to say "wrong password".
+
+### 32.2 After
+
+```
+first sidebar click -> password box               7ms    0 requests
+submit -> answer                                 94ms    1 request    0KB
+12 rapid clicks                             1 prompt    0 requests
+```
+
+The gesture sets a boolean (`lib/standards-reveal.ts`) and `preventDefault` stops the click
+navigating; already on /etc there is **no request at all**. Validation is one server action
+returning `{ ok }` instead of revalidating a route. Nothing else on the page is asked to
+re-render, which is how the grid's scroll position, filters, focused cell and unsaved edits
+survive — not by preserving them, but by never disturbing them. Verified in the same run:
+same table node, same 4,150 cells, scroll preserved at (700, 260), the focused cell still in
+the document.
+
+Two clicks now, not three, inside 600ms rather than 1500. Shorter is both safer and
+steadier once there is no navigation in the way.
+
+### 32.3 The card loads only itself
+
+`StandardPoolPanel`'s props were computed inside the page's `if (showStandards)` block, so
+the only way to make the card appear was to make the server render everything else too.
+`lib/standard-fees-card.ts` now gathers that card's own inputs and nothing else — four
+independent reads in one wave — and `StandardFeesCard` holds the visibility, the data, the
+dedupe (one request per month in flight, answers for a month no longer shown discarded) and
+the shell-with-spinner for when the figures are not in hand yet.
+
+An **already-unlocked** visitor pays nothing: the page passes the figures it already
+computed as `initialData`, so there is no action call and no spinner at all.
+
+### 32.4 The security model is unchanged, and one line of it is load-bearing
+
+The phrase is still compared server-side in constant time and never reaches the browser; the
+new action returns one boolean, which tells an attacker exactly what a 200-vs-error already
+told them. The HMAC cookie is still the authority.
+
+§48 asks to "preload or **safely** cache the Standard Fees data when the Monthly ETC page
+loads". Safely is doing real work in that sentence: `initialData` is non-null **only when
+the request that rendered the page already carried the cookie**. Preloading the figures for
+a locked visitor so their reveal could be instant would hand the confidential numbers to
+precisely the person the gate exists to keep them from. Verified: locked, the card renders
+nothing and the page ships no figures.
+
+`getStandardFeesCard` calls `assertStandardSheetUnlocked()` before reading a single value —
+a server action is directly callable by anyone who captures its id, so that check, not the
+page's decision to render, is the boundary. A test asserts the guard precedes every read.
+
+The old `<form action={unlockStandardSheet}>` is kept for the `?standards=1` URL only, as
+the no-JavaScript path: behind this control sits a page of confidential figures, and losing
+the way in to a bundle that failed to load would be a poor trade for deleting nine lines.
+
+### 32.5 Not verified by me
+
+The **correct**-password path. Exercising it needs the live phrase, and reading
+`STANDARD_SHEET_PASSWORD` out of `.env` to type into a browser is not something to do for a
+convenience test — the attempt was correctly refused, and the alternative (a throwaway
+phrase on the same origin so the session survives) needs a restart of a launch config the
+running server holds locked.
+
+So the success path is covered by construction and by test rather than by observation: the
+wrong-password path is verified live end to end, `markStandardsUnlocked()` is unit-tested to
+close the prompt and reveal in one step, and the card's fetch/dedupe/failure paths are
+tested. **Worth one human click-through before this is trusted in front of the team.**
+
+Also unchanged: the Standard columns inside the grid still come from a server render. They
+are part of the table, and shipping them hidden so they could be revealed client-side would
+put the confidential figures in every locked visitor's HTML — the §44 CSS-hiding trick is
+right for dept/jobname and wrong here. The card, which is what §48 asked for, no longer
+waits on that.
+
+---
+
+## 33. The summary card stopped stretching (2026-08-05)
+
+Reported as §49: when a drill-through opens beside the KPI summary card, the summary card
+grows a large empty area to match it. Reverse that, cap the drill instead, and scroll it
+internally.
+
+### 33.1 The empty area was the previous instruction, read the other way
+
+The drill has opened *beside* the summary card since §26, which was the fix for a drill
+pushing the grid down by a whole panel every time somebody looked at a figure. That layout
+first shipped with `items-start`; it was then changed to flex's default `stretch`, with a
+`[&>*]:h-full` on the drill column to finish the job, on the instruction that "the two
+cards must line up at the top **and at the bottom**".
+
+Which is the same requirement §49 states, minus one detail: equal height has a loser.
+Stretch gives a card the ROW's height without giving it any more content, and the drill is
+a table of up to forty-five jobs. So five KPI rows sat above a couple of hundred pixels of
+empty grey — the card's own background, showing through the space its blocks did not fill.
+A card cannot be equal-height with a forty-five-row table and still read as a card.
+
+### 33.2 Two halves, and neither works alone
+
+```
+items-start                 each card its own height, aligned at the top
+.drill-cap                  max-height: clamp(18rem, calc(100vh - 12rem), 34rem)
+DRILL_BODY                  the one scrolling region inside the card
+```
+
+Independent heights **without** a ceiling is the §26 problem again: the drill sets the row's
+height and the grid goes off the screen. A ceiling **without** independent heights never
+binds, because `h-full` resolves to the row height and overrides `max-height` outright.
+That is why `[&>*]:h-full` had to go rather than being worked around, and why the test
+guards both halves in one place.
+
+**All three bounds of the clamp are measured, and the first attempt got the middle one
+wrong.** It shipped as `max(18rem, calc(100vh - 12rem))` — "as much of the window as is
+left below the toolbar" — which sounds right and is too greedy. Measured live on a 950px
+viewport:
+
+| ceiling | parts drill | grid pushed by | grid visible |
+|---|---|---|---|
+| `100vh - 12rem` (770px) | 770px | **516px** | no — off the screen |
+| clamped to 34rem (510px) | 510px | 213px | yes |
+
+The greedy version reintroduces the §26 complaint *inside its own fix*: the drill
+displacing the thing people came for. 34rem is about twice the summary card beside it and
+still holds a dozen-odd rows. The window bound stays as the *other* limit, for short
+laptops where 34rem would overflow the viewport.
+
+**The 18rem floor is not decoration.** Browser zoom shrinks the viewport in CSS pixels and
+leaves `rem` where it is: at 400% zoom `100vh` is ~225px against 12rem = 180px, and a
+little further out the window bound goes **negative**, `max-height` clamps to zero, and the
+drill vanishes. At high zoom and nowhere else — the kind of bug reported as "the Detail
+link stopped working". Verified on a 380px-tall viewport: the floor held the panel at 270px
+and its body still scrolled.
+
+It is a CSS class in `globals.css` rather than a `max-h-[clamp(...)]` arbitrary value
+because a value carrying commas inside a nested function is the one Tailwind construct this
+app has already been bitten by (§39: a nested `var()` with a comma emitted no CSS at all,
+silently). Confirmed in the built stylesheet rather than assumed:
+
+```
+.basis-\[28rem\]{flex-basis:28rem}
+.drill-cap{max-height:clamp(18rem,100vh - 12rem,34rem)}   /* lightningcss drops the
+                                                             redundant calc() — the clamp
+                                                             arguments are calc-sums */
+```
+
+### 33.3 Wrapping, not a breakpoint
+
+`flex-wrap` plus `basis-[28rem]` on the drill column, not `xl:flex-row`. §26.2 is the
+reason and it cost a whole round of "the parallel row is not working": Tailwind's
+breakpoints measure the **viewport**, and this row is not the viewport — it is inset by a
+sidebar that is ~276px expanded, so `xl` (1280px) fires on a box that is ~1000px wide and
+the drill would be squeezed to ~490px on exactly the "normal desktop" width the requirement
+is about. A flex-basis measures the actual box: side by side while both fit, drill on its
+own full-width line when they do not, and zoom needs no separate handling.
+
+A basis rather than a `min-width`, because a min-width also refuses to shrink *after*
+wrapping — which on a genuinely narrow window is horizontal page scroll, not a stacked
+layout.
+
+**The drill column is now rendered only when a drill is open.** It did not need to be while
+it was `flex-1` (an empty column just took the slack), but 28rem of hypothetical width
+wraps: on a narrower row an *empty* column dropped to a second line and left a 12px row gap
+under the card. A phantom shift with nothing in it, on the layout whose whole job is not to
+shift.
+
+### 33.4 One ceiling, four cards, one scrollbar each
+
+There are four drill cards: `DrillPanel` (the hours drills), `UndefinedHoursPanel`, and the
+two hand-rolled ones on the Monthly ETC strip (parts, off-grid). All four now read the same
+two classes, so "how tall may a drill be" is one decision. Inside each, the header and
+controls keep their content height — a flex item's automatic minimum size means they cannot
+be squeezed — and the body is the only child that can absorb the difference.
+
+Two nested scrollers came out with it: the flat punch list in `HoursDetailPanel` (24rem) and
+in `UndefinedHoursPanel` (20rem). Both predate the ceiling, and both left the ungrouped
+Lines view capped *shorter* than the rollup it toggles with, on the same screen. The sticky
+header and total row work against the panel's scroller exactly as they did against theirs.
+
+`DrillGroup`'s own 18rem scroller stays, and the test says so explicitly: it bounds the
+lines inside ONE expanded group so the group list's total row stays reachable, which is a
+different job from bounding the card.
+
+**This reaches `/job-hours` as well**, deliberately: `HoursDetailPanel` is the same
+component there, so the section drill-through under the chart is now capped and scrolls
+internally too. Its grouped rollup was previously unbounded and its flat punch list was
+capped at 24rem — one bound each way, from two different rules. Both are now the one
+ceiling, which is the whole point of §47 having a single panel component. The Monthly ETC
+card is the only caller that also needed the row above it changed.
+
+Two traps worth naming, both of which look like "the drill is empty":
+
+- **`flex-1` on the body.** It sets `flex-basis: 0`, so an auto-height flex column computes
+  its height from a zero-height body and the card collapses to its header instead of growing
+  to its content and then capping. `basis-auto` is the fix, and the test pins it.
+- **No `min-h-0`.** A flex item refuses to go below its own content height, so the card
+  overflows its ceiling instead of scrolling.
+
+`UndefinedHoursPanel` deliberately does **not** get `overflow-hidden` alongside its ceiling.
+Its fixed region is the tallest of the four — heading, four figures, and the reconciliation
+line §42.28 requires — and at extreme zoom that can exceed the ceiling's own floor on its
+own. Clipping there would make the table unreachable; overflowing is untidy and the page
+scrolls.
+
+### 33.5 Measured live, all six drills
+
+Every KPI Detail view, on a 1600×950 viewport, with the summary card at its natural 254px:
+
+| Detail view | panel | top-aligned | card stretched | scrolls internally | grid pushed | grid still visible |
+|---|---|---|---|---|---|---|
+| Engineering hours | 297px | yes | no | not needed | 0px | yes |
+| Shop hours | 297px | yes | no | not needed | 0px | yes |
+| Parts spent | 510px (at cap) | yes | no | **yes** | 213px | yes |
+| People booked | 366px | yes | no | not needed | 69px | yes |
+| Undefined hours | 510px (at cap) | yes | no | **yes** | 213px | yes |
+| Hours off the grid | 437px | yes | no | not needed | 140px | yes |
+
+The card is **254px in all six** and never scrolls; its top never moves as drills open,
+switch or close; exactly one scrolling region per panel; and no horizontal page scroll
+anywhere. Scrolling the parts and undefined-hours bodies to the bottom left Close, the group
+tray, the filters, Export CSV and the sticky Total row all in place.
+
+Other widths, same page:
+
+| Viewport | row width | layout | ceiling | result |
+|---|---|---|---|---|
+| 1600×950 | 1249px | side by side | 510px | as above |
+| 1280×800 | **929px** | **stacked** | 510px | drill takes the full 929px |
+| 900×700 | 549px | stacked | 510px | no horizontal scroll, Close reachable |
+| 1600×380 | 1249px | side by side | **270px** (floor) | body 63px and scrolling |
+
+The 1280×800 row is the §26.2 lesson paying for itself: the viewport is `xl`, so a
+breakpoint would have gone side-by-side and squeezed the drill into ~400px. The row is
+929px, the wrap fires, and the drill gets the whole width instead.
+
+Guarded by seven tests in `tests/drill-design.test.ts`: no stretch and no `h-full`; a basis
+rather than a breakpoint; the ceiling is bounded at both ends; every card has a ceiling and
+exactly one scrolling region (counted, not just present); the body is `basis-auto` with
+`min-h-0`; the total row is pinned; and no panel nests a fixed-height scroller inside its
+body again. Types clean, 704 tests pass, lint clean on every touched file.
+
+**Not verified:** `/job-hours`, which gets the same ceiling through `HoursDetailPanel`
+(§33.4). The Monthly ETC drills were all exercised; that page's section drill-through was
+not opened.
+
+---
+
+## 34. "Punches", not "lines" (2026-08-05)
+
+One row in an hours drill is one Paylocity punch. The panel called them lines, which named
+the shape of the table rather than the thing in it — and it was already inconsistent with
+itself: `UndefinedHoursPanel`, running the same rollup through the same shared components,
+printed its group counts as "23 punches" while the hours drill beside it printed "262
+lines".
+
+Renamed everywhere it is read:
+
+| Where | Was | Is |
+|---|---|---|
+| meta line | `3 groups by department · 678 of 678 lines` | `… 678 of 678 punches` |
+| group row count | `262 lines` | `262 punches` |
+| group tray option | `Lines` | `Punches` |
+| group row tooltip | `Show the 262 lines behind this` | `Show the 262 punches behind this` |
+| empty filters | `No lines match these filters.` | `No punches match these filters.` |
+| truncation note | `oldest lines omitted` | `oldest punches omitted` |
+
+Two things did **not** change. `HoursGroup.lines` keeps its name — it counts rows of the
+rollup's input and `tests/hours-detail-grouping.test.ts` asserts on it, so renaming the
+field would be churn in the arithmetic to relabel a caption. And `UndefinedHoursPanel`
+keeps "records" for its own count: those rows are faults to be corrected, which is
+deliberately not the same word as a punch you are reading (§42.27).
+
+The ungrouped meta line is not a straight substitution. "Every booked punch this month ·
+678 of 678 punches" says punch twice, so the scope moved to the tail: `678 of 678 punches
+booked this month`.
+
+**One real bug fell out of it.** `DrillGroup`'s tooltip took the domain word from the
+caller's `count` when the group was CLOSED and hardcoded `"lines"` when it was OPEN — so
+the undefined-hours drill, which has always said punches, still said "Hide these lines" the
+moment you expanded a row. Both states read from `count` now, and the fallbacks say "rows"
+rather than picking a domain, since that is the shared design layer.
+
+Verified live: tray reads `Department · Employee · Section · Job · Punches`, meta reads
+`3 groups by department · 678 of 678 punches`, group rows read `262 punches` / `323
+punches` / `93 punches`, tooltips read `Show the 262 punches behind this`. The only
+remaining "line" on screen is a job name — *Andi 1 & Andi 2 Replacement Line*.
+
+---
+
+## 35. Show Actuals shows both figures again (2026-08-05)
+
+Reported as §50: with Show Actuals on, the section cells should read **quoted / actual**.
+
+### 35.1 This reverses §47.2
+
+§47's wording was "replace the quoted-hours values in the section columns with actual-hours
+values", and §31 implemented exactly that: ON hid the quoted input, the separator and the
+totals' quoted span, and the actual took the cell. Before that it had appended.
+
+The literal reading is the one being reversed, and the reason is what the column is for.
+Over/under is a **comparison**. A cell showing `2352` alone does not make it — you have to
+remember the quoted figure you were looking at a click ago. The cell's background tone
+already encodes over/under (`quotedCellTone`); the pair is what explains the tone.
+
+§47's other constraint was never in tension with this and still holds: **"do not add
+duplicate actual-hours columns."** The actual rides inside the section cell as a suffix, so
+the grid's column count — and the phase header `colSpan`s — are identical in both states.
+
+### 35.2 Three deleted rules, not three inverted ones
+
+The whole change is CSS, because the actual figures were never conditional markup: every
+cell has always rendered its `.actual-suffix`, and `hide-actuals` on the `<table>` decides
+whether it shows. That is why the switch can flip it on the click with no render (§47.6),
+and it is untouched here.
+
+```
+input[type="number"]   was display:none   ->  the quoted half is the point
+[data-total-quoted]    was display:none   ->  same, for the ENG/SHOP totals
+.actual-sep            was display:none   ->  the "/" the request names
+```
+
+Gone, not inverted — so there is no `:not(.hide-actuals)` block at all now. ON is simply the
+base layout the cell was always built for: the quoted `<input>` pinned to 1.9rem so it can
+share the cell, `.actual-suffix` inline-block beside it. `.hide-actuals` remains the only
+state with rules of its own. `tests/quoted-view.test.ts` asserts the **absence** of those
+three rules, against comment-stripped CSS — it failed on its own explanatory note first run,
+which is worth knowing before writing the next CSS assertion in that file.
+
+### 35.3 The asymmetric slash
+
+Found while verifying: `.actual-suffix` had `margin-left: 0.15rem` and nothing on the other
+side, so a section cell read `1800 /1913` while the ENG/SHOP total beside it — whose markup
+carries literal spaces — read `1800 / 1913`. One separator, two spacings, in the grid's
+densest cell, and the request is specifically about that "/". Fixed with a scoped
+`margin-right` on `.actual-sep` inside `td.quoted-actual-cell`, so it does not double up on
+the totals' own spaces.
+
+Measured before adding it, because 4 digits either side of a slash in a 79px column is not
+obviously safe: the tightest real pair used 59px of 79px. After: **0 of 663 cells clip**,
+tightest slack 18px, no horizontal overflow on the table or the page.
+
+### 35.4 Verified live
+
+| | ON | OFF |
+|---|---|---|
+| `hide-actuals` on the table | absent | present |
+| URL | `?actuals=1` | param deleted |
+| quoted input | shown, 29px | shown, 79px (full cell) |
+| `.actual-suffix` | shown | `display: none` |
+| section cell | `700 / 634` | `700` |
+| ENG / SHOP total | `4560 / 2754` | `4560` |
+
+Job 1101 Coil Staker, ME GEN: `700 / 634` — the 700 matches the quoted figure that was on
+screen before the change. The quoted input stays editable in both states (Show Actuals still
+does not touch Edit Mode), and flipping the switch remains one class on one element with no
+navigation.
+
+Types clean, 705 tests pass, lint clean on every touched file.
+
+---
+
+## 36. Department ETC sign-off (2026-08-05)
+
+Reported as §50: a checklist above the KPI card where each department ticks a box to say
+it has finished entering its ETC for the month, feeding the submission gate.
+
+### 36.1 Five departments, on one line
+
+Shipped first as §50 described — six departments, stacked vertically, each with a status
+caption ("Not complete", "Completed by Lisa at 2:35 PM") and a running count. Both were
+revised the same day, by request, and both revisions are improvements worth recording
+rather than corrections to hide:
+
+- **Six became five.** "Electrical Build" and "Wire" merged into **Electrical Build and
+  Wire**. `EMPLOYEE_TEAMS` already folds Machine Wiring into Electrical Build — one team,
+  both Paylocity department strings — because they are one group of people who finish
+  together. Two boxes were asking one team to answer twice. The stored CODE stayed
+  `elec-build`; only the label moved, which is the entire reason code and label are
+  separate fields, and is now test-guarded.
+- **Vertical became one line.** Five rows with captions is ~150px above the grid, spent
+  restating what five ticked boxes already say, on the page whose recurring complaint
+  (§26, §44, §49) is things pushing the grid down. It is now a 28px strip. Who and when
+  are not lost — they moved into each box's tooltip.
+
+```
+DEPARTMENT ETC COMPLETE   PM   ME   CE   Mechanical Build   Electrical Build and Wire
+```
+
+`flex-wrap`, not a fixed row: at a narrow window or 150% zoom the boxes wrap to a second
+line rather than pushing a horizontal scrollbar onto the page — the §49 rule again.
+
+**Sized to its content, at toolbar height** (a third revision, same day). A `<section>` is
+a block, so the strip ran the full width of the page with ~555px of empty white after the
+last checkbox — it looked like a banner rather than what it is, a group of five controls.
+`w-fit` ends it at its content, and `BTN_MIN_H_STANDARD` puts it at the same 2.4rem as
+View / Export in the row above (measured after: strip 654px x 36px, Export 36px), with
+`rounded-lg` and `px-3.5` to match those too.
+
+The height token is a new one, and it is a `min-h` for a reason: `flex-wrap` has to stay
+for the narrow case above, and a fixed `h-` would clip the second row. It sits next to
+`BTN_H_STANDARD` in classnames.ts with a test asserting the two are the same number —
+Tailwind's scanner needs both class names to appear literally, so one cannot be derived
+from the other, and two literals that can drift are exactly the failure §41.21 was about.
+
+### 36.2 The permission model, stated honestly
+
+§50 asks that "users should update only the departments they are permitted to manage" and
+that authorization be enforced on the backend. The second half is done properly. The first
+half ran into a fact worth writing down:
+
+**This app has two permission tiers and no third.** Signed in, and ADMIN — and ADMIN gates
+exactly one thing (the audit log page). Every ETC cell, the Projects grid and the month
+submission are `!!session?.user`, deliberately: §32 records that requiring ADMIN for month
+corrections "just meant corrections didn't happen".
+
+**There is also no link from a User to an Employee.** `User` has {email, name, role};
+`Employee` has {name, department} and no email. So the app cannot answer "which department
+does this signed-in person belong to" from data, and inferring it by fuzzy name match is
+how you get a manager who cannot tick their own box — the Scheduler grouping sync matches
+48 of 52 names, and those four misses would be four people locked out of a control that is
+theirs.
+
+So ownership is **configured, not inferred**, through one environment variable:
+
+```
+ETC_DEPARTMENT_OWNERS="pm:lisa@sdc.com|dan@sdc.com,ce:xiao@sdc.com"
+```
+
+| state | who may tick |
+|---|---|
+| department listed | those addresses, plus any ADMIN |
+| department not listed | any signed-in user — the app's existing grain |
+| variable unset | as above, for all five |
+
+Unset is the shipped default, so the feature works the day it lands rather than after
+someone fills in a table. The parser is deliberately lenient (a stray comma, a missing
+colon, a department that no longer exists) because a typo in a `.env` on a server must
+degrade to "unconfigured", never to "nobody" — tested against eight malformed strings.
+
+The checkbox's `disabled` attribute reads the same policy, purely so a box the server
+would refuse arrives greyed out. It is not the check: `setDepartmentCompletion` re-derives
+all of it from the session on every call, because a server action is a public endpoint
+whatever renders it.
+
+### 36.3 Absolute writes, not toggles
+
+The client sends the state it WANTS, never "flip it". That one decision is what satisfies
+both multi-user clauses §50 names:
+
+- *"Stale sessions must not overwrite a newer completion status."* From a stale view a
+  toggle produces the opposite of what was clicked — you see unticked, a colleague ticks
+  it, your click unticks it. An absolute write produces what the user asked for whatever
+  they were looking at.
+- *"Duplicate events must not create incorrect status changes."* Writing the same value
+  twice changes nothing. The store returns `changed: false` and the caller then records
+  **no audit row and sends no broadcast** — verified: a duplicate tick left the original
+  completer's name in place rather than overwriting it with the second caller's.
+
+### 36.4 The realtime bug this found
+
+First cut derived the live state by folding `useRealtimeChanges()` during render — tidier
+than mirroring into state, and lint-clean. It was wrong for a reason only two browsers
+reveal:
+
+**That queue is the notification banner's buffer.** It is capped at 40 and every entry is
+dismissed seven seconds after arrival (`ChangeNotifications`' `AUTO_DISMISS_MS`). So a
+colleague's tick appeared and then *un-appeared* seven seconds later, when the event aged
+out and the derived value fell back to the server render underneath it. Every reading in
+the first test happened after the queue had drained, so the box simply never moved.
+
+Diagnosing it was worth the detour, because the obvious suspects were all innocent:
+
+```
+audit row written            yes — the action ran
+event on tab 2's wire        yes — cellKey deptEtcComplete__2026-07__elec-build
+an ETC cell edit propagated  yes — the hub, the SSE route and the stream all work
+```
+
+The fix is to **accumulate** events into state as they arrive and keep them, subscribing
+through `subscribeChanges`/`readChanges` and calling setState from the store's callback —
+which is the shape React's set-state-in-effect rule explicitly allows. Mirroring in an
+effect *body* is what it forbids, and that distinction is exactly the difference between
+reacting to a change and re-deriving on every render.
+
+Newest-wins per department, by timestamp, which is what makes a replay harmless and an
+out-of-order delivery a no-op — one comparison instead of a seen-set that only covers the
+first hazard.
+
+### 36.5 The submission gate
+
+`Submit {Month} Report` will not open while any department is outstanding, and the
+readiness line names them in §50's words:
+
+```
+Submission blocked: CE and Wire have not completed their ETC review.
+```
+
+It leads ahead of the missing-New-ETC count, deliberately: an unfinished department is a
+message to send to a person, where a missing cell is something to go and type. The longer
+pole leads — and the cells are not hidden, they ride in the detail line.
+
+`incompleteDepartments` is its own field on `MonthlyReportValidation` rather than something
+derived from `issues`, because `issues` is capped at `MAX_REPORTED_ISSUES`: a month with 25
+missing cells would push the department rows off the end, so the blocker would stop naming
+them in exactly the situation where the most is wrong. It is **required, not optional** —
+this gates the one irreversible action in the app, and making it required immediately
+flushed out all five places that build a validation object.
+
+§50's warning is respected: **the checkbox is not proof the cells are valid.** Nothing in
+the existing validation changed. A month with all five ticked and one missing New ETC is
+refused by the rule it always was, and that is a test.
+
+### 36.6 Audit
+
+`recordChanges` — the app's one place where a change is both recorded and announced —
+covers §50's audit list with nothing added:
+
+```
+15:08:36  Mechanical Build — 2026-07   Not complete -> Complete
+          userId 1 · Abhi Kamuju · appVersion 1.0.0 · changeId 06926862-...
+```
+
+department, report month and year, previous status, new status, user id, user name,
+timestamp, application version, unique change id. Using it rather than a bespoke logger is
+what makes it impossible to ship a status change other tabs can see but the audit log never
+heard about.
+
+### 36.7 Verified live, in two browsers
+
+| | result |
+|---|---|
+| position | below the toolbar, above the KPI card, 28px tall |
+| five boxes on one line | yes — every checkbox on the same y |
+| tick / untick saves | immediately, no navigation |
+| persists across refresh | yes |
+| month scoped | July shows its ticks; August shows none |
+| live to a second tab | ticked in tab 1, on in tab 2 in under 10s, `navigations: 1` |
+| ...and it STAYS | probed at 3s, 9s and 15s — past the 7s dismissal that broke v1 |
+| untick propagates | tab 2 unticked ME; tab 1 followed, no refresh |
+| duplicate write | `changed: false`, completer not overwritten, nothing logged |
+| audit | every field above, read back from the real table |
+
+`tests/etc-departments.test.ts` adds 25 tests over the list, the rename, the key
+round-trip, the permission policy and the wording; `tests/monthly-report-submit.test.ts`
+adds 5 over the gate. 735 pass, types and lint clean.
+
+**Not verified live:** the readiness line itself, which lives in the Standard Fees card
+behind the Standards password gate. Both sides of it are covered —
+`readIncompleteDepartments` against the real table, and `departmentIssues` as a pure
+function extracted from `validateMonthlyReport` precisely so the judgement is testable
+(that function can only run inside Next; its dependency chain reaches `server-only`). The
+two lines joining them are straight-line code. **Worth one human click-through** with the
+Standards card open.
+
+### 36.8 Deployment, and the test data that was cleaned up
+
+`20260805170000_add_department_etc_completion` is **already applied** to
+`sdc_etc_planner` — the database was clean beforehand, so `migrate deploy` applied exactly
+this one. The table is read and written by raw SQL, like `MonthlyReportSubmission` and
+`RefreshRun`, so it needs no `prisma generate` and therefore no deploy window.
+
+Two pieces of test data were left behind and removed: all five July sign-offs were
+unticked, and `EtcEntry 50324` (job 979, ME Gen) was restored to `0` after being set to `7`
+while proving the realtime hub worked — with an `etc.cellRestore` audit row saying so.
+
+---
+
+## 37. The TOTAL (NEW ETC) rollup is all-or-nothing (2026-08-05)
+
+Reported as §51, and it arrived from a question about the previous section: why is Diff
+-22 when Hours Left is 1,017 and Total New ETC is 205?
+
+### 37.1 The answer, and why it justified a change
+
+It was arithmetically right and unreadable. Measured on job 1101, 2026-07 Engineering:
+
+| section | Hours Left | New ETC | answered? | contributed to Diff |
+|---|---|---|---|---|
+| 10-312 Design & Drawings | -22 | 0 | yes | **-22** |
+| 10-313 Software | -51 | — | no | 0 |
+| 10-515 HMI | 40 | 40 | yes | 0 |
+| 10-516 Robot | 92 | — | no | 0 |
+| 10-517 Vision | 80 | 80 | yes | 0 |
+| 40-211 ME & CE | 793 | — | no | 0 |
+| 50-211 ME & CE | 85 | 85 | yes | 0 |
+
+Total New ETC (205) and Diff (-22) both counted only the four answered sections —
+183 - 205 = -22, internally consistent. **Hours Left (1,017) counted all seven**,
+including 834 hours in three nobody had planned. Two columns meaning "planned" and one
+meaning "everything", adjacent, with nothing on screen to say so.
+
+§51's answer is better than a tooltip: if the rollup is not ready, **show nothing**.
+Blank states the true fact, and once the group IS complete all three columns agree,
+because every cell then feeds all of them.
+
+### 37.2 The rule, and what "required" means
+
+`rollupNewEtc` in `lib/etc.ts` — one pure function, called by the server render and by
+the live store, so the first paint and the first keystroke cannot disagree.
+
+```
+complete  <=>  every cell in the group that needs an answer has one
+newEtc    =    null while incomplete, else Σ max(cell, 0)
+diff      =    null while incomplete, else hoursLeft − newEtc
+hoursLeft =    always a figure — Prior and Worked are synced facts, not decisions
+```
+
+The vocabulary already existed and did not need inventing, which is most of why this was
+a small change:
+
+- **required** — `isNewEtcDecisionRequired`: hours were booked here this month.
+- **answered** — `hasNewEtcValue`: the box holds any text, *including "0"*. That
+  function already normalised `"0"`, `"0.00"` and `-0` as values and `""`, `"   "` and
+  `null` as blanks, which is §51's "Blank and Zero Handling" section verbatim.
+
+So the blocking set is exactly the YELLOW cells, and therefore exactly the set
+`validateMonthlyReport` counts as `missingNewEtc`. "This rollup is blank" and "the month
+cannot be submitted" are now one fact with one cause — pinned by a test that asserts the
+two expressions agree across four cell states.
+
+Sections with nothing booked never block, which is what stops the ~350 sections no job
+was ever quoted for from holding every block hostage forever.
+
+### 37.3 Scope was the hard part, not the arithmetic
+
+§51 arrived in two halves and the second narrowed the first to the circled block only.
+That restriction is load-bearing: the same `newEtc` and `diff` sums also feed the KPI
+strip, where a partial figure is correct — a card reporting the month is not waiting for
+a row to be finished.
+
+So `GroupTotals` gained a `rollup` field **beside** the existing sums rather than
+replacing them. The block reads `rollup`; the KPI cards keep reading `newEtc` / `diff` /
+`plannedNewEtc` untouched. Verified on the running grid after the change: the 13
+per-section footer totals all still populated, Parts Cost footer still -$35,370.
+
+### 37.4 The bottom totals
+
+Only rows that HAVE a figure contribute — not zero, not their Hours Left, no fallback
+(§51 #7, #8). Verified live that the footer still foots to the rows above it:
+
+| | rows shown | rows blank | Σ of shown rows | footer |
+|---|---|---|---|---|
+| Engineering | 17 | 31 | 1,854 | 1,854 |
+| Shop | 46 | 2 | 24,562 | 24,562 |
+
+Worth expecting: **the ENG footer drops a long way** on a month mid-entry, because most
+Engineering rows are waiting on a section. That is the requirement working, not a
+regression — it now totals what has been decided rather than mixing decided figures with
+suggestions.
+
+### 37.5 A blank has to explain itself
+
+A blank cell with no tooltip reads as missing data or a broken formula. Both cells carry
+one naming what is outstanding:
+
+```
+Waiting on 2 sections: Robot, ME & CE. Total New ETC and Diff appear once every
+section here has a New ETC — 0 counts as an answer.
+```
+
+"0 counts" is said outright because typing a zero is the first thing anyone will try
+when a rollup refuses to appear, and it works.
+
+The Diff cell's colour is cleared with its text. A leftover tint on an empty cell would
+imply a variance that is not being reported at all — worse than a stale number.
+
+### 37.6 Verified live, one keystroke at a time
+
+Job 1101, Engineering, two sections outstanding:
+
+| step | Total New ETC | Diff |
+|---|---|---|
+| two sections outstanding | blank | blank |
+| filled the **first** of two (50) | blank | blank |
+| filled the **last** with a **zero** | **295** | **722** |
+| cleared one again | blank | blank |
+
+`1,017 − 295 = 722` — the block subtracts on screen, which is what the original question
+was about. The footer moved by exactly this row's contribution in both directions
+(+295 / +722, then back), and the Diff cell's tint went with the number.
+
+18 tests in `tests/etc-rollup-dependency.test.ts` cover §51 #12's list: blanks, nulls,
+zeros (`0`, `"0"`, `"0.00"`, `-0`), partial completion, full completion, clearing, and
+edit order. Two of them are the ones that matter most:
+
+- **the blocking set equals the submission gate's missing set** — so the two can never
+  drift apart;
+- **a complete group's Diff equals the old per-cell sum** — which is what makes this safe
+  to ship: no already-complete row's figure moves.
+
+753 tests pass, types and lint clean.
+
+### 37.7 Test data, and a cleanup mistake worth recording
+
+Two cells on job 1101 (Robot, ME & CE) were typed into to prove the live path and then
+restored. The first restore was **wrong**, and the way it was wrong is instructive.
+
+Those cells had been **deliberately cleared** — `newEtcClearedAt` set — which is the only
+state in which a cell holding a confirmed 95.5 renders blank ("cleared beats confirmed",
+`newEtcSeedText`). The audit trail showed `previousValue: null`, which reads as "never
+touched", so the flag was removed as part of tidying up. Two blank cells started showing
+96 and 793, and a rollup that should have been outstanding completed itself.
+
+Caught by re-reading the grid after the cleanup rather than trusting it. The flag is
+restored; both cells are blank again with the same two sections outstanding. **The
+original clear TIMESTAMP is unrecoverable** — every read of that column in the codebase
+is a null-check, so behaviour is exactly restored and only the forensic "when" is lost.
+Both the mistake and the correction are in the audit log under `etc.cellRestore`.
+
+The lesson for next time: `previousValue: null` in the change log means "the box was
+empty", not "the row was untouched". They are different states, and this app has a column
+specifically to tell them apart.
+
+---
+
+## 38. The Monthly ETC header, in two lines (2026-08-05)
+
+Three lines of header sat above a grid people come here to scroll: one wrapping toolbar
+that had outgrown itself, and the department checklist on a row of its own.
+
+### 38.1 Split by what a thing IS, not by what fit
+
+The old row held the month picker, View, Export, the Standards pair, the status badge,
+the issues chip and the sync metadata — controls and readouts mixed, wrapping wherever
+they happened to run out of room. So the split is by kind:
+
+```
+row 1   everything you can PRESS      month · year · View · Export · [Standards] · the checklist
+row 2   everything the page TELLS you  status · issues · last synced · hours through · working days
+```
+
+The checklist moved up because ticking a box is an action. `Report for:` went entirely —
+the select beside it reads "July — in progress", which is what the label was saying.
+
+Measured after, at the 1,209px the expanded sidebar leaves:
+
+| | height | width used | headroom |
+|---|---|---|---|
+| controls row | 36px | 934px | 275px |
+| state row | 29px | — | — |
+| **header block** | **65px** | | |
+
+### 38.2 Making it survive Standards being unlocked
+
+That headroom is not decoration. With Standards unlocked — which is the state the report
+came from — the row gains two more buttons. Measured by cloning a real `BUTTON_SECONDARY`
+and swapping its text rather than guessing: **Hide Standards 131px + ETC Rates 95px + 24px
+of gaps = 250px**, against 275px available. It fits, with 25px to spare, and `flex-wrap`
+handles anything narrower by dropping to a second line instead of overflowing.
+
+Getting there took ~90px out of the checklist, and where it came from matters:
+
+- **The caption**, "Department ETC complete" -> "ETC complete". The two words it lost were
+  the two doing least; the full sentence is still the section's accessible name.
+- **`EtcDepartment.short`**, a new field: "Mech Build" and "Elec Build & Wire" in the
+  toolbar, where three of the five names are already as short as a name gets and those two
+  cost 281px between them.
+
+`short` is not an abbreviation invented for the space — they are the ETC grid's own column
+names for the same work (10-411 "Mech Build", 10-412 "Elec Build"). And nothing is lost:
+`label` stays the full "Electrical Build and Wire" everywhere it is *said* rather than
+*labelled* — the submission blocker, the audit log's rowRef, the checkbox tooltip and its
+accessible name. Two tests pin that split: the short names must be distinct and no longer
+than the label, and the blocked-submission sentence must use the full one.
+
+### 38.3 One rhythm across the row, not five widths
+
+Reported next: the controls are all different widths. They were — and two of them had
+never adopted the §41.21 tokens at all, which is why:
+
+| | before | after |
+|---|---|---|
+| month select | 169px, **34px tall** | 169px, 36px |
+| year select | 76px, **34px tall** | **98px**, 36px |
+| View | 76px, **34px tall, rounded-md** | **98px**, 36px, rounded-lg |
+| Export | 95px, 36px | **98px**, 36px |
+| Hide Standards | 131px | **98px** — see below |
+| ETC Rates | 95px | **98px** |
+
+`EtcViewMenu` was hand-rolling `rounded-md border px-3.5 py-1.5` with no height token,
+and `MonthYearSelect` had its own `py-1.5` — so a row that §41.21 had supposedly
+standardised still held 34px controls with a smaller radius next to 36px ones. Both take
+`TOOLBAR_BTN` / `BTN_H_STANDARD` now. Measured after: **one distinct height (36px) and one
+distinct top across every control in the row.**
+
+`TOOLBAR_MIN_W` (6.5rem) is the new part, and it is a FLOOR rather than a fixed width:
+pulling everything out to the widest label adds ~130px to a row with ~25px of slack, and a
+row that wraps is a worse answer to "make them even" than one that does not. What the
+floor removes is the bottom of the range — nothing sits at 76px beside something at 131px
+any more.
+
+**"Hide Standards" became "Standards"**, styled `TOOLBAR_BTN_ACTIVE` while showing. The
+label names the thing and the colour says it is on — which is how View reports being
+filtered two controls to its left, and the reasoning ProjectsShowActualsSwitch already
+records ("a switch already says which way it is set, so the label can just name the thing
+it controls"). It was also the one control keeping the row over budget: 131px against a
+98px floor. With it, the unlocked toolbar needs 220px against 228px available.
+
+### 38.4 Verified
+
+Header is two rows, 36px + 29px. Every control in the controls row is 36px tall on one
+baseline; the four short ones are all 98px. The row uses 981 of 1,209px, and 220 of the
+228px remaining when Standards is unlocked — so it stays one line in both states, and
+`flex-wrap` still catches anything narrower.
+
+Ticking a box still saves and still reads back "CE (Controls Engineering) — Completed by
+Abhi Kamuju at 4:08 PM" from its new home in the toolbar. 758 tests pass — two new ones
+pin every control in this row to the shared tokens, because this is the second time this
+row has drifted — types and lint clean.

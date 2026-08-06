@@ -54,6 +54,13 @@ export type RefreshOutcome =
       month: string | null;
       // Set when this refresh also STARTED a new ETC month — see the note in the body.
       seededMonth: string | null;
+      // The latest work date now covered, "YYYY-MM-DD" (§43). The completion message
+      // states it because the app reads Lisa's file directly while the Power BI report
+      // reads a semantic model that refreshes separately — so the two are routinely at
+      // different vintages, and the app is usually the fresher. Saying which day the
+      // hours run through is what turns "these two reports disagree" into a fact rather
+      // than a bug report.
+      hoursThrough: string | null;
     }
   | { ok: false; reason: "locked"; runningSince: string | null; holder: string | null }
   | { ok: false; reason: "error"; message: string; refreshId: string };
@@ -293,7 +300,13 @@ export async function refreshAllData(input: {
     // Progress is streamed into the run record as each source starts (§30), so a tab
     // watching this refresh — including one that did not start it — can say which
     // stage it is on instead of an indefinite "Refreshing application data…".
-    result = await runAllSyncs(input.trigger, (stage, done) => recordProgress(refreshId, stage, done));
+    result = await runAllSyncs(
+      input.trigger,
+      (stage, done) => recordProgress(refreshId, stage, done),
+      // So the Paylocity import record can name the pass and the person (§42.20) —
+      // "who refreshed, and which file version did they get" is one question.
+      { refreshId, userName: input.userName ?? null },
+    );
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     const completedAt = new Date();
@@ -368,6 +381,21 @@ export async function refreshAllData(input: {
     metadata: { refreshId, trigger: input.trigger, month: result.month, seededMonth, durationMs, steps: result.steps },
   }).catch(() => {});
 
+  // Read back rather than threaded through the sync steps: `hours_actual` is the one
+  // step that owns this figure, it already writes it, and a second copy passed up the
+  // call chain is how two numbers that must agree eventually stop agreeing.
+  let hoursThrough: string | null = null;
+  try {
+    const f = await prisma.powerBiFreshness.findUnique({
+      where: { source: "hours_actual" },
+      select: { refreshedThrough: true },
+    });
+    hoursThrough = f?.refreshedThrough?.toISOString().slice(0, 10) ?? null;
+  } catch {
+    // Cosmetic. A refresh that worked must not be reported as failed because the
+    // vintage could not be read back.
+  }
+
   return {
     ok: true,
     refreshId,
@@ -379,5 +407,6 @@ export async function refreshAllData(input: {
     failedLabels: failed.map((f) => f.label),
     month: result.month,
     seededMonth,
+    hoursThrough,
   };
 }

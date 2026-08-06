@@ -37,6 +37,32 @@
   --sdc-gray-400: #3d3d3d;
   --sdc-gray-600: #2b2b2b;
   --sdc-gray-700: #231f20;
+  /* ── Muted secondary text (§47) ─────────────────────────────────────────────
+   * The tone this palette was missing, and had been missing loudly: `sdc-gray-500`
+   * was written 107 times across 39 files and was never declared, so it emitted no
+   * CSS at all and every "secondary" line in the app — panel subtitles, group
+   * counts, helper text, the drill-throughs' whole second tier — rendered at full
+   * body ink (#231f20, verified in the running app: the class matched no rule and
+   * the text inherited its parent's colour). The hierarchy those call sites were
+   * asking for simply was not there.
+   *
+   * It is NOT called gray-500, deliberately. The neutral ramp runs 50 → 100 → 400
+   * → 600 → 700 light-to-dark, and a muted text tone belongs BETWEEN 100 and 400 —
+   * a "500" would have to be darker than #3d3d3d to keep the ramp monotonic, which
+   * is not muted at all. So it gets a semantic name, like --sdc-red-text and
+   * --sdc-yellow-text already do, and the 107 call sites were renamed to match.
+   *
+   * #6e6a6b is a literal tint of the brand Black (#231f20) toward the brand Gray
+   * (#D9D9D9) — no invented hue — chosen for contrast rather than by eye:
+   *
+   *     on white     5.33:1     on --sdc-gray-50   5.11:1     on --sdc-gray-100  4.76:1
+   *
+   * so it passes WCAG AA for normal text on every surface the app puts it on. The
+   * KPI Card Redesign reference uses #8b8b82 (3.44:1), #9a998f (2.87:1) and
+   * #a9a89f (2.39:1) for these tiers; all three fail AA, and this app renders
+   * financial figures at 10–11px, so the reference's *hierarchy* is adopted and its
+   * exact values are not. */
+  --sdc-muted: #6e6a6b;
   /* Danger / error — the one semantic color the palette lacked, so errors,
      destructive actions and negative deltas used ad-hoc Tailwind reds. These
      match the deactivate-button treatment already in use (#B03A3A / #FBEDED). */
@@ -76,6 +102,27 @@
   --ease-out: cubic-bezier(0.2, 0, 0.2, 1);
   /* Symmetric, for a property that moves both ways (the sidebar's width). */
   --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── The universal zoom (§45) ─────────────────────────────────────────────
+   * The app's ONE size control. See lib/app-zoom.ts for why this is CSS `zoom`
+   * rather than a root font-size or a transform, and what it replaced.
+   *
+   * The sidebar control rewrites this one property on <html>; the pre-paint script
+   * in layout.tsx restores it before first paint. Nothing else in the app sets any
+   * size-related custom property. */
+  --app-zoom: 1;
+
+  /* Viewport lengths, corrected for the zoom.
+   *
+   * `zoom` scales the used value of `vh`/`vw` along with everything else, but the
+   * viewport itself does not scale — so at 125% a `100vh` sidebar renders 900px
+   * against a 720px viewport (measured, not assumed). Dividing the unit back out
+   * makes these mean what `100vh`/`100vw` always meant: exactly one viewport.
+   *
+   * Every viewport-relative length in the app reads one of these two.
+   * tests/app-zoom.test.ts fails if a component reaches for a raw vh/vw again. */
+  --app-vh: calc(100vh / var(--app-zoom));
+  --app-vw: calc(100vw / var(--app-zoom));
 }
 
 @theme inline {
@@ -100,6 +147,7 @@
   --color-sdc-gray-400: var(--sdc-gray-400);
   --color-sdc-gray-600: var(--sdc-gray-600);
   --color-sdc-gray-700: var(--sdc-gray-700);
+  --color-sdc-muted: var(--sdc-muted);
   --color-sdc-red: var(--sdc-red);
   --color-sdc-red-bg: var(--sdc-red-bg);
   --color-sdc-red-text: var(--sdc-red-text);
@@ -125,15 +173,21 @@
    *
    * ── Why rem, and why that is the real fix (§39.14, §39.15) ───────────────
    *
-   * The sidebar's text-size control sets the ROOT font size (AppTextSize, default
-   * 15px), and Tailwind's own steps are rem — so they scaled with it. The hundreds
-   * of arbitrary pixel sizes did NOT: they are absolute pixels. Turning the control
-   * up grew the body text and left every grid label, column header and KPI caption
-   * exactly where it was, which is not a text-size control, it is half of one.
+   * The app's size control was the sidebar's text-size stepper, which set the ROOT
+   * font size. Tailwind's own steps are rem, so they scaled with it; the hundreds of
+   * arbitrary pixel sizes did NOT. Turning the control up grew the body text and left
+   * every grid label, column header and KPI caption exactly where it was, which is
+   * not a text-size control, it is half of one.
    *
-   * Sized as exact fractions of the 15px default, so at that default these are
+   * Sized as exact fractions of the 15px root, so at that root these are
    * pixel-identical to the values they replace — the migration changed no rendered
-   * size — and above or below it the whole interface now scales together.
+   * size — and the interface scales as one.
+   *
+   * §45 has since replaced that stepper with a universal `zoom`, which scales px and
+   * rem alike, so the scale no longer CARRIES the size control. It stays in rem
+   * anyway: one closed vocabulary measured against one root is what keeps ten sizes
+   * from becoming twenty-two again, and rem is what makes the browser's own
+   * text-size setting reach the app.
    *
    * ── No line-height is attached, on purpose ──────────────────────────────
    *
@@ -159,21 +213,26 @@
   --shadow-xl: 0 24px 48px -12px rgb(6 29 57 / 0.22), 0 8px 16px -8px rgb(6 29 57 / 0.1);
 }
 
-/* ── The default root size, stated in CSS (§39.18) ─────────────────────────
+/* ── The root size, and the universal zoom (§39.18, §45) ───────────────────
  *
- * Everything in this app is sized in rem, and the sidebar's text-size control works
- * by setting the root font size (AppTextSize, default 15px). But that default was
- * only ever applied by JavaScript: the pre-paint script in layout.tsx sets the root
- * size only when a SAVED preference exists, and AppTextSize's own effect runs after
- * mount. So on a first visit the whole interface rendered at the browser default of
- * 16px and then snapped to 15px once React hydrated — a 6.7% reflow of every page,
- * which is exactly the font-related layout shift §39.18 and §39.21 #18 forbid.
+ * The root font-size is a CONSTANT now. It used to be the app's text-size control
+ * (AppTextSize, 12–20px), which reached everything written in rem and nothing
+ * written in px — see lib/app-zoom.ts for why that was half a control. §45 replaced
+ * it with `zoom`, which scales every length there is, so the root size goes back to
+ * being one fixed number that the type scale above is measured against.
  *
- * Declaring it here means the server-rendered HTML is already at the right size, and
- * the script and the effect only ever OVERRIDE it for someone who has chosen
- * something else. */
+ * Declaring it in CSS rather than in JavaScript is §39.18: it used to be applied
+ * only by a mount effect and a pre-paint script that ran only when a preference
+ * existed, so a first visit rendered at the browser's 16px and snapped to 15px on
+ * hydration — a 6.7% reflow of every page.
+ *
+ * `zoom` reads a custom property so that changing the level is one property write on
+ * this element (see applyZoom) — no stylesheet swap, no class toggle, no re-render.
+ * At the 1 default this rule is a no-op, so a browser without `zoom` support simply
+ * renders the app at 100% forever rather than breaking. */
 html {
   font-size: 15px;
+  zoom: var(--app-zoom);
 }
 
 body {
@@ -198,56 +257,30 @@ body {
   outline-color: #ffffff;
 }
 
-/* ── Uniform table text (§39.4), and the control it used to break (§39.14) ───
+/* ── Uniform table text (§39.4) ──────────────────────────────────────────────
  *
  * One size for every data table, overriding whatever size utility an individual
- * cell, header or input carries, so a grid reads at one consistent size. In `rem`
- * so the sidebar's Text size control — which sets the root font size — scales the
- * grids with the rest of the UI. The default is ~10px at the 15px default root.
+ * cell, header or input carries, so a grid reads at one consistent size. ~10px at
+ * the 15px root, and it scales with the rest of the app through `zoom` (§45).
  *
- * ── Why this reads a variable now ────────────────────────────────────────────
+ * ── Why it is still a variable, and why there is no longer a second rule ─────
  *
- * Because the `!important` here had silently disabled a shipped control. The
- * Monthly ETC View menu has its own Text size stepper, which writes
- * --etc-font-size and was applied through `[&_td]:text-[length:var(--etc-font-size)]`
- * utilities. The comment on those utilities claimed they "beat each cell's
- * hardcoded size with no `!`" — true of the cell's own class, but not of THIS
- * rule: an important declaration outside any layer beats a normal one inside
- * `@layer utilities`, whatever the specificity. Measured live 2026-08-04, setting
- * --etc-font-size to 22px moved a cell from 10.2px to 10.2px. The stepper did
- * nothing at all.
+ * The variable is how a grid asks for a different size — by setting
+ * --table-font-size on its own table — instead of escalating over this `!important`.
+ * That mattered because the `!important` here had silently disabled a shipped
+ * control: the Monthly ETC View menu's Text size stepper wrote --etc-font-size and
+ * applied it with `[&_td]:text-[length:var(--etc-font-size)]` utilities, and an
+ * important declaration outside any layer beats a normal one inside
+ * `@layer utilities` whatever the specificity. Measured live 2026-08-04: setting
+ * --etc-font-size to 22px moved a cell from 10.2px to 10.2px.
  *
- * So the rule reads a variable, and a grid that wants its own size sets that
- * variable on its table — see ZOOM_CONTROLS in etc/page.tsx. Cooperation by
- * inheritance instead of an escalating fight over `!important`. */
+ * §39.14 fixed that with a second, higher-specificity rule for
+ * `table[data-grid="etc"]`. §45 removed the stepper itself — one universal zoom now
+ * scales the grids with everything else — so that rule went with it, and every table
+ * in the app is back to one size with nothing overriding it. No grid currently sets
+ * --table-font-size; it stays as the supported way to, should one need to. */
 table, table * {
   font-size: var(--table-font-size) !important;
-}
-
-/* ── The Monthly ETC grid's own Text size stepper (§39.14) ───────────────────
- *
- * That stepper (EtcViewMenu) writes --etc-font-size on <html>, and it had never
- * worked: it was applied through `[&_td]:text-[length:var(--etc-font-size)]`
- * utilities, and the un-layered !important above beats a normal declaration inside
- * @layer utilities whatever its specificity. Measured live 2026-08-04 — setting the
- * variable to 22px moved a cell from 10.2px to 10.2px.
- *
- * This rule is the one that reads it: same origin and importance as the rule above,
- * higher specificity, so it wins for this one grid and leaves every other table on
- * the shared default. Scoped by attribute rather than by class so a Tailwind class
- * string cannot quietly stop matching it.
- *
- * ── Why --etc-font-size is referenced DIRECTLY ──────────────────────────────
- *
- * The obvious alternative — have the grid set `--table-font-size: var(--etc-font-size,
- * …)` on its table and let the rule above resolve it — reads better and does not
- * work. With that indirection, writing --etc-font-size on <html> updates the
- * variable (getComputedStyle confirms it) but does NOT invalidate font-size on the
- * descendants, so the text stays put until something else forces a restyle. Verified
- * live, both ways round. One level of var() indirection is one too many here. */
-table[data-grid="etc"],
-table[data-grid="etc"] * {
-  font-size: var(--etc-font-size, var(--table-font-size)) !important;
 }
 
 /* AG Grid tables (Employees, Audit Log) render <div>s, not <table>, so the rule
@@ -390,6 +423,17 @@ td.quoted-actual-cell > .actual-suffix {
   vertical-align: middle;
   margin-left: 0.15rem;
 }
+/* The gutter AFTER the slash (§50). The margin above put one before it and nothing
+ * after, so a section cell read "1800 /1913" while the ENG/SHOP total beside it — whose
+ * markup carries literal spaces — read "1800 / 1913". One asymmetric separator in the
+ * grid's densest cell, and the request is specifically about that "/".
+ *
+ * Scoped to the section cells so it does not double up on the total cells' own spaces.
+ * Measured before adding: the tightest real pair (1800 / 1913, four digits each side)
+ * used 59px of 79px, so 2.25px of gutter costs nothing — 0 of 663 cells clip. */
+td.quoted-actual-cell > .actual-suffix > .actual-sep {
+  margin-right: 0.15rem;
+}
 /* Actuals off. The class sits on the <table>, set server-side from the
  * `actuals` view param (quoted/page.tsx), so the grid arrives in the right
  * state — it used to be a <body> class applied by an effect after hydration,
@@ -403,9 +447,58 @@ td.quoted-actual-cell > .actual-suffix {
 .hide-actuals .actual-suffix {
   display: none;
 }
+/* ── The rule above never reached the SECTION cells (§47) ────────────────────
+ *
+ * Found while verifying Show Actuals, and it predates it: `td.quoted-actual-cell >
+ * .actual-suffix` (two classes + an element) outranks `.hide-actuals .actual-suffix`
+ * (two classes) on specificity, whatever the order — so `display: none` lost, and the
+ * "/ actual" half of every section cell was visible whether or not actuals were on.
+ * Measured on the running grid: with `hide-actuals` on the table, a cell still read
+ * "20 /0". The old "Actual hours in cells" checkbox had therefore never hidden anything
+ * in those cells; it only ever worked on the ENG/SHOP total cells, whose suffix is not
+ * inside a `.quoted-actual-cell` and so had no competing rule.
+ *
+ * Same scoping and specificity as the ON rule below, so the two states are symmetric and
+ * neither can quietly outrank the other again. */
+table[data-grid="projects"].hide-actuals td.quoted-actual-cell > .actual-suffix {
+  display: none;
+}
 .hide-actuals td.quoted-actual-cell > input[type="number"] {
   width: 100% !important;
 }
+
+/* ── Show Actuals ON: quoted / actual, BOTH (§50, by request) ────────────────
+ *
+ * ON shows the pair — "1800 / 2352", quoted then actual — which is what the base rules
+ * above already lay out, and why the quoted input is pinned to 1.9rem: it shares the
+ * cell with the suffix. So ON needs NO rules of its own. The whole of Show Actuals is
+ * `.hide-actuals` hiding one span, which is why the switch can flip it on the click
+ * without a render.
+ *
+ * ── This reverses §47.2, which had ON REPLACE the quoted value ───────────────
+ *
+ * §47's wording asked for one figure at a time ("replace the quoted-hours values in the
+ * section columns with actual-hours values"), so ON hid the quoted input, the separator
+ * and the totals' quoted span, and the actual took the cell. That reading is the one
+ * being reversed: over/under is a COMPARISON, and a cell showing 2,352 alone does not
+ * make it — you have to remember the quoted figure you were looking at a click ago. The
+ * cell's tone already encodes over/under, and the pair is what explains the tone.
+ *
+ * §47's other constraint still holds, and is the one that mattered: "do not add
+ * duplicate actual-hours columns". The pair lives in the ONE section column, so the
+ * grid's column count is identical in both states.
+ *
+ * Three deleted rules, not three inverted ones — hence no `:not(.hide-actuals)` block
+ * here at all. Worth stating because the missing selector looks like an omission:
+ *
+ *   input[type=number]   was display:none      -> the quoted half is the point
+ *   [data-total-quoted]  was display:none      -> same, for the ENG/SHOP totals
+ *   .actual-sep          was display:none      -> the "/" the request names
+ *
+ * `.actual-sep` stays an element rather than a bare text node even though nothing hides
+ * it now: it is inside `.actual-suffix`, which `.hide-actuals` still hides wholesale, and
+ * a separator that only exists in one of two states is one that eventually gets stranded
+ * beside a missing figure. */
 
 /* Date grid cells (DateCell.tsx): when empty, hide the native "mm/dd/yyyy"
  * segment text so the column reads as clean icon-only cells instead of a
@@ -623,6 +716,78 @@ summary {
 }
 .styled-scrollbar::-webkit-scrollbar-corner {
   background: var(--sdc-gray-50);
+}
+
+/* ── The drill-through card's height ceiling (§49) ───────────────────────────
+ *
+ * A drill card opens BESIDE the KPI summary card, and the two are now sized
+ * independently (§49): the summary keeps its natural height and the drill takes what
+ * its own content needs. Unbounded, that is a lot — the hours drill grouped by
+ * employee is fifty rows, the parts drill is forty-five jobs — so looking at one
+ * figure pushed the grid people came for a whole screen down the page. Which is the
+ * complaint the four banners caused (§44) arriving by a third route.
+ *
+ * All three bounds are measured, not chosen:
+ *
+ * - **34rem, the ceiling.** "As much of the window as is left below the toolbar" was
+ *   the first answer and it is too greedy: measured live on a 950px viewport it gave
+ *   the parts drill 770px, which pushed the grid down 516px and clean off the screen.
+ *   That is the §26 complaint — the drill displacing the thing people came for —
+ *   reappearing inside the fix for it. 34rem is about twice the summary card beside it,
+ *   holds a dozen-odd rows, and leaves the first grid rows visible on a laptop.
+ * - **`100vh - 12rem`, the window bound.** On a short window 34rem would overflow the
+ *   viewport, so whichever is smaller wins.
+ * - **18rem, the floor.** Browser zoom shrinks the viewport in CSS pixels while leaving
+ *   `rem` where it is, so at 400% zoom `100vh` is ~225px against 12rem = 180px, and a
+ *   little further out the window bound goes NEGATIVE and `max-height` clamps to zero —
+ *   the drill would vanish at high zoom and nowhere else. Verified: on a 380px-tall
+ *   viewport the floor holds the panel at 270px and its body still scrolls.
+ *
+ * `clamp(floor, window, ceiling)` states all three in one declaration, which is why it
+ * is that rather than a nest of min() and max().
+ *
+ * A CSS class rather than a `max-h-[clamp(...)]` arbitrary value because a value
+ * carrying commas inside a nested function is the one Tailwind construct this app has
+ * already been bitten by (§39: a nested `var()` with a comma emitted no CSS at all,
+ * silently). One declaration here, read by every drill through DRILL_CAP in
+ * components/ui/Drill.tsx.
+ *
+ * Pairs with DRILL_BODY, which is the single scrolling region inside the card. The
+ * card is a flex column: everything else keeps its content height (a flex item's
+ * automatic minimum size means the header and controls cannot be squeezed), so the
+ * body is the only child that can absorb the difference. */
+.drill-cap {
+  max-height: clamp(18rem, calc(100vh - 12rem), 34rem);
+}
+
+/* ── The collapsed sidebar's scroll area (§46.5, §46.6) ─────────────────────
+ *
+ * The rail's nav is `overflow-y: auto`, which is what §46.5 asks for ("if vertical
+ * space is limited, use a controlled internal sidebar scroll area") — at 150% app
+ * zoom, or on a short laptop screen, seven 51px icons do not fit and it scrolls.
+ *
+ * A classic scrollbar there takes its width out of the CONTENT box, and that broke
+ * the centring §46.6 requires: measured at 150% on an 820px viewport, the nav's
+ * scrollbar took 10px (offsetWidth 59, clientWidth 49), so every nav icon sat 5px
+ * left of the rail's centre while the footer icons — in a container that does not
+ * scroll — stayed centred. Two columns of icons, visibly misaligned, and only when
+ * the rail happened to overflow.
+ *
+ * So the rail scrolls without a visible scrollbar: the content box is the full rail
+ * at all times and the icons cannot drift. Nothing becomes unreachable — the wheel
+ * still scrolls it, and Tab moves focus through the links, which scrolls the focused
+ * one into view.
+ *
+ * `scrollbar-gutter: stable both-edges` was the first thing tried, and it centres
+ * correctly but reserves the gutter on BOTH sides permanently: 2 x 10px out of a
+ * 60px rail, leaving less room than the 32px-wide targets this pass just fixed.
+ * Wrong trade for a scrollbar that is usually not needed at all. */
+.rail-scroll {
+  scrollbar-width: none;
+}
+.rail-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
 }
 
 /* Frozen (sticky) grid columns — the #/Job Id/Job pane on the Projects grid

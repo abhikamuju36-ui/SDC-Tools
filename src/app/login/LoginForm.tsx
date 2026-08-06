@@ -75,7 +75,7 @@ export default function LoginForm() {
   const submitLabel = mode === "signin" ? "Sign in" : mode === "signup" ? "Create account" : "Change password";
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-background">
+    <div className="flex min-h-[var(--app-vh)] items-center justify-center bg-background">
       <div className="relative w-full max-w-sm space-y-5 overflow-hidden rounded-2xl border border-sdc-border bg-white p-8 shadow-xl">
         <div className="absolute inset-x-0 top-0 h-1 bg-gradient-to-r from-sdc-blue to-sdc-blue-dark" />
         <div className="flex flex-col items-center gap-2 pb-2">

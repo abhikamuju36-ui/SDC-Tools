@@ -51,6 +51,12 @@ const BTN_BASE = `inline-flex items-center justify-center gap-1.5 whitespace-now
 // together. 36px at the default root: §41.20's floor, and a REDUCTION from the 39-40px the
 // primary/secondary pair used to render at (§41.19).
 export const BTN_H_STANDARD = "h-[2.4rem]";
+// The same height as a FLOOR, for a toolbar-height strip that is allowed to wrap onto a
+// second line (the department checklist). A fixed `h-` would clip its second row; a
+// bare `min-h-` written at the call site would be the 2.4rem literal living in two
+// files, which is the drift §41.21 was about. Kept adjacent so they move together, and
+// tests/control-tokens.test.ts asserts they are the same number.
+export const BTN_MIN_H_STANDARD = "min-h-[2.4rem]";
 // In-menu and in-row actions (Select all, Clear, Detail). Smaller, but still a real click
 // target — these were 15px tall, which §41.20 rules out outright.
 export const BTN_H_COMPACT = "h-[1.9rem]";
@@ -79,7 +85,7 @@ export const BUTTON_COMPACT_DANGER =
 // An understated in-menu action ("Select all", "Clear"). Reads as a text link, but carries
 // the compact height and a padded hit box — it was a bare underlined span 15px tall.
 export const BUTTON_MENU_LINK =
-  `${BTN_BASE} ${BTN_H_COMPACT} rounded-md px-1.5 text-label font-medium text-sdc-gray-500 underline decoration-sdc-gray-400/60 hover:bg-sdc-gray-100 hover:text-sdc-navy disabled:opacity-50`;
+  `${BTN_BASE} ${BTN_H_COMPACT} rounded-md px-1.5 text-label font-medium text-sdc-muted underline decoration-sdc-gray-400/60 hover:bg-sdc-gray-100 hover:text-sdc-navy disabled:opacity-50`;
 
 // ── A control whose label changes while it works (§36.3, §36.14) ────────────
 //
@@ -111,7 +117,25 @@ export const TOOLBAR_BTN =
 // Muted (a filter with nothing selected).
 export const TOOLBAR_BTN_NEUTRAL = "border-sdc-border bg-white text-sdc-navy hover:bg-sdc-blue-light";
 export const TOOLBAR_BTN_ACTIVE = "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark";
-export const TOOLBAR_BTN_MUTED = "border-sdc-border bg-white text-sdc-gray-500 hover:bg-sdc-blue-light";
+export const TOOLBAR_BTN_MUTED = "border-sdc-border bg-white text-sdc-muted hover:bg-sdc-blue-light";
+
+// ── One width rhythm for a toolbar row (2026-08-05, by request) ─────────────
+//
+// §41.21 got every control in a row onto one HEIGHT. The widths were still whatever
+// each label happened to measure — on Monthly ETC that was 169 / 76 / 76 / 95 / 131 / 95,
+// which reads as a jumble however neatly it is aligned.
+//
+// A FLOOR, not a fixed width: a control still grows for a long label ("Hide Standards"
+// needs 131px and clipping it would be worse than the unevenness). What this removes is
+// the bottom half of the range — nothing sits at 76px next to something at 131px any
+// more, so the row scans as a set of controls rather than a ransom note.
+//
+// 6.5rem = ~98px at the 15px root, which is the widest of the SHORT labels (Export, ETC
+// Rates) plus a little. Deliberately not the widest overall: pulling everything out to
+// 131px adds ~130px to a row that has ~25px of slack once Standards is unlocked, and a
+// row that wraps to two lines is a worse answer to "make them even" than one that does
+// not.
+export const TOOLBAR_MIN_W = "min-w-[6.5rem]";
 
 export const INPUT =
   `rounded-lg border border-sdc-border bg-white px-3.5 py-2.5 text-sm text-sdc-navy shadow-sm ${MOTION} outline-none focus:border-sdc-blue focus:ring-2 focus:ring-sdc-blue/15`;

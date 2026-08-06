@@ -45,7 +45,7 @@ export function EmptyState({
         )}
       </span>
       <p className={`text-sm font-semibold ${warn ? "text-sdc-red-text" : "text-sdc-navy"}`}>{title}</p>
-      {message && <p className="max-w-md text-xs text-sdc-gray-500">{message}</p>}
+      {message && <p className="max-w-md text-xs text-sdc-muted">{message}</p>}
       {action && <div className="mt-1">{action}</div>}
     </div>
   );

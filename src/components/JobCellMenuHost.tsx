@@ -126,7 +126,7 @@ export function JobCellMenuHost() {
       style={{ position: "fixed", left: at.x, top: at.y, visibility: "hidden", zIndex: 60 }}
       className="min-w-[190px] overflow-hidden rounded-md border border-sdc-border bg-white py-1 shadow-lg"
     >
-      <div className="truncate border-b border-sdc-border px-3 py-1 font-mono text-label text-sdc-gray-500">{at.jobId}</div>
+      <div className="truncate border-b border-sdc-border px-3 py-1 font-mono text-label text-sdc-muted">{at.jobId}</div>
       <Link
         href={`/job-hours?jobs=${encodeURIComponent(at.jobId)}`}
         role="menuitem"

@@ -20,6 +20,14 @@
 // functions themselves. That is also why the validation TYPES live here and
 // lib/monthly-report.ts re-exports them: they cross the server/client boundary
 // in both directions.
+//
+// The one import below is RELATIVE for that same reason, not by accident: the rest of
+// this codebase uses `@/`, which the test runner does not resolve. lib/etc-departments
+// carries the identical no-dependencies rule, so importing it keeps this module loadable
+// by `tsx --test` while letting both places word an English list the same way — the
+// alternative was a second copy of `joinLabels` here, in the file whose whole purpose is
+// that the submission is described in exactly one place.
+import { joinLabels as joinNames } from "./etc-departments";
 
 // ── What the month is made of ───────────────────────────────────────────────
 
@@ -44,6 +52,18 @@ export type MonthlyReportValidation = {
   sections: ReportSection[];
   // Enough of a summary to put in the submission record without the whole list.
   counts: { entries: number; jobs: number; missingNewEtc: number; standardJobs: number };
+  // ── Which departments have not signed off (§50) ───────────────────────────
+  //
+  // Labels, in checklist order, e.g. ["CE", "Wire"]. Its own field rather than something
+  // derived from `issues`, for one reason: `issues` is capped at MAX_REPORTED_ISSUES and
+  // a month with 25 missing New ETC cells would push the department rows off the end —
+  // so the blocker would stop naming the departments in exactly the situation where the
+  // most is wrong. §50 requires them to be "clearly identified", which means always.
+  //
+  // Required, not optional. This gates the one irreversible action in the app, and a
+  // producer that forgets it should fail to compile rather than quietly report a month
+  // as ready that six departments have not looked at.
+  incompleteDepartments: string[];
 };
 
 // How many issues travel to the client. A month with 200 unfilled cells does not
@@ -114,6 +134,31 @@ export function readinessLine(ctx: SubmitContext): ReadinessLine {
         `${v.counts.entries} ETC ${plural(v.counts.entries, "entry", "entries")} across ${v.counts.jobs} ` +
         `${plural(v.counts.jobs, "job")}, and ${v.counts.standardJobs} ${plural(v.counts.standardJobs, "job")} ` +
         `in the Standard Fees allocation.`,
+    };
+  }
+
+  // ── The department sign-off leads (§50) ───────────────────────────────────
+  //
+  // Ahead of the missing-New-ETC count, and that order is a judgement: an unfinished
+  // department is a message to send to a person, where a missing cell is something to go
+  // and type. The first is the longer pole, so it is the one to see first — and unlike
+  // the cell count it names exactly who is being waited on.
+  //
+  // Any remaining issues ride along in `detail` rather than being hidden behind the
+  // headline, for the same reason the missing-New-ETC branch does it: chasing the last
+  // department, then finding the button still refused, is the exact frustration §26.4
+  // was written about.
+  const depts = v.incompleteDepartments ?? [];
+  if (depts.length > 0) {
+    const verb = depts.length === 1 ? "has" : "have";
+    const others = v.totalIssues;
+    return {
+      tone: "blocked",
+      text: `Submission blocked: ${joinNames(depts)} ${verb} not completed their ETC review.`,
+      detail:
+        others > 0
+          ? `And ${others} other ${plural(others, "item")} still ${plural(others, "requires", "require")} attention.`
+          : "Every other check has passed — the report submits as soon as they tick their box.",
     };
   }
 

@@ -175,3 +175,80 @@ test("fractional punches survive the rollup", () => {
   const robert = g.find((x) => x.values[0] === "Robert Brooks")!;
   assert.equal(robert.hours, 0.4);
 });
+
+// ── Grid order (2026-08-05, by request) ─────────────────────────────────────
+//
+// "the department order should be the same as the down in the grid monthly etc table".
+// Grouped by a single dimension the grid has an order for, the rollup follows that
+// order instead of hours-descending, so the drill and the table below it can be read
+// line for line.
+
+test("departments come out in the grid's order, not by size", () => {
+  const rows = [
+    // Deliberately built so hours-descending would produce the OPPOSITE order: Service
+    // is the biggest and sorts last, Mechanical is the smallest and sorts first.
+    row({ department: "Service Engineering", employee: "C", hours: 500 }),
+    row({ department: "Controls Engineering", employee: "B", hours: 200 }),
+    row({ department: "Mechanical Engineering", employee: "A", hours: 10 }),
+  ];
+  const g = groupHoursRows(rows, ["department"])!;
+  assert.deepEqual(
+    g.map((x) => x.values[0]),
+    ["Mechanical Engineering", "Controls Engineering", "Service Engineering"],
+    "must follow EMPLOYEE_TEAMS, which is the grid's left-to-right reading",
+  );
+});
+
+test("an alias department lands in its team's slot, not at the end", () => {
+  // "Mechanical Build / Manufacturing" and "Mechanical Build" are one team in
+  // EMPLOYEE_TEAMS. Matching on the literal label would have missed the aliased form
+  // and dumped it after Service.
+  const rows = [
+    row({ department: "Service Engineering", employee: "C", hours: 1 }),
+    row({ department: "Mechanical Build / Manufacturing", employee: "B", hours: 1 }),
+    row({ department: "Mechanical Engineering", employee: "A", hours: 1 }),
+  ];
+  const g = groupHoursRows(rows, ["department"])!;
+  assert.deepEqual(g.map((x) => x.values[0]), [
+    "Mechanical Engineering",
+    "Mechanical Build / Manufacturing",
+    "Service Engineering",
+  ]);
+});
+
+test("a department the grid has no place for sorts last, by size", () => {
+  const rows = [
+    row({ department: "Astrology", employee: "X", hours: 999 }),
+    row({ department: "Basket Weaving", employee: "Y", hours: 5 }),
+    row({ department: "Mechanical Engineering", employee: "A", hours: 1 }),
+  ];
+  const g = groupHoursRows(rows, ["department"])!;
+  assert.equal(g[0].values[0], "Mechanical Engineering", "known departments come first");
+  // Unranked ones keep hours-descending among themselves — useful, unlike alphabetical.
+  assert.deepEqual(g.slice(1).map((x) => x.values[0]), ["Astrology", "Basket Weaving"]);
+});
+
+test("sections come out in the grid's column order", () => {
+  const rows = [
+    row({ section: "50-411", sectionName: "MB & EB", hours: 900 }),
+    row({ section: "10-211", sectionName: "ME Gen", hours: 5 }),
+    row({ section: "10-411", sectionName: "Mech Build", hours: 400 }),
+  ];
+  const g = groupHoursRows(rows, ["section"])!;
+  assert.deepEqual(
+    g.map((x) => x.values[0]),
+    ["10-211 — ME Gen", "10-411 — Mech Build", "50-411 — MB & EB"],
+    "SECTIONS order, which IS the grid's columns",
+  );
+});
+
+test("a multi-dimension rollup stays on hours descending", () => {
+  // "Department › Employee" has no grid equivalent. Ordering the outer level by the grid
+  // while the inner one stayed by size would read as neither.
+  const rows = [
+    row({ department: "Mechanical Engineering", employee: "A", hours: 1 }),
+    row({ department: "Service Engineering", employee: "C", hours: 500 }),
+  ];
+  const g = groupHoursRows(rows, ["department", "employee"])!;
+  assert.equal(g[0].values[1], "C", "biggest first when there is no grid order to follow");
+});

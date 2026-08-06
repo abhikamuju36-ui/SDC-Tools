@@ -48,7 +48,7 @@ export function DashboardTabs({
     `relative -mb-px border-b-2 px-4 py-2.5 text-sm font-semibold motion-interactive ${
       active
         ? "border-sdc-blue text-sdc-blue-dark"
-        : "border-transparent text-sdc-gray-500 hover:border-sdc-border hover:text-sdc-navy"
+        : "border-transparent text-sdc-muted hover:border-sdc-border hover:text-sdc-navy"
     }`;
 
   return (

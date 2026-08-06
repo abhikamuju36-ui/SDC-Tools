@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
-import { BUTTON_SECONDARY } from "@/components/ui/classnames";
+import { BUTTON_SECONDARY, TOOLBAR_MIN_W } from "@/components/ui/classnames";
 import { saveStandardRates } from "@/lib/execution-rate-actions";
 
 // The "ETC Rates" toolbar control for the Monthly ETC grid's inline Standard
@@ -85,7 +85,7 @@ export function EtcRatesButton({
 
   return (
     <div ref={wrapRef} className="relative">
-      <button type="button" className={BUTTON_SECONDARY} onClick={() => (open ? setOpen(false) : openPanel())} title="Set the global ENGR / Shop / Parts rates used to compute the Standard Sheet values.">
+      <button type="button" className={`${BUTTON_SECONDARY} ${TOOLBAR_MIN_W} justify-center`} onClick={() => (open ? setOpen(false) : openPanel())} title="Set the global ENGR / Shop / Parts rates used to compute the Standard Sheet values.">
         ETC Rates
       </button>
       {open && (
@@ -110,7 +110,7 @@ export function EtcRatesButton({
             </label>
           </div>
           {disabled && (
-            <p className="mt-2 text-xs text-sdc-gray-500">This month is submitted and frozen — rates cannot be changed.</p>
+            <p className="mt-2 text-xs text-sdc-muted">This month is submitted and frozen — rates cannot be changed.</p>
           )}
           {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
           <div className="mt-3 flex justify-end gap-2">

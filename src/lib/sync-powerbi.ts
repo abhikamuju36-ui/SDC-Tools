@@ -42,8 +42,13 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
   rowsSkippedOverridden: number;
   detailRowsWritten: number;
 }> {
-  const { rows, issues } = prefetched ?? (await fetchJobHoursRowsWithIssues());
-  await recordImportIssues(issues);
+  const { rows } = prefetched ?? (await fetchJobHoursRowsWithIssues());
+  // Undefined hours are NOT recorded here any more (2026-08-05, §42.14 stage 10).
+  // They moved to their own refresh step — lib/paylocity-import.ts recordUndefinedHours
+  // — for two reasons: it writes the punch-level rows as well as the totals, in one
+  // transaction, which is what makes the KPI and its drill-through reconcile by
+  // construction; and it is a stage a manager watching a refresh should see named
+  // ("Calculating Undefined Hours…") rather than buried inside "Actual hours".
   // Sum every tracked section to a per-job, per-month total.
   const byJobMonth = new Map<string, number>(); // `${jobId}::${YYYY-MM}` -> hours
   for (const r of rows) {
@@ -667,11 +672,16 @@ export async function syncCategoryPoolsFromPowerBi(
   return { poolsUpserted, periodFound: true };
 }
 
-// How current the underlying Paylocity feed itself is (distinct from when the
-// app last asked) — the freshness figure managers see. Now the latest Work
-// Date in the SharePoint hours export (the direct equivalent of the old
-// [Hours Refreshed Thru] measure). Takes the already-fetched rows so it
-// doesn't re-download.
+// How current the underlying Paylocity feed itself is (distinct from when the app last
+// asked) — the freshness figure managers see, rendered on the Monthly ETC header as
+// "Hours through <date>". The latest Work Date in Lisa's workbook (the direct
+// equivalent of the old [Hours Refreshed Thru] measure). Takes the already-fetched rows
+// so it doesn't re-read the file.
+//
+// This is the figure that explains the §43 report: the app reads the file, the Power BI
+// report reads a semantic model that refreshes separately, so the two are routinely at
+// different vintages and the app is usually ahead. Measured 2026-08-05 — file through
+// 08-04, model through 07-31, worth 138.83h of July Engineering alone.
 async function syncHoursRefreshedThrough(rows: JobHoursRow[]): Promise<void> {
   const refreshedThrough = latestWorkDate(rows);
   if (!refreshedThrough) return;
@@ -707,26 +717,14 @@ export async function recordSyncSuccess(source: string, refreshedThrough: Date |
   }
 }
 
-// Persists what the importer had to reject, so unattributable time is visible
-// rather than merely absent. Replace-all rather than upsert: the export is the
-// authority on its own problems, so a label corrected upstream must disappear
-// here too, which an upsert-only pass would never do.
+// recordImportIssues() lived here until 2026-08-05. It wrote HoursImportIssue — the
+// per-month/label TOTALS the KPI card reads — and nothing else, which is precisely why
+// the drill-through had to recompute the punch rows from the source and could disagree
+// with the card.
 //
-// Best-effort. This is a diagnostic, and it must never be the reason an
-// otherwise-good hours sync fails — but it says so when it cannot write, since
-// a silent catch on exactly this kind of path is what hid the varchar(191) bug.
-async function recordImportIssues(issues: HoursImportIssue[]): Promise<void> {
-  try {
-    await prisma.$transaction([
-      prisma.hoursImportIssue.deleteMany({}),
-      prisma.hoursImportIssue.createMany({
-        data: issues.map((i) => ({ month: i.month, label: i.label, rows: i.rows, hours: round2(i.hours) })),
-      }),
-    ]);
-  } catch (err) {
-    console.error(`[sync] could not record hours-import issues: ${err instanceof Error ? err.message : String(err)}`);
-  }
-}
+// Its replacement is recordUndefinedHours() in lib/paylocity-import.ts, which writes
+// the totals AND the punch rows from one pass in one transaction. See §42.9-42.12 and
+// the header of lib/unattributed-hours.ts.
 
 // Records that an hours sync FAILED, so the staleness is visible in the app
 // instead of only in a console log nobody reads. Without this, a broken feed

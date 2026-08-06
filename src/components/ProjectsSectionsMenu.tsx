@@ -125,7 +125,7 @@ export function ProjectsSectionsMenu({
         {` (${shownCount}/${allSections.length})`}
         <MenuStatus pending={pending} />
       </summary>
-      <div className="motion-menu-panel styled-scrollbar absolute left-0 top-full z-30 mt-2 max-h-[70vh] w-72 overflow-y-auto rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
+      <div className="motion-menu-panel styled-scrollbar absolute left-0 top-full z-30 mt-2 max-h-[calc(var(--app-vh)_*_0.7)] w-72 overflow-y-auto rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
         {phases.map((p) => {
           const phaseCodes = p.sections.map((s) => s.code);
           const on = phaseCodes.filter((c) => cols.includes(c)).length;

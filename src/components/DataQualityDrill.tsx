@@ -19,8 +19,20 @@ import type { PunchIssue } from "@/lib/data-quality";
 // The menu is portaled to <body>: these tables scroll inside a fixed-height box,
 // and an absolutely-positioned menu would be clipped by it.
 
-const TH = "px-2 py-1.5 text-left text-label font-bold uppercase tracking-wide text-white";
-const TD = "px-2 py-1 text-left text-note text-sdc-navy";
+// ── The shared drill treatment (§47) ────────────────────────────────────────
+//
+// These tables are drill-throughs too, and they were the third of three designs: a navy
+// header band with white bold caps, and zebra striping. Both are gone for the same
+// reasons the other two panels lost them — a drill is read as a report, so hierarchy
+// comes from type and hairlines rather than from a filled band and alternating fills.
+// The header treatment matches DrillLines exactly (see components/ui/Drill.tsx); it is
+// spelled out here rather than imported because these are plain <table>s that predate
+// the shared component and do not have groups to hang off it.
+const TH =
+  "px-2 py-1 text-left text-label font-semibold uppercase tracking-[0.08em] text-sdc-muted whitespace-nowrap";
+const TD = "border-t border-sdc-border-soft px-2 py-1 text-left text-note text-sdc-gray-700";
+/** The header row's own fill + rule, replacing `bg-sdc-navy`. */
+const THEAD = "bg-sdc-gray-50 [&_th]:border-b [&_th]:border-sdc-border";
 
 export function DataQualityDrill({ rows, showCompleted }: { rows: PunchIssue[]; showCompleted?: boolean }) {
   const router = useRouter();
@@ -65,7 +77,7 @@ export function DataQualityDrill({ rows, showCompleted }: { rows: PunchIssue[]; 
     <>
       <div className="max-h-72 overflow-auto rounded-lg border border-sdc-border styled-scrollbar">
         <table className="w-full border-collapse">
-          <thead className="sticky top-0 z-[1] bg-sdc-navy">
+          <thead className={`sticky top-0 z-[1] ${THEAD}`}>
             <tr>
               <th className={TH}>Date</th>
               <th className={TH}>Employee</th>
@@ -86,15 +98,15 @@ export function DataQualityDrill({ rows, showCompleted }: { rows: PunchIssue[]; 
                   setMenu({ x: e.clientX, y: e.clientY, row: r });
                 }}
                 title="Click for this job's hours · right-click to drill by employee"
-                className={`cursor-pointer hover:bg-sdc-blue-light/50 ${i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}`}
+                className={"cursor-pointer hover:bg-sdc-gray-50"}
               >
                 <td className={`${TD} whitespace-nowrap font-mono text-label`}>{r.date}</td>
                 <td className={TD}>{r.employee}</td>
-                <td className={`${TD} text-sdc-gray-500`}>{r.department}</td>
+                <td className={`${TD} text-sdc-muted`}>{r.department}</td>
                 <td className={TD} title={r.jobName}>
-                  <span className="font-mono text-label text-sdc-gray-500">{r.jobId}</span> {r.jobName}
+                  <span className="font-mono text-label text-sdc-muted">{r.jobId}</span> {r.jobName}
                 </td>
-                {showCompleted && <td className={`${TD} whitespace-nowrap font-mono text-label text-sdc-gray-500`}>{r.completeDate ?? "—"}</td>}
+                {showCompleted && <td className={`${TD} whitespace-nowrap font-mono text-label text-sdc-muted`}>{r.completeDate ?? "—"}</td>}
                 <td className={`${TD} font-mono text-label`}>{r.section}</td>
                 <td className={`${TD} text-right font-mono tabular-nums`}>{r.hours}</td>
               </tr>
@@ -111,7 +123,7 @@ export function DataQualityDrill({ rows, showCompleted }: { rows: PunchIssue[]; 
             style={{ position: "fixed", left: Math.min(menu.x, window.innerWidth - 240), top: Math.min(menu.y, window.innerHeight - 120), zIndex: 60 }}
             className="min-w-[220px] overflow-hidden rounded-md border border-sdc-border bg-white py-1 shadow-lg"
           >
-            <div className="truncate border-b border-sdc-border px-3 py-1 font-mono text-label text-sdc-gray-500">
+            <div className="truncate border-b border-sdc-border px-3 py-1 font-mono text-label text-sdc-muted">
               {menu.row.jobId} · {menu.row.date}
             </div>
             <button type="button" role="menuitem" className={ITEM} onClick={() => openJob(menu.row)}>
@@ -142,7 +154,7 @@ export function EmployeeIdDrill({ ids }: { ids: { employeeId: string; rows: numb
     <>
       <div className="overflow-hidden rounded-lg border border-sdc-border">
         <table className="w-full border-collapse">
-          <thead className="bg-sdc-navy">
+          <thead className={THEAD}>
             <tr>
               <th className={TH}>Payroll ID</th>
               <th className={`${TH} text-right`}>Punches</th>
@@ -150,12 +162,13 @@ export function EmployeeIdDrill({ ids }: { ids: { employeeId: string; rows: numb
             </tr>
           </thead>
           <tbody>
-            {ids.map((r, i) => (
+            {/* No row index any more — it was only ever used for the zebra stripe. */}
+            {ids.map((r) => (
               <tr
                 key={r.employeeId}
                 onClick={() => startTransition(async () => setPanel(await getEmployeePunches(r.employeeId)))}
                 title="Click to see everything this ID has booked"
-                className={`cursor-pointer hover:bg-sdc-blue-light/50 ${i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}`}
+                className={"cursor-pointer hover:bg-sdc-gray-50"}
               >
                 <td className={`${TD} font-mono`}>#{r.employeeId}</td>
                 <td className={`${TD} text-right tabular-nums`}>{r.rows.toLocaleString()}</td>
@@ -180,9 +193,9 @@ function EmployeePanel({ detail, onClose }: { detail: EmployeePunchDetail; onClo
         <div>
           <p className="text-sm font-bold text-sdc-navy">
             {detail.name ?? `Payroll ID #${detail.employeeId}`}
-            {detail.department && <span className="ml-2 text-xs font-normal text-sdc-gray-500">{detail.department}</span>}
+            {detail.department && <span className="ml-2 text-xs font-normal text-sdc-muted">{detail.department}</span>}
           </p>
-          <p className="text-note text-sdc-gray-500">
+          <p className="text-note text-sdc-muted">
             {detail.rows.length.toLocaleString()} punches · {Math.round(detail.total).toLocaleString()}h
             {detail.truncated && " (most recent 500)"}
             {/* An unresolved ID is the finding itself, so name it here too rather
@@ -198,7 +211,7 @@ function EmployeePanel({ detail, onClose }: { detail: EmployeePunchDetail; onClo
       </div>
       <div className="max-h-72 overflow-auto rounded-lg border border-sdc-border styled-scrollbar">
         <table className="w-full border-collapse">
-          <thead className="sticky top-0 z-[1] bg-sdc-navy">
+          <thead className={`sticky top-0 z-[1] ${THEAD}`}>
             <tr>
               <th className={TH}>Date</th>
               <th className={TH}>Job</th>
@@ -209,12 +222,12 @@ function EmployeePanel({ detail, onClose }: { detail: EmployeePunchDetail; onClo
           </thead>
           <tbody>
             {detail.rows.map((r, i) => (
-              <tr key={`${r.date}-${r.jobId}-${r.section}-${i}`} className={i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}>
+              <tr key={`${r.date}-${r.jobId}-${r.section}-${i}`} className="hover:bg-sdc-gray-50">
                 <td className={`${TD} whitespace-nowrap font-mono text-label`}>{r.date}</td>
                 <td className={TD} title={r.jobName}>
-                  <span className="font-mono text-label text-sdc-gray-500">{r.jobId}</span> {r.jobName}
+                  <span className="font-mono text-label text-sdc-muted">{r.jobId}</span> {r.jobName}
                 </td>
-                <td className={`${TD} text-sdc-gray-500`}>{r.jobStatus}</td>
+                <td className={`${TD} text-sdc-muted`}>{r.jobStatus}</td>
                 <td className={`${TD} font-mono text-label`} title={r.sectionName}>
                   {r.section}
                 </td>

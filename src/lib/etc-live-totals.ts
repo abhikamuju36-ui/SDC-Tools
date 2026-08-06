@@ -1,6 +1,9 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+// The rollup rule, shared with the server render so the block cannot paint one
+// figure on load and a different one on the first keystroke (§51).
+import { rollupNewEtc, type NewEtcRollup, type NewEtcRollupCell } from "@/lib/etc";
 
 // Live per-job ETC totals, published by the cells that own the numbers and read
 // by everything downstream of them.
@@ -90,6 +93,17 @@ type GroupTotals = {
   diffUnplanned: number;
   plannedHoursLeft: number;
   plannedNewEtc: number;
+  // ── The TOTAL (NEW ETC) block's own figures (§51) ─────────────────────────
+  //
+  // ADDED beside the sums above rather than replacing them, and that is the whole
+  // scoping decision: §51 applies to the ENG/SHOP rollup block and to nothing else,
+  // so the KPI cards keep reading `newEtc` / `diff` / `plannedNewEtc` exactly as they
+  // did. Only the block reads this, and only this goes blank.
+  //
+  // `newEtc` and `diff` here are null until every section in the group that needs an
+  // answer has one — see rollupNewEtc in lib/etc.ts, which is the SAME function the
+  // server render calls, so the first paint and the first keystroke agree.
+  rollup: NewEtcRollup;
 };
 
 export type JobTotals = {
@@ -224,6 +238,8 @@ export function forgetPartsCell(jobId: number): void {
 
 const EMPTY_GROUP = (): GroupTotals => ({
   prior: 0, worked: 0, hoursLeft: 0, newEtc: 0, diff: 0, diffUnplanned: 0, plannedHoursLeft: 0, plannedNewEtc: 0,
+  // Overwritten at the end of computeTotals; this is the empty-group answer.
+  rollup: { complete: true, hoursLeft: 0, newEtc: 0, diff: 0 },
 });
 
 // Recomputed from scratch on demand rather than maintained incrementally: the
@@ -232,6 +248,10 @@ const EMPTY_GROUP = (): GroupTotals => ({
 // slowly stops matching its column.
 function computeTotals(): Map<number, JobTotals> {
   const byJob = new Map<number, JobTotals>();
+  // The block's cells, collected per job+group so the rollup can be computed by the
+  // SHARED function rather than re-derived here. Kept out of JobTotals: it is working
+  // state, and putting it on the exported type would invite a consumer to sum it.
+  const rollupCells = new Map<string, NewEtcRollupCell[]>();
   const ensure = (jobId: number) => {
     let t = byJob.get(jobId);
     if (!t) byJob.set(jobId, (t = { engineering: EMPTY_GROUP(), shop: EMPTY_GROUP(), parts: null }));
@@ -240,6 +260,13 @@ function computeTotals(): Map<number, JobTotals> {
   for (const c of cells.values()) {
     const t = ensure(c.jobId);
     const g = c.billingGroup === "Engineering" ? t.engineering : t.shop;
+    const key = `${c.jobId}|${c.billingGroup}`;
+    let list = rollupCells.get(key);
+    if (!list) rollupCells.set(key, (list = []));
+    // `decided` is the cell's own live answer to "is this box filled in" — the same
+    // flag it already publishes for `diff`, so the block and the Diff column can never
+    // disagree about whether a cell has been answered.
+    list.push({ decided: c.decided, hoursLeft: c.hoursLeft, newEtc: c.effective });
     g.prior += c.prior;
     g.worked += c.worked;
     g.hoursLeft += c.hoursLeft;
@@ -257,6 +284,13 @@ function computeTotals(): Map<number, JobTotals> {
     }
   }
   for (const [jobId, p] of parts) ensure(jobId).parts = p;
+  // The rollup, from the one shared function (§51). A job whose group published no
+  // cells at all keeps EMPTY_GROUP's rollup, which is `complete` over zero cells —
+  // correct: there is nothing outstanding, and 0 − 0 is 0.
+  for (const [jobId, t] of byJob) {
+    t.engineering.rollup = rollupNewEtc(rollupCells.get(`${jobId}|Engineering`) ?? []);
+    t.shop.rollup = rollupNewEtc(rollupCells.get(`${jobId}|Shop`) ?? []);
+  }
   return byJob;
 }
 

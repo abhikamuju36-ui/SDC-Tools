@@ -116,7 +116,7 @@ export default async function JobsPage({
               className="motion-interactive grid min-w-[900px] grid-cols-[40px_76px_minmax(240px,1fr)_180px_110px_120px] items-center gap-4 px-6 py-3 text-center text-label hover:bg-sdc-blue-light/40"
             >
               <span className="text-sdc-gray-400 tabular-nums">{i + 1}</span>
-              <span className="font-mono text-sdc-gray-500 tabular-nums">{job.jobId}</span>
+              <span className="font-mono text-sdc-muted tabular-nums">{job.jobId}</span>
               <span className="flex min-w-0 items-center justify-center gap-2">
                 <span className="truncate font-semibold text-sdc-navy" title={job.jobName}>{job.jobName}</span>
                 {noUpstreamData && (

@@ -148,7 +148,7 @@ export default async function JobHoursPage({
       <div className="mb-1 flex flex-wrap items-end justify-between gap-4">
         <PageTitle>Job Hour Details</PageTitle>
         <div className="flex items-center gap-2">
-          <span className="text-xs text-sdc-gray-500">Jobs</span>
+          <span className="text-xs text-sdc-muted">Jobs</span>
           {/* Multi-job picker. Several jobs aggregate into one set of hours
               charts, the way the Power BI job slicer does. */}
           <JobSelect jobs={jobs} selected={selectedJobIds} />
@@ -166,7 +166,7 @@ export default async function JobHoursPage({
               // the header must say so rather than name a single job.
               <>
                 <p className="text-lg font-semibold text-sdc-navy">{selectedJobIds.length} jobs (aggregated)</p>
-                <p className="text-xs text-sdc-gray-500" title={selectedJobIds.join(", ")}>
+                <p className="text-xs text-sdc-muted" title={selectedJobIds.join(", ")}>
                   {selectedJobIds.join(", ")}
                 </p>
               </>
@@ -183,7 +183,7 @@ export default async function JobHoursPage({
                     className="shrink-0 text-sdc-gray-400 hover:text-sdc-blue"
                   />
                 </p>
-                <p className="text-xs text-sdc-gray-500">
+                <p className="text-xs text-sdc-muted">
                   {data.job.customer ?? "—"} · {data.job.status}
                 </p>
               </>

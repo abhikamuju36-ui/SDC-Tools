@@ -33,7 +33,7 @@ export function PasswordGate({
 }) {
   const [show, setShow] = useState(false);
   return (
-    <div className="flex min-h-[60vh] items-center justify-center p-6">
+    <div className="flex min-h-[calc(var(--app-vh)_*_0.6)] items-center justify-center p-6">
       <form action={action} className="w-full max-w-sm rounded-lg border border-sdc-border bg-white p-6 shadow-sm">
         <h2 className="font-heading text-base font-semibold text-sdc-navy">{title}</h2>
         {hint && <p className="mt-1 text-sm text-sdc-gray-400">{hint}</p>}

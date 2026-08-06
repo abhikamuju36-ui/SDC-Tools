@@ -54,10 +54,15 @@ export const SYNC_INTERVAL_MS = 1 * 60 * 60 * 1000;
 // "last refreshed" means something different for those: they are deliberately
 // idle while the month is locked.
 export const SYNC_SOURCES = [
-  // "Power BI" rather than "Paylocity export" since 2026-08-03: it is the same
-  // Paylocity data, but naming the road matters when someone is deciding where to
-  // go and look at why a figure is stale.
-  { source: "hours_actual", label: "Actual hours (Power BI)", monthScoped: false },
+  // "Paylocity workbook" again since 2026-08-05 (§42): hours are read from Lisa's
+  // OneDrive file rather than from the Power BI model, because the model runs days
+  // behind it. Naming the road matters when somebody is deciding where to go and look
+  // at why a figure is stale — and the answer is now "the file", not "the model".
+  { source: "hours_actual", label: "Actual hours (Paylocity workbook)", monthScoped: false },
+  // Its own stage rather than a silent part of the one above, so a manager watching a
+  // refresh sees "Calculating Undefined Hours…" (§42.15) — and so the totals and the
+  // punch rows behind them are written together (§42.10-42.12).
+  { source: "undefined_hours", label: "Undefined hours", monthScoped: false },
   { source: "etc_hours_worked", label: "ETC hours worked", monthScoped: true },
   { source: "parts_cost", label: "Parts cost (TotalETO)", monthScoped: true },
   // The Projects grid's Parts Cost Actual column. Not month-scoped: it is a
@@ -99,21 +104,33 @@ export type SyncRunResult = {
 // hourly schedule passes nothing and behaves exactly as it did.
 export type SyncProgress = (stage: string | null, done: SyncStepResult[]) => void | Promise<void>;
 
-export async function runAllSyncs(trigger: SyncTrigger, onProgress?: SyncProgress): Promise<SyncRunResult> {
+export async function runAllSyncs(
+  trigger: SyncTrigger,
+  onProgress?: SyncProgress,
+  // Carried so the Paylocity import record can be tied back to the pass that ran it
+  // and to the person who pressed the button (§42.20). Optional, because the hourly
+  // schedule has neither and must behave exactly as it did.
+  attribution?: { refreshId?: string | null; userName?: string | null },
+): Promise<SyncRunResult> {
   // Imported lazily, inside the function: this module is loaded from
   // instrumentation.ts, which also runs under the Edge runtime, where the Node
   // built-ins these pull in (mssql, msal's native cache, fs) cannot load at all.
   const { syncActualHours, syncHoursWorked, syncPartsCost, recordSyncSuccess, recordSyncFailure, recordSyncNote } = await import("@/lib/sync-powerbi");
-  const { fetchJobHoursRowsWithIssues } = await import("@/lib/job-hours-source");
   const { computeCategoryPoolsLocally } = await import("@/lib/standard-pool-local");
   const { poolRefreshBlockedBy } = await import("@/lib/standard-pool-eligibility");
   const { syncFromTotalEto, syncPartsCostActual } = await import("@/lib/sync-totaleto");
   const { syncSchedulerTeam } = await import("@/lib/sync-scheduler-team");
+  const { newImportContext, beginPaylocityImport, recordUndefinedHours, completePaylocityImport } = await import("@/lib/paylocity-import");
   const { prisma } = await import("@/lib/prisma");
   const { isMonthLocked } = await import("@/lib/etc");
 
   const startedAt = new Date();
   const steps: SyncStepResult[] = [];
+  const refreshId = attribution?.refreshId ?? null;
+  const userName = attribution?.userName ?? null;
+  // Filled in by the hours steps, written to the import record at the end (§42.20).
+  const importTotals = { rowsInserted: 0, rowsUpdated: 0, rowsRemoved: 0 };
+  let undefinedResult = { kpiRows: 0, kpiHours: 0 };
 
   // Rule 1: the month every month-scoped step below will use. Null means either
   // there are no ETC months at all or the latest one is locked — both of which
@@ -171,22 +188,59 @@ export async function runAllSyncs(trigger: SyncTrigger, onProgress?: SyncProgres
     }
   }
 
-  // ONE parse of the ~12,600-row export for the whole pass. Both hours steps
-  // read the same file, and parsing it costs ~900ms, so doing it per step threw
-  // away most of a second every pass for nothing.
+  // ONE read of the ~19,800-row source for the whole pass. Every hours step reads
+  // the same data, and reading it costs ~1s, so doing it per step threw away most of
+  // a second every pass for nothing.
   //
   // Memoised rather than fetched up front, deliberately: rule 2 says a step's
   // failure must not take another step down with it. If the read throws inside
   // the first step, `cached` stays null and the second step retries it and fails
   // with its own message, exactly as when each fetched independently.
-  let cached: import("@/lib/sync-powerbi").HoursExport | null = null;
-  const hoursExport = async () => (cached ??= await fetchJobHoursRowsWithIssues());
+  //
+  // ── Reading Lisa's workbook rather than Power BI (2026-08-05, §42) ────────
+  // readHoursFeed() is the single entry point that decides the source. It reads the
+  // OneDrive workbook, because the Power BI model runs DAYS behind it — July was short
+  // 150.53h and August was entirely absent when measured. See lib/hours-feed.ts for
+  // why there is deliberately no silent fallback to Power BI on failure: it would
+  // overwrite fresh figures with stale ones, which §42.19 forbids in as many words.
+  const importCtx = newImportContext({ refreshId, trigger, userName });
+  let cached: Awaited<ReturnType<typeof beginPaylocityImport>> | null = null;
+  const hoursImport = async () => (cached ??= await beginPaylocityImport(importCtx));
+  const hoursExport = async () => (await hoursImport()).feed;
 
   // Hours first: they're the figures the whole app is judged on, and the parts
   // and mirror steps below are independent of them.
   await step("hours_actual", labelFor("hours_actual"), false, async () => {
-    const r = await syncActualHours(await hoursExport());
-    return `${r.rowsUpserted} upserted, ${r.jobsNotFound} jobs not found, ${r.rowsSkippedOverridden} overridden preserved`;
+    const imported = await hoursImport();
+    const r = await syncActualHours(imported.feed);
+    importTotals.rowsInserted = r.detailRowsWritten;
+    importTotals.rowsUpdated = r.rowsUpserted;
+    return (
+      `${imported.feed.provenance.note} ` +
+      `${r.rowsUpserted} upserted, ${r.detailRowsWritten} punch rows, ${r.jobsNotFound} jobs not found, ` +
+      `${r.rowsSkippedOverridden} overridden preserved` +
+      // §42.16: a refresh that processed the same file again must not imply new data
+      // arrived. Said here so it reaches the refresh record and the completion
+      // message rather than only the log.
+      (imported.changed ? "" : " — SAME FILE VERSION as the last import, no new data")
+    );
+  });
+
+  // ── Undefined Hours, as its own stage (§42.10, §42.14 stage 10) ───────────
+  //
+  // Writes the per-month totals the KPI card reads AND the punch-level rows the
+  // drill-through shows, from one pass over one import, in one transaction. That is
+  // what makes `KPI = sum of drill rows` structural rather than coincidental — see
+  // lib/unattributed-hours.ts for the defect this replaces.
+  await step("undefined_hours", labelFor("undefined_hours"), true, async () => {
+    const imported = await hoursImport();
+    const wb = imported.feed.provenance.workbook;
+    const r = await recordUndefinedHours(imported.feed.rejected, {
+      importId: importCtx.importId,
+      sourceFile: wb?.fileName ?? "power_bi",
+    });
+    undefinedResult = { kpiRows: r.kpiRows, kpiHours: r.kpiHours };
+    return `${r.kpiHours.toFixed(2)}h across ${r.kpiRows} entries counted; ${r.storedRows} rejection rows stored with reasons`;
   });
 
   await step("etc_hours_worked", labelFor("etc_hours_worked"), false, async () => {
@@ -275,6 +329,18 @@ export async function runAllSyncs(trigger: SyncTrigger, onProgress?: SyncProgres
     if (!r.ok) throw new Error(r.reason ?? "Scheduler sync reported failure.");
     return `${r.updated.length} re-grouped, ${r.unchanged} unchanged, ${r.unmatchedEtc.length} unmatched`;
   });
+
+  // ── Close the Paylocity import record (§42.20) ────────────────────────────
+  //
+  // Only when a feed was actually read. A pass whose hours step threw never got one,
+  // and beginPaylocityImport has already written the FAILURE row in that case — so
+  // writing a second record here would report the same import twice, once as failed
+  // and once as complete.
+  if (cached) {
+    await completePaylocityImport(cached, importTotals, undefinedResult).catch((err) =>
+      console.error("[auto-sync] could not close the Paylocity import record:", err),
+    );
+  }
 
   const ms = Date.now() - startedAt.getTime();
   const failed = steps.filter((s) => s.status === "failed");

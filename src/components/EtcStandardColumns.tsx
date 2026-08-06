@@ -371,7 +371,7 @@ export function EtcStandardCells({ job }: { job: StandardJobBase }) {
       <td className={`${cell(true)} bg-sdc-yellow-bg/60 font-medium`} title={`${currencyExact(std.totalStandardFees)} = Total ETC $ + Standard Fees + (Contingency × Contingency Rate)`}>
         {currency(std.totalStandardFees)}
       </td>
-      <td className={`${STD_EDGE} px-2 py-1 text-center text-label text-sdc-gray-500 whitespace-nowrap`} title={job.notes}>
+      <td className={`${STD_EDGE} px-2 py-1 text-center text-label text-sdc-muted whitespace-nowrap`} title={job.notes}>
         <ContingencyNotesInputs jobId={job.jobId} field="notes" jobName={job.jobName} contingency={job.contingencyAmount} notes={job.notes} editable={editable} />
       </td>
     </>

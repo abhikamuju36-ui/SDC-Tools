@@ -290,6 +290,121 @@ model HoursImportIssue {
   @@index([month])
 }
 
+// ── The punch-level rows BEHIND HoursImportIssue (§42.11, §42.12) ───────────
+//
+// HoursImportIssue above holds per-month/label TOTALS. This holds the individual
+// punches those totals are made of, and it exists because a total is not actionable:
+// fixing undefined hours means opening Paylocity and correcting specific entries,
+// which needs a person, a date and a section.
+//
+// ── Why this is persisted rather than recomputed on demand ──────────────────
+//
+// It used to be recomputed. getUnattributedDetail() ran a live query every time
+// somebody clicked Detail, while the KPI card read the stored totals — two sources
+// for one number, and the module said so in its own header ("this can disagree with
+// the card if the file has changed since the last sync"). That is the §42.11 defect.
+//
+// Both are now written from ONE pass over the import, in one transaction, so
+// "KPI = sum of the drill's rows" is true by construction rather than by luck. It is
+// also ~750ms faster per click, since the drill no longer re-reads and re-parses the
+// whole source to answer a question the import already answered.
+//
+// Replaced wholesale per import, for the same reason HoursImportIssue is: the source
+// file is the authority on its own faults, and a punch corrected upstream must
+// disappear here too.
+model UndefinedHoursRow {
+  id       Int      @id @default(autoincrement())
+  month    String // "2026-07", from the WORK DATE (§42.6)
+  // One of the UndefinedReason codes — MISSING_JOB_ID, JOB_NOT_FOUND, ... See
+  // lib/paylocity-workbook.ts, which owns the vocabulary and the labels.
+  reason   String
+  // The raw cell value that could not be used: "Not Defined", "2026 SERVICE", "0964".
+  label    String
+  workDate DateTime? @db.Date
+  // Paylocity Employee Id. The NAME and department are deliberately NOT copied here
+  // — they are resolved at read time through Employee.paylocityId, so correcting an
+  // employee record fixes every drill row at once instead of leaving stale copies.
+  employeeId String
+  // Raw MachineSec-Function, e.g. "80-311".
+  section  String
+  hours    Decimal  @db.Decimal(10, 2)
+  // 1-based row in the source sheet, so a manager can go and look at it (§42.11).
+  sourceRow Int
+  // Which exact file version produced this row (§42.11, §42.20). Both are carried so
+  // a drill row can name its source without joining, and so a stale row is obvious.
+  sourceFile String
+  importId   String
+  // Whether this row is inside the KPI's definition. FALSE rows are correct
+  // exclusions (phase 80/90, the four pool sections) kept so §42.7's "do not silently
+  // drop unmatched rows" holds — the drill shows them separately and says they are
+  // not counted. See KPI_COUNTED_REASONS.
+  countsTowardKpi Boolean @default(true)
+  syncedAt DateTime @default(now())
+
+  @@index([month])
+  @@index([month, countsTowardKpi])
+  @@index([importId])
+}
+
+// ── One Paylocity file import, recorded in full (§42.20) ────────────────────
+//
+// PowerBiFreshness says how current a SOURCE is and RefreshRun says what a PASS did;
+// neither can answer "which exact file version produced the numbers on screen". That
+// question is the whole point of §42.2-42.3: Lisa replaces the workbook keeping the
+// same name, so a filename and a timestamp do not identify a version — only the
+// content hash does.
+//
+// `sha256` is therefore load-bearing rather than diagnostic. It is what makes a
+// repeated refresh of an unchanged file a no-op (§42.5) instead of a re-import, and
+// what lets the refresh message be honest about whether new data actually arrived.
+model PaylocityImport {
+  id             Int      @id @default(autoincrement())
+  importId       String   @unique
+  // The RefreshRun this import belonged to, when it ran inside one.
+  refreshId      String?
+  fileName       String
+  filePath       String   @db.Text
+  fileSize       Int
+  fileModifiedAt DateTime
+  // sha256 of the exact bytes parsed. The version identity (§42.2).
+  sha256         String
+  sheet          String
+  // The work-date range the file actually carried, and the months it covered.
+  reportFrom     DateTime? @db.Date
+  reportTo       DateTime? @db.Date
+  monthsCovered  String    @db.Text // JSON array of "YYYY-MM"
+
+  rowsRead       Int @default(0)
+  rowsInserted   Int @default(0)
+  rowsUpdated    Int @default(0)
+  rowsRemoved    Int @default(0)
+  // Rows that collapsed into the storage grain — punch SEGMENTS, not duplicates.
+  // See the long note in lib/paylocity-workbook.ts about why those are different.
+  segmentsMerged Int @default(0)
+  rowsInvalid    Int @default(0)
+  rowsUndefined  Int @default(0)
+  undefinedHours Decimal @db.Decimal(10, 2) @default(0)
+
+  startedAt   DateTime
+  completedAt DateTime?
+  durationMs  Int?
+  // "manual" | "interval" | "startup", matching SyncTrigger.
+  trigger     String
+  userName    String?
+  // "ok" | "unchanged" | "failed". "unchanged" is a SUCCESS: the file was checked,
+  // its hash matched the last import, and nothing needed doing.
+  status      String
+  // Which stage failed, from WorkbookFailureStage — so a failure names the thing to
+  // go and fix rather than reporting the pass as generically broken (§42.15).
+  failureStage  String?
+  failureDetail String? @db.Text
+  appVersion    String
+
+  @@index([sha256])
+  @@index([startedAt])
+  @@index([status])
+}
+
 // Per-job, per-section-code hours across three snapshots, confirmed from the
 // "Estimated Hours" tab: Quoted (original bid), Actual Hours Historical
 // (cumulative actuals as of a cutoff date), and Estimate to Complete.
@@ -511,6 +626,53 @@ model MonthlyReportSubmission {
   @@index([month])
 }
 
+// ── Department ETC sign-off, one row per department per month (§50) ──────────
+//
+// Six departments (see lib/etc-departments.ts for the list and why it is not derived
+// from EMPLOYEE_TEAMS) tick a box to say they have finished entering their ETC for a
+// month. The submission gate reads it: `Submit {Month} Report` will not open while any
+// of them is outstanding.
+//
+// ── Month AND year, as separate columns ──────────────────────────────────────
+//
+// `month` ("2026-07") is the key every other monthly table in this app uses and is what
+// the unique index is on, so a lookup is one indexed hit and July can never be confused
+// with August. `year` and `monthNumber` are redundant with it and are stored anyway, the
+// same way MonthlyReportSubmission does: §50 asks for the status to be stored separately
+// by report month and report year, and a report that has to parse a string to group by
+// year is one substring bug away from filing December under the wrong one.
+//
+// ── The completer is a SNAPSHOT, not a foreign key ───────────────────────────
+//
+// `completedByName` is copied at the time of the tick, like AuditLog.userEmail: the line
+// under the checkbox has to keep reading "Completed by Lisa" even if that account is
+// later renamed or removed. `completedById` is kept for joining when the account still
+// exists, but deliberately carries NO relation — a FK here would make deleting a user
+// either fail or cascade away a month's sign-off, and neither is what anyone wants from
+// a checkbox.
+//
+// Accessed by raw SQL for the same reason as MonthlyReportSubmission and RefreshRun:
+// `prisma generate` cannot run while a server process holds node_modules/.prisma open,
+// so a new table must not need a deploy window to become usable.
+model DepartmentEtcCompletion {
+  id              Int       @id @default(autoincrement())
+  month           String    @db.VarChar(7) // "2026-07"
+  year            Int
+  monthNumber     Int
+  department      String    @db.VarChar(32) // the stable CODE, e.g. "mech-build"
+  completed       Boolean   @default(false)
+  completedById   Int?
+  completedByName String?   @db.VarChar(191)
+  completedAt     DateTime?
+  // Bumped on every write, ticked or unticked. What a late-arriving duplicate request
+  // is compared against, so a stale session cannot overwrite a newer status (§50).
+  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime  @default(now())
+
+  @@unique([month, department])
+  @@index([year, monthNumber])
+}
+
 // ── One row per application-wide refresh, manual or scheduled (§25.11) ───────
 //
 // Written by lib/refresh-service.ts around every call to runAllSyncs, so "when was
@@ -539,6 +701,18 @@ model RefreshRun {
   // keeps what each one actually said rather than flattening them into one number
   // that would be wrong for most of them.
   steps        String    @db.Text
+  // The stage now in flight, e.g. "Actual hours (Power BI)". Written by
+  // recordProgress() as each source starts, so a tab watching a refresh can name the
+  // step instead of showing an indefinite spinner (§30, §42.15).
+  //
+  // ── Declared here 2026-08-05, having existed in the database since §30 ─────
+  // It was added by raw SQL and never added to this model, so the two had drifted:
+  // `prisma migrate diff` wanted to DROP it, which would have silently broken refresh
+  // progress — the feature §42.15 exists to extend. Found by reading the generated
+  // migration before applying it. Nothing about the column changes; the schema simply
+  // now admits it exists. VarChar(64) matches the live column exactly, so declaring
+  // it generates no ALTER — the longest label in SYNC_SOURCES is 29 characters.
+  currentStage String?   @db.VarChar(64)
   failureDetail String?  @db.Text
 
   @@index([startedAt])
