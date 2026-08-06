@@ -168,14 +168,21 @@ export function JobHoursDashboard({
           stretching the other two cards to match a much taller one and
           reopening the empty-space problem §33 fixed for the KPI summary card
           (see drill-cap-scroll-ceiling in the memory notes / DEVLOG §33).
-          Falls back to the original 2-column ratio when there's no Parts Cost
-          to show, rather than leaving an empty cell. */}
+
+          §55: the first card is the WIDEST (2fr against 1fr each), because it
+          holds the most content — the tiered section chart — and had been the
+          one forced to scroll internally at three equal columns. The extra
+          width plus the now-responsive chart (see SectionHierarchyChart) lets
+          it show every section in full with no internal scroll, while the
+          billing-group and Parts Cost cards are comfortable at 1fr. Falls back
+          to the original 2-column ratio when there's no Parts Cost to show,
+          rather than leaving an empty cell. */}
       <div
         className={`grid grid-cols-1 gap-5 ${drillRow ? "items-start" : "items-stretch"} ${
-          parts ? "lg:grid-cols-3" : "lg:grid-cols-[2fr_1fr]"
+          parts ? "lg:grid-cols-[2fr_1fr_1fr]" : "lg:grid-cols-[2fr_1fr]"
         }`}
       >
-        <div className={`${card("p-4")} flex h-full flex-col overflow-x-auto`}>
+        <div className={`${card("p-4")} flex h-full min-w-0 flex-col`}>
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3">
             <p className="font-heading text-base font-bold tracking-tight text-sdc-navy">Estimate to Complete vs Actual</p>
             <p className="text-note text-sdc-gray-400">Click a section for its month-by-month detail</p>
@@ -271,7 +278,12 @@ function SectionHierarchyChart({
   const max = Math.max(1, ...rows.flatMap((r) => [r.planned, r.actual]));
   const deptRuns = groupRuns(rows, (r) => `${r.phase}|${r.group}`, (r) => r.group);
   const phaseRuns = groupRuns(rows, (r) => r.phase, (r) => r.phase);
-  const colStyle = { gridTemplateColumns: `repeat(${rows.length}, minmax(60px, 1fr))` } as const;
+  // §55: `minmax(0, 1fr)`, not `minmax(60px, 1fr)`, so the columns SHRINK to
+  // fit the card instead of forcing a 640px floor that had to scroll. Equal
+  // fractions keep the tiers (section / dept / phase) lined up by construction.
+  // The bars inside are responsive too (capped at their old width), so a
+  // narrower column narrows the bars rather than clipping them.
+  const colStyle = { gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))` } as const;
 
   // Hovered section index + cursor position, for the floating tooltip.
   const [hover, setHover] = useState<{ row: HierRow; x: number; y: number } | null>(null);
@@ -285,7 +297,11 @@ function SectionHierarchyChart({
   }, [rows]);
 
   const Bar = ({ value, color }: { value: number; color: string }) => (
-    <div className="flex h-full flex-col items-center justify-end">
+    // §55: `flex-1 min-w-0 max-w-5` — the bar fills the space its column gives
+    // it, up to its old 20px width, and shrinks below that on a narrow column
+    // rather than overflowing. `w-5` was a fixed width that forced the 640px
+    // chart floor; the cap keeps wide columns looking exactly as before.
+    <div className="flex h-full min-w-0 max-w-5 flex-1 flex-col items-center justify-end">
       <span className="mb-0.5 text-micro leading-none text-sdc-muted">{value ? fmt(value) : ""}</span>
       {/* ── scaleY, not height (§36.2, §36.14, §36.15) ──────────────────────────
           This was `transition-[height] duration-500`, which broke three of §36's
@@ -301,7 +317,7 @@ function SectionHierarchyChart({
           label — and scales up from the baseline on the compositor. Same growing
           gesture, one property, no layout. */}
       <div
-        className="w-5 origin-bottom rounded-t-sm"
+        className="w-full origin-bottom rounded-t-sm"
         style={{
           height: `${(value / max) * 100}%`,
           background: color,
@@ -315,7 +331,10 @@ function SectionHierarchyChart({
   );
 
   return (
-    <div className="relative min-w-[640px]" onMouseLeave={() => setHover(null)}>
+    // §55: `w-full`, not `min-w-[640px]` — the chart fits its card exactly and
+    // never forces the card to scroll horizontally. `min-w-0` lets it shrink
+    // inside the flex column above it.
+    <div className="relative w-full min-w-0" onMouseLeave={() => setHover(null)}>
       <div className="mb-2 flex items-center gap-4 text-xs text-sdc-gray-600">
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIES.planned }} /> {plannedLabel}</span>
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIES.actual }} /> Actual</span>

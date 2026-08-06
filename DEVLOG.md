@@ -4155,3 +4155,37 @@ cell. Below `lg` all three stack to one column (verified at 900px: one column, n
 Types clean, 758 tests pass, lint clean on the touched files (one pre-existing
 `set-state-in-effect` warning in `SectionHierarchyChart`'s entrance animation is unrelated and
 predates this change).
+
+### 39.4 The first card fully visible, no internal scroll (§55, 2026-08-06)
+
+At three equal columns the first card (`Estimate to Complete vs Actual`) was ~349px of
+content while its tiered section chart carried a hard `min-w-[640px]` floor — so the card
+scrolled horizontally and hid half the sections behind an internal scrollbar. §55: show it
+in full, give it the width, let the other two shrink.
+
+Two changes, and the second is what makes the first safe:
+
+- **The row is now `lg:grid-cols-[2fr_1fr_1fr]`** — the first card takes half the row, the
+  billing-group and Parts Cost cards a quarter each. Measured at 1440px: 526 / 263 / 263px,
+  all three still top- and bottom-aligned (stretch unchanged), no page overflow.
+- **The chart shrinks to fit instead of scrolling.** `SectionHierarchyChart` dropped
+  `min-w-[640px]` for `w-full min-w-0`, its columns went from `minmax(60px, 1fr)` to
+  `minmax(0, 1fr)`, and the bars themselves became responsive: `w-5` (a fixed 20px, which was
+  the real cause of the 640px floor) became `flex-1 min-w-0 max-w-5` on a `w-full` fill, so a
+  bar fills whatever its column gives it up to its old 20px and shrinks below that rather than
+  overflowing. Wide columns look exactly as before (capped at 20px); narrow ones narrow the
+  bars, never clip them.
+
+Verified with 12 sections (the job's full template, the worst case) at two widths:
+
+```
+viewport   first card   internal scroll   bar width   pair overflow   page overflow
+1440px       526px            none          16.1px         none            none
+1280px       445px            none          12.7px         none            none
+```
+
+Every section, its bars, the per-bar value labels, the diff labels and all three tier rows
+(section / dept / phase) render inside the card at both widths. Nothing in the chart's data,
+tooltip, hover, legend, drill-through or the other two cards changed — only the widths and the
+bar sizing. 758 tests pass, types clean, lint clean on the touched file (the one remaining
+`set-state-in-effect` warning is the pre-existing entrance-animation effect, unrelated).
