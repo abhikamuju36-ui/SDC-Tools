@@ -4268,3 +4268,31 @@ Projection-vs-Estimated variance meter below are the same numbers (§58.5). Segm
 rows are defensively clamped (`Math.max`) and filtered so a null projection or a zero-spend job
 degrades cleanly rather than rendering an inverted or empty stack. 758 tests pass, types clean,
 lint clean on the touched file.
+
+### 40.4 Parts Cost bars: proportional scaling + centred (§60, 2026-08-06)
+
+§58's stacked bar was reported as mis-scaled: Amount Invoiced $43,502 and Total Parts Cost
+Spent $43,743 (near-equal) rendered as a full-height green bar next to a barely-visible blue
+sliver. That was not a rounding or min-height bug — it is intrinsic to stacking NESTED values.
+The three figures are cumulative (`paid ≤ purchased ≤ projection`), so a stack draws the
+middle segment as the INCREMENT `purchased − paid` = **$241**, which is correctly tiny and
+also completely useless for comparing the two $43k figures the labels show. No amount of
+segment tweaking fixes that; stacked increments can never make two near-equal cumulative
+totals look near-equal.
+
+So the visual changed from one stacked bar to **three grouped bars**, each drawn from a zero
+baseline on ONE shared linear scale (`scaleMax = max(paid, purchased, projection)`), height
+strictly `(value / scaleMax) × BAR_AREA` — no min-height, no per-bar normalisation, no
+headroom fudge (§60.1/§60.2). Two near-equal values are now two near-equal bars. Measured live
+on job 1142 (the near-equal case): Invoiced $1,522,142 → 168.3px, Spent $1,566,916 → 173.2px,
+Projection $1,591,916 → 176px — exactly proportional, and the three read as almost the same
+height, which is the truth of the numbers.
+
+Centred (§60.3): the bar group is `flex-1 items-end justify-center`, so it hangs off a common
+baseline and sits centred in the card both ways — verified 16px of gap on each side, equal.
+Each column carries its exact value above and its name below; still a rectangular bar (§58),
+still vertical (§54), just no longer stacked.
+
+`PARTS_BAR` colours unchanged (green Invoiced / blue Spent / amber Projection); the
+Projection-vs-Estimated variance meter below is untouched (§60.4). No business calculation
+changed. 758 tests pass, types clean, lint clean on the touched file.

@@ -60,59 +60,53 @@ export function PartsCostSummary({
   const estimate = estimated != null && estimated > 0 ? estimated : null;
   const projection = budgetProjection?.total ?? null;
 
-  // ── The single stacked bar (§58) ─────────────────────────────────────────
+  // ── The Parts Cost bars (§58 rectangular bars, §60 correct scaling) ────────
   //
-  // The three figures are NESTED, not independent: you invoice a subset of what
-  // you have committed on a PO, and you have committed a subset of what you
-  // project to spend. So `paid ≤ purchased ≤ projection` always (the ≤s are
-  // enforced defensively below in case an upstream oddity inverts them), which
-  // is exactly the shape a stacked bar is FOR — each of the three business
-  // values is the cumulative TOP of a segment:
+  // Three GROUPED bars, not a stacked one. §58 stacked the three figures as
+  // segments of one bar — but they are nested (paid ≤ purchased ≤ projection),
+  // so the middle segment is an INCREMENT (purchased − paid), and when invoiced
+  // and spent are nearly equal that increment is a few dollars: it rendered as
+  // a sliver next to a full-height green bar even though the two LABELS were
+  // almost identical (§60's exact complaint — $43,502 vs $43,743 looking wildly
+  // different). Stacking increments can never make two near-equal cumulative
+  // values look near-equal; that is a property of the shape, not a bug to patch.
   //
-  //   ┌───────────────┐  ← projection   (top of the amber segment / whole bar)
-  //   │ amber  remainder = projection − purchased  (projected, not yet spent) │
-  //   ├───────────────┤  ← purchased    (Total Parts Cost Spent)
-  //   │ blue   committed = purchased − paid         (spent, not yet invoiced)  │
-  //   ├───────────────┤  ← paid         (Amount Invoiced)
-  //   │ green  invoiced  = paid                      (the main filled portion)  │
-  //   └───────────────┘  ← 0
-  //
-  // The whole bar's height IS the projection, so there is no separate scale to
-  // pick and no headroom to leave — the segments sum to 100% by construction.
-  const invoiced = Math.max(0, paid);
-  const spentTop = Math.max(invoiced, purchased);
-  const projTop = projection != null ? Math.max(spentTop, projection) : spentTop;
-  const barTotal = projTop; // the tallest of the three; the bar's full value
+  // So each value is now its own bar, drawn from a zero baseline on ONE shared
+  // linear scale (the largest of the three). Two near-equal values → two
+  // near-equal bar heights, strictly proportional. No min-height, no per-bar
+  // normalisation, no headroom fudge — height is exactly (value / scaleMax).
+  const scaleMax = Math.max(1, paid, purchased, projection ?? 0);
+  // The tallest bar fills BAR_AREA px; every other bar is that fraction of it.
+  const BAR_AREA = 176;
+  const barPx = (v: number) => Math.max(0, (v / scaleMax) * BAR_AREA);
 
-  // Segment heights as a share of the bar, so they always sum to ≤100%.
-  const seg = (amount: number) => (barTotal > 0 ? (amount / barTotal) * 100 : 0);
-  const hInvoiced = seg(invoiced);
-  const hCommitted = seg(spentTop - invoiced);
-  const hRemainder = seg(projTop - spentTop);
-
-  // The three legend rows, top-to-bottom, matching the bar's stacking. Each
-  // carries the cumulative business value (the segment's TOP), which is the
-  // number the team reads, plus the tooltip spelling out the increment.
-  const legend = [
-    projection != null && {
-      color: PARTS_BAR.projection,
-      label: "Projection",
-      value: projection,
-      title: `Projection: ${usd(projection)} — purchased plus ${usd(projTop - spentTop)} still projected to buy`,
-    },
+  const bars = [
     {
-      color: PARTS_BAR.purchased,
-      label: "Total Parts Cost Spent",
-      value: purchased,
-      title: `Total Parts Cost Spent: ${usd(purchased)} — includes ${usd(spentTop - invoiced)} committed but not yet invoiced`,
-    },
-    {
-      color: PARTS_BAR.paid,
+      key: "invoiced",
       label: "Amount Invoiced",
       value: paid,
+      color: PARTS_BAR.paid,
       title: `Amount Invoiced: ${usd(paid)}`,
     },
-  ].filter(Boolean) as { color: string; label: string; value: number; title: string }[];
+    {
+      key: "spent",
+      label: "Total Parts Cost Spent",
+      value: purchased,
+      color: PARTS_BAR.purchased,
+      title: `Total Parts Cost Spent: ${usd(purchased)} — committed on a PO, invoiced or not`,
+    },
+    ...(projection != null
+      ? [
+          {
+            key: "projection",
+            label: "Projection",
+            value: projection,
+            color: PARTS_BAR.projection,
+            title: `Projection: ${usd(projection)} — purchased plus what is still projected to buy`,
+          },
+        ]
+      : []),
+  ];
 
   // ONE meter: where the job is HEADING against what it was sold for.
   //
@@ -162,54 +156,26 @@ export function PartsCostSummary({
         </p>
       )}
 
-      {/* ── The single stacked bar (§58) ──────────────────────────────────────
-          A real rectangular chart column (not the old rounded-pill indicator):
-          one bar, three stacked segments sitting on a baseline, green Amount
-          Invoiced as the main filled portion at the bottom, then the committed
-          and projected slices above it. The legend beside it carries the exact
-          cumulative value each segment tops out at, so the bar shows the
-          composition and the numbers stay readable even when two of the three
-          are close (a nearly-complete job stacks as a thin sliver, which the
-          legend still states to the dollar).
-          `flex-1` lets the fixed-height bar sit centred once the grid stretches
-          this card to match its two siblings (§54.3). */}
-      <div className="flex flex-1 items-center gap-4 py-2">
-        {/* The column. `rounded-t-md` + `overflow-hidden` rounds only the top,
-            so it reads as a bar standing on the axis, not a capsule. The faint
-            bottom border is that axis line. */}
-        <div className="flex h-56 w-16 shrink-0 flex-col overflow-hidden rounded-t-md border-b border-sdc-border bg-sdc-gray-100">
-          {hRemainder > 0 && (
+      {/* ── The Parts Cost bars (§58 rectangular, §60 proportional + centred) ──
+          Three real chart columns on one shared scale, sitting on a baseline.
+          Each column: its exact value above, the rectangular bar, its name
+          below. `rounded-t-sm` (not a pill) reads as a bar standing on the
+          axis. `flex-1 justify-center items-end` CENTRES the group in the card
+          both ways and hangs the bars off a common baseline (§60.3). Because
+          every bar is (value / scaleMax) of the same BAR_AREA, two near-equal
+          values are two near-equal bars (§60.1) — the fix for the stacked
+          version making $43,502 and $43,743 look wildly different. */}
+      <div className="flex flex-1 items-end justify-center gap-5 py-2">
+        {bars.map((b) => (
+          <div key={b.key} className="flex flex-col items-center" title={b.title}>
+            <span className="mb-1 whitespace-nowrap text-micro font-bold tabular-nums text-sdc-navy">{usd(b.value)}</span>
             <div
-              className="w-full shrink-0"
-              style={{ height: `${hRemainder}%`, background: PARTS_BAR.projection }}
-              title={legend[0]?.title}
+              className="w-9 rounded-t-sm"
+              style={{ height: `${barPx(b.value)}px`, background: b.color }}
             />
-          )}
-          {hCommitted > 0 && (
-            <div
-              className="w-full shrink-0"
-              style={{ height: `${hCommitted}%`, background: PARTS_BAR.purchased }}
-              title={`Total Parts Cost Spent: ${usd(purchased)} — includes ${usd(spentTop - invoiced)} committed but not yet invoiced`}
-            />
-          )}
-          <div
-            className="w-full shrink-0"
-            style={{ height: `${hInvoiced}%`, background: PARTS_BAR.paid }}
-            title={`Amount Invoiced: ${usd(paid)}`}
-          />
-        </div>
-        {/* Legend, top-to-bottom in the bar's stacking order. */}
-        <div className="flex min-w-0 flex-col gap-2.5 text-xs">
-          {legend.map((row) => (
-            <div key={row.label} className="flex items-start gap-1.5" title={row.title}>
-              <span className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: row.color }} />
-              <div className="min-w-0">
-                <div className="leading-tight text-sdc-gray-600">{row.label}</div>
-                <div className="font-heading font-bold leading-tight tabular-nums text-sdc-navy">{usd(row.value)}</div>
-              </div>
-            </div>
-          ))}
-        </div>
+            <span className="mt-1.5 w-16 text-center text-label leading-tight text-sdc-gray-600">{b.label}</span>
+          </div>
+        ))}
       </div>
 
       {/* Projection vs Estimated — the one figure that says whether this job
