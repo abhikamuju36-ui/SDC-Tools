@@ -4727,3 +4727,74 @@ a tab that has been hot-reloaded all day is not evidence about shipped code; re-
 tab before believing one.
 
 765 tests pass, types clean, lint clean on all four touched files.
+
+---
+
+## 47. The billing-group chart's labels stopped hitting its legend (§67, 2026-08-06)
+
+Reported from a screenshot: in "Quoted and Actual by Billing Group" on Job Hour Details, the
+`+2,587` variance label was sitting on top of the Quoted/Actual legend.
+
+### 47.1 It is arithmetic, not bad luck
+
+Two labels stack above each bar group, both anchored to the taller bar's top: the bar's own
+value label (position `top`, distance ~5, 10px) and the variance label (position `top`,
+distance **16**, 12px). The stack therefore reaches ~30px above the bar. The y-axis rounds its
+max up to a tick, so the tallest bar can sit within a few px of the plot ceiling — measured
+3,427 against a 3,500 max, i.e. 98% of the plot height, ~6px of clearance. At the old
+`grid.top: 40` the stack reached y≈16, and the legend at `top: 6` occupied y 6…24. Guaranteed
+collision on any month where one group's bar is near its axis max.
+
+### 47.2 The first fix was right at desktop and wrong at 1024px
+
+Legend to `top: 0`, plot to `grid.top: 64` — measured 22.4px of clearance at 1552px and clean
+across all seven zoom steps. Then the width sweep found a second case it did not cover.
+
+**This chart is the middle `1fr` of a three-card row whose first card takes `2fr` (§55)**, so at
+a 1024px viewport its SVG is only **~120px wide** — and ECharts wraps the two legend items onto
+separate rows there (measured: `Quoted` y 3.7…18.3, `Actual` y 33.7…48.3). A one-row budget put
+the plot at y=64 and `+2,587` at y 40.7…55.4, straight through that second row: still one
+overlap, 5.4px of "clearance".
+
+So `top` is budgeted for the worst case instead, and the worst case is **bounded** — the legend
+has exactly two items, so it can never exceed two rows:
+
+```
+two-row legend bottom (~48) + label stack (~30) + slack  ->  grid.top: 82
+```
+
+At wide widths the legend is one row and the spare ~34px simply reads as the top padding the
+request asks for; the plot still gets 290 of the chart's 400px.
+
+### 47.3 Verified by measurement, not by eye
+
+Every text node in the SVG was measured for legend-vs-label overlap, clearance to the nearest
+text below the legend, and any text escaping the top edge:
+
+```
+viewport   legend rows   clearance   overlaps
+1552px          1          40.0px       0
+1280px          1          40.0px       0
+1100px          2          10.0px       0     <- wrapping case
+1024px          2          10.0px       0     <- the case the first fix missed
+ 900px          1          40.0px       0     <- row stacks below lg, chart wide again
+```
+
+And across all seven §45 zoom steps at 1552px: 0 overlaps and 0 clipped at every level,
+clearance rising 30.3 → 60.0px. 150% zoom reaches the two-row legend on its own (it narrows the
+effective layout width), so the worst case is exercised by zoom as well as by viewport. `zoom`
+scales the rendered SVG uniformly, which is why px budgeting here needs no per-zoom handling.
+
+`groupedBarOption` has exactly one consumer (this chart), so nothing else moved. No data,
+series, formatter or calculation changed — only `grid.top` and `legend.top`. 765 tests pass,
+types and lint clean.
+
+### 47.4 Separate issue this surfaced, NOT fixed here
+
+At 1024px the whole three-chart row is squeezed past usefulness, and the legend was only the
+part that was reported. The first card's tiered axis labels collide with each other
+("ME Gen"/"Design & Drawings"/"Software"/"HMI" overprinting), its five variance labels run
+together as `+632+255+501+326+240`, and the billing-group chart's own `Shop` category label is
+silently dropped by `hideOverlap`. That is §55's `2fr` split meeting a viewport the row should
+have stopped being three columns at — a layout change (stack the row earlier than `lg`), not a
+chart-padding one, so it is recorded here rather than guessed at.

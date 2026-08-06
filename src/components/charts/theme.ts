@@ -135,9 +135,42 @@ export function groupedBarOption(opts: {
   return {
     color: [SERIES.planned, SERIES.actual],
     textStyle: { fontFamily: chartFont() },
-    grid: { top: 40, left: 8, right: 12, bottom: opts.rotate ? 64 : 28, containLabel: true },
+    // ── Headroom for the label stack above the tallest bar ────────────────────
+    //
+    // Reported: the variance labels collided with the Quoted/Actual legend. It is
+    // arithmetic rather than bad luck, and worth writing down because the numbers
+    // are what decide `top`.
+    //
+    // TWO labels stack above each bar group, both anchored to the taller bar's top:
+    //   • the bar's own value label — position "top", default distance ~5, 10px font
+    //   • the variance label       — position "top", distance 16, 12px font
+    // so the stack reaches roughly 16 + 14 = 30px ABOVE the bar.
+    //
+    // The y-axis rounds its max up to a tick, so the tallest bar can sit within a
+    // few px of the plot ceiling (measured: 3,427 against a 3,500 max = 98% of the
+    // plot height, ~6px of clearance). At the old `grid.top: 40` the stack therefore
+    // reached y≈16 — inside the legend, which at `top: 6` occupies y 6…24.
+    //
+    // So the legend goes to the very top and the plot starts below the stack's reach.
+    //
+    // `top` is budgeted for the WORST CASE, which is a legend on TWO rows — and that
+    // case is real, not hypothetical: this chart is the middle 1fr of a three-card row
+    // whose first card takes 2fr (§55), so at a 1024px viewport the SVG is only ~120px
+    // wide and ECharts wraps the two items onto separate lines (measured: `Quoted` at
+    // y 3.7…18.3, `Actual` at y 33.7…48.3). Budgeting for one row put the plot at y=64
+    // and `+2,587` at y 40.7…55.4 — straight through that second row. Two items is the
+    // ceiling, so two rows is the worst case and this is bounded:
+    //
+    //     two-row legend bottom (~48) + label stack (~30) + small slack  ->  82
+    //
+    // At wide widths the legend is one row, so the extra ~34px simply reads as the top
+    // padding this fix is asked for; the plot still gets 290 of the 400px. Both numbers
+    // are px in the SVG, and CSS `zoom` scales the whole rendered chart uniformly, so a
+    // fix that clears at 100% clears at every zoom level (§45) — verified across all
+    // seven steps rather than assumed.
+    grid: { top: 82, left: 8, right: 12, bottom: opts.rotate ? 64 : 28, containLabel: true },
     legend: {
-      top: 6,
+      top: 0,
       itemWidth: 12,
       itemHeight: 12,
       itemGap: 18,
