@@ -4189,3 +4189,44 @@ Every section, its bars, the per-bar value labels, the diff labels and all three
 tooltip, hover, legend, drill-through or the other two cards changed — only the widths and the
 bar sizing. 758 tests pass, types clean, lint clean on the touched file (the one remaining
 `set-state-in-effect` warning is the pre-existing entrance-animation effect, unrelated).
+
+---
+
+## 40. The Job-Hours header in one compact row (2026-08-06)
+
+Reported as §57. The page header was two stacked blocks: a tall `p-4` project-title card
+(number + name, then customer · status) with a lot of empty vertical space, and below it a
+four-card KPI grid (Active Jobs, Hours Refreshed Thru, Latest ETC Month, **Eng
+Design-to-Debug Ratio**). §57: one compact row, the ratio card gone.
+
+### 40.1 One grid, owned by the page
+
+The title card lived in `job-hours/page.tsx` (it needs the scheduler-link context and the
+aggregate-vs-single-job branch) and the KPI cards lived inside `JobHoursDashboard`. Putting
+them on one line meant one of them had to move; the KPI cards moved UP into the page, because
+the page already has `data.kpis` and owns the title card, so the whole row is now built in one
+place. `JobHoursDashboard` lost its KPI grid and its now-unused `IndicatorCard` import; its
+first child is the Hours-Type / phase-filter control row.
+
+The row is `grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr]`: the title card takes 2fr (widest,
+because it carries the most text — a full job name), each summary card 1fr. Measured at
+1552px: **462 / 231 / 231 / 231px, all four at height 71px, all four top-aligned at y=106** —
+`items-stretch` (the grid default) equalises the heights and the title card is
+`flex flex-col justify-center` so its two lines sit centred in that height instead of leaving
+the p-4 block's empty space below them. The `2xl` KPI value and the title card's two compact
+lines land at the same card height with no card taller or shorter than the others.
+
+### 40.2 Removed, and responsive
+
+The "Eng Design-to-Debug Ratio" card is gone from the render (`data.kpis.designToDebugRatio`
+is left computed and untouched — §57 asked only to remove the card, not change data). Verified
+live: the string "Design-to-Debug" no longer appears on the page.
+
+Narrow screens: the title card is `col-span-2 lg:col-span-1`, so below `lg` it spans the full
+two-column width and the three summary cards wrap beneath it; everything stacks below `sm`.
+Verified at 768px — title full-width, summary cards wrapping, no horizontal page overflow.
+
+No data or behaviour changed for the title, Active Jobs, Hours Refreshed Thru or Latest ETC
+Month — only the layout. 758 tests pass, types clean, lint clean on the touched files (the one
+remaining `set-state-in-effect` warning is the pre-existing entrance-animation effect in
+`SectionHierarchyChart`, unrelated).

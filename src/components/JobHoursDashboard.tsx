@@ -5,7 +5,6 @@ import { card } from "@/components/ui/classnames";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { EChart } from "@/components/charts/EChart";
 import { groupedBarOption, SERIES } from "@/components/charts/theme";
-import { IndicatorCard } from "@/components/charts/IndicatorCard";
 import type { JobHoursDashboard as DashData, HoursType } from "@/lib/job-hours-dashboard";
 import type { JobHoursDetail as JobHoursDetailData } from "@/lib/job-hours-detail";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
@@ -107,16 +106,10 @@ export function JobHoursDashboard({
 
   return (
     <div className="space-y-5">
-      {/* KPI indicators */}
-      <div className="grid grid-cols-2 gap-3 md:grid-cols-4">
-        <IndicatorCard label="Active Jobs" value={String(data.kpis.activeJobs)} />
-        <IndicatorCard label="Hours Refreshed Thru" value={data.kpis.hoursRefreshedThru ?? "—"} />
-        <IndicatorCard label="Latest ETC Month" value={data.kpis.latestEtcMonth ?? "—"} />
-        <IndicatorCard
-          label="Eng Design-to-Debug Ratio"
-          value={data.kpis.designToDebugRatio != null ? data.kpis.designToDebugRatio.toFixed(2) : "—"}
-        />
-      </div>
+      {/* The KPI indicator cards (Active Jobs, Hours Refreshed Thru, Latest ETC
+          Month) moved up into the page's header row (§57), where they sit
+          beside the project-title card on one line. The "Eng Design-to-Debug
+          Ratio" card was removed there. */}
 
       {/* Controls: Hours Type + phase filter */}
       <div className="flex flex-wrap items-center gap-4">

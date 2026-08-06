@@ -2,6 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { PageTitle } from "@/components/ui/Typography";
 import { card } from "@/components/ui/classnames";
 import { JobHoursDashboard } from "@/components/JobHoursDashboard";
+import { IndicatorCard } from "@/components/charts/IndicatorCard";
 import { JobSelect } from "@/components/JobSelect";
 import { listDashboardJobs, getJobHoursDashboard, defaultDashboardJobId } from "@/lib/job-hours-dashboard";
 import { getJobPartsCost, type JobPartsCost } from "@/lib/sync-totaleto";
@@ -159,34 +160,50 @@ export default async function JobHoursPage({
 
       {data ? (
         <>
-          <div className={`${card("p-4")} mb-5`}>
-            {selectedJobIds.length > 1 ? (
-              // Aggregate mode: the charts/KPIs below sum every selected job, so
-              // the header must say so rather than name a single job.
-              <>
-                <p className="text-lg font-semibold text-sdc-navy">{selectedJobIds.length} jobs (aggregated)</p>
-                <p className="text-xs text-sdc-muted" title={selectedJobIds.join(", ")}>
-                  {selectedJobIds.join(", ")}
-                </p>
-              </>
-            ) : (
-              <>
-                <p className="flex items-center gap-2 text-lg font-semibold text-sdc-navy">
-                  <span>{data.job.jobId} — {data.job.jobName}</span>
-                  <SchedulerJobLink
-                    jobId={data.job.jobId}
-                    jobName={data.job.jobName}
-                    baseUrl={schedulerBaseUrl}
-                    available={schedulerJobNumbers.has(data.job.jobId)}
-                    ssoEmail={schedulerSsoEmail}
-                    className="shrink-0 text-sdc-gray-400 hover:text-sdc-blue"
-                  />
-                </p>
-                <p className="text-xs text-sdc-muted">
-                  {data.job.customer ?? "—"} · {data.job.status}
-                </p>
-              </>
-            )}
+          {/* Header row (§57): the project-title card and the three summary
+              cards on ONE line, all the same height. The title card is wider
+              (2fr vs 1fr each) because it holds the most text, but the row
+              stays balanced. `items-stretch` (grid default) equalises heights;
+              the title card centres its two lines vertically so it fills that
+              height without the empty space the old p-4 block wasted. The
+              "Eng Design-to-Debug Ratio" card was removed. On narrow screens
+              the title spans the full width and the summary cards wrap beneath.
+              Below `sm` everything stacks. */}
+          <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-[2fr_1fr_1fr_1fr]">
+            <div className={`${card("p-3.5")} col-span-2 flex flex-col justify-center lg:col-span-1`}>
+              {selectedJobIds.length > 1 ? (
+                // Aggregate mode: the charts/KPIs below sum every selected job,
+                // so the header must say so rather than name a single job.
+                <>
+                  <p className="font-heading text-lg font-bold leading-tight tracking-tight text-sdc-navy">
+                    {selectedJobIds.length} jobs (aggregated)
+                  </p>
+                  <p className="mt-0.5 truncate text-xs text-sdc-muted" title={selectedJobIds.join(", ")}>
+                    {selectedJobIds.join(", ")}
+                  </p>
+                </>
+              ) : (
+                <>
+                  <p className="flex items-center gap-2 font-heading text-lg font-bold leading-tight tracking-tight text-sdc-navy">
+                    <span className="truncate">{data.job.jobId} — {data.job.jobName}</span>
+                    <SchedulerJobLink
+                      jobId={data.job.jobId}
+                      jobName={data.job.jobName}
+                      baseUrl={schedulerBaseUrl}
+                      available={schedulerJobNumbers.has(data.job.jobId)}
+                      ssoEmail={schedulerSsoEmail}
+                      className="shrink-0 text-sdc-gray-400 hover:text-sdc-blue"
+                    />
+                  </p>
+                  <p className="mt-0.5 truncate text-xs text-sdc-muted">
+                    {data.job.customer ?? "—"} · {data.job.status}
+                  </p>
+                </>
+              )}
+            </div>
+            <IndicatorCard label="Active Jobs" value={String(data.kpis.activeJobs)} />
+            <IndicatorCard label="Hours Refreshed Thru" value={data.kpis.hoursRefreshedThru ?? "—"} />
+            <IndicatorCard label="Latest ETC Month" value={data.kpis.latestEtcMonth ?? "—"} />
           </div>
           {/* Parts Cost joins the two hours charts in one row (§52) — it follows
               the selection like they do: these dollars sum across jobs
