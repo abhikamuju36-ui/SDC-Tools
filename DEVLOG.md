@@ -4296,3 +4296,45 @@ still vertical (§54), just no longer stacked.
 `PARTS_BAR` colours unchanged (green Invoiced / blue Spent / amber Projection); the
 Projection-vs-Estimated variance meter below is untouched (§60.4). No business calculation
 changed. 758 tests pass, types clean, lint clean on the touched file.
+
+### 40.5 Parts Cost back to ONE stacked bar, incremental (§61, 2026-08-06)
+
+§60 (grouped bars) was reverted by request. §61 wants a single vertical stacked bar again —
+and clarifies the intent §60 had muddied: the segments are **incremental**, so the blue
+"spent" segment IS meant to be the small `purchased − paid` increment ($241 in §61's own
+example), not a full-height bar. §60 had read that thin segment as a scaling bug; §61 confirms
+it is the point — the bar shows the progression invoiced → spent → projected.
+
+So the visual is the §58 stack again, with the framing made explicit and defensive:
+
+```
+orange = projection − purchased   (top)     ┐
+blue   = purchased  − paid                  ├ increments, NOT raw totals
+green  = paid       (base)                  ┘
+total  = projection  (the full bar height)
+```
+
+§61's "Important Rule" — do not stack the raw values (43,502 + 43,743 + 51,743) — is exactly
+what the increments avoid: the segments sum to the projection, and each boundary lands on a
+business figure (top-of-green = Invoiced, top-of-blue = Total Spent, top-of-orange =
+Projection). Heights are a strict share of the total, no min-height, `Math.max` guards keep
+the increments ≥ 0.
+
+Layout: ONE bar, centred in the card (`flex-1 flex-col items-center justify-center` — verified
+equal 115px side gaps), `rounded-t-md` + bottom border so it reads as a bar on an axis, with a
+legend directly beneath stating the three CUMULATIVE values exactly ($1,591,916 / $1,566,916 /
+$1,522,142 on job 1142) so a thin increment never loses its number; each segment also carries
+a tooltip. Measured live: segments 3.0 / 5.5 / 185.8px summing to the 195px bar (13rem at this
+app's 15px root), no card overflow.
+
+Colours unchanged (green/blue/orange = PARTS_BAR.paid/purchased/projection); the
+Projection-vs-Estimated meter untouched; no business calculation changed (§61 preserve rule).
+758 tests pass, types + lint clean.
+
+**Design-history note for the next person:** this visual has now been stacked (§58) → grouped
+(§60) → stacked (§61). The tension is real and worth stating once: a stacked bar of these
+nested values makes near-equal Invoiced/Spent look very different (thin middle increment);
+grouped bars make them look similar but lose the "one bar, cumulative progression" reading.
+§61 is the settled answer — single stacked bar, increments, with the legend carrying the exact
+cumulative numbers so the thin-segment downside is covered by text rather than by changing the
+shape. Do not "fix" the thin blue segment by re-scaling; it is correct.

@@ -60,53 +60,62 @@ export function PartsCostSummary({
   const estimate = estimated != null && estimated > 0 ? estimated : null;
   const projection = budgetProjection?.total ?? null;
 
-  // ── The Parts Cost bars (§58 rectangular bars, §60 correct scaling) ────────
+  // ── The single stacked bar (§61) ──────────────────────────────────────────
   //
-  // Three GROUPED bars, not a stacked one. §58 stacked the three figures as
-  // segments of one bar — but they are nested (paid ≤ purchased ≤ projection),
-  // so the middle segment is an INCREMENT (purchased − paid), and when invoiced
-  // and spent are nearly equal that increment is a few dollars: it rendered as
-  // a sliver next to a full-height green bar even though the two LABELS were
-  // almost identical (§60's exact complaint — $43,502 vs $43,743 looking wildly
-  // different). Stacking increments can never make two near-equal cumulative
-  // values look near-equal; that is a property of the shape, not a bug to patch.
+  // ONE vertical bar whose three segments are INCREMENTS that build up
+  // cumulatively — NOT the raw totals stacked on each other. The figures are
+  // nested (paid ≤ purchased ≤ projection), so:
   //
-  // So each value is now its own bar, drawn from a zero baseline on ONE shared
-  // linear scale (the largest of the three). Two near-equal values → two
-  // near-equal bar heights, strictly proportional. No min-height, no per-bar
-  // normalisation, no headroom fudge — height is exactly (value / scaleMax).
-  const scaleMax = Math.max(1, paid, purchased, projection ?? 0);
-  // The tallest bar fills BAR_AREA px; every other bar is that fraction of it.
-  const BAR_AREA = 176;
-  const barPx = (v: number) => Math.max(0, (v / scaleMax) * BAR_AREA);
+  //   orange  = projection − purchased   (additional, to reach Projection)   ── top
+  //   blue    = purchased  − paid        (additional, to reach Total Spent)
+  //   green   = paid                     (Amount Invoiced — the base segment) ── bottom
+  //
+  // The three add up to the projection, so the FULL bar height represents the
+  // Projection value and each segment boundary lands on a business figure:
+  // top-of-green = Amount Invoiced, top-of-blue = Total Parts Cost Spent,
+  // top-of-orange = Projection. The blue segment is deliberately small when
+  // invoiced ≈ spent (e.g. $241) — that IS the progression the bar is meant to
+  // show, per §61's own worked example. The exact cumulative dollar value of
+  // each of the three figures is stated in the legend beneath the bar and in
+  // each segment's tooltip, so a thin segment is never a lost number.
+  //
+  // Defensive Math.max keeps the increments ≥ 0 if an upstream oddity ever
+  // inverts the nesting; heights are a strict share of the total, no min-height.
+  const invoiced = Math.max(0, paid);
+  const spentTop = Math.max(invoiced, purchased);
+  const projTop = projection != null ? Math.max(spentTop, projection) : spentTop;
+  const barTotal = projTop; // the full bar's value = the Projection (or Spent, if no projection)
 
-  const bars = [
-    {
-      key: "invoiced",
-      label: "Amount Invoiced",
-      value: paid,
-      color: PARTS_BAR.paid,
-      title: `Amount Invoiced: ${usd(paid)}`,
+  const segPct = (amount: number) => (barTotal > 0 ? (amount / barTotal) * 100 : 0);
+  // Top-to-bottom, the order they render in the column.
+  const segments = [
+    projection != null && {
+      key: "projection-inc",
+      pct: segPct(projTop - spentTop),
+      color: PARTS_BAR.projection,
+      title: `Projection: ${usd(projTop)} — adds ${usd(projTop - spentTop)} still projected to buy on top of Total Parts Cost Spent`,
     },
     {
-      key: "spent",
-      label: "Total Parts Cost Spent",
-      value: purchased,
+      key: "spent-inc",
+      pct: segPct(spentTop - invoiced),
       color: PARTS_BAR.purchased,
-      title: `Total Parts Cost Spent: ${usd(purchased)} — committed on a PO, invoiced or not`,
+      title: `Total Parts Cost Spent: ${usd(spentTop)} — adds ${usd(spentTop - invoiced)} committed but not yet invoiced on top of Amount Invoiced`,
     },
-    ...(projection != null
-      ? [
-          {
-            key: "projection",
-            label: "Projection",
-            value: projection,
-            color: PARTS_BAR.projection,
-            title: `Projection: ${usd(projection)} — purchased plus what is still projected to buy`,
-          },
-        ]
-      : []),
-  ];
+    {
+      key: "invoiced-base",
+      pct: segPct(invoiced),
+      color: PARTS_BAR.paid,
+      title: `Amount Invoiced: ${usd(invoiced)}`,
+    },
+  ].filter(Boolean) as { key: string; pct: number; color: string; title: string }[];
+
+  // The legend: the three CUMULATIVE business values (each segment's top), the
+  // numbers the team actually reads. Ordered to match the bar, top-to-bottom.
+  const legend = [
+    projection != null && { color: PARTS_BAR.projection, label: "Projection", value: projTop },
+    { color: PARTS_BAR.purchased, label: "Total Parts Cost Spent", value: spentTop },
+    { color: PARTS_BAR.paid, label: "Amount Invoiced", value: invoiced },
+  ].filter(Boolean) as { color: string; label: string; value: number }[];
 
   // ONE meter: where the job is HEADING against what it was sold for.
   //
@@ -156,26 +165,32 @@ export function PartsCostSummary({
         </p>
       )}
 
-      {/* ── The Parts Cost bars (§58 rectangular, §60 proportional + centred) ──
-          Three real chart columns on one shared scale, sitting on a baseline.
-          Each column: its exact value above, the rectangular bar, its name
-          below. `rounded-t-sm` (not a pill) reads as a bar standing on the
-          axis. `flex-1 justify-center items-end` CENTRES the group in the card
-          both ways and hangs the bars off a common baseline (§60.3). Because
-          every bar is (value / scaleMax) of the same BAR_AREA, two near-equal
-          values are two near-equal bars (§60.1) — the fix for the stacked
-          version making $43,502 and $43,743 look wildly different. */}
-      <div className="flex flex-1 items-end justify-center gap-5 py-2">
-        {bars.map((b) => (
-          <div key={b.key} className="flex flex-col items-center" title={b.title}>
-            <span className="mb-1 whitespace-nowrap text-micro font-bold tabular-nums text-sdc-navy">{usd(b.value)}</span>
-            <div
-              className="w-9 rounded-t-sm"
-              style={{ height: `${barPx(b.value)}px`, background: b.color }}
-            />
-            <span className="mt-1.5 w-16 text-center text-label leading-tight text-sdc-gray-600">{b.label}</span>
-          </div>
-        ))}
+      {/* ── The single stacked bar (§61) ──────────────────────────────────────
+          ONE vertical bar, centred in the card, three incremental segments
+          building green → blue → orange so the full height is the Projection.
+          `flex-1 flex-col items-center justify-center` centres the bar and its
+          legend as a group; `overflow-hidden rounded-t-md` + the bottom border
+          make it a bar on an axis, not a pill. The legend below states each of
+          the three cumulative business values exactly, so a thin segment (the
+          blue increment when invoiced ≈ spent) still has its number. */}
+      <div className="flex flex-1 flex-col items-center justify-center gap-3 py-2">
+        <div className="flex h-52 w-16 flex-col overflow-hidden rounded-t-md border-b border-sdc-border bg-sdc-gray-100">
+          {segments.map(
+            (s) =>
+              s.pct > 0 && (
+                <div key={s.key} className="w-full shrink-0" style={{ height: `${s.pct}%`, background: s.color }} title={s.title} />
+              ),
+          )}
+        </div>
+        <div className="flex flex-col gap-1.5 text-xs">
+          {legend.map((row) => (
+            <div key={row.label} className="flex items-center gap-2">
+              <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: row.color }} />
+              <span className="text-sdc-gray-600">{row.label}</span>
+              <span className="ml-auto font-heading font-bold tabular-nums text-sdc-navy">{usd(row.value)}</span>
+            </div>
+          ))}
+        </div>
       </div>
 
       {/* Projection vs Estimated — the one figure that says whether this job
