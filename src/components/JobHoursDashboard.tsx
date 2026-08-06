@@ -29,10 +29,9 @@ export type JobHoursDashboardParts = {
 // Type toggle (Quoted / ETC) swaps the planned-basis series across the matrix
 // and both charts, mirroring the report's field-parameter slicer.
 
-// The fixed section template the chart/matrix always show (even at zero hours),
-// matching the Power BI report: Complete Design & Build (excluding PM) +
-// Machine Testing, in canonical order.
-const TEMPLATE_PHASES = ["Complete Design & Build", "Machine Testing"];
+// The section template the chart shows in full (even at zero hours) is no longer a
+// constant here — it is derived from the payload, which is SECTIONS' own order. See the
+// note on `phases` below for why the hardcoded two-phase list was a bug (§72).
 
 // Divider color for the tiered category axis — darker than the default border
 // so the dashed group dividers read clearly.
@@ -65,8 +64,33 @@ export function JobHoursDashboard({
   const planned = (s: { quoted: number; etc: number }) => (hoursType === "Quoted" ? s.quoted : s.etc);
   const plannedLabel = hoursType === "Quoted" ? "Quoted" : "ETC";
 
-  // Fixed template — always show these phases/sections, even at zero hours.
-  const [activePhases, setActivePhases] = useState<Set<string>>(() => new Set(TEMPLATE_PHASES));
+  // ── Every phase the section template defines, DERIVED (§72) ───────────────
+  //
+  // This was a hardcoded `TEMPLATE_PHASES = ["Complete Design & Build", "Machine
+  // Testing"]`, which silently dropped Teardown & Install (50-211/50-411) and Warranty
+  // (70-211/70-411) from the chart even though the backend returns them — `sections` is
+  // `SECTIONS.map(...)`, so all 17 rows have always been in the payload. The old comment
+  // claimed the list matched the Power BI report; the report shows those phases, so it
+  // did not. Deriving it means adding a section to sections.ts is the whole change, and
+  // the chart cannot fall behind that list again.
+  //
+  // Order comes from the payload, which is SECTIONS' own order — the canonical sheet
+  // order the phase-header tiers already rely on, so the hierarchy is unchanged.
+  const phases = useMemo(() => {
+    const seen: string[] = [];
+    for (const s of data.sections) if (!seen.includes(s.phase)) seen.push(s.phase);
+    return seen;
+  }, [data.sections]);
+
+  // ── Hidden, not active (§72) ───────────────────────────────────────────────
+  //
+  // The filter tracks which phases are switched OFF rather than which are on, and that
+  // is deliberate: "everything is shown" is then the empty set, which stays correct
+  // however many phases the payload has. The previous `useState(() => new Set(
+  // TEMPLATE_PHASES))` seeded itself once from a fixed list, so a phase that appeared
+  // later could never be active — and re-seeding it from `phases` in an effect is the
+  // set-state-in-effect pattern this codebase has already been bitten by (§36.4).
+  const [hiddenPhases, setHiddenPhases] = useState<Set<string>>(() => new Set());
 
   // Drill-through target: the section code whose monthly detail is open, or null.
   // Parts already had a drill (JobProcurement's drillToPart); the hours charts
@@ -75,13 +99,13 @@ export function JobHoursDashboard({
   // survives a Quoted/ETC toggle re-deriving `hierRows`.
   const [drillCode, setDrillCode] = useState<string | null>(null);
 
-  const templateSections = useMemo(
-    () => data.sections.filter((s) => TEMPLATE_PHASES.includes(s.phase) && s.code !== "10-111"),
-    [data.sections],
-  );
+  // Every section the backend sent, at zero hours or not — the template is shown in
+  // full, which is what keeps a zero-value category visible exactly as Power BI shows
+  // it. PM (10-111) is no longer excluded either: the report has a PM column, and
+  // dropping it here was the other half of the same hardcoding.
   const visible = useMemo(
-    () => templateSections.filter((s) => activePhases.has(s.phase)),
-    [templateSections, activePhases],
+    () => data.sections.filter((s) => !hiddenPhases.has(s.phase)),
+    [data.sections, hiddenPhases],
   );
 
   const hierRows = visible.map((s) => ({ code: s.code, name: s.name, group: s.group, phase: s.phase, planned: planned(s), actual: s.actual }));
@@ -98,7 +122,7 @@ export function JobHoursDashboard({
   const jobActualTotal = data.sections.reduce((sum, s) => sum + s.actual, 0);
 
   const togglePhase = (p: string) =>
-    setActivePhases((prev) => {
+    setHiddenPhases((prev) => {
       const next = new Set(prev);
       if (next.has(p)) next.delete(p); else next.add(p);
       return next;
@@ -127,14 +151,17 @@ export function JobHoursDashboard({
             </button>
           ))}
         </div>
+        {/* One chip per phase the payload actually contains (§72) — so Teardown &
+            Install and Warranty are filterable like the other two rather than absent. */}
         <div className="flex flex-wrap gap-1.5">
-          {TEMPLATE_PHASES.map((p) => (
+          {phases.map((p) => (
             <button
               key={p}
               type="button"
               onClick={() => togglePhase(p)}
+              aria-pressed={!hiddenPhases.has(p)}
               className={`rounded-full border px-3 py-1 text-xs motion-interactive ${
-                activePhases.has(p)
+                !hiddenPhases.has(p)
                   ? "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark"
                   : "border-sdc-border-soft text-sdc-muted hover:text-sdc-navy"
               }`}
@@ -147,7 +174,14 @@ export function JobHoursDashboard({
 
       {visible.length === 0 ? (
         <div className={card("p-8")}>
-          <p className="text-center text-sdc-muted">No hours recorded for this job yet.</p>
+          {/* Two different nothings, said differently: a job with no section template at
+              all, versus every phase switched off by the chips above. The old copy
+              claimed the former in both cases. */}
+          <p className="text-center text-sdc-muted">
+            {data.sections.length === 0
+              ? "No hours recorded for this job yet."
+              : "Every phase is hidden — switch one back on above to see the chart."}
+          </p>
         </div>
       ) : (
       <>

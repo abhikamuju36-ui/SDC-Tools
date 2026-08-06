@@ -5129,3 +5129,93 @@ Production was untouched throughout: 3010 stayed on PID 16832 at HTTP 200.
 followed by `pm2 logs sdc-etc-planner --err` to check for EADDRINUSE before believing it. The
 root cause is PM2's process handling on Windows, which is not ours to fix; this makes the
 documented deploy path immune to it rather than pretending the underlying behaviour changed.
+
+---
+
+## 52. Teardown & Install (and Warranty, and PM) were hardcoded out of the chart (§72, 2026-08-06)
+
+Reported against the Power BI report: its "Estimate to Complete vs Actual" shows a **Teardown
+and Install** phase that the app's chart does not.
+
+### 52.1 It was the hardcoded-categories case, and only that
+
+§72 lists nine candidate causes. Eight were ruled out by reading rather than guessed at:
+
+| Candidate | Finding |
+|---|---|
+| Missing section mapping | **No** — `sections.ts` has defined `50-211`/`50-411` "Teardown & Install" all along, plus `70-211`/`70-411` Warranty |
+| Wrong labour-code mapping | No — codes match the report's MachineSec-Function pairs |
+| Different names PBI vs app | Cosmetic only: app says "Teardown & Install", the report renders "Teardown and I…" truncated. Nothing filters on the name |
+| Missing backend data | **No** — `job-hours-dashboard.ts` builds `sections` as `SECTIONS.map(...)`, so all 17 rows have always been in the payload |
+| API fields omitted | No — same object carries quoted/etc/actual for every section |
+| Records grouped elsewhere | No — the phases are distinct in `SECTIONS` |
+| Zero values hidden | No — the chart renders its template at zero |
+| **Hardcoded chart categories** | **YES** |
+
+`JobHoursDashboard.tsx` carried:
+
+```ts
+const TEMPLATE_PHASES = ["Complete Design & Build", "Machine Testing"];
+...filter((s) => TEMPLATE_PHASES.includes(s.phase) && s.code !== "10-111")
+```
+
+Two phases whitelisted, so Teardown & Install and Warranty were dropped after arriving; and
+PM dropped separately by code. The constant's own comment claimed it was "matching the Power
+BI report" — the report shows all of them, so that comment had been wrong since it was
+written. Data was never missing; the chart was throwing four of its seventeen columns away.
+
+### 52.2 Derived, not extended
+
+The fix is not "add Teardown & Install to the list" — that leaves Warranty broken and the next
+section broken after it. The phase list is now derived from the payload, whose order IS
+`SECTIONS`' order, so the tiered phase/group headers keep the sheet's hierarchy for free and
+adding a section to `sections.ts` is the whole change.
+
+The filter state was inverted with it: it tracks which phases are **hidden** (starting empty)
+rather than which are active. "Everything is shown" is then the empty set, correct for any
+number of phases — where `useState(() => new Set(TEMPLATE_PHASES))` seeded itself once from a
+fixed list, so a phase appearing later could never be active. Re-seeding from `phases` in an
+effect would have been the `set-state-in-effect` pattern this codebase has already been bitten
+by, so the state shape avoids needing one at all.
+
+Consequences worth stating outright, because they go beyond the one phase reported: **Warranty
+and PM now appear too.** Both are in `SECTIONS`, both are on the report, and both were hidden
+by the same two lines. They remain excluded from the Monthly ETC grid and the Standard Fees
+pools exactly as before — this is the Job Hour Details chart only, and no calculation changed.
+
+### 52.3 Reconciled against the source, not the screenshot
+
+The chart now renders 17 columns (was 13). Checked the four that were missing against the
+database directly for job 1142, since §72 forbids hardcoding the screenshot's values:
+
+```
+                                       DB quoted   DB actual   chart
+50-411  Teardown & Install / Shop            92           0    quoted 92, diff +92   OK
+70-211  Warranty / Engineering            236.6           0    quoted 237, diff +237 OK   (whole-hour display)
+70-411  Warranty / Shop                   101.4           0    quoted 101, diff +101 OK
+50-211  Teardown & Install / Engineering       0           0    blank — zero preserved OK
+```
+
+Quoted comes from `EstimatedHours`, actual from the `JobHoursDetail` punch rows — the same two
+sources every other column on the chart uses, so there is no second formula to keep in step.
+
+Drill-through works on the new phase: clicking Teardown & Install / Shop opens
+`Teardown & Install · Shop · 50-411 — Quoted: 92, Actual: 0, Under Quoted by 92`, and
+correctly reports "No month-by-month history for this section" (its actual would come from the
+migrated Excel total, not from ETC tracking). Filter chips now read Complete Design & Build ·
+Machine Testing · Teardown & Install · Warranty, each toggling its own phase.
+
+One copy fix came with it: the empty state said "No hours recorded for this job yet" whichever
+way the chart emptied. With four togglable chips it is now reachable by hiding everything, so
+that case says so instead of blaming the data.
+
+786 tests pass, types clean, lint clean (the one remaining error in this file is the
+pre-existing entrance-animation effect).
+
+### 52.4 Not verified
+
+The figures were reconciled against the app's own source tables, **not** against Power BI
+side by side — the two screenshots in the report are of different job selections, and I have
+no way to run the report's DAX for the same job from here. The mapping and the arithmetic are
+the app's existing ones, unchanged; what remains unproven is only whether the REPORT agrees
+on this job, which needs someone with the report open on job 1142.
