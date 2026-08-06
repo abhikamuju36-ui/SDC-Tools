@@ -10,6 +10,7 @@
 // full reload; the sidebar stays because this renders inside the (app) layout.
 import { useEffect } from "react";
 import Link from "next/link";
+import { isStaleBundleError, STALE_BUNDLE_TITLE, STALE_BUNDLE_BODY } from "@/lib/stale-bundle";
 
 export default function AppError({
   error,
@@ -18,6 +19,12 @@ export default function AppError({
   error: Error & { digest?: string };
   reset: () => void;
 }) {
+  // A stale chunk can hit ANY route, not just /etc (§70) — and here it was the more
+  // quietly broken case: "Try again" calls reset(), which re-renders the same segment and
+  // requests the same missing file, so the card just reappears. The user has no way out
+  // of the loop except knowing to reload by themselves.
+  const stale = isStaleBundleError(error);
+
   useEffect(() => {
     // Surface to the console; `digest` ties it to the server log line Next emits.
     console.error("Page error:", error);
@@ -33,18 +40,33 @@ export default function AppError({
             <line x1="12" y1="16.5" x2="12" y2="16.5" strokeLinecap="round" />
           </svg>
         </div>
-        <h2 className="mb-1 text-base font-semibold text-sdc-navy">Something went wrong on this page</h2>
+        <h2 className="mb-1 text-base font-semibold text-sdc-navy">
+          {stale ? STALE_BUNDLE_TITLE : "Something went wrong on this page"}
+        </h2>
         <p className="mb-4 text-sm text-sdc-gray-600">
-          The page failed to load — often a brief hiccup talking to Power BI, TotalETO, or the database.
-          Your data is safe; nothing was changed.
+          {stale
+            ? STALE_BUNDLE_BODY
+            : "The page failed to load — often a brief hiccup talking to Power BI, TotalETO, or the database. Your data is safe; nothing was changed."}
         </p>
         <div className="flex items-center justify-center gap-2">
-          <button
-            onClick={reset}
-            className="rounded-lg bg-sdc-blue px-4 py-2 text-sm font-semibold text-white hover:bg-sdc-blue-dark"
-          >
-            Try again
-          </button>
+          {stale ? (
+            // A document reload, not reset(): see lib/stale-bundle.ts.
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="rounded-lg bg-sdc-blue px-4 py-2 text-sm font-semibold text-white hover:bg-sdc-blue-dark"
+            >
+              Reload the page
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={reset}
+              className="rounded-lg bg-sdc-blue px-4 py-2 text-sm font-semibold text-white hover:bg-sdc-blue-dark"
+            >
+              Try again
+            </button>
+          )}
           {/* Link, not <a>: a bare anchor here does a full document reload,
               which throws away the router and every client-held preference on
               the way out of an error the user may well be able to recover from. */}

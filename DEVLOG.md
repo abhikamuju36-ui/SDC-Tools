@@ -4973,3 +4973,89 @@ because it is a real restructure — Parts Cost is currently a prop of `JobHours
 and Procurement needs the same `parts.lines` the card does, so doing it without fetching
 TotalETO twice needs a `cache()` boundary as well. Worth doing deliberately rather than while
 the upstream is degraded and every verification round costs minutes.
+
+---
+
+## 50. "Failed to load chunk" stopped calling itself a rejected submission (§70, 2026-08-06)
+
+Reported as a red panel on Monthly ETC:
+
+```
+Submission rejected
+Failed to load chunk /_next/static/chunks/3q20900fw39rz.js from module 964893
+Nothing was saved — fix the value above and submit again. Reloading is safe.
+[ Back to Monthly ETC ]
+```
+
+Every part of that except the last sentence was wrong, and wrong in the direction that costs
+someone time: it named a submission that had never happened, pointed at a "value above" that
+was not on screen (the page had failed before the grid rendered), and its only button called
+`reset()` — which re-renders the same segment and asks the browser for the same missing file.
+
+### 50.1 The boundary was mislabelled, not just unlucky
+
+`(app)/etc/error.tsx` hardcoded that heading and that advice for **every** error it caught. And
+a real submission failure never reaches it: `submitMonthlyReport` returns a typed failure kind
+and `SubmitReportAction` renders it INLINE in the Standard Fees card (`failureExplanation`) —
+deliberately, so the grid, the filters and unsaved edits survive a refusal. So the title was
+wrong for every error the boundary has ever shown, not only this one. It had already misled on
+exactly that once: `GRAPH-APP-ONLY-SETUP.md` records a user-triggered Refresh surfacing as
+"Submission rejected".
+
+What it actually catches is render and data faults on /etc — a TotalETO or Power BI hiccup, a
+database blip, or a stale chunk.
+
+### 50.2 What a missing chunk actually is
+
+The app ships content-hashed chunks. A tab held open across a deploy (or, in development,
+across a rebuild — this session rebuilt ~40 times) is running a build manifest naming chunks
+the server has since replaced. The first time that tab needs a chunk it has not already
+downloaded — a drill, a menu, any lazily-loaded component — it requests a filename that 404s.
+
+It is one tab running a build the server no longer serves. `reset()` cannot fix it; only a
+document reload re-fetches the manifest. So the boundary that offered *only* `reset()` left the
+user in a loop with no way out but knowing to reload unaided — and `(app)/error.tsx`'s "Try
+again" had the identical defect for every other route.
+
+### 50.3 The fix
+
+`lib/stale-bundle.ts` — `isStaleBundleError()` plus the one wording both boundaries share.
+Detection is a list of phrasings rather than a code because there is no code: the wording comes
+from whichever bundler and browser are in play, and this app has already seen two of them
+(Turbopack's "Failed to load chunk … from module", webpack's "Loading chunk N failed"). The
+list is explicit and tested rather than one unauditable regex, and it also matches webpack's
+`ChunkLoadError` by NAME so a future rewording of the message still lands.
+
+It takes `unknown`, not `Error`: a boundary's `error` is only typed by convention, and a
+detector that assumed `.message` existed would throw *inside* the boundary and replace the
+error card with a blank screen.
+
+Both boundaries now branch:
+
+| | stale bundle | anything else |
+|---|---|---|
+| heading | "This tab is running an older version" | "Something went wrong on Monthly ETC" / "…on this page" |
+| body | updated while open, nothing saved, reload | brief upstream hiccup, drafts still stored |
+| action | **Reload the page** (`location.reload()`) | **Try again** (`reset()`) |
+
+The raw message stays on the card as a footnote — it is what makes a bug report useful — but it
+is no longer the headline, which is what let an infrastructure error read as a rejected write.
+
+### 50.4 Verified by forcing the real error
+
+A temporary probe threw the verbatim reported message, and then a generic one, on the real
+route; both branches rendered correctly (reload button and stale wording for the chunk error;
+"Something went wrong on Monthly ETC" and Try again for `Cannot read properties of null`). The
+probe was removed afterwards — `git diff` on the page reports no change.
+
+11 tests: the verbatim reported message, seven bundler/browser phrasings, name-based detection,
+case-insensitivity, five false-positive guards (a null deref, a §69 timeout, a locked month, a
+Prisma constraint, and the bare word "chunk"), non-Error inputs including `null`/`undefined`/
+`{message: null}`, and assertions that neither boundary still makes the two wrong claims and
+that both offer a real reload.
+
+One trap worth recording, because it is the second time: the file-text assertions failed on
+their **first** run against my own explanatory comments, which quote the old wording to explain
+why it was wrong. Same trap `tests/quoted-view.test.ts` hit (§35.2), same fix
+`tests/drill-design.test.ts` already used — strip comments before searching. 786 tests pass,
+types and lint clean.
