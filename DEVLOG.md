@@ -4461,3 +4461,81 @@ reading the component.
 called during render in three places, `document.body.style` mutated outside an effect in the
 column-resize drag handler) — all at line numbers that exist unchanged in `HEAD`, confirmed
 unrelated to this change.
+
+---
+
+## 42. Drill-throughs simplified: no footer, no row counts (§62, 2026-08-06)
+
+Reported with a screenshot circling "Open full report" / "Export CSV" and the "680 of 680
+punches" subtitle, asking for both gone across every Monthly ETC drill-through. Since Monthly
+ETC's six drills (Engineering, Shop, Parts Spent, People Booked, Undefined Hours, Hours off
+the grid) all route through two components — `HoursDetailPanel` for five of them,
+`UndefinedHoursPanel` for the sixth — and both build on the shared `ui/Drill.tsx`, the fix
+landed once at the shared layer plus each caller's own count text, rather than six times.
+
+### 42.1 The footer: removed from the shared shell, not just unused by its one caller
+
+`DrillPanel`'s `footer` prop and its rendering block are gone entirely, along with the
+`DrillLink`/`DrillAction` exports that only ever fed it — `HoursDetailPanel`'s `exportCsv`
+function and its `csvRow` import went with them (nothing else used either). Removed from the
+component rather than left unused by every current caller: a future drill built on this shared
+shell now has nowhere to reintroduce a footer without editing `Drill.tsx` itself, which is the
+whole point of "one place to change it" (§47). No leftover footer band — the scrolling table
+region is now the last thing in the card.
+
+### 42.2 Counts: removed from the shared `DrillGroup`, plus each caller's own subtitle text
+
+`DrillGroup`'s `count` prop (rendered as "262 punches" beside a group's name, and fed into the
+expand/collapse tooltip as "Show the 262 punches behind this") is gone from the component, so
+no caller can pass one back in. Each panel's own subtitle line changed to name the rollup
+without counting it:
+
+```
+HoursDetailPanel        "3 groups by department · 680 of 680 punches" -> "Grouped by department"
+                         "678 of 678 punches booked this month"        -> "Every punch booked this month"
+UndefinedHoursPanel      "3 groups by department · 45 of 45 records"   -> "Grouped by department"
+                                                              (ungrouped)-> "All records"
+```
+
+Two more counts turned up beyond the ticket's own examples, in the same spirit and fixed the
+same way: the "Why these are undefined" reason chips said "180h · 45 entries" (now just the
+hours), and the correctly-excluded disclosure said "Hide 45 correctly-excluded records
+(1,501h)" (now "Hide correctly-excluded records (1,501h)"). Both are group-label counts of the
+exact kind §62 asks to remove, just not literally in its example list.
+
+### 42.3 What did NOT change
+
+- **Hours and totals.** Every `hoursCell`/`fmtHours`/`usd` value, every group's total, the
+  grand total, and the KPI reconciliation banner on Undefined Hours are untouched — none of
+  this ticket's edits touch arithmetic, only which strings sit next to the numbers.
+- **The header stat tiles** ("Records affected", "Employees affected" on Undefined Hours) —
+  these are KPI-style number tiles in their own labelled grid, not a count buried in a
+  subtitle/row/group-label, so they stay for the same reason "Total hours" stays.
+- **The "Punches" grouping option** in the tray — that names a GROUPING DIMENSION ("show
+  individual lines, not rolled up"), not a count of anything; only digits attached to a
+  punch/record/line word were in scope.
+- **Grouping, filtering, expand/collapse, Close, real-time updates.** None of the state or
+  data-fetching changed — this was a text/markup change over already-working interaction.
+
+### 42.4 Verified live
+
+Engineering hours drill, job set unfiltered: subtitle reads exactly "Grouped by department";
+group rows read "Mechanical Engineering 1,337" / "Controls Engineering 1,487" / "Service
+Engineering 339" with no count anywhere; no "Open full report" or "Export CSV" in the DOM;
+expanding a group still renders its 262 punch-line rows and its tooltip now reads the generic
+"Hide these rows"; the total (3,162) still matches the KPI card above it. Undefined Hours drill:
+subtitle "Grouped by department", reason chip "Job Not Found 180" with no entry count, excluded
+disclosure "Hide correctly-excluded records (1,501)", reconciliation banner unchanged ("✓
+Drill-through total matches KPI: 179.8 hours").
+
+The one pre-existing thing this surfaced rather than caused: Engineering's three department
+rows (1,337 + 1,487 + 339 = 3,163) sum to one hour more than the drill's own total (3,162) — a
+sum-of-independently-rounded-parts artifact, unrelated to this change (no rounding or
+arithmetic was touched) and not something §62 asked to fix.
+
+Replaced the one test that asserted Export CSV existed with four regression guards in
+`tests/drill-design.test.ts`: no footer prop on `DrillPanel`, no "Open full report"/"Export
+CSV" text in any drill, no `count` prop on `DrillGroup`, and no `${x.length}`-driven
+punch/record/line/group count pattern in either panel — so none of this can drift back in
+through a future edit. 761 tests pass (four added, one retired), types clean, lint clean on
+every touched file.

@@ -2,13 +2,11 @@
 
 import { useMemo, useState } from "react";
 import { hours as fmtHours, hoursCell, hoursExact } from "@/components/ui/format";
-import { csvRow } from "@/lib/export/csv";
 // The one drill-through design (§47). See components/ui/Drill.tsx for why the panels
 // supply data and the design lives there.
 import {
   DRILL_NUM,
   DRILL_TOTAL_LABEL,
-  DrillAction,
   DrillControls,
   DrillEmpty,
   DrillFilters,
@@ -16,7 +14,6 @@ import {
   DrillGroupOption,
   DrillGroupTray,
   DrillLines,
-  DrillLink,
   DrillPanel,
   DrillSelect,
   DrillTable,
@@ -276,51 +273,19 @@ export function HoursDetailPanel({
     section: !groupBy.includes("section"),
   };
 
-  // Which columns the flat (ungrouped) punch list shows. Named so the header, the body
-  // and the CSV all read the same list rather than three hand-kept copies.
+  // Which columns the flat (ungrouped) punch list shows. Named so the header and the
+  // body read the same list rather than two hand-kept copies.
   const flatCols = ["Date", ...(showJob ? ["Job"] : []), "Employee", "Department", "Section", "Hours"];
-
-  // ── Export CSV (§47) ────────────────────────────────────────────────────────
-  //
-  // The reference puts "Export CSV" in the panel footer, and it exports what is ON
-  // SCREEN — the filtered rows, not the whole detail. That distinction is the whole
-  // point of exporting from a drill rather than from the page: you narrowed it here.
-  //
-  // Always the punch LINES, never the rollup, whatever the grouping: a CSV of
-  // "Mechanical Engineering, 56" is not something anyone can work with, and the rollup
-  // is a pivot away in whatever they open it in.
-  function exportCsv() {
-    const header = ["Date", "Job", "Employee", "Department", "Section", "Section Name", "Hours"];
-    const body = rows.map((r) => [r.date, r.job ?? "", r.employee, r.department, r.section, r.sectionName ?? "", r.hours]);
-    const csv = [header, ...body].map((line) => csvRow(line)).join("\r\n");
-    // ﻿ so Excel opens it as UTF-8 rather than mangling the em dashes in job names
-    // — the same BOM lib/export/csv.ts writes for the grid exports.
-    const blob = new Blob(["﻿" + csv], { type: "text/csv;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = `${(title ?? "hours-detail").replace(/[^\w-]+/g, "-").toLowerCase()}.csv`;
-    a.click();
-    URL.revokeObjectURL(url);
-  }
-  // What the table currently IS. Grouped, "25 of 25 punches" alone would describe rows
-  // that are no longer on screen — so it names the rollup first and the punch count
-  // second, which is also the order the reference's meta line reads in.
-  //
-  // ── "Punches", not "lines" (2026-08-05, by request) ─────────────────────────
-  //
-  // One row here is one Paylocity punch, and calling it a line named the shape of the
-  // table rather than the thing in it — which left the panel saying "678 of 678 lines"
-  // above a rollup whose own group counts, in the drill beside it, already said
-  // "punches". Same word everywhere now.
-  //
-  // The ungrouped wording is not a straight substitution: "Every booked punch this month
-  // · 678 of 678 punches" says punch twice. The scope moved to the tail instead.
+  // What the table currently IS — the active rollup, with no punch count attached
+  // anywhere in it (§62: "3 groups by department · 680 of 680 punches" is now just
+  // "Grouped by department"). Counts are gone from every level — this line, each
+  // group row, and the expand/collapse tooltip in DrillGroup — while the Hours column
+  // and the total stay untouched; §62 only asks to stop counting rows, not hours.
   const meta = grouped
-    ? `${grouped.length.toLocaleString()} ${grouped.length === 1 ? "group" : "groups"} by ${groupBy
-        .map((k) => GROUP_LABEL[k].toLowerCase())
-        .join(" › ")} · ${rows.length.toLocaleString()} of ${detail.rows.length.toLocaleString()} punches`
-    : `${rows.length.toLocaleString()} of ${detail.rows.length.toLocaleString()} punches ${showJob ? "booked this month" : "booked on this job"}`;
+    ? `Grouped by ${groupBy.map((k) => GROUP_LABEL[k].toLowerCase()).join(" › ")}`
+    : showJob
+      ? "Every punch booked this month"
+      : "Every punch booked on this job";
 
   return (
     // Spacing is the caller's business (`className`) — the panel used to hardcode `mt-4`,
@@ -328,7 +293,7 @@ export function HoursDetailPanel({
     // the card that opens it rather than below it.
     <DrillPanel
       title={title ?? "Hours Detail"}
-      meta={`${meta}${detail.truncated ? " · capped at 4,000, oldest punches omitted" : ""}`}
+      meta={`${meta}${detail.truncated ? " · oldest punches omitted past the cap" : ""}`}
       note={note}
       onClose={onClose}
       className={className}
@@ -406,14 +371,6 @@ export function HoursDetailPanel({
           </DrillFilters>
         </DrillControls>
       }
-      footer={
-        <>
-          {/* Only where there is a fuller report to open. On the per-job drill this panel
-              already IS the job's full punch list, so the link would point at itself. */}
-          {showJob && <DrillLink href="/job-hours">Open full report</DrillLink>}
-          <DrillAction onClick={exportCsv}>Export CSV</DrillAction>
-        </>
-      }
     >
       {rows.length === 0 ? (
         // Distinguishes "nothing ingested" from "your filters exclude everything" — the
@@ -435,9 +392,6 @@ export function HoursDetailPanel({
             <DrillGroup
               key={g.key}
               values={g.values}
-              // `g.lines` stays as the field name — it counts rows of the rollup's input,
-              // which is what the arithmetic tests assert on. Only the word shown changes.
-              count={`${g.lines.toLocaleString()} ${g.lines === 1 ? "punch" : "punches"}`}
               total={hoursCell(g.hours)}
               totalTitle={hoursExact(g.hours)}
               open={expanded.has(g.key)}

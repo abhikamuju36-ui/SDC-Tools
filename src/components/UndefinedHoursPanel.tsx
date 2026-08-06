@@ -194,9 +194,6 @@ export function UndefinedHoursPanel({
                         <span className="text-xs font-semibold text-sdc-navy">{g.label}</span>
                         <span className="shrink-0 text-xs font-bold tabular-nums text-sdc-navy" title={hoursExact(g.hours)}>
                           {fmtHours(g.hours)}
-                          <span className="ml-1 font-normal text-sdc-muted">
-                            · {g.rows} {g.rows === 1 ? "entry" : "entries"}
-                          </span>
                         </span>
                       </span>
                       {/* The corrective action — §42.27's "corrective data needed". */}
@@ -281,16 +278,11 @@ export function UndefinedHoursPanel({
         </DrillControls>
 
         {/* What the table currently IS — the shared design's meta line, in the position
-            this panel has room for it (its heading is the KPI strip above). It replaces
-            the record count that used to sit inside the filter row, where it competed
-            with the controls for space on a narrow window. */}
+            this panel has room for it (its heading is the KPI strip above). No record
+            count anywhere in it (§62): the active rollup is named, not counted — the
+            KPI reconciliation banner above already states the total, in hours. */}
         <p className="px-4 pb-2 text-note text-sdc-muted">
-          {groups
-            ? `${groups.length.toLocaleString()} ${groups.length === 1 ? "group" : "groups"} by ${groupBy
-                .map((k) => GROUP_LABEL[k].toLowerCase())
-                .join(" › ")} · `
-            : ""}
-          {rows.length.toLocaleString()} of {detail.rows.length.toLocaleString()} {detail.rows.length === 1 ? "record" : "records"}
+          {groups ? `Grouped by ${groupBy.map((k) => GROUP_LABEL[k].toLowerCase()).join(" › ")}` : "All records"}
           {/* A filtered view no longer equals the KPI, and says so rather than letting a
               subtotal be read as the headline. */}
           {filtered && (
@@ -330,7 +322,6 @@ export function UndefinedHoursPanel({
               <DrillGroup
                 key={g.key}
                 values={g.values}
-                count={`${g.lines.toLocaleString()} ${g.lines === 1 ? "punch" : "punches"}`}
                 total={fmtHours(g.hours)}
                 totalTitle={hoursExact(g.hours)}
                 open={openGroup === g.key}
@@ -434,8 +425,7 @@ export function UndefinedHoursPanel({
               aria-expanded={showExcluded}
               className="text-label font-medium text-sdc-blue-dark underline-offset-2 hover:underline"
             >
-              {showExcluded ? "Hide" : "Show"} {detail.excluded.rows} correctly-excluded {detail.excluded.rows === 1 ? "record" : "records"} (
-              {fmtHours(detail.excluded.hours)})
+              {showExcluded ? "Hide" : "Show"} correctly-excluded records ({fmtHours(detail.excluded.hours)})
             </button>
             {showExcluded && (
               <div className={`mt-1.5 rounded-lg border px-3 py-2 ${REASON_TONE.excluded}`}>
@@ -449,7 +439,7 @@ export function UndefinedHoursPanel({
                     <li key={g.reason} className="flex items-baseline justify-between gap-2 text-note">
                       <span className="text-sdc-gray-600">{g.label}</span>
                       <span className="shrink-0 font-semibold tabular-nums text-sdc-navy" title={hoursExact(g.hours)}>
-                        {fmtHours(g.hours)} · {g.rows}
+                        {fmtHours(g.hours)}
                       </span>
                     </li>
                   ))}

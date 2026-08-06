@@ -167,8 +167,6 @@ test("group rows are real buttons that report their state", () => {
   assert.match(DRILL, /aria-pressed=\{on\}/, "the group options are toggles, not links");
 });
 
-// ── The footer the reference asks for (§47) ─────────────────────────────────
-
 // ── The card keeps its own height; the drill scrolls (§49) ──────────────────
 //
 // The layout this replaces used flex's default `stretch` plus `[&>*]:h-full`, which made
@@ -283,14 +281,48 @@ test("no drill nests a second fixed-height scroller inside its scrolling body", 
   }
 });
 
-test("the hours drill can export what is on screen", () => {
-  // The reference puts "Export CSV" in the footer. It exports the FILTERED rows — the
-  // point of exporting from a drill rather than from the page — and always the punch
-  // lines, never the rollup, because a CSV of "Mechanical Engineering, 56" is not
-  // something anyone can work with.
-  const hdp = code(join(SRC, "components", "HoursDetailPanel.tsx"));
-  assert.match(hdp, /function exportCsv/);
-  assert.match(hdp, /rows\.map\(/, "it must serialise the filtered rows");
-  assert.match(hdp, /csvRow/, "…through the shared CSV writer, not a hand-rolled join");
-  assert.match(hdp, /<DrillAction onClick=\{exportCsv\}/);
+// ── No footer, no punch counts (§62) ────────────────────────────────────────
+//
+// §62 removed "Open full report" / "Export CSV" from every drill and every numeric
+// row/group/expanded-detail count ("680 of 680 punches", "262 punches", "45 records") —
+// while explicitly keeping Hours/dollar totals and the KPI reconciliation untouched.
+// These guard the shared component so neither comes back through a future caller.
+
+test("DrillPanel has no footer slot", () => {
+  // The footer band and its two actions (DrillLink, DrillAction) were removed
+  // entirely rather than left unused — a component built on this shared shell has
+  // nowhere to reintroduce them without editing Drill.tsx itself.
+  assert.doesNotMatch(DRILL, /footer\s*[:?]/, "DrillPanel must not accept a footer prop");
+  assert.doesNotMatch(DRILL, /function DrillLink|function DrillAction/, "the footer-only exports must be gone");
+});
+
+test("no drill panel offers Open full report or Export CSV", () => {
+  for (const f of DRILLS) {
+    const body = code(f);
+    assert.doesNotMatch(body, /Open full report/, `${f.replace(SRC, "src")}: §62 removed this link`);
+    assert.doesNotMatch(body, /Export CSV/, `${f.replace(SRC, "src")}: §62 removed this action`);
+  }
+});
+
+test("DrillGroup no longer takes a row/line count", () => {
+  // The count prop rendered "262 punches" beside a group's name and fed the
+  // expand/collapse tooltip ("Show the 262 punches behind this"). Both are gone —
+  // removed from the component, not merely unused by every current caller, so a
+  // future drill cannot pass one back in.
+  assert.doesNotMatch(DRILL, /count\?:\s*string/, "DrillGroup's props must not include count");
+  for (const f of DRILLS.slice(0, 2)) {
+    assert.doesNotMatch(code(f), /count=\{/, `${f.replace(SRC, "src")}: must not pass a count into DrillGroup`);
+  }
+});
+
+test("no drill states how many rows/punches/records are behind a group or the whole table", () => {
+  // The specific shape this catches: a template-string count built from a `.length`
+  // sitting next to the words punch(es)/record(s)/line(s) — "680 of 680 punches",
+  // "3 groups by department", "45 correctly-excluded records". Hours and dollar
+  // figures (fmtHours(...), usd(...)) are untouched by this pattern and must stay.
+  const countLike = /\$\{[^}]*\.length[^}]*\}\s*(?:of\s*\{?[^}]*\.length|\s*(?:punch|record|line|group)es?\b)/i;
+  for (const f of DRILLS.slice(0, 2)) {
+    const body = code(f);
+    assert.doesNotMatch(body, countLike, `${f.replace(SRC, "src")}: a row-count pattern survived §62`);
+  }
 });

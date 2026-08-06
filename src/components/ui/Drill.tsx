@@ -118,20 +118,17 @@ export function DrillPanel({
   note,
   onClose,
   controls,
-  footer,
   className,
   children,
 }: {
   title: string;
-  /** The one-line "what this table currently is" — group count, line count. */
+  /** The one-line "what this table currently is" — the active rollup, e.g. "Grouped by department". */
   meta?: ReactNode;
   /** An optional caveat, kept out of `meta` so the meta line stays scannable. */
   note?: ReactNode;
   onClose?: () => void;
   /** The GROUP tray and the filters. Rendered in their own row — see DrillControls. */
   controls?: ReactNode;
-  /** "Open full report" / "Export CSV" — see DrillLink / DrillAction. */
-  footer?: ReactNode;
   className?: string;
   children: ReactNode;
 }) {
@@ -166,14 +163,12 @@ export function DrillPanel({
 
       {/* The table region owns its own top rule, so it reads as a distinct block from
           the controls above it whether or not any controls were passed.
-          It is also the one part of the card that scrolls (§49). The header above and the
-          footer below stay put, so Close, the group tray, the filters and Export CSV are
-          reachable without scrolling back up through a rollup. */}
+          It is also the one part of the card that scrolls (§49). The header above stays
+          put, so Close, the group tray and the filters are reachable without scrolling
+          back up through a rollup. No footer (§62 removed "Open full report" / "Export
+          CSV" from every drill) — the table region is the last thing in the card, so
+          there is no leftover footer band to leave empty. */}
       <div className={`${DRILL_BODY} border-t border-sdc-border`}>{children}</div>
-
-      {footer && (
-        <div className="flex flex-wrap gap-4 border-t border-sdc-border px-4 py-2 text-note">{footer}</div>
-      )}
     </section>
   );
 }
@@ -274,24 +269,6 @@ export function DrillSelect({
   );
 }
 
-/** A footer link out of the panel — "Open full report". */
-export function DrillLink({ href, children }: { href: string; children: ReactNode }) {
-  return (
-    <a href={href} className="text-sdc-blue-dark underline-offset-2 hover:underline">
-      {children}
-    </a>
-  );
-}
-
-/** A footer action — "Export CSV". A button, because it is one. */
-export function DrillAction({ onClick, children }: { onClick: () => void; children: ReactNode }) {
-  return (
-    <button type="button" onClick={onClick} className="text-sdc-blue-dark underline-offset-2 hover:underline">
-      {children}
-    </button>
-  );
-}
-
 // ── The table ───────────────────────────────────────────────────────────────
 
 /**
@@ -377,7 +354,6 @@ export function DrillTable({
  */
 export function DrillGroup({
   values,
-  count,
   total,
   totalTitle,
   open,
@@ -387,8 +363,6 @@ export function DrillGroup({
 }: {
   /** One label per grouping dimension. */
   values: string[];
-  /** "10 punches" — the reference prints it beside the name, not in a column of its own. */
-  count?: string;
   total: ReactNode;
   totalTitle?: string;
   open: boolean;
@@ -404,15 +378,10 @@ export function DrillGroup({
         type="button"
         onClick={onToggle}
         aria-expanded={open}
-        // The domain word comes from `count` in BOTH states now. It used to come from the
-        // caller only when closed and be hardcoded to "lines" when open, so a panel that
-        // called its rows punches still said "Hide these lines" the moment one was opened —
-        // which is how the vocabulary drifted in the first place. The fallbacks say "rows"
-        // rather than picking a domain: this is the shared design layer, and the two callers
-        // that use it both pass a count.
-        title={
-          count ? `${open ? "Hide" : "Show"} the ${count} behind this` : open ? "Hide these rows" : "Show these rows"
-        }
+        // §62 dropped the line-count badge this used to name ("Hide the 262 punches behind
+        // this") — a group row no longer states how many rows are behind it anywhere, so
+        // the tooltip is generic to match.
+        title={open ? "Hide these rows" : "Show these rows"}
         className={`${GROUP_ROW} border-b-0 ${open ? "bg-sdc-gray-50" : ""}`}
         style={{ gridTemplateColumns: template(columns) }}
       >
@@ -432,7 +401,6 @@ export function DrillGroup({
             <span className="truncate" title={v}>
               {v}
             </span>
-            {i === values.length - 1 && count && <span className="shrink-0 text-note text-sdc-muted">{count}</span>}
           </span>
         ))}
         <span className={`${DRILL_NUM} text-note`} title={totalTitle}>
