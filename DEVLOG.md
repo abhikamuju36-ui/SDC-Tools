@@ -4539,3 +4539,44 @@ CSV" text in any drill, no `count` prop on `DrillGroup`, and no `${x.length}`-dr
 punch/record/line/group count pattern in either panel — so none of this can drift back in
 through a future edit. 761 tests pass (four added, one retired), types clean, lint clean on
 every touched file.
+
+---
+
+## 43. Undefined Hours drill: no top strip, no bottom footer (§63, 2026-08-06)
+
+Reported with a screenshot circling the four-figure header strip (Undefined Hours / Records
+Affected / Employees Affected / Correctly Excluded) and the bottom footer (the
+correctly-excluded disclosure and the "From Current_Job_Hours.xlsx" provenance line), asking
+for both gone from the Undefined Hours drill specifically.
+
+### 43.1 What came out, and what stayed
+
+Removed exactly what was named:
+
+* The four-`Stat` header grid — the `Stat` component itself is now unused and deleted with it.
+* The correctly-excluded disclosure ("Show correctly-excluded records (…)" and its expanded
+  reason list) and the provenance line beneath it.
+
+**Kept, because the ticket's own removal list did not name it and §42.28 requires it:** the
+reconciliation banner ("✓ Drill-through total matches KPI: 179.8 hours"). It now sits directly
+under the header's own bottom border instead of under the Stat grid's — no blank band where
+the grid was, since the element was deleted rather than hidden.
+
+Two pieces of now-dead state and styling went with the removed disclosure: `showExcluded`
+(nothing reads or sets it any more) and `REASON_TONE.excluded` (the disclosure was its only
+consumer; `REASON_TONE.fault`, used by the reason chips, stays).
+
+### 43.2 Verified live
+
+Opened the Undefined Hours drill: no "Records affected" / "Employees affected" / "Correctly
+excluded" anywhere in the panel, no "correctly-excluded records" button, no
+"Current_Job_Hours.xlsx" provenance line, and the reconciliation line is still there and still
+correct. The panel now reads header → Close → reconciliation → "Why these are undefined" →
+group tray → table → total, with no gap where the removed sections were.
+
+Confirmed nothing else broke: expanding "Mechanical Engineering" still renders its 38
+punch-line rows; typing into the search box still filters live (a real keystroke test — "Robert"
+narrowed the table to "showing 0 of the 180 total" with "No records match these filters" and a
+working Clear filters button); grouping, Close and the KPI figure are unchanged. Data,
+grouping, search, totals and real-time behavior were never touched — this removed rendering
+only. 761 tests pass, types clean, lint clean.

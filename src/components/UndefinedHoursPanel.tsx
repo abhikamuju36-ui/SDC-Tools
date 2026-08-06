@@ -47,9 +47,6 @@ const REASON_TONE: Record<string, string> = {
   // Faults somebody can fix in Paylocity — amber, because this is work to do rather
   // than something broken.
   fault: "border-sdc-yellow bg-sdc-yellow-bg/50",
-  // Correct exclusions — neutral. Colouring these as problems is what would train
-  // people to ignore the colour.
-  excluded: "border-sdc-border bg-sdc-gray-50",
 };
 
 export function UndefinedHoursPanel({
@@ -66,7 +63,6 @@ export function UndefinedHoursPanel({
   // the list and the panel says so, so a filtered subtotal is never mistaken for the
   // headline.
   const [reason, setReason] = useState<UndefinedReason | null>(null);
-  const [showExcluded, setShowExcluded] = useState(false);
   const [query, setQuery] = useState("");
 
   // ── Grouped by department by default (2026-08-05, by request) ─────────────
@@ -109,16 +105,15 @@ export function UndefinedHoursPanel({
       // other drills, applied here because this panel owns its own shell (see the header
       // note for why it is not DrillPanel).
       //
-      // The header, the four figures and the reconciliation line stay OUTSIDE the
-      // scroller: Close has to be reachable, and the reconciliation line is an assertion
-      // the app makes about itself (§42.28) — scrolling it out of sight would be the one
-      // thing on this panel that must not happen.
-      // No `overflow-hidden` alongside the ceiling: this panel's fixed region is the
-      // tallest of the four (a heading, four figures and the reconciliation line), and at
-      // extreme zoom it can exceed the ceiling's own floor on its own. Clipping there
-      // would make the table unreachable; overflowing is merely untidy, and the page
-      // scrolls. Nothing needs the clip — the last child is the padded body, so no
-      // background reaches the rounded corners.
+      // The header and the reconciliation line stay OUTSIDE the scroller: Close has to be
+      // reachable, and the reconciliation line is an assertion the app makes about itself
+      // (§42.28) — scrolling it out of sight would be the one thing on this panel that
+      // must not happen.
+      // No `overflow-hidden` alongside the ceiling: at extreme zoom this panel's fixed
+      // region (heading + reconciliation line) can exceed the ceiling's own floor on its
+      // own. Clipping there would make the table unreachable; overflowing is merely
+      // untidy, and the page scrolls. Nothing needs the clip — the last child is the
+      // padded body, so no background reaches the rounded corners.
       className={`motion-panel flex ${DRILL_CAP} flex-col rounded-xl border border-sdc-border bg-white shadow-sm`}
       aria-label={`Undefined hours detail for ${month}`}
     >
@@ -141,18 +136,6 @@ export function UndefinedHoursPanel({
           Close
         </button>
       </header>
-
-      {/* ── The three numbers §42.27 asks for, before any table ──────────── */}
-      <div className="grid grid-cols-[repeat(auto-fit,minmax(9rem,1fr))] gap-px border-b border-sdc-border-soft bg-sdc-border-soft">
-        <Stat label="Undefined hours" value={fmtHours(detail.storedTotal)} title={hoursExact(detail.storedTotal)} emphasis />
-        <Stat label="Records affected" value={String(detail.rows.length)} />
-        <Stat label="Employees affected" value={String(detail.employeesAffected)} />
-        <Stat
-          label="Correctly excluded"
-          value={fmtHours(detail.excluded.hours)}
-          title="Phases the app does not model and the four Standard Fees pool sections. Not a fault, and not counted in the KPI."
-        />
-      </div>
 
       {/* ── Reconciliation status (§42.28) ───────────────────────────────── */}
       <p
@@ -415,62 +398,7 @@ export function UndefinedHoursPanel({
             </DrillLines>
           </div>
         )}
-
-        {/* ── Correct exclusions, behind a disclosure (§42.7) ──────────────── */}
-        {detail.excluded.rows > 0 && (
-          <div className="mt-3">
-            <button
-              type="button"
-              onClick={() => setShowExcluded((v) => !v)}
-              aria-expanded={showExcluded}
-              className="text-label font-medium text-sdc-blue-dark underline-offset-2 hover:underline"
-            >
-              {showExcluded ? "Hide" : "Show"} correctly-excluded records ({fmtHours(detail.excluded.hours)})
-            </button>
-            {showExcluded && (
-              <div className={`mt-1.5 rounded-lg border px-3 py-2 ${REASON_TONE.excluded}`}>
-                <p className="mb-1.5 text-note leading-relaxed text-sdc-gray-600">
-                  These are <strong>not faults</strong> and are not counted in the KPI. They are hours the app deliberately does not model —
-                  phases 80 and 90, and the four sections planned company-wide in the Standard Fees pools rather than job by job. Listed so
-                  &ldquo;where did the rest of the hours go&rdquo; has an answer.
-                </p>
-                <ul className="grid gap-1 md:grid-cols-2">
-                  {detail.excluded.groups.map((g) => (
-                    <li key={g.reason} className="flex items-baseline justify-between gap-2 text-note">
-                      <span className="text-sdc-gray-600">{g.label}</span>
-                      <span className="shrink-0 font-semibold tabular-nums text-sdc-navy" title={hoursExact(g.hours)}>
-                        {fmtHours(g.hours)}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-              </div>
-            )}
-          </div>
-        )}
-
-        {/* Provenance — which file version these rows came from (§42.11). */}
-        {detail.sourceFile && (
-          <p className="mt-3 text-label text-sdc-gray-400">
-            From <span className="font-medium text-sdc-muted">{detail.sourceFile}</span>
-            {detail.importedAt && <> · imported {detail.importedAt.toLocaleString()}</>}
-          </p>
-        )}
       </div>
     </section>
-  );
-}
-
-// One figure in the header strip. Equal weight by default (§42.22: "give each KPI
-// equal visual importance"), with the headline allowed to be larger — it is the number
-// the card was clicked to explain.
-function Stat({ label, value, title, emphasis }: { label: string; value: string; title?: string; emphasis?: boolean }) {
-  return (
-    <div className="bg-white px-4 py-2.5">
-      <div className="text-label font-medium uppercase tracking-wide text-sdc-muted">{label}</div>
-      <div className={`tabular-nums text-sdc-navy ${emphasis ? "text-lg font-bold" : "text-base font-semibold"}`} title={title}>
-        {value}
-      </div>
-    </div>
   );
 }
