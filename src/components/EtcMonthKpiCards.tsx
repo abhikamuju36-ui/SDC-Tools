@@ -715,36 +715,12 @@ export function EtcMonthKpiCards({
           )}
         </div>
       ) : drill === "OffGrid" ? (
-        // Capped, with the table as its one scrolling region (§49). The two explanatory
-        // paragraphs and the Split by toggle stay put — this is the one figure on the
-        // strip with an action attached, and scrolling the "what to do about it" out of
-        // view to read the rows would defeat the panel.
+        // Capped, with the table as its one scrolling region (§49). The explanatory
+        // heading and its two paragraphs (why a job lands here, and why the figure
+        // survives a refresh) were removed by request (§65) — the KPI row's own label
+        // and hint already say "Hours off the grid" / "N jobs not listed", so the panel
+        // opens straight onto the one control that changes what the table shows.
         <div className={`motion-panel flex ${DRILL_CAP} flex-col rounded-xl border border-sdc-red-border bg-white p-4 shadow-sm`}>
-          <p className="mb-1 text-xs font-semibold text-sdc-navy">
-            {/* The trailing space is explicit. It reads as an ordinary space between an
-                expression and the text after it, and on one line JSX does preserve that
-                — but it rendered as "5 jobsthe grid isn't listing" in a screenshot, and
-                a separator that depends on JSX whitespace rules is not worth defending.
-                {" "} cannot be collapsed by a formatter re-wrapping the line either. */}
-            {fmtHours(offGridTotal)} hours on {offGridJobs.length} {offGridJobs.length === 1 ? "job" : "jobs"}{" "}
-            the grid isn&apos;t listing
-          </p>
-          {/* The WHY and the WHAT-NOW, not just the number. This is the one figure
-              on the strip with a deadline attached, and a drill that only restated
-              the total would send someone hunting for the explanation. */}
-          <p className="mb-2 text-note leading-relaxed text-sdc-gray-600">
-            The grid lists <strong>Active, billable</strong> jobs only, so anything else lands here — a job that moved status, one that is
-            non-billable, one already Complete, or a <strong>HeadStart</strong> job (no PO, so never planned in an ETC month; listed always,
-            even at 0 hours, so one that starts booking time is seen). Set a job back to Active and billable to bring it into the month, or
-            accept the shortfall deliberately.
-          </p>
-          {/* Sourced from JobHoursDetail, not EtcEntry — see where hiddenJobEntries is
-              built. Worth stating outright, because the previous version of this panel
-              promised the opposite and was right to: it read rows that prune deletes. */}
-          <p className="mb-3 text-note leading-relaxed text-sdc-gray-600">
-            Counted from the <strong>punch records</strong>, so this figure stays visible and is not affected by Refresh Data or Submit ETC.
-            It still reaches no total in the grid below until the job qualifies.
-          </p>
           {/* Two readings of the same 181 hours. Both total identically — they have to,
               since the card above shows that figure too. */}
           <div className="mb-2 flex items-center gap-1.5">

@@ -4651,3 +4651,27 @@ it), but it is backend computation rather than the "unused frontend component lo
 to remove, and the ticket's own caution runs the other way — "do not remove shared
 employee-count calculations if still required" — so it stays rather than being pruned as a
 guess at a second request that was not made.
+
+---
+
+## 45. Hours off the grid drill: description gone, controls moved up (§65, 2026-08-06)
+
+Reported with a screenshot circling three text blocks at the top of the Hours off the grid
+drill-through — the heading sentence ("274 hours on 4 jobs the grid isn't listing"), the
+Active/billable/HeadStart explanation paragraph, and the "Counted from the punch records"
+paragraph — asking for all three gone and the Split by controls and table pulled up in their
+place.
+
+Removed exactly those three elements from the `drill === "OffGrid"` branch in
+`EtcMonthKpiCards.tsx`; nothing else in the panel changed. The panel's own JSX already put
+"Split by" directly after the third paragraph with no wrapper around any of the three, so
+deleting them left no empty container or leftover margin behind — the panel now opens
+straight onto "Split by  Job  Section" followed immediately by the table.
+
+Verified live: the panel's text no longer contains "the grid isn't listing", "Active,
+billable" or "Counted from the" anywhere; it starts with "Split by" and the table header row
+with zero gap between them. The Split by toggle still works (switched to Section, table
+re-headered to Section/Jobs/Hours, Total row intact). The small "Hours only — Parts Cost is
+money and is not counted here" footnote below the table — not part of the circled text —
+stays untouched. Close/Hide is on the KPI row itself (unaffected either way, since it was
+never inside this panel). 765 tests pass, types clean, lint clean.
