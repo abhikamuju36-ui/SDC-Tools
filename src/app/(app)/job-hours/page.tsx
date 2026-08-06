@@ -11,6 +11,7 @@ import { SchedulerJobLink } from "@/components/SchedulerJobLink";
 import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 import { getJobBom, type JobBom } from "@/lib/job-bom";
 import { getJobHoursDetail, type JobHoursDetail } from "@/lib/job-hours-detail";
+import { withTimeoutOrNull, UPSTREAM_BUDGET_MS } from "@/lib/with-timeout";
 import { JobProcurement } from "@/components/JobProcurement";
 import { EmptyState } from "@/components/ui/EmptyState";
 
@@ -79,69 +80,89 @@ export default async function JobHoursPage({
   const PARTS_MAX_JOBS = 12;
   const partsCapped = !!data && data.jobRefs.length > PARTS_MAX_JOBS;
 
-  let parts: JobPartsCost | null = null;
-  let partsProjection: PartsBudgetProjection | null = null;
-  let partsBudget: number | null = null;
-  let partsFailedJobs = 0;
-  if (data && !partsCapped) {
-    try {
-      const perJob = await Promise.all(
-        data.jobRefs.map((r) =>
-          getJobPartsCost(r.jobId).then(
-            (v) => ({ ok: true as const, v }),
-            () => ({ ok: false as const, v: null }),
+  // ── The two TotalETO reads are CONCURRENT and TIME-BOXED (§69) ─────────────
+  //
+  // They used to run one after the other — the whole parts block awaited, then the BOM
+  // — with no budget on either. Measured 2026-08-06 while TotalETO was degraded:
+  // getJobPartsCost 110.5s, getJobBom 101.7s, and this page returning 200 in
+  // 2.0–3.9 MINUTES behind its loading skeleton while every app-database read on it
+  // took ~30ms. Sequential was doubling a wait that should not have existed.
+  //
+  // Both fixes are needed and neither is sufficient alone: running them concurrently
+  // halves a bad day, and the budget is what stops a bad day being unbounded. On a
+  // healthy day (~1–3s each) nothing about this is observable.
+  //
+  // The fallbacks were already built — a null `parts` renders "Parts Cost is
+  // unavailable", a null `bom` renders the procurement EmptyState — so timing out
+  // lands in paths the page already had, rather than needing new UI. See
+  // lib/with-timeout.ts for why the abandoned query is not (and cannot be) cancelled.
+  const partsPromise: Promise<{
+    parts: JobPartsCost | null;
+    projection: PartsBudgetProjection | null;
+    budget: number | null;
+    failedJobs: number;
+  }> = data && !partsCapped
+    ? (async () => {
+        const perJob = await Promise.all(
+          data.jobRefs.map((r) =>
+            withTimeoutOrNull(`TotalETO parts (job ${r.jobId})`, UPSTREAM_BUDGET_MS, () => getJobPartsCost(r.jobId), (e) =>
+              console.error(`getJobPartsCost failed for job ${r.jobId}:`, e),
+            ),
           ),
-        ),
-      );
-      partsFailedJobs = perJob.filter((r) => !r.ok).length;
-      const lines = perJob.flatMap((r) => r.v?.lines ?? []);
-      lines.sort((a, b) => (b.purchaseDate ?? "").localeCompare(a.purchaseDate ?? ""));
-      const purchased = lines.reduce((s, l) => s + l.totalPrice, 0);
-      const paid = lines.reduce((s, l) => s + l.invoicedAmount, 0);
-      // Every job failed: show nothing rather than a confident set of $0 bars.
-      parts =
-        partsFailedJobs === data.jobRefs.length ? null : { purchased, paid, leftToPay: purchased - paid, lines };
-      // "Part Cost Budget Projection" — purchased + estimate-to-purchase, the
-      // latter being the Parts New ETC for the latest ETC month (see
-      // parts-budget-projection.ts for why that field IS Dan's estimate to
-      // purchase). Best-effort like the parts pull above; a failure drops the bar.
-      partsProjection = await computePartsBudgetProjection(
-        data.jobRefs.map((r) => r.id),
-        lines,
-        data.kpis.latestEtcMonth,
-      ).catch(() => null);
-    } catch {
-      parts = null;
-    }
-    // "Part Cost Budget" — the report's [Part Cost Quoted] measure is
-    // SUM('Cost Estimated'[Cost Quoted]), and that same upstream table populates
-    // Job.costQuoted here (syncQuotedFromPowerBi reads EVALUATE 'Cost Estimated'),
-    // so summing it across the selected jobs is the same number.
-    try {
-      const rows = await prisma.job.findMany({
-        where: { id: { in: data.jobRefs.map((r) => r.id) } },
-        select: { costQuoted: true },
-      });
-      const total = rows.reduce((s, j) => s + Number(j.costQuoted ?? 0), 0);
-      partsBudget = total > 0 ? total : null; // no quote on file → hide the budget bar
-    } catch {
-      partsBudget = null;
-    }
-  }
+        );
+        const failedJobs = perJob.filter((v) => v == null).length;
+        const lines = perJob.flatMap((v) => v?.lines ?? []);
+        lines.sort((a, b) => (b.purchaseDate ?? "").localeCompare(a.purchaseDate ?? ""));
+        const purchased = lines.reduce((s, l) => s + l.totalPrice, 0);
+        const paid = lines.reduce((s, l) => s + l.invoicedAmount, 0);
+        // Every job failed: show nothing rather than a confident set of $0 bars.
+        const totals =
+          failedJobs === data.jobRefs.length ? null : { purchased, paid, leftToPay: purchased - paid, lines };
+
+        // "Part Cost Budget Projection" — purchased + estimate-to-purchase, the
+        // latter being the Parts New ETC for the latest ETC month (see
+        // parts-budget-projection.ts for why that field IS Dan's estimate to
+        // purchase). Best-effort; a failure drops the marker.
+        //
+        // "Part Cost Budget" — the report's [Part Cost Quoted] measure is
+        // SUM('Cost Estimated'[Cost Quoted]), and that same upstream table populates
+        // Job.costQuoted here (syncQuotedFromPowerBi reads EVALUATE 'Cost Estimated'),
+        // so summing it across the selected jobs is the same number. Both are app-database
+        // reads, so they need no budget of their own — and they can run together.
+        const [projection, budgetRows] = await Promise.all([
+          computePartsBudgetProjection(data.jobRefs.map((r) => r.id), lines, data.kpis.latestEtcMonth).catch(() => null),
+          prisma.job
+            .findMany({ where: { id: { in: data.jobRefs.map((r) => r.id) } }, select: { costQuoted: true } })
+            .catch(() => [] as { costQuoted: unknown }[]),
+        ]);
+        const quoted = budgetRows.reduce((s, j) => s + Number(j.costQuoted ?? 0), 0);
+        return {
+          parts: totals,
+          projection,
+          budget: quoted > 0 ? quoted : null, // no quote on file → hide the budget bar
+          failedJobs,
+        };
+      })()
+    : Promise.resolve({ parts: null, projection: null, budget: null, failedJobs: 0 });
 
   // Job Cost — the BOM cost hierarchy (formerly its own page) now lives below
   // Parts Cost here. It's a per-single-job view, so only load it when exactly
-  // one job is selected. Best-effort: a Power BI hiccup mustn't break the page.
-  let bom: JobBom | null = null;
-  let bomFailed = false;
-  if (data && singleJobId) {
-    try {
-      bom = await getJobBom(singleJobId);
-    } catch (e) {
-      console.error(`getJobBom failed for job ${singleJobId}:`, e);
-      bomFailed = true;
-    }
-  }
+  // one job is selected. Best-effort: a TotalETO hiccup mustn't break the page.
+  const bomPromise: Promise<JobBom | null> =
+    data && singleJobId
+      ? withTimeoutOrNull(`TotalETO BOM (job ${singleJobId})`, UPSTREAM_BUDGET_MS, () => getJobBom(singleJobId), (e) =>
+          console.error(`getJobBom failed for job ${singleJobId}:`, e),
+        )
+      : Promise.resolve(null);
+
+  const [partsResult, bom] = await Promise.all([partsPromise, bomPromise]);
+  const parts = partsResult.parts;
+  const partsProjection = partsResult.projection;
+  const partsBudget = partsResult.budget;
+  const partsFailedJobs = partsResult.failedJobs;
+  // Distinguishes "we asked and could not get it" from "there is nothing to ask for",
+  // which is what decides between the warning EmptyState and the plain one below.
+  const bomFailed = !!(data && singleJobId) && bom == null;
 
   return (
     <div className="w-full p-6 md:p-8">

@@ -4879,3 +4879,97 @@ function rather than two that happened to agree.
 4 new tests (off-grid excluded, eligible still fully validated, an empty eligible set failing
 closed rather than open, and the filter being pure — the caller reuses the full array
 afterwards). 769 pass, types and lint clean.
+
+---
+
+## 49. Job Hour Details stopped hanging on a slow TotalETO (§69, 2026-08-06)
+
+Reported as "why is the Job Hour Details page not loading" — a screenshot of the route's
+`loading.tsx` skeleton, apparently forever.
+
+### 49.1 It was loading. It was taking 2–4 minutes.
+
+Timed every dependency of the page in isolation, each raced against a limit so one hanging
+upstream could not hide the others:
+
+```
+listDashboardJobs()              app MySQL          34ms
+defaultDashboardJobId()          app MySQL          19ms
+getJobHoursDashboard([id])       app MySQL          29ms
+getJobHoursDetail([id])          app MySQL           8ms
+prisma.job.findMany costQuoted   app MySQL           1ms
+getJobPartsCost(1142)            TotalETO mssql  110,554ms
+getJobBom(1142)                  TotalETO mssql  101,738ms
+```
+
+The server log agreed: `GET /job-hours 200 in 2.0min`, `3.2min`, `3.9min`. `/etc` stayed at
+~600ms throughout, because it makes no live per-job TotalETO call.
+
+`Test-NetConnection SERVER-APP1:1433` succeeded, so the box was up and accepting connections
+— the *queries* were blocked, not the network. Nothing in the app changed to cause it; the
+same page rendered in 3.1s earlier the same day. The upstream is somebody else's to fix.
+
+### 49.2 What was ours to fix: no budget, and a needless sequence
+
+The page already knew how to survive these two calls FAILING — a null `parts` renders "Parts
+Cost is unavailable", a thrown BOM renders the procurement EmptyState. It had no answer for
+them being SLOW. mssql's own `requestTimeout` is 120s, so a blocked query held the render for
+two minutes before the fallback it already had was ever reached.
+
+Worse, the two ran in SEQUENCE: the whole parts block was awaited, and only then the BOM. Two
+independent upstream reads, one after the other, doubling a wait that should not have existed.
+
+Both halves are needed and neither is sufficient. Concurrency halves a bad day; the budget is
+what makes a bad day bounded.
+
+```
+                        before            after
+getJobPartsCost         110.5s  ─┐
+getJobBom               101.7s  ─┴─ sequential    both concurrent, each ≤ 12s
+page render            2.0–3.9 min                11.3–12.2s   (measured)
+```
+
+`lib/with-timeout.ts` states the budget in app terms rather than leaving it to the driver's.
+12 seconds is chosen from measurement, not taste: a healthy TotalETO answers in ~1–3s, so
+this is ~4× the healthy case — long enough that a merely busy server still returns real
+figures, short enough that a blocked one costs seconds instead of minutes. Under ~5s would
+start reporting "unavailable" on a slow-but-working day, and a missing figure reads as a bug.
+
+Two things the module is explicit about, because both are easy to assume otherwise:
+
+* **It does not cancel the query.** A promise is not cancellable; the mssql request runs to
+  the driver's own timeout and finishes into nothing. This bounds the RENDER, not the load on
+  TotalETO — a reload starts another query. Stated so nobody reads this as a fix for the
+  upstream.
+* **`withTimeoutOrNull` collapses a timeout and a genuine rejection to the same `null`**, on
+  purpose: the page's fallback is identical either way, and making every caller write that
+  two-branch catch is how one of them ends up missing a branch. The distinction survives in
+  the `onFail` callback, which gets the real error for the log.
+
+### 49.3 Verified live, in the degraded state
+
+With TotalETO still slow, `/job-hours?jobs=1142` now renders in **11.3–12.2s** and the page
+is fully usable: the header row and both hours charts show real data, the Parts Cost card is
+replaced by its existing amber "Parts Cost is unavailable — the hours above are unaffected"
+banner, and Procurement shows its existing "temporarily unavailable" EmptyState. No new UI was
+needed — timing out lands in paths the page already had. When TotalETO recovers, both sections
+return with no code change.
+
+8 new tests in `tests/with-timeout.test.ts`: a fast call is untouched, a slow one rejects with
+a `TimeoutError` naming the upstream, a real rejection is passed through rather than relabelled
+as a timeout, `withTimeoutOrNull` reports null for both while handing the real error to the
+logger, a synchronous throw inside the work function is still caught (a naive `Promise.race`
+lets that escape and crash the render), the timer does not outlive a fast call (a leaked 12s
+timer during a server render is a leak per request), and the budget is bounded at both ends.
+777 pass, types and lint clean.
+
+### 49.4 Not done
+
+**Streaming.** `<Suspense>` boundaries around the Parts Cost card and Procurement would let
+the hours charts paint in ~100ms and those two fill in independently, instead of the whole
+page waiting up to 12s for them. That is the better answer and it is the documented Next
+pattern (`docs/01-app/02-guides/streaming.md`, sibling boundaries). It was not done here
+because it is a real restructure — Parts Cost is currently a prop of `JobHoursDashboard` (§52)
+and Procurement needs the same `parts.lines` the card does, so doing it without fetching
+TotalETO twice needs a `cache()` boundary as well. Worth doing deliberately rather than while
+the upstream is degraded and every verification round costs minutes.
