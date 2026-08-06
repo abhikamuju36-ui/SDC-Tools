@@ -5,7 +5,6 @@ import { JobHoursDashboard } from "@/components/JobHoursDashboard";
 import { JobSelect } from "@/components/JobSelect";
 import { listDashboardJobs, getJobHoursDashboard, defaultDashboardJobId } from "@/lib/job-hours-dashboard";
 import { getJobPartsCost, type JobPartsCost } from "@/lib/sync-totaleto";
-import { PartsCostSummary } from "@/components/PartsCostSummary";
 import { computePartsBudgetProjection, type PartsBudgetProjection } from "@/lib/parts-budget-projection";
 import { SchedulerJobLink } from "@/components/SchedulerJobLink";
 import { getSchedulerLinkContext } from "@/lib/scheduler-link";
@@ -189,22 +188,26 @@ export default async function JobHoursPage({
               </>
             )}
           </div>
-          <JobHoursDashboard data={data} hoursDetail={hoursDetail} />
-
-          {/* Parts Cost money summary — sits between the hours charts above and
-              the Procurement drawer below, so the page reads hours → parts $ →
-              part-level detail. Follows the selection: these dollars sum
-              across jobs correctly, unlike the BOM below. */}
-          {parts && (
-            <PartsCostSummary
-              purchased={parts.purchased}
-              paid={parts.paid}
-              estimated={partsBudget}
-              budgetProjection={partsProjection}
-              jobCount={data.jobRefs.length}
-              failedJobs={partsFailedJobs}
-            />
-          )}
+          {/* Parts Cost joins the two hours charts in one row (§52) — it follows
+              the selection like they do: these dollars sum across jobs
+              correctly, unlike the BOM below. Below the row, Procurement reads
+              hours → parts $ → part-level detail. */}
+          <JobHoursDashboard
+            data={data}
+            hoursDetail={hoursDetail}
+            parts={
+              parts
+                ? {
+                    purchased: parts.purchased,
+                    paid: parts.paid,
+                    estimated: partsBudget,
+                    budgetProjection: partsProjection,
+                    jobCount: data.jobRefs.length,
+                    failedJobs: partsFailedJobs,
+                  }
+                : null
+            }
+          />
 
           {partsCapped && (
             <p className="mt-6 rounded-lg border border-sdc-border bg-sdc-gray-50 px-4 py-3 text-sm text-sdc-gray-600">

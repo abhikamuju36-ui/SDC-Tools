@@ -63,111 +63,30 @@ const DIFF_GREEN = "#15803d"; // under (Quoted − Actual > 0)
 const DIFF_RED = "#dc2626"; // over
 const DIFF_GRAY = "#94a3b8"; // even
 
-// Horizontal single-series bar chart for the Parts Cost money measures
-// (Purchased / Estimated to Purchase / Paid / Left to Pay) — the replacement for
-// the Power BI report's gauge.
+// Colors for the Parts Cost visual (§52) — a hand-rolled single-bar "bullet"
+// built in PartsCostSummary.tsx directly (CSS, not ECharts: one filled bar plus
+// two dashed markers on one shared scale has no natural ECharts option shape,
+// and this app already hand-rolls comparable bars — see the variance meter in
+// the same component, and SectionHierarchyChart above). Colors stay here so the
+// two hours charts and the Parts Cost bar draw from one palette.
 //
-// Why a bar chart and not the gauge: the gauge plotted Purchased against the
-// Part Cost BUDGET, so a $20K spend on a $600K job rendered as an unreadable
-// sliver with its axis labels stacked on top of each other, and a gauge can only
-// ever show one value against one target — not these four side by side.
+// Was a 4-5 row horizontal bar chart (Purchased / Estimated / Paid / Left to
+// Pay / Projection) — replaced because five separate bars made "how do these
+// three relate" a multi-glance comparison instead of a one-glance one. See
+// DEVLOG §52.
 //
-// Why the budget is NOT a fifth bar: at $600K vs ~$20K it would compress the
-// other three to invisible slivers, which is the same failure in a new shape.
-// Two measures of that different a scale belong in two visuals, so the
-// budget is rendered separately as a share-of-budget progress bar.
-//
-// HORIZONTAL because the category names are long ("Estimated to Purchase") —
-// vertical would need rotated labels.
-//
-// Per-bar colors mirror the Power BI report's own table, where the measure NAMES
-// are colored: Part Cost Purchased in blue, Part Cost Paid in green, and the two
-// derived rows (Estimated to Purchase, Left to Pay) in plain black. Keeping that
-// mapping means the two views read the same way to people who use both. Values
-// come from this app's tokens rather than eyedropped from the report, so the
-// page stays internally consistent — PAID_GREEN is the same green the Paid KPI
-// card's bullet already uses.
-//
-// Color is REDUNDANT here, never the only channel: every bar carries its own
-// axis label plus a direct value label, so the blue/green/neutral distinction is
-// reinforcement rather than the sole way to tell the rows apart. Still no legend
-// — one series, and each bar is named on the axis.
+// Per-bar colors mirror the Power BI report's own table, where the measure
+// names are colored: Part Cost Purchased in blue, Part Cost Paid in green.
 // Validated with the dataviz palette validator (light surface):
-//   #408bf7 / #475569 / #15803d — lightness band PASS, CVD separation PASS
-//   (worst adjacent green↔slate ΔE 13.1 deutan, 10.9 tritan — target is ≥8),
-//   normal-vision floor PASS (17.3), contrast PASS (all ≥ 3:1).
-// The validator's "chroma floor" check FAILS on the slate, which is expected and
-// correct: that check exists to catch accidentally-muddy categorical hues, and
-// this one is a DELIBERATE neutral standing in for the report's plain-black rows.
-// A darker #334155 separates better still but falls outside the lightness band;
-// lighter greys (#52627a, #64748b) drop tritan separation to 6–7, into the floor
-// band. #475569 is the pick that passes every check that applies.
+//   #408bf7 / #15803d / #b45309 — lightness band PASS, CVD separation PASS,
+//   normal-vision floor PASS, contrast PASS (all ≥ 3:1).
 export const PARTS_BAR = {
-  purchased: SERIES.planned, // blue — matches the two hours charts above
-  paid: "#15803d", // green — same token as IndicatorCard's Paid bullet
-  neutral: "#475569", // slate — the report's plain-black rows
-  // Amber for "Part Cost Budget Projection" — the only forward-looking bar, so
-  // it shouldn't share a color with money actually purchased or invoiced.
+  purchased: SERIES.planned, // blue — matches the two hours charts above; "Total Parts Cost Spent" marker
+  paid: "#15803d", // green — same token as IndicatorCard's Paid bullet; "Amount Invoiced" fill
+  // Amber for "Projection" — the only forward-looking figure, so it shouldn't
+  // share a color with money actually purchased or invoiced.
   projection: "#b45309",
 } as const;
-
-// No tooltip on these bars, by request (2026-07-30). Each bar already carries
-// its category on the axis and its value as a direct label, so the hover panel
-// was repeating both — and at this card's width it overhung the chart and
-// covered the neighbouring content instead of explaining it. The per-figure
-// explanations live on the budget meters' own title attributes.
-export function partsCostBarOption(
-  rows: { label: string; value: number; color?: string }[],
-): EChartsOption {
-  // Reversed ONCE, so the axis labels and the bar data can't drift out of step.
-  const ordered = [...rows].reverse();
-  return {
-    color: [SERIES.planned], // fallback only; per-bar colors are set on each datum
-    textStyle: { fontFamily: chartFont() },
-    // Extra right room so the longest direct value label can't clip, and a real
-    // left inset because at left:8 the first character of the longest category
-    // label was being shaved off (seen live on "Estimated to Purchase").
-    grid: { top: 8, left: 14, right: 78, bottom: 4, containLabel: true },
-    // Hover panel deliberately off — see the note above the function.
-    tooltip: { show: false },
-    xAxis: {
-      type: "value",
-      splitLine: { lineStyle: { color: GRID } },
-      axisLabel: { color: MUTED, fontSize: 11, formatter: (v: number) => usd(v) },
-    },
-    yAxis: {
-      type: "category",
-      // ECharts stacks category 0 at the BOTTOM on a horizontal bar chart;
-      // reversing keeps the rows in the order they're passed (Purchased first).
-      data: ordered.map((r) => r.label),
-      axisLine: { lineStyle: { color: GRID } },
-      axisTick: { show: false },
-      axisLabel: { color: MUTED, fontSize: 11 },
-    },
-    series: [
-      {
-        type: "bar",
-        // One array of {value, itemStyle} objects rather than parallel value and
-        // color arrays: both have to survive the same .reverse() as the axis
-        // labels, and keeping them in a single datum makes it impossible for a
-        // bar to end up wearing another row's color.
-        data: ordered.map((r) => ({ value: r.value, itemStyle: { color: r.color ?? PARTS_BAR.purchased } })),
-        barMaxWidth: 18,
-        // Rounded data-end only (the baseline end stays square). Series-level, so
-        // each datum only has to carry its color.
-        itemStyle: { borderRadius: [0, 4, 4, 0] },
-        label: {
-          show: true,
-          position: "right",
-          color: INK,
-          fontSize: 11,
-          fontWeight: "bold",
-          formatter: (p: unknown) => usd(Number((p as { value?: number }).value) || 0),
-        },
-      },
-    ],
-  };
-}
 
 export function groupedBarOption(opts: {
   categories: string[];

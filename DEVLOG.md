@@ -4087,3 +4087,71 @@ Ticking a box still saves and still reads back "CE (Controls Engineering) — Co
 Abhi Kamuju at 4:08 PM" from its new home in the toolbar. 758 tests pass — two new ones
 pin every control in this row to the shared tokens, because this is the second time this
 row has drifted — types and lint clean.
+
+---
+
+## 39. The three Job-Hours charts in one row; Parts Cost redesigned (2026-08-06)
+
+Reported as §52 then refined by §54. The Job Hour Details page stacked its two hours charts
+in one row (`lg:grid-cols-[2fr_1fr]`) and dropped the **Parts Cost** block onto its own
+full-width row below (`PartsCostSummary` rendered directly by the page). §52 asked for all
+three side by side; §54 asked for the Parts Cost visual to go vertical and for the three
+cards to look like one aligned row.
+
+### 39.1 Parts Cost stopped being a page-level block and became a chart card
+
+`PartsCostSummary` was a standalone `<div className="mt-6 …">` the page placed after
+`<JobHoursDashboard>`. It now composes as the dashboard's third grid column: the page passes
+its inputs down as a single `parts` prop (`JobHoursDashboardParts`) and the dashboard renders
+the card inside the same grid as the two hours charts, so there is one row to align rather
+than a row plus an orphan.
+
+The card lost its outer `mt-6 space-y-3` wrapper and now shares the exact `card("p-4")` +
+`flex h-full flex-col` treatment as the other two — same padding, radius, border and shadow —
+which is most of what §54.4 asks for. Its title dropped from `text-lg` to `text-base` to match
+the two chart titles beside it, and its subtitle moved to the same right-aligned
+`text-note text-sdc-gray-400` slot the other two use for their captions.
+
+### 39.2 The bar: horizontal 5-bar ECharts → one CSS bullet → one VERTICAL bullet
+
+Three shapes in two days, and both changes were narrowings:
+
+- **Was** a 4-5 row horizontal ECharts bar (`partsCostBarOption`: Estimated / Purchased /
+  Paid / Left to pay / Projection). Five bars made "how do Invoiced, Spent and Projection
+  relate" a multi-glance read.
+- **§52** replaced it with one hand-rolled CSS bullet bar — a filled track for Amount
+  Invoiced with two dashed markers (Total Parts Cost Spent, Projection) crossing it on one
+  shared scale. Hand-rolled, not ECharts, because a single bar plus two threshold markers has
+  no natural ECharts option shape, and this component already hand-rolls comparable bars (the
+  variance meter below it, and `SectionHierarchyChart`).
+- **§54** turned that bar vertical: the fill now grows up from the baseline, the two markers
+  are horizontal dashed lines crossing it at their own heights, and the legend moved beside
+  the bar. `partsCostBarOption` was deleted from `charts/theme.ts` (only `PARTS_BAR` colours
+  remain, now feeding CSS rather than an ECharts series). The `EChart` import went with it.
+
+**No calculation changed** (§52.5, §54.2). `purchased` / `paid` / `budgetProjection` /
+`estimated` and the Projection-vs-Estimated variance meter are byte-identical; only the two
+KPIs the old bar also drew (Estimated, Left to pay) stopped having their own bar — Estimated
+still feeds the variance baseline, Left to pay was `purchased − paid` and is implicit in the
+gap between the two figures now shown. Exact dollar values are stated in the legend row, so
+nothing that was readable became unreadable.
+
+### 39.3 One aligned row — stretch by default, independent only when a drill is open
+
+The grid is `items-stretch` by default, so idle all three cards are the tallest one's height
+exactly — verified live at 1600px: **497.875px tall and 403.7px wide, all three, top and
+bottom edges identical, zero overflow on any card.** The one exception is while chart 1's
+section drill-through is open: that content genuinely needs the room (§54.5 "unless
+absolutely required by content"), so the grid flips to `items-start` for that state only,
+rather than stretching the other two cards to match a much taller one — the same empty-space
+trap §33 fixed for the KPI summary card. Each card is `flex h-full flex-col` so it fills the
+stretched height; the Parts Cost bar sits in a `flex-1` centring region so it never looks
+stranded in a taller card.
+
+The row falls back to the old `lg:grid-cols-[2fr_1fr]` two-column ratio when there is no Parts
+Cost to show (Total ETO unreachable, or the >12-job cap), rather than leaving an empty third
+cell. Below `lg` all three stack to one column (verified at 900px: one column, no overflow).
+
+Types clean, 758 tests pass, lint clean on the touched files (one pre-existing
+`set-state-in-effect` warning in `SectionHierarchyChart`'s entrance animation is unrelated and
+predates this change).

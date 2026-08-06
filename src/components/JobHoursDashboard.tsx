@@ -9,6 +9,22 @@ import { IndicatorCard } from "@/components/charts/IndicatorCard";
 import type { JobHoursDashboard as DashData, HoursType } from "@/lib/job-hours-dashboard";
 import type { JobHoursDetail as JobHoursDetailData } from "@/lib/job-hours-detail";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
+import { PartsCostSummary } from "@/components/PartsCostSummary";
+import type { PartsBudgetProjection } from "@/lib/parts-budget-projection";
+
+// The Parts Cost bullet bar (§52) joins the two hours charts in one row, so
+// its inputs travel as one prop rather than a second top-level component the
+// page has to lay out itself. Null when Parts Cost has nothing to show
+// (Total ETO unreachable, or the selection is capped) — the row then falls
+// back to its original two-column ratio instead of leaving an empty third cell.
+export type JobHoursDashboardParts = {
+  purchased: number;
+  paid: number;
+  estimated: number | null;
+  budgetProjection: PartsBudgetProjection | null;
+  jobCount: number;
+  failedJobs: number;
+};
 
 // Web recreation of the Power BI "Job Detail" dashboard (hours half). The Hours
 // Type toggle (Quoted / ETC) swaps the planned-basis series across the matrix
@@ -37,7 +53,15 @@ function groupRuns<T>(rows: T[], keyOf: (r: T) => string, labelOf: (r: T) => str
   return out;
 }
 
-export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hoursDetail: JobHoursDetailData }) {
+export function JobHoursDashboard({
+  data,
+  hoursDetail,
+  parts = null,
+}: {
+  data: DashData;
+  hoursDetail: JobHoursDetailData;
+  parts?: JobHoursDashboardParts | null;
+}) {
   const [hoursType, setHoursType] = useState<HoursType>("Quoted");
   const planned = (s: { quoted: number; etc: number }) => (hoursType === "Quoted" ? s.quoted : s.etc);
   const plannedLabel = hoursType === "Quoted" ? "Quoted" : "ETC";
@@ -134,9 +158,24 @@ export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hours
         </div>
       ) : (
       <>
-      {/* Charts */}
-      <div className="grid grid-cols-1 gap-5 lg:grid-cols-[2fr_1fr]">
-        <div className={`${card("p-4")} overflow-x-auto`}>
+      {/* Charts — all three (Estimate to Complete vs Actual, {plannedLabel} and
+          Actual by Billing Group, Parts Cost) in one row on normal desktop
+          screens, uniform height and aligned top/bottom (§54.3-54.5). Stretch
+          is the DEFAULT — `items-stretch` — so idle, all three cards match the
+          tallest one exactly. The one exception is while chart 1's
+          drill-through is open: that content is "absolutely required" per
+          §54.5, so `items-start` takes over for that state only rather than
+          stretching the other two cards to match a much taller one and
+          reopening the empty-space problem §33 fixed for the KPI summary card
+          (see drill-cap-scroll-ceiling in the memory notes / DEVLOG §33).
+          Falls back to the original 2-column ratio when there's no Parts Cost
+          to show, rather than leaving an empty cell. */}
+      <div
+        className={`grid grid-cols-1 gap-5 ${drillRow ? "items-start" : "items-stretch"} ${
+          parts ? "lg:grid-cols-3" : "lg:grid-cols-[2fr_1fr]"
+        }`}
+      >
+        <div className={`${card("p-4")} flex h-full flex-col overflow-x-auto`}>
           <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3">
             <p className="font-heading text-base font-bold tracking-tight text-sdc-navy">Estimate to Complete vs Actual</p>
             <p className="text-note text-sdc-gray-400">Click a section for its month-by-month detail</p>
@@ -178,8 +217,10 @@ export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hours
             </>
           )}
         </div>
-        <div className={card("p-4")}>
-          <p className="mb-1 font-heading text-base font-bold tracking-tight text-sdc-navy">{plannedLabel} and Actual by Billing Group</p>
+        <div className={`${card("p-4")} flex h-full flex-col`}>
+          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3">
+            <p className="font-heading text-base font-bold tracking-tight text-sdc-navy">{plannedLabel} and Actual by Billing Group</p>
+          </div>
           <EChart
             height={400}
             option={groupedBarOption({
@@ -191,6 +232,16 @@ export function JobHoursDashboard({ data, hoursDetail }: { data: DashData; hours
             })}
           />
         </div>
+        {parts && (
+          <PartsCostSummary
+            purchased={parts.purchased}
+            paid={parts.paid}
+            estimated={parts.estimated}
+            budgetProjection={parts.budgetProjection}
+            jobCount={parts.jobCount}
+            failedJobs={parts.failedJobs}
+          />
+        )}
       </div>
       </>
       )}
