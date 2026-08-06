@@ -79,16 +79,18 @@ const byId = (bs: KpiBlock[], id: KpiBlockId): KpiBlock => {
 
 // ── 1. Every KPI is still there (§37.13 #1, #2, #20) ────────────────────────
 
-test("all six KPIs are present, in reading order", () => {
-  // The six §37 names them, and nothing else. An extra block would be a KPI nobody
-  // asked for; a missing one is the failure the whole requirement is about.
+test("all five KPIs are present, in reading order", () => {
+  // Five since §64 retired the standalone "People booked" block (its split moved into
+  // Engineering/Shop's own countLabel — see the headcount tests below). An extra block
+  // would be a KPI nobody asked for; a missing one is the failure the whole requirement
+  // is about.
   assert.deepEqual(
     blocks().map((b) => b.id),
-    ["engineering", "shop", "parts", "people", "undefined", "offGrid"],
+    ["engineering", "shop", "parts", "undefined", "offGrid"],
   );
   assert.deepEqual(
     blocks().map((b) => b.label),
-    ["Engineering hours", "Shop hours", "Parts spent", "People booked", "Undefined hours", "Hours off the grid"],
+    ["Engineering hours", "Shop hours", "Parts spent", "Undefined hours", "Hours off the grid"],
   );
 });
 
@@ -96,7 +98,7 @@ test("off-grid is the only conditional block, and it is hidden at zero", () => {
   // "0 undefined hours" is a daily reassurance the import is clean, so that block stays
   // at zero. A permanent "0 off-grid" block would just be dead space.
   const clean = blocks({ importIssues: [], offGridJobs: [] });
-  assert.deepEqual(clean.map((b) => b.id), ["engineering", "shop", "parts", "people", "undefined"]);
+  assert.deepEqual(clean.map((b) => b.id), ["engineering", "shop", "parts", "undefined"]);
   assert.equal(byId(clean, "undefined").value, "0");
 });
 
@@ -120,12 +122,8 @@ test("each block reads its own KPI, and no block averages two", () => {
   assert.equal(byId(bs, "engineering").value, "2980", "engineering hours worked");
   assert.equal(byId(bs, "shop").value, "2675", "shop hours worked");
   assert.equal(byId(bs, "parts").value, "$1432857", "parts money spent");
-  assert.equal(byId(bs, "people").value, "18", "distinct people overall");
   assert.equal(byId(bs, "undefined").value, "28", "27.5 undefined hours, rounded");
   assert.equal(byId(bs, "offGrid").value, "181", "120 + 61 off the grid");
-  // Not eng.people + shop.people (21) — anyone who booked to both would be counted
-  // twice. The headline is the distinct count.
-  assert.notEqual(byId(bs, "people").value, "21");
 });
 
 test("moving one KPI moves exactly one block", () => {
@@ -151,10 +149,62 @@ test("a large value is carried in full, never abbreviated", () => {
   assert.ok(!byId(big, "parts").value.includes("…"));
 });
 
-test("no punch data means no confident zero", () => {
+test("no punch data means no confident headcount", () => {
+  // §64: the headcount now lives on the hours blocks themselves. With no punch rows at
+  // all there is nothing to count, so countLabel (and the link) are absent rather than
+  // a confident "0 engineers".
   const bs = blocks({ kpis: { ...KPIS, hasPunchData: false, peopleTotal: 0 } });
-  assert.equal(byId(bs, "people").value, "—", "an em dash, not 0");
-  assert.match(byId(bs, "people").hint!, /No punch-level hours stored/);
+  assert.equal(byId(bs, "engineering").countLabel, null);
+  assert.equal(byId(bs, "shop").countLabel, null);
+  assert.equal(byId(bs, "engineering").hint, null);
+});
+
+// ── 2b. The retired People Booked block's split, now on the hours blocks (§64) ──
+
+test("Engineering and Shop each carry their own headcount label", () => {
+  // KPIS above: engineering.people = 12, shop.people = 9 — the same figures the old
+  // People Booked block's "12 eng · 9 shop" hint quoted, now on the block they describe
+  // instead of a third block between them and Parts spent.
+  const bs = blocks();
+  assert.equal(byId(bs, "engineering").countLabel, "12 engineers");
+  assert.equal(byId(bs, "shop").countLabel, "9 shop");
+  // Parts, Undefined and Off-grid have no headcount of their own.
+  assert.equal(byId(bs, "parts").countLabel, null);
+  assert.equal(byId(bs, "undefined").countLabel, null);
+  const withOffGrid = blocks({ offGridJobs: OFF_GRID });
+  assert.equal(byId(withOffGrid, "offGrid").countLabel, null);
+});
+
+test("the headcount label is singular for exactly one person", () => {
+  const bs = blocks({
+    kpis: { ...KPIS, engineering: group({ ...KPIS.engineering, people: 1 }), shop: group({ ...KPIS.shop, people: 1 }) },
+  });
+  assert.equal(byId(bs, "engineering").countLabel, "1 engineer");
+  // "1 shop" reads fine without a singular/plural split — "shop" was never a countable
+  // noun to begin with, unlike "engineer(s)".
+  assert.equal(byId(bs, "shop").countLabel, "1 shop");
+});
+
+test("the headcount is the SAME figure the drill reconciles against, not a second one", () => {
+  // §64's own caution: do not just relabel a number, use the one already scoped
+  // identically to the hours it sits beside. `g.people` is what getEtcMonthKpis counts
+  // from JobHoursDetail over the exact same (month, jobIds) as `g.worked` — this pins
+  // that the strip reads that field verbatim rather than deriving its own count.
+  const bs = blocks({
+    kpis: { ...KPIS, engineering: group({ ...KPIS.engineering, people: 24 }), shop: group({ ...KPIS.shop, people: 21 }) },
+  });
+  assert.equal(byId(bs, "engineering").countLabel, "24 engineers");
+  assert.equal(byId(bs, "shop").countLabel, "21 shop");
+});
+
+test("changing one group's headcount moves only that block", () => {
+  // The same §37.4 property the hours figures already have, extended to the new field:
+  // a memoised block must not re-render for a change that is not its own.
+  const before = blocks();
+  const after = blocks({ kpis: { ...KPIS, shop: group({ ...KPIS.shop, people: 40 }) } });
+  assert.notEqual(byId(after, "shop").countLabel, byId(before, "shop").countLabel);
+  assert.equal(byId(after, "engineering").countLabel, byId(before, "engineering").countLabel);
+  assert.deepEqual(byId(after, "engineering"), byId(before, "engineering"));
 });
 
 // ── 3. Status, arrows and colour (§37.1, §37.10) ────────────────────────────
@@ -252,10 +302,11 @@ test("every block keeps an explanation reachable", () => {
 
 test("each KPI keeps its own drill-through, and no two share one", () => {
   // §37.2 forbids exactly the shortcut a consolidation invites: one generic drill for
-  // the whole card. Six blocks, six distinct scopes.
+  // the whole card. Five blocks, five distinct scopes — the unscoped "All" (People
+  // Booked) retired with its block (§64).
   const bs = blocks();
   const drills = bs.map((b) => b.drill);
-  assert.deepEqual(drills, ["Engineering", "Shop", "Parts", "All", "Unattributed", "OffGrid"]);
+  assert.deepEqual(drills, ["Engineering", "Shop", "Parts", "Unattributed", "OffGrid"]);
   assert.equal(new Set(drills).size, drills.length, "two blocks point at the same drill");
 });
 
@@ -266,7 +317,6 @@ test("a drill is offered only when there is something behind it", () => {
   const noPunches = blocks({ kpis: { ...KPIS, hasPunchData: false } });
   assert.equal(byId(noPunches, "engineering").drill, null);
   assert.equal(byId(noPunches, "shop").drill, null);
-  assert.equal(byId(noPunches, "people").drill, null);
   assert.equal(byId(noPunches, "parts").drill, "Parts", "parts money does not depend on punches");
   const clean = blocks({ importIssues: [] });
   assert.equal(byId(clean, "undefined").drill, null);
@@ -320,13 +370,13 @@ test("typing a New ETC moves that group's status, live", () => {
 });
 
 test("a live edit in one group leaves the other blocks untouched", () => {
-  // §37.4: "update only the affected KPI block". The blocks for Shop, Parts, People,
-  // Undefined and Off-grid must come back deep-equal, which is what lets React.memo skip
-  // them in the component.
+  // §37.4: "update only the affected KPI block". The blocks for Shop, Parts, Undefined
+  // and Off-grid must come back deep-equal, which is what lets React.memo skip them in
+  // the component.
   const before = liveBlocks(published({ eng: { newEtc: 500, plannedHoursLeft: 620, plannedNewEtc: 500 } }));
   const after = liveBlocks(published({ eng: { newEtc: 700, plannedHoursLeft: 620, plannedNewEtc: 700 } }));
   assert.notDeepEqual(byId(after, "engineering"), byId(before, "engineering"));
-  for (const id of ["shop", "parts", "people", "undefined", "offGrid"] as KpiBlockId[]) {
+  for (const id of ["shop", "parts", "undefined", "offGrid"] as KpiBlockId[]) {
     assert.deepEqual(byId(after, id), byId(before, id), `${id} re-rendered for an engineering edit`);
   }
 });
@@ -338,7 +388,8 @@ test("hours worked, money spent and headcount do not move when someone types", (
   assert.equal(byId(bs, "engineering").value, "2980");
   assert.equal(byId(bs, "shop").value, "2675");
   assert.equal(byId(bs, "parts").value, "$1432857");
-  assert.equal(byId(bs, "people").value, "18");
+  assert.equal(byId(bs, "engineering").countLabel, "12 engineers");
+  assert.equal(byId(bs, "shop").countLabel, "9 shop");
 });
 
 test("a live parts edit re-states the tooltip with the figures it used", () => {
@@ -374,7 +425,8 @@ test("the whole card is built from one snapshot, so it cannot mix vintages", () 
   assert.equal(byId(after, "engineering").value, "3100");
   assert.equal(byId(after, "shop").value, "2700");
   assert.equal(byId(after, "parts").value, "$1500000");
-  assert.equal(byId(after, "people").value, "19");
+  assert.equal(byId(after, "engineering").countLabel, "13 engineers", "the refreshed headcount, not the stale one");
+  assert.equal(byId(after, "shop").countLabel, "10 shop");
   assert.equal(byId(after, "undefined").value, "4");
   // The off-grid block leaves with its data rather than lingering with a stale figure.
   assert.equal(after.find((b) => b.id === "offGrid"), undefined);
@@ -395,22 +447,23 @@ const lanes = (o: Partial<KpiLanes> = {}): KpiLanes => ({
   ...o,
 });
 
-test("Engineering, Shop and People share one punch request; the others are their own", () => {
-  // One fetch narrowed client-side, rather than three identical round trips.
+test("Engineering and Shop share one punch request; the others are their own", () => {
+  // One fetch narrowed client-side, rather than two identical round trips. People
+  // Booked used to share this lane too (unscoped, via "All"), retired with its block
+  // (§64) along with that scope.
   assert.equal(kpiLaneFor("Engineering"), "punches");
   assert.equal(kpiLaneFor("Shop"), "punches");
-  assert.equal(kpiLaneFor("All"), "punches");
   assert.equal(kpiLaneFor("Parts"), "parts");
   assert.equal(kpiLaneFor("Unattributed"), "undefinedHours");
   assert.equal(kpiLaneFor("OffGrid"), null, "off-grid rows arrive with the page");
 });
 
 test("only the open block reports loading, so a slow KPI blocks nothing", () => {
-  // §37.13 #11. The Parts detail is a TotalETO round trip; while it runs, the other five
+  // §37.13 #11. The Parts detail is a TotalETO round trip; while it runs, the other four
   // blocks must keep showing their confirmed values with no spinner and no placeholder.
   const busy = lanes({ parts: { loading: true, error: null, loaded: false } });
   assert.equal(kpiDetailState("Parts", "Parts", busy), "loading");
-  for (const other of ["Engineering", "Shop", "All", "Unattributed", "OffGrid"] as DrillScope[]) {
+  for (const other of ["Engineering", "Shop", "Unattributed", "OffGrid"] as DrillScope[]) {
     assert.equal(kpiDetailState(other, "Parts", busy), "idle", `${other} showed a state for the parts fetch`);
   }
 });

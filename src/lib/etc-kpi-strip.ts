@@ -29,9 +29,13 @@ import { varianceTooltip } from "@/lib/etc-kpi-live";
 // Which drill-through a block opens. Lives here rather than in the component because
 // the mapping from block to drill is one of the things §37.2 forbids collapsing, so it
 // belongs with the tests that check it stays injective.
-export type DrillScope = "Engineering" | "Shop" | "All" | "Unattributed" | "OffGrid" | "Parts";
+//
+// "All" (the unscoped People Booked drill) retired with the block in §64 — every
+// remaining drill scope narrows to one section group or one source, so nothing reads
+// the punch rows unfiltered any more.
+export type DrillScope = "Engineering" | "Shop" | "Unattributed" | "OffGrid" | "Parts";
 
-export type KpiBlockId = "engineering" | "shop" | "parts" | "people" | "undefined" | "offGrid";
+export type KpiBlockId = "engineering" | "shop" | "parts" | "undefined" | "offGrid";
 
 // "warn" is work to do rather than work done — deliberately not red, nothing is broken.
 // "danger" is a figure about to be LOST (see the off-grid block).
@@ -57,7 +61,7 @@ export type KpiBlock = {
   id: KpiBlockId;
   label: string;
   // Formatted for display, or "—" when the figure is genuinely unavailable rather than
-  // zero (People booked on a month with no punch rows).
+  // zero (a month with no punch rows at all).
   value: string;
   // The full explanation, carried as the block's title attribute exactly as the six
   // separate cards carried it (§37.1: "any existing tooltip or explanation").
@@ -76,6 +80,11 @@ export type KpiBlock = {
   // of its own to get backwards.
   statusSign: -1 | 0 | 1;
   statusTitle: string;
+  // The headcount that used to live in its own "People booked" block (§64: retired,
+  // its split surfaces here instead) — "24 engineers" / "21 shop". null for the three
+  // blocks headcount does not apply to (Parts, Undefined hours, Hours off the grid),
+  // and for Engineering/Shop on a month with no punch data at all.
+  countLabel: string | null;
 };
 
 export type KpiFormatters = {
@@ -167,30 +176,70 @@ function groupStatus(g: GroupKpi, fmt: KpiFormatters): Status {
 
 // ── The strip ───────────────────────────────────────────────────────────────
 //
-// Order is the reading order (§37.10) and the one the six cards were in: the two hours
-// groups, the money, the headcount, then the two "missing from every figure here"
-// blocks. Off-grid is last because it is the only conditional one.
+// Order is the reading order (§37.10): the two hours groups (each now carrying its own
+// headcount, §64), the money, then the two "missing from every figure here" blocks.
+// Off-grid is last because it is the only conditional one.
+//
+// ── The headcount moved INTO Engineering/Shop, the standalone block did not (§64) ──
+//
+// "People booked" was its own block: 49 distinct people overall, with the eng/shop
+// split (24 · 21) as its hint and second line. Retired by request; the split survives
+// as each hours block's OWN `countLabel` — `g.people` was already computed on the
+// identical scope as `g.worked` (same `month`, same `jobIds`, same section→group map;
+// see getEtcMonthKpis) so this is not a new figure, only a new place to read one that
+// already existed. The one number this loses is the distinct-overall total (49) —
+// engineering.people + shop.people can exceed it (someone who booked both groups) or
+// fall short of it (someone whose sections are in neither group) — which is exactly
+// why it was never engineering.people + shop.people to begin with, and why there is no
+// replacement for it now that neither hours block is the right home for a figure that
+// belongs to both.
 export function buildKpiBlocks(input: KpiStripInput, fmt: KpiFormatters): KpiBlock[] {
   const { kpis, importIssues, offGridJobs } = input;
   const undef = undefinedHoursTotals(importIssues);
   const offGridTotal = offGridTotalHours(offGridJobs);
 
-  const group = (id: "engineering" | "shop", label: string, g: GroupKpi, drill: DrillScope): KpiBlock => ({
+  const group = (
+    id: "engineering" | "shop",
+    label: string,
+    g: GroupKpi,
+    drill: DrillScope,
+    // The compact ON-ROW label ("24 engineers", "21 shop") and the fuller tooltip
+    // phrasing, so the short form fits between the status and the figure while the
+    // hint can afford to spell out "shop people" without the row's space limit.
+    rowLabel: string,
+    hintLabel: string,
+  ): KpiBlock => ({
     id,
     label,
     value: fmt.hours(g.worked),
-    hint: kpis.hasPunchData ? `${g.people} ${g.people === 1 ? "person" : "people"} booked time` : null,
+    hint: kpis.hasPunchData ? `${hintLabel} booked time` : null,
     tone: null,
     toneLabel: null,
     // No punch rows means there is nothing behind the figure to show, which is why the
-    // link is absent rather than opening an empty panel.
+    // link and the count are both absent rather than the panel — or the row — opening
+    // on nothing.
     drill: kpis.hasPunchData ? drill : null,
+    countLabel: kpis.hasPunchData ? rowLabel : null,
     ...groupStatus(g, fmt),
   });
 
   const blocks: KpiBlock[] = [
-    group("engineering", "Engineering hours", kpis.engineering, "Engineering"),
-    group("shop", "Shop hours", kpis.shop, "Shop"),
+    group(
+      "engineering",
+      "Engineering hours",
+      kpis.engineering,
+      "Engineering",
+      `${kpis.engineering.people} ${kpis.engineering.people === 1 ? "engineer" : "engineers"}`,
+      `${kpis.engineering.people} ${kpis.engineering.people === 1 ? "engineer" : "engineers"}`,
+    ),
+    group(
+      "shop",
+      "Shop hours",
+      kpis.shop,
+      "Shop",
+      `${kpis.shop.people} shop`,
+      `${kpis.shop.people} shop ${kpis.shop.people === 1 ? "person" : "people"}`,
+    ),
     {
       id: "parts",
       label: "Parts spent",
@@ -199,6 +248,7 @@ export function buildKpiBlocks(input: KpiStripInput, fmt: KpiFormatters): KpiBlo
       tone: null,
       toneLabel: null,
       drill: "Parts",
+      countLabel: null,
       ...variance(
         kpis.parts.diff,
         fmt.usd,
@@ -213,30 +263,6 @@ export function buildKpiBlocks(input: KpiStripInput, fmt: KpiFormatters): KpiBlo
           groupNewEtc: kpis.parts.newEtc,
           format: fmt.usd,
         }),
-      ),
-    },
-    {
-      id: "people",
-      label: "People booked",
-      value: kpis.hasPunchData ? String(kpis.peopleTotal) : "—",
-      hint: kpis.hasPunchData
-        ? // Not eng + shop: anyone who booked to both would be double-counted.
-          `${kpis.engineering.people} engineering · ${kpis.shop.people} shop (distinct overall)`
-        : "No punch-level hours stored for this month yet",
-      tone: null,
-      toneLabel: null,
-      drill: kpis.hasPunchData ? "All" : null,
-      // The split is now VISIBLE rather than tooltip-only, which makes it worth saying
-      // why it need not add up to the headline — it can fall either side. Someone who
-      // booked to both groups is counted in both figures but once in the headline, and
-      // someone whose sections belong to neither group (the pool sections the ETC grid
-      // excludes) is in the headline but in neither figure. Measured live on 2026-07:
-      // 49 people against 24 eng · 21 shop.
-      ...note(
-        kpis.hasPunchData ? `${kpis.engineering.people} eng · ${kpis.shop.people} shop` : "No punch data yet",
-        kpis.hasPunchData
-          ? `${kpis.engineering.people} booked engineering sections · ${kpis.shop.people} booked shop sections. These need not add up to ${kpis.peopleTotal}: somebody who booked to both is counted once in the headline, and somebody whose sections fall in neither group is counted in the headline only.`
-          : "No punch-level hours stored for this month yet",
       ),
     },
     // Hours booked to something that isn't a job number. Part of the summary, not just
@@ -257,6 +283,7 @@ export function buildKpiBlocks(input: KpiStripInput, fmt: KpiFormatters): KpiBlo
       tone: undef.hours > 0 ? "warn" : null,
       toneLabel: undef.hours > 0 ? "Needs attention" : null,
       drill: undef.hours > 0 ? "Unattributed" : null,
+      countLabel: null,
       ...note(
         undef.hours > 0 ? `${undef.entries} ${undef.entries === 1 ? "entry" : "entries"}` : "None outstanding",
         undef.hours > 0
@@ -286,6 +313,7 @@ export function buildKpiBlocks(input: KpiStripInput, fmt: KpiFormatters): KpiBlo
       tone: "danger",
       toneLabel: "Action needed",
       drill: "OffGrid",
+      countLabel: null,
       ...note(
         `${offGridJobs.length} ${jobWord} not listed`,
         "These hours reach no total in the grid below, and the rows are deleted by the next Refresh Data or Submit ETC",

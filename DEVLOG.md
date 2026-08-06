@@ -4580,3 +4580,74 @@ narrowed the table to "showing 0 of the 180 total" with "No records match these 
 working Clear filters button); grouping, Close and the KPI figure are unchanged. Data,
 grouping, search, totals and real-time behavior were never touched — this removed rendering
 only. 761 tests pass, types clean, lint clean.
+
+---
+
+## 44. People Booked retired; its split moved onto Engineering and Shop (§64, 2026-08-06)
+
+Reported with a screenshot circling the People Booked row, asking for it gone and its
+eng/shop split shown inline on the two hours rows instead — `24 engineers` between the
+status and the figure on Engineering, `21 shop` on Shop.
+
+### 44.1 Not a new figure — the ticket's own caution, checked rather than assumed
+
+§64 explicitly warns not to "simply move the existing People Booked value without
+validating the Engineering and Shop split." Checked before touching anything: `GroupKpi.people`
+(the count now surfacing on each row) was **already** computed in `getEtcMonthKpis` — from
+`JobHoursDetail` filtered to the identical `month` and `jobIds` the hours figures beside it
+use, split by the same `SECTION_GROUP` billing-group map the hours split uses. It was never
+the People Booked block's own headline value (`peopleTotal`, the DISTINCT-overall count,
+49 on 2026-07) — it was always the number behind that block's "24 eng · 21 shop" hint. So this
+is not "move 49 into two boxes"; it's surfacing a figure that already existed, already scoped
+identically to the hours it now sits beside.
+
+**Reconciled live**, not just argued structurally: opened the Engineering drill, grouped by
+Employee, counted 24 distinct groups. Same for Shop: 21. Both match the new inline labels
+exactly.
+
+### 44.2 What changed, and where
+
+* `lib/etc-kpi-strip.ts` — `KpiBlock` gained `countLabel: string | null`; the `group()`
+  helper builds it (`"24 engineers"` / `"21 shop"` — Engineering gets the full word since it
+  reads naturally either way, Shop gets the ticket's own explicitly-sanctioned shorter form
+  since "shopper" fits nobody). The whole `{ id: "people", ... }` block is deleted, and with
+  it `KpiBlockId`'s `"people"` member and `DrillScope`'s `"All"` (the unscoped drill only
+  the People block ever opened).
+* `components/EtcMonthKpiCards.tsx` — `MetricBlock` renders `countLabel` between the status
+  and the figure, exactly the ticket's ordering. Two `drill === "All"` branches (the
+  unfiltered `scopedDetail` case and the drill title) simplified to their non-"All" arm, since
+  nothing can produce that value any more.
+* `tests/etc-kpi-strip.test.ts` — every list/count that assumed six blocks or the `"All"`
+  scope updated to five and to the two remaining hours scopes; four new tests pin the
+  headcount label's format, its singular case, that it reads the untouched `g.people` field
+  (not a re-derived one), and that changing one group's headcount moves only that block
+  (§37.4's property, extended to the new field).
+
+### 44.3 The one real layout bug this surfaced
+
+First attempt at "wrap cleanly on a narrow screen" put `flex-wrap` on the status/count/value/
+Detail cluster but left it `shrink-0` — which is precisely what stops wrapping from ever
+happening: `shrink-0` refuses to let the browser narrow that cluster at all, so under space
+pressure the whole ROW overflows sideways rather than the cluster wrapping internally.
+Verified live at both faults: with `shrink-0`, a forced-narrow row measured `overflowX: true`
+at a fixed 36px height (clipped, not wrapped); swapping it for `min-w-0` (letting the cluster
+shrink before it wraps) measured `overflowX: false` at 118px (three lines, nothing clipped).
+The label's own `flex-1 truncate` still absorbs ordinary space pressure first, so this only
+engages once even a fully truncated label leaves no room.
+
+### 44.4 Verified live
+
+Card shows exactly five rows (Engineering, Shop, Parts, Undefined, Off-grid). Engineering
+reads `▼ 1,567 over  24 engineers  3,162  Detail`; Shop reads `On plan  21 shop  2,705
+Detail` — both matching §64's example layouts character for character. At a realistic
+narrow width (768px) every row stays one line with zero overflow. Nothing else on the card
+moved: Parts/Undefined/Off-grid rows, their values, tones and Detail links are byte-identical
+to before. 765 tests pass (4 added), types clean, lint clean.
+
+**Left alone, deliberately:** `EtcMonthKpis.peopleTotal` and the `allPeople` Set that
+computes it, in `lib/etc-month-kpis.ts` — still computed, still part of the reconciled type,
+still tested in `etc-kpi-live.test.ts`. It is genuinely dead for display now (nothing reads
+it), but it is backend computation rather than the "unused frontend component logic" §64 asks
+to remove, and the ticket's own caution runs the other way — "do not remove shared
+employee-count calculations if still required" — so it stays rather than being pruned as a
+guess at a second request that was not made.

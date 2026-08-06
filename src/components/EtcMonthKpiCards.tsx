@@ -189,7 +189,9 @@ export function EtcMonthKpiCards({
   // dropdown offering only this group's sections and the total matching the card.
   const scopedDetail = useMemo<JobHoursDetail | null>(() => {
     if (!detail) return null;
-    if (!drill || drill === "All") return detail;
+    // Every remaining drill scope narrows to one section group — the unscoped "All"
+    // People Booked drill retired with its block (§64).
+    if (!drill) return detail;
     const rows = detail.rows.filter((r) => SECTION_GROUP.get(r.section) === drill);
     // Section totals recomputed from the kept rows, so the dropdown's per-section
     // figures still add up to the footer.
@@ -905,8 +907,11 @@ export function EtcMonthKpiCards({
             note={scopeNote}
             // Names the scope rather than where the click came from: "Engineering
             // hours" says what the table contains, where "(opened from
-            // Engineering)" only said how you got here.
-            title={drill === "All" ? `Hours Detail — ${month}` : `${drill} hours — ${month}`}
+            // Engineering)" only said how you got here. This branch is reached only
+            // for Engineering/Shop — Parts, Unattributed and OffGrid have their own
+            // branches above, and the unscoped "All" (People Booked) retired with
+            // its block (§64) — so the title is unconditional now.
+            title={`${drill} hours — ${month}`}
             onClose={() => setDrill(null)}
           />
         ))
@@ -952,6 +957,7 @@ const MetricBlock = memo(function MetricBlock({
   statusText,
   statusSign,
   statusTitle,
+  countLabel,
   drillOpen,
   detailState,
   onDrill,
@@ -1042,8 +1048,18 @@ const MetricBlock = memo(function MetricBlock({
           whatever its figures do. */}
       {/* Status BEFORE the figure and to its left, so the column of figures on the right
           stays unbroken. It gets no reserved width: in a row there is space for it, and
-          the whole reason the column layout hid things was that there wasn't. */}
-      <div className="flex shrink-0 items-baseline justify-end gap-3">
+          the whole reason the column layout hid things was that there wasn't.
+          `flex-wrap` (§64): with the count label added, a narrow card wraps the status
+          and count onto their own line rather than clipping either — the figure and
+          Detail, ordered last, stay together on the line they wrap to.
+          NOT `shrink-0` — that was measured to backfire here: it stops this group from
+          ever being narrower than its own content, so the ROW overflows sideways
+          instead of this group wrapping internally. The label's own `flex-1 truncate`
+          already absorbs ordinary space pressure first (its content is prose, safe to
+          ellipsise); this group only shrinks — and then wraps — once even a fully
+          truncated label leaves no room, which is the narrow-screen case wrapping is
+          for. */}
+      <div className="flex min-w-0 flex-wrap items-baseline justify-end gap-3">
         <p
           className={`min-w-0 truncate text-note font-semibold tabular-nums ${
             statusKind === "unplanned"
@@ -1069,6 +1085,11 @@ const MetricBlock = memo(function MetricBlock({
           )}
           {statusText}
         </p>
+        {/* The headcount that used to be its own "People booked" block (§64) — between
+            the status and the figure, exactly where the ticket asks for it. Muted like
+            the status beside it (it's a fact, not a variance) and truncating rather
+            than pushing the figure/Detail out of reserved width if it is ever long. */}
+        {countLabel && <p className="min-w-0 shrink truncate text-note font-medium text-sdc-muted">{countLabel}</p>}
         {/* The figure. Right-aligned in a reserved width so every value on the card lines
             up on the same edge regardless of how long the label beside it is — the
             comparison this card exists for. Larger than it was, because a row has the
