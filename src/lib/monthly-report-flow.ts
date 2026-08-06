@@ -70,6 +70,36 @@ export type MonthlyReportValidation = {
 // need 200 rows in a dialog — it needs the first screenful and the true count.
 export const MAX_REPORTED_ISSUES = 25;
 
+// ── Which of a month's entries submission actually validates (§68) ──────────
+//
+// A month's EtcEntry rows and the jobs the Monthly ETC grid RENDERS are not the same
+// set. The grid's universe is `etcActiveJobFilter` (Active, not complete, billable,
+// valid type) for the live month, but entries already seeded for a job survive that
+// job changing status — going non-billable, being set to HeadStart, or completing. Those
+// leftovers are exactly what the "Hours off the grid" KPI reports, and they are pruned
+// by the next Refresh Data.
+//
+// Validation must not demand a New ETC for them. The cell is not on screen for anyone to
+// fill in, so a month with one could never be submitted — the reported symptom was
+// `Monthly ETC · Job 1155 · Parts Cost · New ETC` blocking submission for a job that had
+// left the grid. §68's rule: readiness applies only to jobs eligible for the grid.
+//
+// It lives here, in the dependency-free module, for the reason the department issues do:
+// `validateMonthlyReport` can only run inside Next, so the one judgement in it that is a
+// RULE rather than a query is kept where `tsx --test` can reach it. The eligible set is
+// supplied by the caller from getEtcMonthJobWhere — the single source of truth the grid
+// itself renders from — so this function cannot invent a second definition of "eligible".
+//
+// Scope note: this is READINESS only. submitEtcEntriesInTx still freezes every row the
+// month contains, and the off-grid hours stay in the KPI, the drill-through, the audit
+// trail and data-quality review. §68 is explicit that the exclusion must not hide them.
+export function entriesInSubmissionScope<T extends { job: { id: number } }>(
+  entries: readonly T[],
+  eligibleJobIds: ReadonlySet<number>,
+): T[] {
+  return entries.filter((e) => eligibleJobIds.has(e.job.id));
+}
+
 // ── The seven states (§26.7) ────────────────────────────────────────────────
 
 export type SubmitPhase =

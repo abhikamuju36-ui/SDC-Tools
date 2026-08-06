@@ -16,6 +16,7 @@ import {
   failureExplanation,
   receiptLines,
   receiptHeadline,
+  entriesInSubmissionScope,
   type MonthlyReportValidation,
   type SubmitContext,
   type SubmitPhase,
@@ -329,4 +330,64 @@ test("a successful submission reports month, year, user, time and id", () => {
     }),
     "July Report was submitted successfully.",
   );
+});
+
+// ── Hours off the grid do not block submission (§68) ────────────────────────
+//
+// A month's EtcEntry rows outlive the job's eligibility for the grid: seed a month, then
+// set a job non-billable / HeadStart / Complete and its rows remain until the next
+// Refresh prunes them. Those are the "Hours off the grid" rows. Validation used to read
+// every entry for the month, so one of them missing a New ETC blocked submission with an
+// issue nobody could clear — the cell is not rendered for anyone to type into. The
+// reported case was `Monthly ETC · Job 1155 · Parts Cost · New ETC`.
+//
+// The eligible set always comes from getEtcMonthJobWhere (what the grid itself renders),
+// so these pin the RULE; that the caller passes the right set is enforced by there being
+// exactly one query for it in validateMonthlyReport.
+
+type ScopeRow = { id: number; section: string; job: { id: number; jobId: string } };
+const row = (id: number, jobPk: number, jobId: string, section = "10-211"): ScopeRow => ({
+  id,
+  section,
+  job: { id: jobPk, jobId },
+});
+
+test("an off-grid job's entries are excluded from submission scope", () => {
+  const entries = [
+    row(1, 10, "1142"), // on the grid
+    row(2, 55, "1155", "PARTS_COST"), // the reported case — job left the grid
+    row(3, 10, "1142", "40-211"),
+  ];
+  const kept = entriesInSubmissionScope(entries, new Set([10]));
+  assert.deepEqual(
+    kept.map((e) => e.id),
+    [1, 3],
+    "only the eligible job's rows may be validated",
+  );
+  assert.ok(!kept.some((e) => e.job.jobId === "1155"), "job 1155 must not reach the blocked list");
+});
+
+test("every eligible job is still fully validated", () => {
+  // §68 acceptance #5. The exclusion must not become a general amnesty: a job that IS on
+  // the grid keeps every one of its rows in scope.
+  const entries = [row(1, 10, "1142"), row(2, 11, "1144"), row(3, 10, "1142", "PARTS_COST")];
+  const kept = entriesInSubmissionScope(entries, new Set([10, 11]));
+  assert.equal(kept.length, 3);
+});
+
+test("nothing eligible means nothing to block on, not everything", () => {
+  // A locked/historical month resolves its own entries-based universe, so an empty
+  // eligible set only happens when the grid genuinely renders no jobs. Failing OPEN here
+  // (reporting every row as a blocker) is the bug this rule exists to remove.
+  assert.deepEqual(entriesInSubmissionScope([row(1, 10, "1142")], new Set<number>()), []);
+});
+
+test("scoping neither mutates nor reorders the entries it is given", () => {
+  // validateMonthlyReport reuses the full `entries` array afterwards for counts and for
+  // the started/locked checks, so this must be a pure filter.
+  const entries = [row(3, 10, "a"), row(1, 10, "b"), row(2, 99, "c")];
+  const before = entries.map((e) => e.id);
+  const kept = entriesInSubmissionScope(entries, new Set([10]));
+  assert.deepEqual(entries.map((e) => e.id), before, "the input array must be untouched");
+  assert.deepEqual(kept.map((e) => e.id), [3, 1], "order is preserved, not sorted");
 });

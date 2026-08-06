@@ -50,7 +50,7 @@ import {
 // into the browser bundle. Re-exported so every existing importer is unaffected.
 export type { ReportSection, ValidationIssue, MonthlyReportValidation } from "@/lib/monthly-report-flow";
 import type { ReportSection, ValidationIssue, MonthlyReportValidation } from "@/lib/monthly-report-flow";
-import { MAX_REPORTED_ISSUES } from "@/lib/monthly-report-flow";
+import { MAX_REPORTED_ISSUES, entriesInSubmissionScope } from "@/lib/monthly-report-flow";
 import { departmentIssues } from "@/lib/etc-departments";
 import { readIncompleteDepartments } from "@/lib/etc-department-status";
 
@@ -99,6 +99,26 @@ export async function validateMonthlyReport(month: string): Promise<MonthlyRepor
     };
   }
 
+  // ── The job universe readiness applies to (§68) ───────────────────────────
+  //
+  // getEtcMonthJobWhere is the single source of truth for "which jobs belong to this
+  // ETC month" — the grid renders from it, and the Standard rows below are built from
+  // it. Reading it HERE, once, and scoping the checks below to it is what stops
+  // validation demanding a New ETC for a job the grid does not show: an entry left
+  // behind by a job that went non-billable, HeadStart or Complete after the month was
+  // seeded. Those are the "Hours off the grid" rows, and nobody can fill in a cell
+  // that is not on screen.
+  //
+  // `entries` above stays the FULL month deliberately — the started/locked checks and
+  // `counts` below are facts about the month, and submitEtcEntriesInTx freezes every
+  // row it contains. Only the two checks that BLOCK submission are scoped.
+  const eligibleJobs = await prisma.job.findMany({
+    where: (await getEtcMonthJobWhere(month)).where,
+    select: { id: true, executionRate: true, billable: true, excludedFromStandardFees: true },
+  });
+  const eligibleJobIds = new Set(eligibleJobs.map((j) => j.id));
+  const gridEntries = entriesInSubmissionScope(entries, eligibleJobIds);
+
   // ── The manager-entered New ETC values the month is waiting on ────────────
   //
   // "Required" is exactly what the grid paints yellow: hours (or money) were booked
@@ -112,7 +132,7 @@ export async function validateMonthlyReport(month: string): Promise<MonthlyRepor
   // booked; "I removed the old number" is not the same as "I have decided", and the
   // reason says so rather than pretending the cell was never touched.
   let missingNewEtc = 0;
-  for (const e of entries) {
+  for (const e of gridEntries) {
     if (!e.needsReview) continue; // already confirmed (a partially-submitted month)
     const worked = round2(Number(e.hoursWorked));
     const state: NewEtcCellState = {
@@ -146,7 +166,12 @@ export async function validateMonthlyReport(month: string): Promise<MonthlyRepor
   // Hours can never be negative; PARTS_COST stores MONEY in the same column and
   // genuinely can (a credit note, a returned part) — the same asymmetry submitMonth
   // has always had, which is why 2026-06 was once unsubmittable over one credit.
-  for (const e of entries) {
+  //
+  // Scoped to the grid's jobs for the same reason as the loop above (§68): the fix for
+  // a bad stored figure is "Run Refresh Data", and Refresh PRUNES an off-grid job's
+  // unsubmitted rows rather than repairing them — so blocking on one asks for an action
+  // that deletes the row instead of fixing it.
+  for (const e of gridEntries) {
     const value = Number(e.hoursWorked);
     if (!Number.isFinite(value) || (value < 0 && e.section !== PARTS_COST_SECTION)) {
       if (issues.length < MAX_REPORTED_ISSUES) {
@@ -167,12 +192,10 @@ export async function validateMonthlyReport(month: string): Promise<MonthlyRepor
   // refreshed would freeze LAST month's balances as if they were this month's — the
   // check the old Standard-Sheet submission already made, now stated as a validation issue on
   // the one submission instead of an exception from a second button.
-  const jobsForStandard = (
-    await prisma.job.findMany({
-      where: (await getEtcMonthJobWhere(month)).where,
-      select: { id: true, executionRate: true, billable: true, excludedFromStandardFees: true },
-    })
-  ).filter(isInStandardFeesAllocation);
+  // Same universe the ETC checks above were scoped to — one read, one definition
+  // (§68). This used to issue its own identical getEtcMonthJobWhere + job.findMany
+  // pair, which was where "eligible" quietly had two implementations in one function.
+  const jobsForStandard = eligibleJobs.filter(isInStandardFeesAllocation);
   const pools = await loadEffectivePools(month);
   if (pools.pools.length === 0) {
     issues.push({

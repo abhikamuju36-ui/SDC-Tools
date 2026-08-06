@@ -4798,3 +4798,84 @@ together as `+632+255+501+326+240`, and the billing-group chart's own `Shop` cat
 silently dropped by `hideOverlap`. That is §55's `2fr` split meeting a viewport the row should
 have stopped being three columns at — a layout change (stack the row earlier than `lg`), not a
 chart-padding one, so it is recorded here rather than guessed at.
+
+---
+
+## 48. Hours off the grid stopped blocking submission (§68, 2026-08-06)
+
+Reported: `Submit {Month} Report` refused with `Monthly ETC · Job 1155 · Parts Cost · New ETC`
+for a job that is not on the Monthly ETC grid at all — so the cell it demanded was not on
+screen for anyone to fill in, and the month could never be submitted.
+
+### 48.1 The frontend already had the rule; the backend never applied it
+
+`etcActiveJobFilter` (Active, not complete, billable, valid type) is the month's job
+universe, and `getEtcMonthJobWhere` is the single source of truth that resolves it — with
+the entries-based branch for a locked or reopened-historical month. `job-filters.ts` even
+states the consequence outright: *"this is the ONE universe the month operates on, so
+excluding them here excludes them from seeding, pruning and submission too."*
+
+Seeding and pruning honoured that. `validateMonthlyReport` did not — it read
+`prisma.etcEntry.findMany({ where: { month } })`, every row in the month, and looped that.
+A job's entries outlive its eligibility: seed the month, then set the job non-billable, or
+HeadStart, or Complete, and its rows remain until the next Refresh prunes them. Those
+leftovers are precisely what the "Hours off the grid" KPI exists to report — and validation
+was treating each one as an unfilled cell.
+
+The frontend was already correct, which is why the two disagreed: the page's pending badge
+counts `jobs.flatMap((j) => j.etcEntries)`, and `jobs` comes from `getEtcMonthJobWhere`. §68's
+acceptance criterion 6 ("the backend enforces the same exclusion rule as the frontend") was
+therefore the whole fix, in one direction only.
+
+### 48.2 Measured on the real month before and after
+
+`2026-07` had **27 off-grid entries across 7 jobs**, of which **10 would have blocked
+submission**:
+
+```
+job 979   status=Complete  billable=true    7 rows   0 blocking
+job 1083  status=Active    billable=false   8 rows   2 blocking  [10-412, PARTS_COST]
+job 4000  status=Active    billable=false   6 rows   4 blocking  [10-312, 10-313, 10-211, 10-411]
+job 1155  status=Active    billable=false   1 row    1 blocking  [PARTS_COST]   <- the report
+job 7000  status=Active    billable=false   3 rows   1 blocking  [10-312]
+job 7001  status=Active    billable=false   1 row    1 blocking  [PARTS_COST]
+job 2025  status=Active    billable=false   1 row    1 blocking  [PARTS_COST]
+```
+
+Every one is either an Active NON-billable job or a Complete one — exactly the categories
+§68 names. After the change: `missingNewEtc: 0`, and **no off-grid job appears in the issue
+list at all**. The single remaining issue is legitimate and unrelated (PM has not ticked its
+§50 department box).
+
+### 48.3 What is deliberately NOT scoped
+
+* **`counts.entries` / `counts.jobs` stay the FULL month** (464 entries across 54 jobs, vs 48
+  eligible). They feed the "Ready to submit" line, which describes what the submission will
+  FREEZE — and `submitEtcEntriesInTx` still writes every row the month contains. Narrowing
+  them would make that sentence understate the work.
+* **`submitEtcEntriesInTx` is untouched.** §68 is explicit that the exclusion is about
+  readiness only; the off-grid rows keep getting their suggested New ETC frozen exactly as
+  before, and stay in the KPI, the drill-through, the audit trail and data-quality review.
+* **The started / locked checks stay on the full set**, because whether a month exists and
+  whether it is frozen are facts about the month, not about the eligible subset.
+
+The negative-hours check was scoped along with the New ETC one, for a reason worth stating:
+its remedy is "run Refresh Data", and Refresh *prunes* an off-grid job's unsubmitted rows
+rather than repairing them — so blocking on one asked the manager to take an action that
+deletes the row instead of fixing it.
+
+### 48.4 One definition, not two
+
+The rule lives in `monthly-report-flow.ts` as `entriesInSubmissionScope(entries,
+eligibleJobIds)` — the dependency-free module, so `tsx --test` can reach it, the same reason
+`departmentIssues` lives there. The eligible set is always supplied by the caller from
+`getEtcMonthJobWhere`, so this function cannot invent a second definition of "eligible".
+
+Hoisting that read also removed a genuine duplication: `validateMonthlyReport` was already
+calling `getEtcMonthJobWhere` + `prisma.job.findMany` for the Standard Fees rows further
+down. There is now one read serving both, so "eligible" has one implementation in the
+function rather than two that happened to agree.
+
+4 new tests (off-grid excluded, eligible still fully validated, an empty eligible set failing
+closed rather than open, and the filter being pure — the caller reuses the full array
+afterwards). 769 pass, types and lint clean.
