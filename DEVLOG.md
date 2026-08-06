@@ -4404,3 +4404,60 @@ the component body runs.
 
 No calculation changed (§59 didn't ask for any); the two existing charts' tooltips are
 untouched. 758 tests pass, types clean, lint clean on both touched files.
+
+---
+
+## 41. Procurement stayed expanded after a job switch — a stale-mount bug (§53, 2026-08-06)
+
+Reported with a screenshot of nested assemblies (nine levels deep) all expanded on page load.
+The collapsed-by-default feature itself was already built — `AssembliesTab`'s
+`collapsed` state initializes to `new Set(allKeys)` (every node collapsed), and every nested
+`AssemblyRow`/`PartsDetailTable` is truly conditionally rendered (`{isOpen && (...)}`, not just
+CSS-hidden) — so a fresh page load already collapsed correctly, verified live.
+
+### 41.1 The actual bug: switching jobs without a full reload
+
+`<AssembliesTab bom={bom} .../>` at the call site had no `key`. Selecting a different job
+through the `Jobs` picker changes `?jobs=` via client-side navigation — the page Server
+Component re-renders and streams a new `bom`, but `AssembliesTab` sits at the same position in
+the same element type, so React reconciles it as the **same instance** and just updates its
+props. `useState(() => new Set(allKeys))`'s lazy initializer runs **once**, on the very first
+mount, and never again — so after a job switch, `collapsed` still holds the *previous* job's
+node keys. None of those match the new job's tree, `collapsed.has(newKey)` is false for every
+node, and every row renders open. Reproduced live: expanded one row on job 1142, switched to
+job 1101 via the picker, and it rendered with a node open that had never been clicked on 1101 —
+the exact bug, on the exact mechanism.
+
+Fixed with `key={bom.jobId}` on `AssembliesTab`. Procurement only ever renders for a single
+selected job (the `isMulti` branch above it skips Procurement entirely for a multi-job
+selection), so `jobId` alone identifies "is this a different tree" — no separate reset effect
+needed, and nothing else in `JobProcurement` (the Parts List tab, its filters, column widths)
+is disturbed, since the key is scoped to `AssembliesTab` alone rather than the whole drawer.
+
+### 41.2 Verified live, the reported scenario exactly
+
+```
+job 1142, fresh load            0 open rows
+expand "1142-A-000"             1 open row (that one only)
+switch to job 1101 (picker)     0 open rows   ← was leaking the prior job's expand state
+switch back to 1142             0 open rows
+```
+
+Expand All / Collapse All are unchanged (`setCollapsed(new Set())` / `setCollapsed(new Set(allKeys))`)
+and still work on the freshly-keyed instance. All part-level detail was already loaded in one
+server-side `getJobBom` call — collapsing/expanding is pure client state over already-fetched
+data, so there was never a second network request to avoid; the fix is entirely about not
+reusing stale REACT state across a job switch, not about data fetching.
+
+### 41.3 Not touched
+
+A section's **loose parts not belonging to any assembly** (`section.parts`) render
+unconditionally, with no collapse toggle of their own — pre-existing, unrelated to this bug, and
+out of §53's report (which showed nested *assembly* expansion). Worth a separate ask if the team
+also wants those collapsed by default; noted here rather than silently left findable only by
+reading the component.
+
+758 tests pass, types clean; the lint run on this file surfaces 6 pre-existing issues (Date.now()
+called during render in three places, `document.body.style` mutated outside an effect in the
+column-resize drag handler) — all at line numbers that exist unchanged in `HEAD`, confirmed
+unrelated to this change.

@@ -564,7 +564,17 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
       </div>
 
       {tab === "assemblies" ? (
-        <AssembliesTab bom={bom} onPartClick={drillToPart} onOpenPo={openPoFor} />
+        // §53: `key={bom.jobId}` forces a fresh mount — and so a fresh
+        // collapsed-by-default state — when the selected job changes. Without
+        // it, switching jobs updates `bom` on the SAME AssembliesTab instance
+        // (same position in the tree, no type change), so its `collapsed`
+        // state's lazy useState initializer never re-runs; the old job's
+        // Set<string> of collapsed keys survives and matches none of the new
+        // job's node keys, so every row in the newly selected job renders
+        // expanded. Procurement only ever renders for a single job (the
+        // isMulti branch above skips it entirely), so jobId alone identifies
+        // "is this a different tree" — no separate reset effect needed.
+        <AssembliesTab key={bom.jobId} bom={bom} onPartClick={drillToPart} onOpenPo={openPoFor} />
       ) : (
         <PartsListTab
           parts={parts}
@@ -656,7 +666,10 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
     return { pricedByKey: priced, allKeys: keys };
   }, [bom]);
 
-  // Collapsed-by-default: start with every assembly collapsed.
+  // Collapsed-by-default: start with every assembly collapsed. This lazy
+  // initializer only runs once per MOUNT (§53) — the caller keys this
+  // component on `bom.jobId` so a job switch remounts it and re-collapses,
+  // rather than reusing a stale Set of the previous job's node keys.
   const [collapsed, setCollapsed] = useState<Set<string>>(() => new Set(allKeys));
   const toggle = (key: string) =>
     setCollapsed((prev) => {
