@@ -5059,3 +5059,73 @@ their **first** run against my own explanatory comments, which quote the old wor
 why it was wrong. Same trap `tests/quoted-view.test.ts` hit (§35.2), same fix
 `tests/drill-design.test.ts` already used — strip comments before searching. 786 tests pass,
 types and lint clean.
+
+---
+
+## 51. The deploy no longer trusts PM2 to have released port 3010 (§71, 2026-08-06)
+
+A deploy (`pm2 stop` → `npm run build` → `pm2 restart`) left production serving the OLD
+build while PM2 crash-looped, and the loop was silent: `/api/health` returned 200 the whole
+time, so the site looked up and the new code simply was not live.
+
+### 51.1 PM2 on this box does not kill this app's server
+
+Every PM2 command reported success while the `next start` server kept running and kept the
+socket. Observed three times in twenty minutes, with a different mechanism blamed each time
+until the pattern was obvious:
+
+```
+12:43  pm2 stop      -> "[sdc-etc-planner](11) ✓"   PID 4016 still listening on 3010
+12:47  pm2 restart   -> new instance bound only after 4016 was killed BY HAND
+12:51  pm2 delete    -> app entry removed            PID 9324 still listening on 3010
+```
+
+The replacement instance then fails every ~4s with `listen EADDRINUSE :::3010` and PM2 keeps
+respawning it. That is what the entry's `↺ 364` had been recording — not one bad restart, the
+same leak across many deploys.
+
+Two things made this hard to see, and both are worth remembering:
+
+* **The old build keeps answering.** `/api/health` is 200, pages load, nothing is obviously
+  broken. The only symptom is that a change is not there. The check that settled it was
+  comparing `.next/BUILD_ID` on disk against the build id in the served HTML.
+* **`taskkill /F /T /PID <child>` is not enough on its own.** Killing the listener freed the
+  port, but PM2 had already queued another supervisor, so the loop continued until the app
+  entry itself was recreated. And the *parent* of the leaked process is the **PM2 God
+  daemon** (PID 3496 here — it parents every app in the estate), so "kill the parent tree" is
+  exactly the wrong instinct: it would take down scheduler, calendar, statelogic and the rest.
+
+### 51.2 The deploy step
+
+`scripts/free-port.mjs` frees the port between the build and the restart, wired up as:
+
+```
+"deploy": "next build && node scripts/free-port.mjs 3010 && pm2 restart sdc-etc-planner"
+```
+
+Three decisions in it that are deliberate rather than incidental:
+
+* **It fails the deploy loudly (exit 1) if a listener survives.** Falling through to
+  `pm2 restart` after a failed kill is precisely what produces the silent stale-build
+  "success" this exists to prevent. A deploy that stops and says so is strictly better than
+  one that finishes and lies.
+* **The port is matched EXACTLY**, parsed from netstat's local-address column rather than by
+  substring. `endsWith(":3010")` would also match `:13010`, and killing an unrelated service
+  because of a substring is far worse than a failed deploy.
+* **No `npx kill-port`.** A deploy step that reaches the network to free a *local* socket
+  fails when the network does, on a box whose upstreams are already the flaky part.
+
+Verified both paths: the no-op path (`nothing listening on 59999 — nothing to do`, exit 0)
+and the real kill path (it killed the live listener on 3021 and reported it). The
+permission-denied path is handled and code-reviewed but was not executed — the one process
+that denied `taskkill` was in the interactive user's session, which the test shell cannot
+reach.
+
+Production was untouched throughout: 3010 stayed on PID 16832 at HTTP 200.
+
+### 51.3 Left alone
+
+`pm2 restart` by hand still works and is still documented — with the caveat that it must be
+followed by `pm2 logs sdc-etc-planner --err` to check for EADDRINUSE before believing it. The
+root cause is PM2's process handling on Windows, which is not ours to fix; this makes the
+documented deploy path immune to it rather than pretending the underlying behaviour changed.

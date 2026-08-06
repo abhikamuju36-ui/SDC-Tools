@@ -8,6 +8,8 @@
     "dev:preview2": "set NEXT_DIST_DIR=.next-preview2&& next dev",
     "build": "next build",
     "start": "next start -p 3010",
+    "free-port": "node scripts/free-port.mjs 3010",
+    "deploy": "next build && node scripts/free-port.mjs 3010 && pm2 restart sdc-etc-planner",
     "lint": "eslint",
     "test": "tsx --test tests/*.test.ts"
   },

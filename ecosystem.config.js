@@ -9,11 +9,24 @@
  * must be running for the board's Unassigned/Inactive cards to populate.
  *
  * ── Deploy ─────────────────────────────────────────────────────────────────
- *   1. Build:            npm run build          (from this folder)
- *   2. Stop any dev:     stop `npm run dev` / preview on 3010 first
- *   3. Start:            pm2 start ecosystem.config.js
- *   4. Persist:          pm2 save
- *   restart after code change:  npm run build && pm2 restart sdc-etc-planner
+ *   First time:          pm2 start ecosystem.config.js && pm2 save
+ *   After a code change: npm run deploy        <-- build, free 3010, pm2 restart
+ *
+ * ── Use `npm run deploy`, not `pm2 restart` on its own (§71) ────────────────
+ *
+ * PM2 on this Windows box does NOT reliably kill this app's server process. Measured
+ * 2026-08-06, three times in twenty minutes: `pm2 stop`, `pm2 restart` and `pm2 delete`
+ * each reported success while the `next start` server kept running and kept the socket.
+ * The replacement instance then crash-loops on EADDRINUSE every ~4s — while the OLD
+ * BUILD CARRIES ON SERVING. So the deploy looks like it worked, the site looks up, and
+ * the new code is simply not live, with nothing to announce it. (The `↺ 364` this entry
+ * had accumulated was that loop, over many deploys.)
+ *
+ * `npm run deploy` frees 3010 explicitly between the build and the restart, and FAILS
+ * LOUDLY if a process there survives — see scripts/free-port.mjs. If you do restart by
+ * hand, check `pm2 logs sdc-etc-planner --err` for EADDRINUSE before believing it.
+ *
+ * Stop any dev server on 3010 (`npm run dev`) before deploying either way.
  *
  * Env: Next.js auto-loads this folder's .env (DATABASE_URL, SCHEDULER_SHARED_TOKEN,
  * TotalETO/PowerBI creds, etc.) — no need to duplicate secrets here.
