@@ -3,6 +3,10 @@
 import { usd } from "@/components/ui/format";
 import { card } from "@/components/ui/classnames";
 import { PARTS_BAR } from "@/components/charts/theme";
+import { useChartTooltip, type TooltipData, type TooltipRow } from "@/components/charts/ChartTooltip";
+
+const OVER = "#dc2626"; // red — over estimate
+const UNDER = "#15803d"; // green — under estimate
 
 // Parts Cost money block for the Job Hour Details page — the app's version of
 // the Power BI report's Parts Cost visual: one compact vertical "bullet" bar
@@ -55,6 +59,11 @@ export function PartsCostSummary({
   // missing.
   budgetProjection: { purchased: number; estimateToPurchase: number; total: number } | null;
 }) {
+  // Shared hover/tap tooltip (§59), rendered via a portal so it is never
+  // clipped by this card and follows the pointer. `{tooltip.node}` is rendered
+  // once near the end of the card.
+  const tooltip = useChartTooltip();
+
   // Treat a ZERO quote as "nothing on file", not as a $0 target — an absent
   // estimate must not read as $0 estimated.
   const estimate = estimated != null && estimated > 0 ? estimated : null;
@@ -87,35 +96,65 @@ export function PartsCostSummary({
   const barTotal = projTop; // the full bar's value = the Projection (or Spent, if no projection)
 
   const segPct = (amount: number) => (barTotal > 0 ? (amount / barTotal) * 100 : 0);
-  // Top-to-bottom, the order they render in the column.
+
+  // ── Tooltip content (§59) ──────────────────────────────────────────────────
+  //
+  // One TooltipData per metric, shared by both the bar SEGMENT and its LEGEND
+  // row so either can be hovered/tapped — and, crucially, so a thin segment
+  // (the blue increment when invoiced ≈ spent) still has a large hover target
+  // in its legend row (§59 "sufficiently large hover target").
+  const jobCtx = jobCount > 1 ? `Summed across ${jobCount} jobs` : "Selected job";
+  const projDiff = estimate != null ? projTop - estimate : null;
+
+  const invoicedTip: TooltipData = {
+    title: "Amount Invoiced",
+    sub: jobCtx,
+    rows: [{ color: PARTS_BAR.paid, label: "Amount", value: usd(invoiced) }],
+  };
+  const spentTip: TooltipData = {
+    title: "Total Parts Cost Spent",
+    sub: jobCtx,
+    rows: [
+      { color: PARTS_BAR.purchased, label: "Amount", value: usd(spentTop) },
+      { label: "Committed, not invoiced", value: usd(spentTop - invoiced) },
+    ],
+  };
+  const projectionTip: TooltipData | null =
+    projection != null
+      ? {
+          title: "Projection",
+          sub: jobCtx,
+          rows: [
+            { color: PARTS_BAR.projection, label: "Amount", value: usd(projTop) },
+            ...(estimate != null && projDiff != null
+              ? ([
+                  { label: "Estimated", value: usd(estimate) },
+                  {
+                    label: projDiff > 0 ? "Over estimate" : projDiff < 0 ? "Under estimate" : "On estimate",
+                    value: usd(Math.abs(projDiff)),
+                    valueColor: projDiff > 0 ? OVER : projDiff < 0 ? UNDER : undefined,
+                    strong: true,
+                  },
+                ] as TooltipRow[])
+              : []),
+          ],
+        }
+      : null;
+
+  // Top-to-bottom, the order they render in the column; each carries its tip.
   const segments = [
-    projection != null && {
-      key: "projection-inc",
-      pct: segPct(projTop - spentTop),
-      color: PARTS_BAR.projection,
-      title: `Projection: ${usd(projTop)} — adds ${usd(projTop - spentTop)} still projected to buy on top of Total Parts Cost Spent`,
-    },
-    {
-      key: "spent-inc",
-      pct: segPct(spentTop - invoiced),
-      color: PARTS_BAR.purchased,
-      title: `Total Parts Cost Spent: ${usd(spentTop)} — adds ${usd(spentTop - invoiced)} committed but not yet invoiced on top of Amount Invoiced`,
-    },
-    {
-      key: "invoiced-base",
-      pct: segPct(invoiced),
-      color: PARTS_BAR.paid,
-      title: `Amount Invoiced: ${usd(invoiced)}`,
-    },
-  ].filter(Boolean) as { key: string; pct: number; color: string; title: string }[];
+    projection != null && { key: "projection-inc", pct: segPct(projTop - spentTop), color: PARTS_BAR.projection, tip: projectionTip! },
+    { key: "spent-inc", pct: segPct(spentTop - invoiced), color: PARTS_BAR.purchased, tip: spentTip },
+    { key: "invoiced-base", pct: segPct(invoiced), color: PARTS_BAR.paid, tip: invoicedTip },
+  ].filter(Boolean) as { key: string; pct: number; color: string; tip: TooltipData }[];
 
   // The legend: the three CUMULATIVE business values (each segment's top), the
   // numbers the team actually reads. Ordered to match the bar, top-to-bottom.
   const legend = [
-    projection != null && { color: PARTS_BAR.projection, label: "Projection", value: projTop },
-    { color: PARTS_BAR.purchased, label: "Total Parts Cost Spent", value: spentTop },
-    { color: PARTS_BAR.paid, label: "Amount Invoiced", value: invoiced },
-  ].filter(Boolean) as { color: string; label: string; value: number }[];
+    projection != null && { color: PARTS_BAR.projection, label: "Projection", value: projTop, tip: projectionTip! },
+    { color: PARTS_BAR.purchased, label: "Total Parts Cost Spent", value: spentTop, tip: spentTip },
+    { color: PARTS_BAR.paid, label: "Amount Invoiced", value: invoiced, tip: invoicedTip },
+  ].filter(Boolean) as { color: string; label: string; value: number; tip: TooltipData }[];
 
   // ONE meter: where the job is HEADING against what it was sold for.
   //
@@ -146,6 +185,23 @@ export function PartsCostSummary({
           fill: Math.min(100, (budgetProjection.total / estimate) * 100),
         }
       : null;
+
+  const varianceTip: TooltipData | null = variance
+    ? {
+        title: "Projection vs Estimated",
+        sub: jobCtx,
+        rows: [
+          { color: PARTS_BAR.projection, label: "Projection", value: usd(variance.projection) },
+          { label: "Estimated", value: usd(variance.estimate) },
+          {
+            label: variance.dollars > 0 ? "Over" : variance.dollars < 0 ? "Under" : "On estimate",
+            value: usd(Math.abs(variance.dollars)),
+            valueColor: variance.dollars > 0 ? OVER : variance.dollars < 0 ? UNDER : undefined,
+            strong: true,
+          },
+        ],
+      }
+    : null;
 
   return (
     // The four KPI cards that used to sit beside this chart are gone by
@@ -178,13 +234,18 @@ export function PartsCostSummary({
           {segments.map(
             (s) =>
               s.pct > 0 && (
-                <div key={s.key} className="w-full shrink-0" style={{ height: `${s.pct}%`, background: s.color }} title={s.title} />
+                <div
+                  key={s.key}
+                  className="w-full shrink-0"
+                  style={{ height: `${s.pct}%`, background: s.color }}
+                  {...tooltip.trigger(s.tip)}
+                />
               ),
           )}
         </div>
         <div className="flex flex-col gap-1.5 text-xs">
           {legend.map((row) => (
-            <div key={row.label} className="flex items-center gap-2">
+            <div key={row.label} className="-mx-1 flex items-center gap-2 rounded px-1 py-0.5 hover:bg-sdc-gray-50" {...tooltip.trigger(row.tip)}>
               <span className="inline-block h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: row.color }} />
               <span className="text-sdc-gray-600">{row.label}</span>
               <span className="ml-auto font-heading font-bold tabular-nums text-sdc-navy">{usd(row.value)}</span>
@@ -211,18 +272,9 @@ export function PartsCostSummary({
       )}
 
       {variance != null && (
-        <div className="mt-auto border-t border-sdc-border pt-3">
+        <div className="mt-auto border-t border-sdc-border pt-3" {...(varianceTip ? tooltip.trigger(varianceTip) : {})}>
           <div className="flex items-baseline justify-between gap-2">
-            <p
-              className="cursor-help text-xs font-semibold text-sdc-gray-600"
-              title={
-                `Projected part cost ${usd(variance.projection)} against the ${usd(variance.estimate)} Parts Cost Quoted estimate — ` +
-                `${usd(Math.abs(variance.dollars))} ${variance.dollars > 0 ? "over" : "under"}. ` +
-                "Projection = Purchased + estimate to purchase (the Parts New ETC), so this moves as parts are bought and the ETC is revised."
-              }
-            >
-              Projection vs Estimated
-            </p>
+            <p className="text-xs font-semibold text-sdc-gray-600">Projection vs Estimated</p>
             <p className="font-heading text-sm font-bold tabular-nums">
               {/* Zero handled separately: "0.0% over" reads as a rounding
                   artefact where "on estimate" is unambiguous. */}
@@ -252,6 +304,8 @@ export function PartsCostSummary({
           </div>
         </div>
       )}
+
+      {tooltip.node}
     </div>
   );
 }

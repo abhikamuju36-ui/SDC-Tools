@@ -4338,3 +4338,69 @@ grouped bars make them look similar but lose the "one bar, cumulative progressio
 §61 is the settled answer — single stacked bar, increments, with the legend carrying the exact
 cumulative numbers so the thin-segment downside is covered by text rather than by changing the
 shape. Do not "fix" the thin blue segment by re-scaling; it is correct.
+
+### 40.6 Parts Cost tooltips, via a shared portal-based box (§59, 2026-08-06)
+
+Reported (with a screenshot of an older build) as missing/inconsistent tooltips across the
+Job Hour Details charts. Audited each chart named in §59 against the CURRENT code (post
+§39-§40's redesign, not the screenshot's older layout):
+
+* **Estimate to Complete vs Actual** — already has its own inline hover tooltip (name, phase ·
+  dept, Quoted/Actual/Diff), built for the hover-dim interaction that chart already needs. No
+  gap.
+* **Quoted and Actual by Billing Group** — ECharts' own tooltip (`groupedBarOption` in
+  `charts/theme.ts`), styled to the app's box (white bg, `sdc-border`, shadow, `chartFont()`).
+  No gap.
+* **Parts Cost / Projection vs Estimated** — the actual gap. Both relied on the native
+  `title` attribute: no styling, a multi-second OS-controlled delay before it appears, no touch
+  support, and — the sharpest problem — the hit target on the thin stacked-bar segments (a few
+  px tall when Invoiced ≈ Spent, per §60/§61) made it hard to land the browser's own tiny native
+  tooltip on the value that needed explaining most.
+
+### New shared primitive: `components/charts/ChartTooltip.tsx`
+
+One hook, `useChartTooltip()`, for every hand-rolled (non-ECharts) chart element in the app
+that isn't already OK:
+
+* **Rendered through a portal to `document.body`**, which is what makes several of §59's
+  interaction rules hold structurally rather than by convention: it can never be clipped by a
+  card's `overflow`/rounded corners (it isn't inside one), and it can't be hidden behind another
+  element (last in the DOM, `z-[100]`).
+* **`pointer-events-none`**, so it can never block a click, a drill, or a hover on the thing
+  under it — §59's "must not block clicks or other chart interactions" is enforced by the one
+  style rather than by every caller remembering not to intercept.
+* **`position: fixed` at the pointer, clamped to the viewport** on both axes (flips above/left
+  of the cursor near an edge, per §59's "remain inside the viewport… must follow… without
+  covering the value"). Never moves the chart it describes — no layout shift, since it isn't a
+  sibling of anything being measured.
+* **Mouse hover shows/follows; a non-mouse pointerdown (touch/pen) toggles it** — §59's
+  "touch users must be able to tap a value to open the tooltip," without binding a click handler
+  that would fight a chart element's own click-to-drill behaviour.
+* **The trigger is spread onto the LEGEND row, not just the bar segment** — `Amount Invoiced`,
+  `Total Parts Cost Spent` and `Projection` legend lines share the same `TooltipData` as their
+  segment, so the thin blue/orange increments (as little as a few px tall) still have a full-row
+  hover target. This is §59's "sufficiently large hover target" fix for exactly the case the
+  original screenshot's circle was pointing at.
+
+Content follows §59's own examples: metric name, exact amount, job context ("Selected job" /
+"Summed across N jobs"), and the related benchmark's difference where one applies — Total Parts
+Cost Spent shows the amount committed-but-not-invoiced; Projection and the variance meter show
+Estimated and the signed over/under dollar amount, colour-matched to the app's red-over/
+green-under convention.
+
+Verified live (real pointer hover, not synthetic events — an early synthetic-`MouseEvent` test
+against the thin 3px segment intermittently failed to fire React's enter/leave synthesis and is
+a test-harness artifact, not a product bug; a real `computer.hover` on the same segment showed
+the tooltip correctly): tooltip renders in `document.body` (`parentIsBody: true`), `position:
+fixed`, `z-index: 100`, `pointer-events: none`, fully inside the viewport, and disappears on
+pointer-leave.
+
+One lint issue surfaced and was fixed rather than suppressed: an SSR "mounted" gate
+(`useState` + `useEffect(() => setMounted(true), [])`) around the portal tripped
+`react-hooks/set-state-in-effect`. Removed rather than patched — the gate was solving a problem
+that can't occur: the tooltip only ever renders because a mouse/touch handler already fired,
+and no such event fires during a server render, so `document` is always available by the time
+the component body runs.
+
+No calculation changed (§59 didn't ask for any); the two existing charts' tooltips are
+untouched. 758 tests pass, types clean, lint clean on both touched files.
