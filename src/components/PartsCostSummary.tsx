@@ -60,14 +60,59 @@ export function PartsCostSummary({
   const estimate = estimated != null && estimated > 0 ? estimated : null;
   const projection = budgetProjection?.total ?? null;
 
-  // One shared scale for the bullet bar, with headroom so the largest marker's
-  // dashed line never sits flush against the track's top edge — the same
-  // clipping trap §33/§38 kept finding elsewhere in this app. `projection ≥
-  // purchased` always (see parts-budget-projection.ts), so in the normal case
-  // this is Projection's own value driving the scale; the max() still covers
-  // the (rare) case where nothing has been spent but something was invoiced.
-  const scaleMax = Math.max(1, paid, purchased, projection ?? 0) * 1.08;
-  const pct = (v: number) => Math.min(100, Math.max(0, (v / scaleMax) * 100));
+  // ── The single stacked bar (§58) ─────────────────────────────────────────
+  //
+  // The three figures are NESTED, not independent: you invoice a subset of what
+  // you have committed on a PO, and you have committed a subset of what you
+  // project to spend. So `paid ≤ purchased ≤ projection` always (the ≤s are
+  // enforced defensively below in case an upstream oddity inverts them), which
+  // is exactly the shape a stacked bar is FOR — each of the three business
+  // values is the cumulative TOP of a segment:
+  //
+  //   ┌───────────────┐  ← projection   (top of the amber segment / whole bar)
+  //   │ amber  remainder = projection − purchased  (projected, not yet spent) │
+  //   ├───────────────┤  ← purchased    (Total Parts Cost Spent)
+  //   │ blue   committed = purchased − paid         (spent, not yet invoiced)  │
+  //   ├───────────────┤  ← paid         (Amount Invoiced)
+  //   │ green  invoiced  = paid                      (the main filled portion)  │
+  //   └───────────────┘  ← 0
+  //
+  // The whole bar's height IS the projection, so there is no separate scale to
+  // pick and no headroom to leave — the segments sum to 100% by construction.
+  const invoiced = Math.max(0, paid);
+  const spentTop = Math.max(invoiced, purchased);
+  const projTop = projection != null ? Math.max(spentTop, projection) : spentTop;
+  const barTotal = projTop; // the tallest of the three; the bar's full value
+
+  // Segment heights as a share of the bar, so they always sum to ≤100%.
+  const seg = (amount: number) => (barTotal > 0 ? (amount / barTotal) * 100 : 0);
+  const hInvoiced = seg(invoiced);
+  const hCommitted = seg(spentTop - invoiced);
+  const hRemainder = seg(projTop - spentTop);
+
+  // The three legend rows, top-to-bottom, matching the bar's stacking. Each
+  // carries the cumulative business value (the segment's TOP), which is the
+  // number the team reads, plus the tooltip spelling out the increment.
+  const legend = [
+    projection != null && {
+      color: PARTS_BAR.projection,
+      label: "Projection",
+      value: projection,
+      title: `Projection: ${usd(projection)} — purchased plus ${usd(projTop - spentTop)} still projected to buy`,
+    },
+    {
+      color: PARTS_BAR.purchased,
+      label: "Total Parts Cost Spent",
+      value: purchased,
+      title: `Total Parts Cost Spent: ${usd(purchased)} — includes ${usd(spentTop - invoiced)} committed but not yet invoiced`,
+    },
+    {
+      color: PARTS_BAR.paid,
+      label: "Amount Invoiced",
+      value: paid,
+      title: `Amount Invoiced: ${usd(paid)}`,
+    },
+  ].filter(Boolean) as { color: string; label: string; value: number; title: string }[];
 
   // ONE meter: where the job is HEADING against what it was sold for.
   //
@@ -117,58 +162,53 @@ export function PartsCostSummary({
         </p>
       )}
 
-      {/* ── The bullet bar (§52.3), vertical (§54.1) ─────────────────────────
-          One shared scale, three figures: a filled bar for Amount Invoiced (the
-          money actually paid out so far, growing up from the baseline) and two
-          dashed horizontal markers — Total Parts Cost Spent (committed on a PO,
-          invoiced or not) and Projection (purchased + what's left to buy) —
-          crossing the same bar at their own heights. Exact values are stated in
-          the legend row beside it, so the bar itself only has to carry the
-          comparison, not the reading.
-          `flex-1` on the row below lets the fixed-height bar centre inside
-          whatever room the row ends up with once the grid stretches this card
-          to match its two siblings (§54.3) — it never looks stranded at the
-          top or bottom of a taller card. */}
-      <div className="mb-3 flex flex-wrap items-baseline gap-x-5 gap-y-1 text-xs">
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: PARTS_BAR.paid }} />
-          <span className="text-sdc-gray-600">Amount Invoiced</span>
-          <span className="font-heading font-bold tabular-nums text-sdc-navy">{usd(paid)}</span>
-        </span>
-        <span className="flex items-center gap-1.5">
-          <span className="inline-block h-0.5 w-2.5 border-t-2 border-dashed" style={{ borderColor: PARTS_BAR.purchased }} />
-          <span className="text-sdc-gray-600">Total Parts Cost Spent</span>
-          <span className="font-heading font-bold tabular-nums text-sdc-navy">{usd(purchased)}</span>
-        </span>
-        {projection != null && (
-          <span className="flex items-center gap-1.5">
-            <span className="inline-block h-0.5 w-2.5 border-t-2 border-dashed" style={{ borderColor: PARTS_BAR.projection }} />
-            <span className="text-sdc-gray-600">Projection</span>
-            <span className="font-heading font-bold tabular-nums text-sdc-navy">{usd(projection)}</span>
-          </span>
-        )}
-      </div>
-      <div className="flex flex-1 items-center justify-center py-2">
-        <div
-          className="relative flex h-56 w-10 flex-col justify-end rounded-full bg-sdc-gray-100"
-          title={`Amount Invoiced: ${usd(paid)}`}
-        >
-          <div
-            className="w-full rounded-full"
-            style={{ height: `${pct(paid)}%`, background: PARTS_BAR.paid }}
-          />
-          <div
-            className="absolute -left-1.5 -right-1.5 border-t-2 border-dashed"
-            style={{ bottom: `${pct(purchased)}%`, borderColor: PARTS_BAR.purchased }}
-            title={`Total Parts Cost Spent: ${usd(purchased)}`}
-          />
-          {projection != null && (
+      {/* ── The single stacked bar (§58) ──────────────────────────────────────
+          A real rectangular chart column (not the old rounded-pill indicator):
+          one bar, three stacked segments sitting on a baseline, green Amount
+          Invoiced as the main filled portion at the bottom, then the committed
+          and projected slices above it. The legend beside it carries the exact
+          cumulative value each segment tops out at, so the bar shows the
+          composition and the numbers stay readable even when two of the three
+          are close (a nearly-complete job stacks as a thin sliver, which the
+          legend still states to the dollar).
+          `flex-1` lets the fixed-height bar sit centred once the grid stretches
+          this card to match its two siblings (§54.3). */}
+      <div className="flex flex-1 items-center gap-4 py-2">
+        {/* The column. `rounded-t-md` + `overflow-hidden` rounds only the top,
+            so it reads as a bar standing on the axis, not a capsule. The faint
+            bottom border is that axis line. */}
+        <div className="flex h-56 w-16 shrink-0 flex-col overflow-hidden rounded-t-md border-b border-sdc-border bg-sdc-gray-100">
+          {hRemainder > 0 && (
             <div
-              className="absolute -left-1.5 -right-1.5 border-t-2 border-dashed"
-              style={{ bottom: `${pct(projection)}%`, borderColor: PARTS_BAR.projection }}
-              title={`Projection: ${usd(projection)}`}
+              className="w-full shrink-0"
+              style={{ height: `${hRemainder}%`, background: PARTS_BAR.projection }}
+              title={legend[0]?.title}
             />
           )}
+          {hCommitted > 0 && (
+            <div
+              className="w-full shrink-0"
+              style={{ height: `${hCommitted}%`, background: PARTS_BAR.purchased }}
+              title={`Total Parts Cost Spent: ${usd(purchased)} — includes ${usd(spentTop - invoiced)} committed but not yet invoiced`}
+            />
+          )}
+          <div
+            className="w-full shrink-0"
+            style={{ height: `${hInvoiced}%`, background: PARTS_BAR.paid }}
+            title={`Amount Invoiced: ${usd(paid)}`}
+          />
+        </div>
+        {/* Legend, top-to-bottom in the bar's stacking order. */}
+        <div className="flex min-w-0 flex-col gap-2.5 text-xs">
+          {legend.map((row) => (
+            <div key={row.label} className="flex items-start gap-1.5" title={row.title}>
+              <span className="mt-0.5 inline-block h-2.5 w-2.5 shrink-0 rounded-sm" style={{ background: row.color }} />
+              <div className="min-w-0">
+                <div className="leading-tight text-sdc-gray-600">{row.label}</div>
+                <div className="font-heading font-bold leading-tight tabular-nums text-sdc-navy">{usd(row.value)}</div>
+              </div>
+            </div>
+          ))}
         </div>
       </div>
 

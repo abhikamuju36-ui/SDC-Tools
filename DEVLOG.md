@@ -4230,3 +4230,41 @@ No data or behaviour changed for the title, Active Jobs, Hours Refreshed Thru or
 Month — only the layout. 758 tests pass, types clean, lint clean on the touched files (the one
 remaining `set-state-in-effect` warning is the pre-existing entrance-animation effect in
 `SectionHierarchyChart`, unrelated).
+
+### 40.3 Parts Cost as a single STACKED bar (§58, 2026-08-06)
+
+§54 turned the Parts Cost visual into a vertical pill-shaped bullet (a `rounded-full` track
+with a filled portion and two dashed markers). §58: make it a proper rectangular stacked bar
+chart instead.
+
+The redesign leans on a fact the pill was ignoring — the three figures are **nested**, not
+independent: `paid ≤ purchased ≤ projection` always (you invoice a subset of what's on a PO,
+and you have committed a subset of what you project). That is precisely the shape a stacked
+bar is for, so each business value became the cumulative **top** of a segment:
+
+```
+projection ─┐ amber   projection − purchased   (projected, not yet spent)
+purchased  ─┤ blue    purchased  − paid        (spent, not yet invoiced)
+paid       ─┤ green   paid                     (Amount Invoiced — the main fill)
+0          ─┘
+```
+
+The bar's full height IS the projection, so the segments sum to 100% by construction — no
+scale to pick, no headroom to leave (the two things §33/§38 kept getting wrong elsewhere).
+It is a real chart column now: `rounded-t-md` + `overflow-hidden` rounds only the top so it
+stands on a faint bottom-border axis line, rather than the capsule shape §58 called out.
+
+The legend sits beside the bar, top-to-bottom in stacking order, each row carrying the
+cumulative dollar value its segment tops out at (`$1,591,916 / $1,566,916 / $1,522,142` on
+job 1142) with a tooltip spelling out the increment. That is what keeps it readable when two
+of the three are close: a nearly-complete job stacks as a fat green base under two thin
+slivers, and the exact figures are still stated to the dollar in the legend rather than left
+to be eyeballed off 3px of bar. Measured live on job 1142: 60×210px column, segments
+200.2 / 5.9 / 3.3px summing to the bar height, no card overflow, still aligned with the two
+chart cards beside it.
+
+No calculation changed — `paid` / `purchased` / `budgetProjection` and the untouched
+Projection-vs-Estimated variance meter below are the same numbers (§58.5). Segments and legend
+rows are defensively clamped (`Math.max`) and filtered so a null projection or a zero-spend job
+degrades cleanly rather than rendering an inverted or empty stack. 758 tests pass, types clean,
+lint clean on the touched file.
