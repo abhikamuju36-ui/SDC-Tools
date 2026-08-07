@@ -1,91 +1,57 @@
-# SDC Projects Reports
+# SDC Projects Reports (ETC Planner)
 
-Replaces the `Project Planner Data Control.xlsx`, `End Of Month ETC Sheet.xlsx`,
-and `Standard Fees.xlsx` workbooks with a single web app: monthly
-Estimate-to-Complete tracking, the Projects (quoted hours) grid, and the
-Standard Fees calculation — sourced live from Power BI (Fabric warehouse +
-SharePoint) and TotalETO.
+An internal web app that replaces the `Project Planner Data Control.xlsx`, `End Of Month ETC
+Sheet.xlsx`, and `Standard Fees.xlsx` workbooks: monthly Estimate-to-Complete (ETC) tracking,
+the Projects (quoted hours) grid, Standard Fees, and a Job Hour Details / Procurement view that
+recreates the equivalent Power BI reports natively. Hours come from a Paylocity export
+workbook; parts cost and BOM data come live from Total ETO.
 
-Next.js 16 (App Router) · React 19 · Prisma / MySQL · next-auth v5.
+## Tech stack
 
-## Development
+Next.js 16 (App Router, Turbopack) · React 19 · Prisma / MySQL · NextAuth v5 · ECharts
 
-```bash
-npm run dev        # dev server with hot reload, http://localhost:3010
-```
-
-Use `localhost:3010` (not the hostname) in dev — see the dev-origin note in
-`next.config.ts`.
-
-## Production
+## Setup
 
 ```bash
-npm run build      # optimized build (also runs the type check)
-npm start          # production server on port 3010
+npm install
+# create .env with DATABASE_URL and the other variables listed in docs/DEVELOPMENT.md
+npx prisma migrate deploy
+npm run dev          # http://localhost:3010
 ```
 
-`npm start` runs the same server dev uses, minus hot-reload — faster, lower
-memory, and it surfaces prod-only type/route errors at build time. The
-6-hourly auto-sync (`src/instrumentation.ts`) runs under `npm start`
-exactly as in dev.
+Use `localhost:3010`, not a hostname, in dev (see `next.config.ts`'s `allowedDevOrigins` note).
 
-**Run it as a durable service** (so it survives logout/reboot) rather than a
-bare `npm start` in a terminal. On this Windows server the simplest options are
-a scheduled task set to run at startup, or a process manager (e.g. `pm2` /
-`nssm` wrapping `npm start`). The app must run on **SERVER-APP1** — it is the
-MySQL host and the TotalETO SQL host (`10.0.0.7`), so both are local.
-
-If a build ever fails the type check on a `/standard-sheet` route error, delete
-the stale preview build dirs and rebuild: `rm -rf .next .next-preview*` then
-`npm run build`. (They are git-ignored and tsconfig-excluded; this only matters
-if an old dev:preview run left them behind.)
-
-## Environment
-
-All secrets live in `.env` (git-ignored): `DATABASE_URL`, the `PBI_*` Power BI
-service-principal credentials, `TOTALETO_DB_*`, `AUTH_*` (next-auth + Entra),
-and the Standard-Sheet / Audit-Log gate passwords. See `.env` for the full set.
-
-## Tests
+## Main commands
 
 ```bash
-npm test           # node:test unit tests for the ETC / Standard Fees math
+npm run dev          # dev server, port 3010
+npm run build        # production build
+npm start            # run the production build
+npm run deploy       # build + free port 3010 + pm2 restart (production deploy)
+npm test             # run the test suite (57 files, tsx --test)
+npm run lint         # eslint
 ```
 
-## Data sources & freshness
+## Documentation
 
-- **Hours worked** — read from the Paylocity export `Current_Job_Hours.xlsx`
-  every 6 hours (`src/lib/sharepoint-hours.ts`). Preferred source is the
-  OneDrive-synced copy on local disk (`JOB_HOURS_LOCAL_PATH`); Microsoft Graph
-  is the fallback. Reading a file needs no token, which is what lets the sync
-  work from a service in Windows session 0 — see §12 of `DEVLOG.md`.
-  **The OneDrive folder must stay pinned "Always keep on this device"**, or it
-  reverts to a placeholder that only hydrates in an interactive session.
-- **Parts costs / jobs / costing** — synced from TotalETO directly
-  (`src/lib/sync-totaleto.ts`).
-- **Quoted hours** — owned by this app (the Projects tab), no longer pulled.
-- **ETC history / category pools** — on-demand backfills only, via Power BI DAX
-  (`src/lib/sync-etc-history.ts`) and the Fabric warehouse. Power BI is not in
-  the live path for any figure the ETC grid shows.
-- The ETC header shows how fresh the hours feed is ("Hours Refreshed Thru", the
-  latest work date in the export) alongside when the app last pulled it.
+Everything beyond this quick start lives in [`docs/`](docs/):
 
-Two multi-day silent stale-hours outages happened in July, so failures are now
-surfaced rather than logged and forgotten. The ETC page shows a red banner when
-either the feed (`hours_actual`) or the step that writes the grid's own numbers
-(`etc_hours_worked`) last failed — they are tracked separately because the first
-can succeed while the second throws, which is exactly how the grid went stale
-behind a header that said everything was fine.
+| Doc | Covers |
+|---|---|
+| [ARCHITECTURE.md](docs/ARCHITECTURE.md) | System components, client/server boundaries, auth, main modules |
+| [CODEBASE-STRUCTURE.md](docs/CODEBASE-STRUCTURE.md) | Folder-by-folder layout, where new code goes |
+| [DATA-FLOW.md](docs/DATA-FLOW.md) | Source → database → calculation → UI, for hours/parts/ETC/exports |
+| [ETC-BUSINESS-LOGIC.md](docs/ETC-BUSINESS-LOGIC.md) | The exact ETC formulas (Prior ETC, New ETC, Diff, Parts Cost, carry-forward, submission) |
+| [INTEGRATIONS.md](docs/INTEGRATIONS.md) | Paylocity, Total ETO, Power BI, auth, the sibling Scheduler app |
+| [REALTIME-SYNC.md](docs/REALTIME-SYNC.md) | Live cell edits, presence, conflict handling |
+| [REFRESH-PIPELINE.md](docs/REFRESH-PIPELINE.md) | The scheduled + manual data-refresh pipeline |
+| [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local setup, env vars, Prisma workflow |
+| [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Build/deploy process, the PM2-on-Windows gotcha, rollback |
+| [TESTING.md](docs/TESTING.md) | Test structure and what must pass before deploying |
+| [TROUBLESHOOTING.md](docs/TROUBLESHOOTING.md) | Common failure modes and where to look |
 
-An amber banner reports time booked without a valid job number (`"Not Defined"`
-and similar). That time cannot appear in any figure on the page — there is no
-job to put it against — so it is stated rather than left as an unexplained gap
-between the app's totals and payroll.
+`docs/` also holds standalone setup guides for specific integrations (Entra, Graph, Paylocity
+ingestion, Power BI continuity) that predate this documentation set.
 
-> To check the data against its source rather than trusting the header, run
-> `scripts/archive/_recon_kpi_vs_truth.ts` (stored vs a fresh pull) or
-> `scripts/archive/_recon_july_2026.ts` (the app's transforms vs Power BI's measures).
-
-The committed `Job Hours Report - *.Report` / `.SemanticModel` folders are the
-Power BI source of truth this app replicates; the `.SemanticModel` TMDL holds
-every measure's DAX and was used to verify the app's calculations 1:1.
+`DEVLOG.md` at the repo root is the detailed, dated running history of every change — the
+`docs/` files above describe current behavior; `DEVLOG.md` explains how it got that way.
