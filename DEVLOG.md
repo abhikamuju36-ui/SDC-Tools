@@ -5585,9 +5585,15 @@ an undecided latest predecessor to an older decided value underneath it). Revert
 day at request, before any of it was committed — every touched file was restored to its prior
 state and the full verification suite (`tsc`, `eslint`, 844/844 tests) confirmed clean.
 
-The real production database still carries two side effects from the live verification: the
-three `EtcEntry` columns added by migration `20260807150428_add_etc_entry_pending_lineage`
-(that migration itself was left uncommitted, and does not match the reverted schema.prisma —
-do not run it against another environment), and 451 real August 2026 `EtcEntry` rows seeded
-during live testing (none carry a saved New ETC draft). Asked and decided: left as-is. The
-reverted code reads and writes neither, so both are inert dead weight rather than a live risk.
+The real production database carried two side effects from the live verification: the three
+`EtcEntry` columns added by migration `20260807150428_add_etc_entry_pending_lineage` (that
+migration itself was left uncommitted, and does not match the reverted schema.prisma — do not
+run it against another environment), and 451 real August 2026 `EtcEntry` rows plus 445
+September 2026 rows seeded during live testing (none carried a saved New ETC draft). Initially
+asked and decided: leave the rows as-is, since the reverted code reads and writes neither. That
+turned out wrong in practice — with rows on file for both months, the Monthly ETC month picker
+showed August AND September as "in progress" (undoing the exact "next month only after the
+current one locks" behavior the revert was supposed to restore). Deleted both months' rows
+outright once this was reported; July is again the sole in-progress month, matching pre-§66
+behavior. The 3 orphaned schema columns are still on the table, still uncommitted, and still
+inert — no code path reads or writes them.

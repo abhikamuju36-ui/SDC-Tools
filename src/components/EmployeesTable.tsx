@@ -36,6 +36,13 @@ export type EmployeeRow = {
 
 const NO_DEPT = "No department"; // bucket for employees with no department AND no discipline
 
+// Non-team departments that don't get their own card — "Operations" is a
+// single-person administrative bucket, and "Unassigned" is a filing artifact
+// (see teamFor() in employee-teams.ts) rather than a real place someone works.
+// People here still count in the toolbar's totals and are still reachable via
+// the department filter; they just don't get a tile on the board.
+const HIDDEN_DEPARTMENT_CARDS = new Set(["operations", "unassigned"]);
+
 type Card = {
   key: string;
   code: string | null; // short team code; null for a plain department
@@ -67,6 +74,7 @@ export function EmployeesTable({ rows }: { rows: EmployeeRow[] }) {
     for (const r of rows) {
       const team = teamFor(r);
       const key = team ? team.code : r.department?.trim() && r.department !== DASH ? r.department.trim() : NO_DEPT;
+      if (!team && HIDDEN_DEPARTMENT_CARDS.has(key.toLowerCase())) continue;
       let card = byKey.get(key);
       if (!card) {
         card = { key, code: null, title: key, theme: OTHER_THEME, people: [] };
