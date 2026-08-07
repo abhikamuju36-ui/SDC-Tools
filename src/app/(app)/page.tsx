@@ -7,7 +7,6 @@ import { SYNC_SOURCES, SYNC_INTERVAL_MS } from "@/lib/auto-sync";
 import { recentRefreshRuns } from "@/lib/refresh-service";
 import { validJobTypeFilter } from "@/lib/job-filters";
 import { PageTitle, SectionTitle } from "@/components/ui/Typography";
-import { StatusBadge } from "@/components/ui/StatusBadge";
 import { card, BUTTON_PRIMARY } from "@/components/ui/classnames";
 
 function currentMonth() {
@@ -30,6 +29,14 @@ function formatDataThrough(d: Date | null | undefined) {
   return d ? `data thru ${d.toISOString().slice(0, 10)}` : null;
 }
 
+// "Aug 6, 2:04 PM" — the compact clock format the consolidated refresh-status row
+// prints next to each source. Short enough that seven sources still fit on a
+// handful of wrapped lines; the FULL detail (data-through date, failure/waiting
+// text, the "open month only" note) lives in that chip's tooltip instead of here.
+function formatClock(d: Date): string {
+  return d.toLocaleString("en-US", { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+}
+
 export default async function Home({
   searchParams,
 }: {
@@ -50,7 +57,6 @@ export default async function Home({
     activeCount,
     employeeCount,
     needsReviewCount,
-    recentJobs,
     freshnessRows,
     dataQuality,
     // The last few passes (§25.11), so the card can say who refreshed and when.
@@ -60,7 +66,6 @@ export default async function Home({
     prisma.job.count({ where: { status: "Active", ...validJobTypeFilter } }),
     prisma.employee.count({ where: { active: true } }),
     prisma.etcEntry.count({ where: { needsReview: true } }),
-    prisma.job.findMany({ where: validJobTypeFilter, orderBy: { createdAt: "desc" }, take: 8 }),
     prisma.powerBiFreshness.findMany(),
     // The Power BI report's Data Quality page, rebuilt locally — see
     // lib/data-quality.ts for where each rule comes from.
@@ -160,26 +165,32 @@ export default async function Home({
         dataQuality={<DataQualityPanel dq={dataQuality} explorer={explorer} />}
         overview={
         <>
-      <div className="mb-7 grid grid-cols-2 gap-4 md:grid-cols-4">
+      {/* ── One compact KPI strip, not four separate cards ──────────────────
+          Four bordered, shadowed, individually-padded cards became one outer frame
+          with hairline (`gap-px`) dividers between equal-height cells — the same
+          "one card, not N" trick the Monthly ETC summary strip uses (see
+          KPI_GRID_CLASS in lib/etc-kpi-strip.ts), so the two consolidated KPI
+          strips in the app read as one design rather than two. `items-stretch`
+          (grid's default) is what makes every cell the same height regardless of
+          label length, with no cell left holding unused space the way a fixed
+          card height would on a short label.
+          `grid-cols-2 md:grid-cols-4` — the same breakpoint the four-card grid
+          already wrapped at — keeps every cell fully readable on a narrow window
+          instead of clipping four columns into a space meant for two. */}
+      <div className="mb-7 grid grid-cols-2 gap-px overflow-hidden rounded-xl border border-sdc-border bg-sdc-border-soft shadow-sm md:grid-cols-4">
         {stats.map((s) => {
           const icon = statIcons[s.label];
           const cardEl = (
             <div
-              className={`relative ${
-                s.alert
-                  // No transition-shadow here any more: card() carries
-                  // `motion-interactive`, which already transitions box-shadow at the
-                  // shared duration. Two transition declarations on one element means
-                  // whichever Tailwind emits last wins, silently (§36.17).
-                  ? `${card("p-5")} border-sdc-yellow bg-sdc-yellow-bg/40 hover:shadow-md`
-                  : `${card("p-5")} hover:shadow-md`
+              className={`flex h-full items-center gap-3 px-4 py-3.5 motion-interactive ${
+                s.alert ? "border-l-4 border-l-sdc-yellow bg-sdc-yellow-bg/40" : "border-l-4 border-l-transparent bg-white hover:bg-sdc-blue-light/20"
               }`}
             >
               {icon && (
-                <div className={`absolute top-5 right-5 flex h-6.5 w-6.5 items-center justify-center rounded-[7px] ${icon.bg}`}>
+                <div className={`flex h-8 w-8 shrink-0 items-center justify-center rounded-lg ${icon.bg}`}>
                   <svg
-                    width="14"
-                    height="14"
+                    width="15"
+                    height="15"
                     viewBox="0 0 24 24"
                     fill="none"
                     stroke="currentColor"
@@ -192,18 +203,22 @@ export default async function Home({
                   </svg>
                 </div>
               )}
-              <p className={`pr-8 text-xs font-semibold ${s.alert ? "text-sdc-yellow-text" : "text-sdc-gray-600"}`}>{s.label}</p>
-              <p className={`mt-3.5 font-heading text-3xl font-bold tracking-tight ${s.alert ? "text-sdc-yellow-text" : "text-sdc-navy"}`}>
-                {s.value}
-              </p>
+              <div className="min-w-0">
+                <p className={`truncate text-xs font-semibold ${s.alert ? "text-sdc-yellow-text" : "text-sdc-gray-600"}`}>{s.label}</p>
+                <p className={`font-heading text-3xl font-bold tracking-tight ${s.alert ? "text-sdc-yellow-text" : "text-sdc-navy"}`}>
+                  {s.value}
+                </p>
+              </div>
             </div>
           );
           return s.href ? (
-            <Link key={s.label} href={s.href}>
+            <Link key={s.label} href={s.href} className="block h-full">
               {cardEl}
             </Link>
           ) : (
-            <div key={s.label}>{cardEl}</div>
+            <div key={s.label} className="h-full">
+              {cardEl}
+            </div>
           );
         })}
       </div>
@@ -255,42 +270,66 @@ export default async function Home({
           </p>
         )}
 
-        <div className="mt-3 divide-y divide-sdc-border-soft">
-          {scheduledFeeds.map((f) => (
-            <div key={f.source} className="flex items-start justify-between gap-4 py-3">
-              <div className="min-w-0">
-                <div className="flex items-center gap-2.5">
+        {/* ── One compact, wrapping status row — not a seven-row list ──────────
+            Every source used to be its own three-line block (name row, an optional
+            failure/waiting line, a right-aligned two-line timestamp), separated by
+            hairlines. That is a lot of vertical space for what is, on a healthy day,
+            seven names and seven clock times. Now each source is one small chip —
+            status dot, name, and its last-checked time, in the
+            "Paylocity · Aug 6, 2:04 PM" shape — and the chips wrap onto as many
+            lines as the window needs rather than each source claiming its own row
+            regardless of how much it has to say.
+            Nothing is dropped, only relocated: the "open month only" note, the
+            data-through date, and the full failure/waiting text all still exist —
+            in the chip's title tooltip — because they are exactly the "longer
+            source detail" a compact row has no room to print inline. The status
+            dot and a warning glyph stay in the row itself, unhidden, so a failure
+            is visible without hovering anything. */}
+        <div className="mt-3 flex flex-wrap items-center gap-x-1 gap-y-1.5 text-xs">
+          {scheduledFeeds.map((f, i) => {
+            const tooltip = [
+              f.everRan ? `Checked ${timeAgo(f.checkedAt!)}` : "Never run",
+              formatDataThrough(f.refreshedThrough),
+              f.monthScoped ? "Only the latest open ETC month — a submitted month is frozen and never touched" : null,
+              f.failure,
+              f.waiting,
+            ]
+              .filter(Boolean)
+              .join("\n");
+            return (
+              <span key={f.source} className="flex items-center gap-1">
+                {i > 0 && (
+                  <span aria-hidden className="mr-0.5 text-sdc-border">
+                    |
+                  </span>
+                )}
+                <span
+                  title={tooltip}
+                  className="flex items-center gap-1.5 rounded-md px-1.5 py-1 motion-interactive hover:bg-sdc-gray-50"
+                >
                   <span
                     className={`h-1.75 w-1.75 shrink-0 rounded-full ${
                       f.failure ? "bg-sdc-red" : f.waiting ? "bg-sdc-yellow" : f.everRan ? "bg-sdc-green" : "bg-sdc-gray-400"
                     }`}
                   />
-                  <p className="truncate text-sm font-semibold text-sdc-navy">{f.label}</p>
-                  {f.monthScoped && (
-                    <span
-                      className="shrink-0 rounded bg-sdc-gray-100 px-1.5 py-0.5 text-label font-medium text-sdc-gray-600"
-                      title="Only the latest open ETC month — a submitted month is frozen and never touched"
-                    >
-                      open month only
+                  <span className="font-semibold text-sdc-navy">{f.label}</span>
+                  <span className="text-sdc-gray-400">· {f.everRan ? formatClock(f.checkedAt!) : "never run"}</span>
+                  {/* Not colour alone: the glyph says "look closer" even to someone who
+                      can't tell the dot's red from its green. */}
+                  {f.failure && (
+                    <span aria-hidden className="font-bold text-sdc-red-text">
+                      ⚠
                     </span>
                   )}
-                </div>
-                {f.failure && <p className="mt-1 pl-4.5 text-xs break-words text-sdc-red-text">{f.failure}</p>}
-                {f.waiting && <p className="mt-1 pl-4.5 text-xs break-words text-sdc-yellow-text">{f.waiting}</p>}
-              </div>
-              <span className="shrink-0 text-right text-xs text-sdc-gray-400">
-                {f.everRan ? `Checked ${timeAgo(f.checkedAt!)}` : "Never run"}
-                {formatDataThrough(f.refreshedThrough) && (
-                  <>
-                    <br />
-                    <span title="How current the source data itself is, not when the app last asked">
-                      {formatDataThrough(f.refreshedThrough)}
+                  {!f.failure && f.waiting && (
+                    <span aria-hidden className="font-bold text-sdc-yellow-text">
+                      ⚠
                     </span>
-                  </>
-                )}
+                  )}
+                </span>
               </span>
-            </div>
-          ))}
+            );
+          })}
         </div>
       </div>
 
@@ -301,27 +340,6 @@ export default async function Home({
           one refresh now, it covers every source, and the per-source state above still
           shows exactly which feed is stale and why. */}
 
-      <div className={card("p-0")}>
-        <div className="border-b border-sdc-border-soft px-6 py-4">
-          <SectionTitle>Recently Added Jobs</SectionTitle>
-        </div>
-        <div className="divide-y divide-sdc-border-soft">
-          {recentJobs.length === 0 && <p className="p-5 text-sm text-sdc-gray-400">No jobs yet.</p>}
-          {recentJobs.map((job) => (
-            <Link
-              key={job.id}
-              href={`/jobs/${job.id}`}
-              className="motion-interactive flex items-center justify-between px-6 py-3.5 text-sm hover:bg-sdc-blue-light/40"
-            >
-              <span>
-                <span className="font-mono text-sdc-gray-400">#{job.jobId}</span>{" "}
-                <span className="font-semibold text-sdc-navy">{job.jobName}</span>
-              </span>
-              <StatusBadge variant={job.status === "Complete" ? "complete" : "active"}>{job.status}</StatusBadge>
-            </Link>
-          ))}
-        </div>
-      </div>
         </>
         }
       />
