@@ -27,8 +27,9 @@ type PartsBarRow = {
 
 // Parts Cost money block for the Job Hour Details page — the app's version of
 // the Power BI report's Parts Cost visual: four horizontal bullet-bar rows
-// (Budget, Amount Invoiced, Total Parts Cost Spent, Projection) on one shared
-// scale, plus a budget-line marker and a budget meter (§78, by Dan's request,
+// (Budget, Projection, Amount Invoiced, Total Parts Cost Spent — reordered by
+// request so Projection sits right beside the Budget it's measured against)
+// on one shared scale, plus a budget-line marker and a budget meter (§78, by Dan's request,
 // redesigned again against his own reference mockup — reference/Parts Cost
 // Chart.dc.html — after a first §78 attempt built this as four ECharts bars;
 // that shared-scale bullet-row layout has no natural ECharts shape, so it is
@@ -126,9 +127,9 @@ export function PartsCostSummary({
   // caption under "Total Parts Cost Spent" instead, only when it's non-zero.
   const uninvoicedCommitted = spent - invoiced;
 
-  // Top to bottom: Budget (the plan), then the two actuals building up to it, then the
-  // forward-looking figure — the same order the requirement itself lists them in, and
-  // the same order the reference mockup uses. Budget and Projection are OMITTED, not
+  // Top to bottom: Budget (the plan), then Projection (the other forward-looking
+  // figure, kept right beside the plan it's measured against — by request), then
+  // the two actuals that build up to it. Budget and Projection are OMITTED, not
   // drawn at $0, when there is nothing to show — same rule §61 used for the orange
   // segment, applied per-row instead of per-segment.
   //
@@ -140,9 +141,9 @@ export function PartsCostSummary({
 
   const maybeBars: (PartsBarRow | null)[] = [
     estimate != null ? { key: "budget", label: "Budget", value: estimate, color: BAR_BUDGET } : null,
+    projTotal != null ? { key: "projection", label: "Projection", value: projTotal, color: projColor, emphasize: true } : null,
     { key: "invoiced", label: "Amount Invoiced", value: invoiced, color: BAR_INVOICED },
     { key: "spent", label: "Total Parts Cost Spent", value: spent, color: BAR_SPENT },
-    projTotal != null ? { key: "projection", label: "Projection", value: projTotal, color: projColor, emphasize: true } : null,
   ];
   const bars = maybeBars.filter((b): b is PartsBarRow => b != null);
   // All rows share one scale, per the reference mockup — each bar's fill is its own
@@ -226,12 +227,14 @@ export function PartsCostSummary({
         </p>
       )}
 
-      {/* ── The four bullet-bar rows (§78) ────────────────────────────────────
-          Budget, Amount Invoiced, Total Parts Cost Spent, Projection — each a
+      {/* ── The four bullet-bar rows (§78, reordered by request) ──────────────
+          Budget, Projection, Amount Invoiced, Total Parts Cost Spent — each a
           label + exact dollar value above a horizontal track filled to its
-          share of the largest value shown, per Dan's reference mockup
-          (reference/Parts Cost Chart.dc.html). Every value is plain text, so
-          nothing here depends on a hover to be read. */}
+          share of the largest value shown. Row proportions/colors follow
+          Dan's original reference mockup (reference/Parts Cost Chart.dc.html);
+          only the ORDER moved, so Projection sits right beside the Budget
+          it's measured against instead of trailing after both actuals. Every
+          value is plain text, so nothing here depends on a hover to be read. */}
       <div className="flex-1 space-y-4">
         {bars.map((b) => (
           <div key={b.key}>
@@ -252,19 +255,25 @@ export function PartsCostSummary({
                 <div className="absolute -top-1 -bottom-1 w-px bg-sdc-navy/55" style={{ left: `${budgetPct}%` }} />
               )}
             </div>
+            {/* The "Budget line" legend used to sit after all four rows, which
+                read fine when Projection — the only row that draws a tick
+                mark — was last. Now that Projection sits right after Budget,
+                the legend moves with it rather than trailing below the two
+                unrelated actuals, so it still reads as "what that mark on
+                THIS bar means" instead of an orphaned caption at the bottom. */}
+            {b.key === "projection" && showBudgetLine && estimate != null && (
+              <div className="mt-1.5 flex items-center gap-2">
+                <span className="inline-block h-3 w-px bg-sdc-navy/55" />
+                <span className="font-mono text-note uppercase tracking-wide text-sdc-gray-400">
+                  Budget line — {usd(estimate)}
+                </span>
+              </div>
+            )}
             {b.key === "spent" && uninvoicedCommitted > 0.005 && (
               <p className="mt-1 text-note text-sdc-gray-400">{usd(uninvoicedCommitted)} committed, not yet invoiced</p>
             )}
           </div>
         ))}
-        {showBudgetLine && estimate != null && (
-          <div className="flex items-center gap-2 pt-1">
-            <span className="inline-block h-3 w-px bg-sdc-navy/55" />
-            <span className="font-mono text-note uppercase tracking-wide text-sdc-gray-400">
-              Budget line — {usd(estimate)}
-            </span>
-          </div>
-        )}
       </div>
 
       {/* Projection vs Estimated — the one figure that says whether this job

@@ -788,6 +788,13 @@ export function EtcMonthKpiCards({
                                           {/* getJobPartsCost already sorts newest purchase first, so this
                                               column is also the order the rows are in. */}
                                           <th className="px-2 py-1.5 text-left font-bold whitespace-nowrap">Purchased on</th>
+                                          {/* The AP document date — when the line was actually billed,
+                                              distinct from Purchased on (when it was ordered) and from
+                                              the dollar "Invoiced" column further right. Can be blank: a
+                                              PO line that's ordered but not yet invoiced has no AP
+                                              document at all — but this drill is invoiced-only (§77), so
+                                              every row here should carry one. */}
+                                          <th className="px-2 py-1.5 text-left font-bold whitespace-nowrap">Invoiced on</th>
                                           <th className="px-2 py-1.5 text-left font-bold">Supplier</th>
                                           <th className="px-2 py-1.5 text-left font-bold">Part</th>
                                           <th className="px-2 py-1.5 text-right font-bold">Qty</th>
@@ -800,13 +807,18 @@ export function EtcMonthKpiCards({
                                         {lines.lines.map((l, i) => (
                                           <tr key={i} className="border-b border-sdc-border-soft/50" title={l.description ?? undefined}>
                                             <td className="px-2 py-1.5 text-left font-mono font-semibold text-sdc-navy">{l.poNumber ?? "—"}</td>
-                                            {/* The PO date, not the invoiced date — "when did we buy
-                                                this" is the question a purchase line answers. The
-                                                invoiced date is what the month's figure is windowed
-                                                on, which is why the two need not agree; the note
-                                                above the table says so. */}
+                                            {/* Two distinct dates, deliberately both shown: Purchased on
+                                                is when the PO was placed, Invoiced on is when it was
+                                                actually billed (the AP document date) — the figure this
+                                                month's "Parts spent" is windowed on. They routinely
+                                                disagree (a part ordered in March can be billed in July);
+                                                the note above the table already explains why the totals
+                                                here don't equal the month's KPI. */}
                                             <td className="px-2 py-1.5 text-left font-medium whitespace-nowrap text-sdc-navy">
                                               {l.purchaseDate ?? "—"}
+                                            </td>
+                                            <td className="px-2 py-1.5 text-left font-medium whitespace-nowrap text-sdc-gray-700">
+                                              {l.invoicedDate ?? "—"}
                                             </td>
                                             <td className="max-w-[150px] truncate px-2 py-1.5 text-left font-medium text-sdc-navy">
                                               {l.supplier ?? "—"}
