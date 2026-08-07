@@ -10,7 +10,6 @@ import { ETC_DEPT_GROUPS, nextHiddenGroups } from "@/lib/etc-view";
 //   • Section columns  -> `dept` param (Engineering/Shop)
 //   • Job Name column  -> `jobname` param ("0" = hidden)
 //   • Billable rows    -> `billables` param (Billable/Non-Billable)
-// URL-param logic mirrors DeptColumnFilter/MultiSelectFilter.
 //
 // ── What is NOT in here any more (§45) ──────────────────────────────────────
 //

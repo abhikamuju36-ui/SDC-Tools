@@ -8,7 +8,7 @@
 // A runtime throw rather than `import "server-only"`, deliberately. That import is
 // a Next build-time alias with no installed package behind it, so any module using
 // it cannot be unit-tested with the repo's plain `tsx --test` runner — which is why
-// projects-gate.ts and confirm-password.ts have no tests. This check is strictly
+// projects-gate.ts has no tests. This check is strictly
 // stronger for our purposes: it fails just as loudly if the module is ever bundled
 // to the browser, AND it lets the concurrency tests below exist.
 if (typeof window !== "undefined") {

@@ -17,7 +17,6 @@
     "@azure/msal-node": "^5.3.1",
     "@azure/msal-node-extensions": "^5.3.1",
     "@prisma/client": "6.19.3",
-    "@tanstack/react-table": "^8.21.3",
     "ag-grid-community": "^36.0.2",
     "ag-grid-react": "^36.0.2",
     "bcryptjs": "^3.0.3",
@@ -31,7 +30,6 @@
     "prisma": "6.19.3",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "recharts": "^3.10.0",
     "unpdf": "^1.6.2"
   },
   "devDependencies": {
