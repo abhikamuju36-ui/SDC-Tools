@@ -22,6 +22,14 @@ const eslintConfig = defineConfig([
     "out/**",
     "build/**",
     "next-env.d.ts",
+    // The other .next-* dist dirs this project's own tooling creates (dev:preview*,
+    // the sdc-etc-planner-verify*/-perf/-buildcheck launch configs, all via
+    // NEXT_DIST_DIR) — eslint-config-next's default only covers the literal `.next`,
+    // so any of these left on disk got scanned as source, not generated output.
+    ".next-*/**",
+    // Design-tool mockup exports dropped for reference (gitignored, not app code —
+    // see .gitignore's own comment on this).
+    "reference/**",
   ]),
 ]);
 
