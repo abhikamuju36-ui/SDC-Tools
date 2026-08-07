@@ -447,24 +447,107 @@ SELECT
 FROM vwCostingExtraCostsDetailed EC WITH(NOLOCK)
 WHERE EC.ProjectID = @job`;
 
-// ── Invoiced-only, for the Parts Spent drill-through specifically (§77) ──────
+// ── Genuinely month-scoped invoice lines, for the Parts Spent drill (2026-08-07) ──
 //
-// A line with nothing invoiced yet answers "what's on order", not "what was spent" —
-// and the Parts Spent drill is specifically about spend. Pure and separate from
-// getJobPartsCost itself: that function is also read directly by the Job Hour
-// Details / Procurement page, where an ordered-but-unbilled part is exactly what a
-// reader is there to see, so the exclusion belongs at the ONE caller that asked for
-// it (lib/hours-detail-actions.ts's loadJobPartsLines) rather than in the shared
-// query every consumer goes through.
+// getJobPartsCost's whole-history result is correct for Job Hour Details/Procurement
+// (below), but the Parts Spent drill nests it directly under a job row that shows THIS
+// MONTH's spend — and a job whose big invoice landed in a different month showed that
+// invoice's full line among rows sitting under a much smaller total. Reported as a bug:
+// a total must never be exceeded by one of its own visible rows.
 //
-// purchased/paid/leftToPay are recomputed from the KEPT lines, not sliced from the
-// input's own totals — those summed the FULL history, and once the zero-invoice
-// lines are gone the returned totals must still be the sum of the returned lines.
-export function invoicedOnly(full: JobPartsCost): JobPartsCost {
-  const lines = full.lines.filter((l) => l.invoicedAmount > 0);
-  const purchased = lines.reduce((s, l) => s + l.totalPrice, 0);
-  const paid = lines.reduce((s, l) => s + l.invoicedAmount, 0);
-  return { purchased, paid, leftToPay: purchased - paid, lines };
+// ── Why this is a SEPARATE query, not a date filter over getJobPartsCost's result ──
+//
+// The first attempt at this fix filtered getJobPartsCost's lines by "does this line's
+// invoicedDate fall in the month" — and it was wrong. `invoicedDate`/`invoicedAmount`
+// there come from a subquery grouped by PurchaseDetailID ALONE (MAX(APDocDate),
+// SUM(amount) across every AP document that PO line has EVER received) — a lifetime
+// aggregate collapsed onto one row. A PO line invoiced across 7 different months (found
+// live on job 1142: $1,207,300 spanning 2025-11 through 2026-08) would have its ENTIRE
+// cumulative total misattributed to whichever single month happens to contain its LATEST
+// invoice — exactly the "mixing monthly and full-history values in the same total" the
+// fix was supposed to prevent, just relocated to a different month instead of removed.
+//
+// This query instead joins to tblAPDocumentDetails/tblAPBatchDocument directly and
+// filters `APBD.APDocDate` BEFORE aggregating, one row per actual invoice event within
+// the window — the same basis and the same date field (APDocDate) getPartsCostBookedByJob
+// windows Money Spent Month on. A multi-month PO line now correctly contributes only
+// the slice of it that was actually invoiced in THIS month, split across each month's
+// drill rather than dumped whole into one of them.
+//
+// Job attribution is `APDD.ProjectID` DIRECTLY — the exact field getPartsCostBookedByJob
+// groups by — not the PO chain (`POD.ProjectID`) the rest of this file's PO-detail
+// queries use. That distinction matters here specifically: found live, job 1122 had 5 AP
+// lines in July ($5,252.77 — freight, a tariff, an expense reimbursement) attributed to
+// it directly with NO purchase order at all. The PO-chain tables are LEFT JOINed, not
+// INNER, so these still surface as rows (PO/part columns blank, description falls back
+// to the AP line's own), rather than being silently dropped the way an INNER JOIN through
+// tblPurchaseOrderDetails would drop them. No BatchEntryTypeID filter either — matching
+// getPartsCostBookedByJob's own definition exactly, not the separate PO-tracking queries'
+// filter (which exists for a different reason: avoiding double-counting a PO's own
+// remaining-balance calculation, not relevant to a plain AP-document sum). Verified live
+// against getPartsCostBookedByJob's per-job figure for 10 real jobs in July 2026 — exact
+// match, to the cent, every time.
+export async function getJobPartsInvoicedInMonth(jobId: string, monthStart: Date, monthEndExclusive: Date): Promise<JobPartsCost> {
+  const numericJob = Number(jobId);
+  if (!Number.isFinite(numericJob)) return { purchased: 0, paid: 0, leftToPay: 0, lines: [] };
+  const pool = await sql.connect({ ...config, requestTimeout: 120000 });
+  try {
+    const result = await pool
+      .request()
+      .input("job", sql.Int, numericJob)
+      .input("start", sql.DateTime, monthStart)
+      .input("end", sql.DateTime, monthEndExclusive)
+      .query(`
+        SELECT
+           CONVERT(varchar(10), POH.PurchaseDate, 23) AS PurchaseDate
+          ,CONVERT(varchar(10), APBD.APDocDate, 23) AS InvoicedDate
+          ,SUP.CName AS Supplier
+          ,IM.Manufacturer AS Manufacturer
+          ,CAT.CategoryDescription AS Category
+          ,CAST(POH.PurchaseOrderID AS varchar(32)) AS PONumber
+          ,COALESCE(NULLIF(POD.PurchaseSupplierItem,''), IM.ManufacturerPartNumber) AS PartNumber
+          ,COALESCE(NULLIF(POD.PurchaseSupplierDescription,''), IM.ItemDescription, NULLIF(APDD.APDocItemDesc,'')) AS Description
+          ,APDD.APDocQty AS Qty
+          ,COALESCE(POD.PurchasePrice * POH.PurchaseCurrRate, APDD.APDocUnitPrice * APBD.APDocCurrRate) AS UnitPrice
+          ,(APDD.APDocQty * APDD.APDocUnitPrice * (1 - APDD.APDocItemPctDisc) * APBD.APDocCurrRate) AS InvoicedAmount
+        FROM tblAPDocumentDetails APDD WITH(NOLOCK)
+          INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID
+          LEFT JOIN tblPurchaseOrderDetails POD WITH(NOLOCK) ON POD.PurchaseDetailID = APDD.PurchaseDetailID
+          LEFT JOIN tblPurchaseOrderHeader POH WITH(NOLOCK) ON POH.PurchaseOrderID = POD.PurchaseOrderID
+          -- Supplier from the AP document's own vendor (tblAPBatchDocument.CompanyID), not the
+          -- PO's — this is who was actually billed, and it is the only source at all for a
+          -- non-PO line.
+          LEFT JOIN tblCompany SUP WITH(NOLOCK) ON SUP.CompanyID = APBD.CompanyID
+          LEFT JOIN tblEngItemMaster IM WITH(NOLOCK) ON IM.ItemID = POD.ItemID
+          LEFT JOIN tlkpItemMaster_Categories CAT WITH(NOLOCK) ON CAT.ItemCategory = IM.ItemCategory
+        WHERE APDD.ProjectID = @job
+          AND APBD.APDocDate >= @start AND APBD.APDocDate < @end
+      `);
+    const lines: PartsCostLine[] = result.recordset.map((r) => ({
+      purchaseDate: r.PurchaseDate ?? null,
+      invoicedDate: r.InvoicedDate ?? null,
+      supplier: r.Supplier ?? null,
+      manufacturer: r.Manufacturer ?? null,
+      category: r.Category ?? null,
+      poNumber: r.PONumber ?? null,
+      partNumber: r.PartNumber ?? null,
+      description: r.Description ?? null,
+      quantity: Number(r.Qty) || 0,
+      // No remaining-uninvoiced-balance concept at this grain — this row IS one
+      // invoice event, so what was purchased (this event's worth) and what was
+      // invoiced are the same number. leftToPay is meaningless per-line here too;
+      // it is computed once, correctly, at the returned total below.
+      unitPrice: Number(r.UnitPrice) || 0,
+      totalPrice: Number(r.InvoicedAmount) || 0,
+      invoicedAmount: Number(r.InvoicedAmount) || 0,
+    }));
+    const meaningful = lines.filter((l) => l.invoicedAmount !== 0);
+    meaningful.sort((a, b) => (b.invoicedDate ?? "").localeCompare(a.invoicedDate ?? ""));
+    const paid = meaningful.reduce((s, l) => s + l.invoicedAmount, 0);
+    return { purchased: paid, paid, leftToPay: 0, lines: meaningful };
+  } finally {
+    await pool.close();
+  }
 }
 
 export async function getJobPartsCost(jobId: string): Promise<JobPartsCost> {

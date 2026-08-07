@@ -1,10 +1,10 @@
 "use server";
 
 import { auth } from "@/lib/auth";
-import { isValidMonth } from "@/lib/etc";
+import { isValidMonth, monthWindowUtc } from "@/lib/etc";
 import { getEtcMonthHoursDetail, type JobHoursDetail } from "@/lib/job-hours-detail";
 import { getPartsSpentDetail, type PartsSpentDetail } from "@/lib/parts-spent";
-import { getJobPartsCost, invoicedOnly, type JobPartsCost } from "@/lib/sync-totaleto";
+import { getJobPartsInvoicedInMonth, type JobPartsCost } from "@/lib/sync-totaleto";
 
 // The punch drill-through behind the Monthly ETC cards, fetched WHEN IT IS OPENED.
 //
@@ -60,34 +60,39 @@ export async function loadPartsSpentDetail(month: string, jobIds: number[]): Pro
 
 // ── The SECOND level: what one job's parts money was actually spent on ───────
 //
-// "Job 1142 spent $1,065,713" is where the first level stops, and it is not where the
-// question stops — the next thing anybody asks is what was bought. This returns the
-// purchase-order lines behind that figure, straight from TotalETO: supplier, part
-// number, description, quantity, unit price, and what has been invoiced.
+// "Job 1142 spent $113,101 in July" is where the first level stops, and it is not
+// where the question stops — the next thing anybody asks is what was bought. This
+// returns the individual AP-document lines behind that figure: supplier, part number,
+// description, quantity, and what was invoiced.
 //
-// Reuses getJobPartsCost, which the Job Hour Details page already renders — so the
-// deeper drill and that page cannot tell different stories about the same job.
+// ── Windowed to the SAME month as the row above it, at the AP-document grain
+// (fixed 2026-08-07) ─────────────────────────────────────────────────────────────
 //
-// Note what this is NOT scoped to: the MONTH. getJobPartsCost returns the job's whole
-// purchase history, because a part invoiced in July may have been ordered in March and
-// the PO is the thing being examined. The panel says so rather than implying the lines
-// sum to the month's figure.
+// This used to reuse getJobPartsCost (the Job Hour Details page's whole-purchase-
+// -history query), unwindowed, with a sentence explaining the lines wouldn't sum to
+// the month's figure above them. Reported as a bug: a job's one big invoice from a
+// different month showed up as a line under this month's small total.
 //
-// ── Invoiced-only, for THIS drill specifically (§77, by request) ────────────────
+// A first attempt filtered getJobPartsCost's lines by "does this line's invoiced date
+// fall in the month" — also wrong, and in a subtler way: that function's invoicedDate/
+// invoicedAmount are a LIFETIME aggregate per PO line (grouped by PurchaseDetailID
+// alone), so a line invoiced across several different months would have dumped its
+// ENTIRE cumulative total into whichever one happened to contain its latest invoice.
 //
-// invoicedOnly (lib/sync-totaleto.ts) does the actual filtering and re-totalling; it is
-// applied HERE, at the one action this drill calls, rather than inside getJobPartsCost
-// itself — that function is also read directly by the Job Hour Details / Procurement
-// page (job-hours/page.tsx), where an ordered-but-unbilled part is exactly what a reader
-// is there to see. Filtering at this action boundary means the exclusion is real (the
-// client never receives the zero-invoice rows — this is still a server action, so "in
-// the backend" holds even though there is no second SQL query) and scoped to the one
-// caller that asked for it.
-export async function loadJobPartsLines(jobNumber: string): Promise<JobPartsCost> {
+// getJobPartsInvoicedInMonth (lib/sync-totaleto.ts) is a genuinely different, separate
+// query: it joins the AP document tables directly and filters by APBD.APDocDate BEFORE
+// aggregating, one row per actual invoice event in the window — the same basis
+// getPartsCostBookedByJob windows the row's own "Money spent" figure on, and Extra
+// Costs excluded to match that figure's own scope. Every row it returns already has a
+// real invoiced amount by construction (it comes from an AP document), so there is no
+// separate invoiced-only filter step here the way getJobPartsCost's callers need.
+export async function loadJobPartsLines(jobNumber: string, month: string): Promise<JobPartsCost> {
   const session = await auth();
   if (!session?.user) throw new Error("Not signed in.");
   // Job numbers are digits in this app ("1142"); anything else is a crafted request,
   // and this value reaches a SQL parameter.
   if (!/^\d{1,10}$/.test(jobNumber)) throw new Error(`Invalid job number "${jobNumber}".`);
-  return invoicedOnly(await getJobPartsCost(jobNumber));
+  if (!isValidMonth(month)) throw new Error(`Invalid month "${month}".`);
+  const { start, endExclusive } = monthWindowUtc(month);
+  return getJobPartsInvoicedInMonth(jobNumber, start, endExclusive);
 }

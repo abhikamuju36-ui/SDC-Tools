@@ -443,13 +443,31 @@ export function EtcMonthKpiCards({
 
   // ── The second level of the parts drill ───────────────────────────────────
   //
-  // Which job's purchase lines are expanded, and the lines themselves, cached per job
-  // so collapsing and reopening a row is instant. Each job is a separate TotalETO
-  // round trip, so they are fetched one at a time, on demand — never all 45 up front.
+  // Which job's purchase lines are expanded, and the lines themselves, cached per
+  // job so collapsing and reopening a row is instant. Each job is a separate
+  // TotalETO round trip, so they are fetched one at a time, on demand — never
+  // all 45 up front.
+  //
+  // Keyed on `${jobNumber}::${month}`, not just the job (2026-08-07): the lines are
+  // now windowed to `month` (see loadJobPartsLines), so a cache keyed on the job
+  // alone would keep serving July's lines under a job row after the picker moved to
+  // June. The check below also drops both caches outright on a month change, in
+  // case this component is ever reused across a month switch without remounting —
+  // adjusted during RENDER (React's "resetting state when a prop changes" idiom,
+  // already used elsewhere in this file for the same reason: an effect that always
+  // fires on a prop change costs an extra commit-then-rerender the render-time
+  // adjustment does not).
   const [openJob, setOpenJob] = useState<string | null>(null);
   const [jobLines, setJobLines] = useState<Record<string, JobPartsCost>>({});
   const [loadingJobLines, startJobLines] = useTransition();
   const [jobLinesError, setJobLinesError] = useState<string | null>(null);
+  const [jobLinesMonth, setJobLinesMonth] = useState(month);
+  if (jobLinesMonth !== month) {
+    setJobLinesMonth(month);
+    setOpenJob(null);
+    setJobLines({});
+    setJobLinesError(null);
+  }
 
   function toggleJobLines(jobNumber: string) {
     if (openJob === jobNumber) {
@@ -458,12 +476,14 @@ export function EtcMonthKpiCards({
     }
     setOpenJob(jobNumber);
     setJobLinesError(null);
-    if (jobLines[jobNumber]) return; // already fetched
+    const cacheKey = `${jobNumber}::${month}`;
+    if (jobLines[cacheKey]) return; // already fetched
     startJobLines(async () => {
-      // Keyed on the job, so expanding a second row does not invalidate the first
-      // — each row's lines are a separate answer that stays valid once fetched.
-      const out = await sequenced(`parts-lines:${jobNumber}`, jobNumber, () => loadJobPartsLines(jobNumber));
-      if (out.ok) setJobLines((m) => ({ ...m, [jobNumber]: out.value }));
+      // Keyed on the job (and month), so expanding a second row does not invalidate
+      // the first — each row's lines are a separate answer that stays valid once
+      // fetched.
+      const out = await sequenced(`parts-lines:${cacheKey}`, cacheKey, () => loadJobPartsLines(jobNumber, month));
+      if (out.ok) setJobLines((m) => ({ ...m, [cacheKey]: out.value }));
       else if (out.reason === "error") {
         setJobLinesError(out.error instanceof Error ? out.error.message : "Could not load the purchase lines.");
       }
@@ -734,7 +754,7 @@ export function EtcMonthKpiCards({
                 <tbody>
                   {partsRows.map((r) => {
                     const open = openJob === r.jobId;
-                    const lines = jobLines[r.jobId];
+                    const lines = jobLines[`${r.jobId}::${month}`];
                     return (
                       <Fragment key={r.id}>
                         <tr
@@ -757,49 +777,59 @@ export function EtcMonthKpiCards({
                               )}
                               {!jobLinesError && lines && lines.lines.length === 0 && (
                                 <p className="text-xs font-medium text-sdc-gray-700">
-                                  {/* §77: this can now mean either "TotalETO has nothing for
-                                      this job" or "everything it has is still uninvoiced" —
-                                      the drill only shows invoiced lines, so the wording no
-                                      longer claims there is nothing at all. */}
-                                  No invoiced purchase-order lines for job {r.jobId} yet.
+                                  {/* §77: no row here can mean "TotalETO has nothing for this
+                                      job," "everything it has is still uninvoiced," or "what it
+                                      has was invoiced in a different month" — the drill only
+                                      shows THIS month's invoiced lines (fixed 2026-08-07), so the
+                                      wording doesn't claim there is nothing at all, ever. */}
+                                  No purchase-order lines for job {r.jobId} invoiced in {month}.
                                 </p>
                               )}
                               {!jobLinesError && lines && lines.lines.length > 0 && (
                                 <>
-                                  {/* Says outright that these are the job's WHOLE purchase
-                                      history, not the month's — a part invoiced in July can
-                                      have been ordered in March, and the PO is what is being
-                                      examined. Without this the two totals look wrong.
-                                      "Invoiced" rather than "All" (§77, by request): a line
-                                      that has been ordered but not yet billed is dropped
-                                      before this ever reaches the client, so "All" would be
-                                      a claim the list itself no longer backs up. */}
+                                  {/* Windowed to THIS month by AP document date (fixed 2026-08-07) —
+                                      the exact same field and job attribution
+                                      (getPartsCostBookedByJob) the row's own "Money spent" figure
+                                      above is computed from, down to a non-PO AP line (freight, a
+                                      tariff, an expense reimbursement) counting the same on both
+                                      sides. Verified live to match to the cent across every job
+                                      checked. Any remaining gap is sync staleness, not a formula
+                                      difference — same explanation as the card-vs-footer banner
+                                      further down. */}
                                   <p className="mb-2 text-note leading-relaxed font-medium text-sdc-gray-700">
-                                    Invoiced purchase lines for job {r.jobId} — <strong>{usd(lines.purchased)} purchased</strong>,{" "}
-                                    {usd(lines.paid)} invoiced, {usd(lines.leftToPay)}{" "}
-                                    left to pay. This is the job&apos;s whole invoiced history,
-                                    not just {month}, so it will not equal the {usd(r.spent)} above.
+                                    Purchase lines for job {r.jobId} invoiced in {month} — <strong>{usd(lines.paid)} invoiced</strong>, {lines.lines.length}{" "}
+                                    line{lines.lines.length === 1 ? "" : "s"}.
                                   </p>
+                                  {Math.abs(lines.paid - r.spent) >= 0.5 && (
+                                    <p className="mb-2 rounded border border-sdc-yellow bg-sdc-yellow-bg/60 px-2 py-1.5 text-label leading-relaxed text-sdc-gray-600">
+                                      This sums to {usd(lines.paid)} against the {usd(r.spent)} above — both should read the same for {month}.
+                                      If it doesn&apos;t, the figure above hasn&apos;t picked up a recent change yet; run &ldquo;Refresh Data&rdquo; and check again.
+                                    </p>
+                                  )}
                                   <div className="styled-scrollbar max-h-64 overflow-auto rounded border border-sdc-border bg-white">
                                     <table className="w-full border-collapse text-note">
                                       <thead className="sticky top-0 bg-sdc-gray-50">
                                         <tr className="border-b border-sdc-border text-sdc-navy">
                                           <th className="px-2 py-1.5 text-left font-bold">PO</th>
-                                          {/* getJobPartsCost already sorts newest purchase first, so this
-                                              column is also the order the rows are in. */}
+                                          {/* Blank for a non-PO AP line (freight, a tariff, an expense
+                                              reimbursement) — there is no purchase order to place a
+                                              date on. Sorted newest-invoiced-first (see below), so this
+                                              column is not the sort order for these rows. */}
                                           <th className="px-2 py-1.5 text-left font-bold whitespace-nowrap">Purchased on</th>
-                                          {/* The AP document date — when the line was actually billed,
-                                              distinct from Purchased on (when it was ordered) and from
-                                              the dollar "Invoiced" column further right. Can be blank: a
-                                              PO line that's ordered but not yet invoiced has no AP
-                                              document at all — but this drill is invoiced-only (§77), so
-                                              every row here should carry one. */}
+                                          {/* The AP document date — every row is windowed on this field
+                                              landing in {month}, the same field and window the row's own
+                                              "Money spent" figure above is computed from. Always present:
+                                              every row here IS an invoice event, unlike getJobPartsCost's
+                                              whole-history view where an ordered-but-unbilled line has none. */}
                                           <th className="px-2 py-1.5 text-left font-bold whitespace-nowrap">Invoiced on</th>
                                           <th className="px-2 py-1.5 text-left font-bold">Supplier</th>
                                           <th className="px-2 py-1.5 text-left font-bold">Part</th>
                                           <th className="px-2 py-1.5 text-right font-bold">Qty</th>
                                           <th className="px-2 py-1.5 text-right font-bold">Unit</th>
-                                          <th className="px-2 py-1.5 text-right font-bold">Purchased</th>
+                                          {/* One dollar column, not two: at this grain (one row = one
+                                              invoice event) "purchased" and "invoiced" are the same
+                                              number by construction, unlike getJobPartsCost's lifetime
+                                              view where an open PO's remaining balance makes them differ. */}
                                           <th className="px-2 py-1.5 text-right font-bold">Invoiced</th>
                                         </tr>
                                       </thead>
@@ -807,13 +837,6 @@ export function EtcMonthKpiCards({
                                         {lines.lines.map((l, i) => (
                                           <tr key={i} className="border-b border-sdc-border-soft/50" title={l.description ?? undefined}>
                                             <td className="px-2 py-1.5 text-left font-mono font-semibold text-sdc-navy">{l.poNumber ?? "—"}</td>
-                                            {/* Two distinct dates, deliberately both shown: Purchased on
-                                                is when the PO was placed, Invoiced on is when it was
-                                                actually billed (the AP document date) — the figure this
-                                                month's "Parts spent" is windowed on. They routinely
-                                                disagree (a part ordered in March can be billed in July);
-                                                the note above the table already explains why the totals
-                                                here don't equal the month's KPI. */}
                                             <td className="px-2 py-1.5 text-left font-medium whitespace-nowrap text-sdc-navy">
                                               {l.purchaseDate ?? "—"}
                                             </td>
@@ -829,10 +852,7 @@ export function EtcMonthKpiCards({
                                             </td>
                                             <td className="px-2 py-1.5 text-right font-medium tabular-nums text-sdc-navy">{l.quantity}</td>
                                             <td className="px-2 py-1.5 text-right font-medium tabular-nums text-sdc-navy">{usd(l.unitPrice)}</td>
-                                            <td className="px-2 py-1.5 text-right font-bold tabular-nums text-sdc-navy">{usd(l.totalPrice)}</td>
-                                            <td className="px-2 py-1.5 text-right font-medium tabular-nums text-sdc-gray-700">
-                                              {usd(l.invoicedAmount)}
-                                            </td>
+                                            <td className="px-2 py-1.5 text-right font-bold tabular-nums text-sdc-navy">{usd(l.invoicedAmount)}</td>
                                           </tr>
                                         ))}
                                       </tbody>

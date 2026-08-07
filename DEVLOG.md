@@ -5651,3 +5651,67 @@ Month and `costActualHistorical` "come from the same query" / "can never tell di
 stories" (in `sync-totaleto.ts` and `sync-powerbi.ts`) were corrected in passing — that was
 never true after §41 moved Money Spent Month to `getPartsCostBookedByJob`, and the wrong
 comment could have misled whoever debugged this next.
+
+## 63. Parts Spent drill's line items could show a bigger row than their own total (2026-08-07)
+
+Reported: expanding a job in the Monthly ETC "Parts spent" drill could show a purchase-order
+line far larger than the job's own "Money spent" figure sitting right above it — a total must
+never be exceeded by one of its own visible rows. Money Spent Month itself was explicitly out
+of scope and confirmed untouched throughout.
+
+**Root cause**: the expanded line items came from `getJobPartsCost` — the job's WHOLE purchase
+history, unwindowed by month, by design (Job Hour Details/Procurement needs exactly that). The
+drill nested this directly under a job row scoped to the CURRENT month, with only a sentence
+disclosing the mismatch. A job with one large invoice from a different month showed that
+invoice's full line among rows sitting under a much smaller total.
+
+**First fix attempt was also wrong, more subtly**: filtered `getJobPartsCost`'s lines by "does
+this line's invoicedDate fall in the month." Looked right, wasn't — that field is
+`MAX(APDocDate)` across a PO line's ENTIRE invoice history, grouped by `PurchaseDetailID`
+alone. A PO line invoiced across several different months (found live, job 1142:
+`PurchaseDetailID` 20504, $1,207,300 spanning 2025-11 through 2026-08) would dump its whole
+cumulative total into whichever ONE month happens to contain its latest invoice — the exact
+"mixing monthly and full-history values" the fix was supposed to prevent, just relocated to a
+different month instead of removed.
+
+**Real fix**: a new function, `getJobPartsInvoicedInMonth` (`sync-totaleto.ts`), queries
+`tblAPDocumentDetails`/`tblAPBatchDocument` directly and filters `APBD.APDocDate` BEFORE
+aggregating — one row per actual invoice event within the window, never a lifetime aggregate.
+Job attribution is `APDD.ProjectID` directly, matching `getPartsCostBookedByJob`'s own
+definition exactly — NOT the PO chain (`POD.ProjectID`) the rest of this file's PO-detail
+queries use. That distinction mattered: job 1122 had 5 AP lines in July ($5,252.77 — freight, a
+tariff, an expense reimbursement) attributed to it directly with no purchase order at all; an
+`INNER JOIN` through the PO tables (even filtering on the AP line's own ProjectID) would still
+drop them, since a non-PO line simply never gets there. The PO tables are `LEFT JOIN`ed instead,
+so these still surface as rows (PO/part columns blank, description falls back to the AP line's
+own) rather than vanishing. `loadJobPartsLines` (`hours-detail-actions.ts`) now takes `month` and
+calls this directly — no separate `invoicedOnly` filter step needed, since every row here IS an
+invoice event by construction.
+
+Verified live across 10 real jobs for July 2026: **exact match to the cent** against
+`getPartsCostBookedByJob`'s own per-job figure, every time (one apparent $6,840 "gap," on a
+job with a single AP line, turned out to be the STORED `EtcEntry` figure being stale relative to
+a fresh live query of the same function — confirmed by re-running `getPartsCostBookedByJob`
+itself fresh and getting the drill's number back; not a defect in the fix). The UI's disclosure
+text and residual-gap banner were updated to match: no longer claims the lines "will not equal"
+the figure above (they now do, to the cent, when both sides are fresh) — a residual now reads as
+sync staleness, with the same "run Refresh Data" guidance the card-vs-footer banner already
+gives elsewhere on this page. The per-line table's now-redundant "Purchased" dollar column was
+removed (at this grain, one row = one invoice event, so "purchased" and "invoiced" are the same
+number by construction — unlike `getJobPartsCost`'s lifetime view, where an open PO's remaining
+balance makes them differ).
+
+The client-side cache for the expanded lines is now keyed on `${jobNumber}::${month}`, not just
+the job — the lines are month-scoped now, so a job-only key would keep serving July's lines
+under a job row after the picker moved to June. A render-time reset (not a `useEffect`, to avoid
+`react-hooks/set-state-in-effect` — same idiom already used elsewhere in this file for "adopt
+what the server last said") drops both caches outright on a month change too, defensively, in
+case this component is ever reused across a month switch without remounting.
+
+`invoicedOnly` (the old §77 filter function) had no remaining caller after this fix and was
+deleted rather than left as dead code; `tests/parts-spent-drill-invoiced.test.ts` was rewritten
+to guard the new query's structural properties (source-inspection style, same reason as
+`tests/parts-cost-spent-by-job.test.ts` — no TotalETO connection in CI): job attribution by
+`APDD.ProjectID` not the PO chain, the PO tables `LEFT JOIN`ed not `INNER`, the date filter in
+SQL before aggregation not a JS filter over a pre-aggregated result. `tsc`/`eslint` clean,
+845/845 tests pass.

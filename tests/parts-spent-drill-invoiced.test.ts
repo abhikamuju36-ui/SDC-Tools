@@ -2,109 +2,24 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { invoicedOnly } from "../src/lib/sync-totaleto";
-import type { JobPartsCost, PartsCostLine } from "../src/lib/sync-totaleto";
 
-// ── Parts Spent drill-through: invoiced lines only (§77) ────────────────────
+// ── Parts Spent drill-through: invoiced AND month-scoped (§77, then 2026-08-07) ──
 //
 // The second-level "purchase lines" panel behind a job row in the Monthly ETC Parts
-// Spent drill used to show a job's WHOLE purchase history — ordered-but-unbilled parts
-// included. By request, it now shows only lines that have actually been invoiced:
-// `Invoiced Amount > 0`. `invoicedOnly` is the pure function that does it, kept separate
-// from getJobPartsCost (the live TotalETO query — needs a real connection, proven
-// instead by scripts/parts-spent-recon.ts) so this arithmetic is testable without one.
-
-function line(over: Partial<PartsCostLine>): PartsCostLine {
-  return {
-    purchaseDate: "2026-01-01",
-    invoicedDate: null,
-    supplier: "Acme",
-    manufacturer: "Acme",
-    category: null,
-    poNumber: "101",
-    partNumber: "P-1",
-    description: "A part",
-    quantity: 1,
-    unitPrice: 100,
-    totalPrice: 100,
-    invoicedAmount: 0,
-    ...over,
-  };
-}
-
-// ── The filter itself ────────────────────────────────────────────────────────
-
-test("a line with nothing invoiced is dropped", () => {
-  const full: JobPartsCost = { purchased: 100, paid: 0, leftToPay: 100, lines: [line({ invoicedAmount: 0 })] };
-  const out = invoicedOnly(full);
-  assert.deepEqual(out.lines, []);
-});
-
-test("a line with a real invoiced amount is kept", () => {
-  const invoiced = line({ totalPrice: 100, invoicedAmount: 100 });
-  const full: JobPartsCost = { purchased: 100, paid: 100, leftToPay: 0, lines: [invoiced] };
-  const out = invoicedOnly(full);
-  assert.deepEqual(out.lines, [invoiced]);
-});
-
-test("the requirement is strictly greater than zero — a credit note is dropped too", () => {
-  // §77's own wording: "Show only rows with Invoiced Amount > 0." A negative
-  // invoicedAmount (a credit/refund against a PO) is not zero, but it is also not
-  // positive, and the acceptance criteria do not carve out an exception for it.
-  const credit = line({ invoicedAmount: -50 });
-  const out = invoicedOnly({ purchased: 0, paid: -50, leftToPay: 50, lines: [credit] });
-  assert.deepEqual(out.lines, []);
-});
-
-test("mixed lines: only the invoiced ones survive, in their original order", () => {
-  const uninvoiced = line({ poNumber: "1", invoicedAmount: 0 });
-  const invoicedA = line({ poNumber: "2", totalPrice: 200, invoicedAmount: 200 });
-  const partial = line({ poNumber: "3", totalPrice: 500, invoicedAmount: 300 });
-  const full: JobPartsCost = {
-    purchased: 800,
-    paid: 500,
-    leftToPay: 300,
-    lines: [uninvoiced, invoicedA, partial],
-  };
-  const out = invoicedOnly(full);
-  assert.deepEqual(
-    out.lines.map((l) => l.poNumber),
-    ["2", "3"],
-    "the surviving lines keep getJobPartsCost's own sort (newest-purchase-first) — this function must not re-sort",
-  );
-});
-
-// ── The totals are the sum of what is actually returned ─────────────────────
-
-test("purchased/paid/leftToPay are recomputed from the KEPT lines, not sliced from the input", () => {
-  // The input's OWN totals (100 uninvoiced + 200 invoiced = 300 purchased, 200 paid) must
-  // not leak through — once the uninvoiced line is dropped, "purchased" has to shrink
-  // with it, or the drill would state a total the visible rows do not add up to.
-  const uninvoiced = line({ totalPrice: 100, invoicedAmount: 0 });
-  const invoiced = line({ totalPrice: 200, invoicedAmount: 200 });
-  const full: JobPartsCost = { purchased: 300, paid: 200, leftToPay: 100, lines: [uninvoiced, invoiced] };
-  const out = invoicedOnly(full);
-  assert.equal(out.purchased, 200, "purchased must be the sum of the SURVIVING lines' totalPrice");
-  assert.equal(out.paid, 200);
-  assert.equal(out.leftToPay, 0);
-});
-
-test("a partially-invoiced line still contributes its own leftToPay", () => {
-  // Kept (invoicedAmount > 0), but totalPrice and invoicedAmount differ — the line
-  // itself still has money left to pay, and that must survive into the recomputed total.
-  const partial = line({ totalPrice: 500, invoicedAmount: 300 });
-  const out = invoicedOnly({ purchased: 500, paid: 300, leftToPay: 200, lines: [partial] });
-  assert.equal(out.purchased, 500);
-  assert.equal(out.paid, 300);
-  assert.equal(out.leftToPay, 200);
-});
-
-test("an empty input stays empty, with zeroed totals rather than NaN", () => {
-  const out = invoicedOnly({ purchased: 0, paid: 0, leftToPay: 0, lines: [] });
-  assert.deepEqual(out, { purchased: 0, paid: 0, leftToPay: 0, lines: [] });
-});
-
-// ── Isolation: the shared query stays untouched for other views ─────────────
+// Spent drill used to show a job's WHOLE purchase history, unwindowed by month —
+// ordered-but-unbilled parts included, and (found 2026-08-07) an invoice from any
+// month at all, sitting under a total that only counted the currently-open month.
+// A row bigger than its own total is exactly the bug this guards against.
+//
+// getJobPartsInvoicedInMonth (lib/sync-totaleto.ts) replaced getJobPartsCost +
+// invoicedOnly for this ONE caller: it queries tblAPDocumentDetails/
+// tblAPBatchDocument directly, filtered by APBD.APDocDate BEFORE aggregating (one
+// row per real invoice event in the window), using the SAME job attribution
+// (APDD.ProjectID, not the PO chain) getPartsCostBookedByJob uses for the row's own
+// "Money spent" figure — verified live to reconcile to the cent across 10 real jobs
+// for July 2026. This can't be a live-DB test (no TotalETO connection in CI), so it
+// inspects the source the way tests/parts-cost-spent-by-job.test.ts does for the
+// same reason.
 
 const SRC = join(import.meta.dirname, "..", "src");
 function code(...parts: string[]): string {
@@ -125,25 +40,61 @@ function functionBody(source: string, name: string): string {
   return nextExport === -1 ? source.slice(start) : source.slice(start, nextExport);
 }
 
-test("getJobPartsCost itself is never filtered — other pages still need every line", () => {
+const SYNC_TOTALETO = () => code("lib", "sync-totaleto.ts");
+
+test("getJobPartsCost itself is never filtered or windowed — other pages still need every line", () => {
   // job-hours/page.tsx (Job Hour Details / Procurement) calls getJobPartsCost directly,
-  // not the drill's action, and it must keep seeing ordered-but-unbilled parts — that is
-  // exactly what a procurement reader opens the page to find. invoicedOnly must be
-  // applied AFTER getJobPartsCost returns, never folded into the function itself or its
-  // SQL, or every other consumer would silently lose those rows too.
-  const fnBody = functionBody(code("lib", "sync-totaleto.ts"), "getJobPartsCost");
+  // not the drill's action, and it must keep seeing ordered-but-unbilled parts across
+  // the job's whole history — exactly what a procurement reader opens the page to find.
+  const fnBody = functionBody(SYNC_TOTALETO(), "getJobPartsCost");
   assert.doesNotMatch(fnBody, /invoicedAmount > 0/, "getJobPartsCost must return every line, invoiced or not");
+  assert.doesNotMatch(fnBody, /@start|@end/, "getJobPartsCost must stay unwindowed — Job Hour Details needs the whole history");
 });
 
-test("only loadJobPartsLines — the Parts Spent drill's own action — applies the filter", () => {
+test("only loadJobPartsLines — the Parts Spent drill's own action — calls getJobPartsInvoicedInMonth", () => {
   const ACTIONS = code("lib", "hours-detail-actions.ts");
   const fnBody = functionBody(ACTIONS, "loadJobPartsLines");
-  assert.match(fnBody, /invoicedOnly\(/, "the drill's action must apply the filter");
+  assert.match(fnBody, /getJobPartsInvoicedInMonth\(/, "the drill's action must call the month-scoped query");
+  assert.doesNotMatch(fnBody, /getJobPartsCost\(/, "must not also call the unwindowed whole-history query");
 
   // And nothing else in the same file (loadEtcMonthHoursDetail, loadPartsSpentDetail —
   // the punch drill and the job-level rows) reaches for it; neither of those is about
-  // individual purchase lines at all. The import line itself names `invoicedOnly` too,
-  // so the check is for a CALL, not the bare identifier.
+  // individual purchase lines at all.
   const others = ACTIONS.replace(fnBody, "");
-  assert.doesNotMatch(others, /invoicedOnly\(/, "no other action in this file should call the filter");
+  assert.doesNotMatch(others, /getJobPartsInvoicedInMonth\(/, "no other action in this file should call the month-scoped query");
+});
+
+test("getJobPartsInvoicedInMonth filters by APDocDate BEFORE aggregating, not by a lifetime max()", () => {
+  // The first attempt at this fix filtered getJobPartsCost's already-aggregated lines by
+  // "does invoicedDate fall in the month" — wrong, because that field is MAX(APDocDate)
+  // across a PO line's ENTIRE invoice history, grouped by PurchaseDetailID alone. A line
+  // invoiced across several different months would dump its whole cumulative total into
+  // whichever one contains its latest invoice — found live on job 1142, a single PO line
+  // spanning 2025-11 through 2026-08, $1,207,300. Guards against that regressing: the
+  // date filter must sit in the SQL's WHERE clause (evaluated per AP document, before any
+  // GROUP BY), never as a JS filter over a pre-aggregated result.
+  const fnBody = functionBody(SYNC_TOTALETO(), "getJobPartsInvoicedInMonth");
+  assert.match(fnBody, /WHERE[\s\S]*APBD\.APDocDate >= @start AND APBD\.APDocDate < @end/, "the date window must be a SQL WHERE clause on the individual AP document date");
+  assert.doesNotMatch(fnBody, /max\(APDocDate\)|MAX\(APDocDate\)/, "must not read a MAX(APDocDate)-per-PO-line aggregate — that is getJobPartsCost's lifetime shape, not a monthly one");
+});
+
+test("getJobPartsInvoicedInMonth attributes by APDD.ProjectID directly, matching getPartsCostBookedByJob — not the PO chain", () => {
+  // Found live: job 1122 had 5 AP lines in July ($5,252.77 — freight, a tariff, an
+  // expense reimbursement) with no purchase order at all. Filtering on POD.ProjectID
+  // (the PO chain) — even with the PO tables LEFT JOINed — would still exclude them,
+  // because a LEFT JOIN with no matching row makes POD.ProjectID NULL, and NULL never
+  // equals @job. The WHERE clause has to name the AP line's own ProjectID.
+  const fnBody = functionBody(SYNC_TOTALETO(), "getJobPartsInvoicedInMonth");
+  assert.match(fnBody, /WHERE\s+APDD\.ProjectID = @job/, "job attribution must be the AP line's own ProjectID");
+  assert.doesNotMatch(fnBody, /WHERE\s+POD\.ProjectID = @job/, "must not filter on the PO chain's ProjectID — that silently drops non-PO AP lines");
+});
+
+test("getJobPartsInvoicedInMonth does not require a PurchaseDetailID — non-PO AP lines must surface as rows", () => {
+  const fnBody = functionBody(SYNC_TOTALETO(), "getJobPartsInvoicedInMonth");
+  assert.doesNotMatch(
+    fnBody,
+    /PurchaseDetailID IS NOT NULL/,
+    "excluding rows with no PurchaseDetailID is exactly how the old query dropped freight/tariffs/expense-reimbursement lines that have a job but no PO",
+  );
+  assert.match(fnBody, /LEFT JOIN tblPurchaseOrderDetails/, "the PO tables must be LEFT JOINed, not INNER — a non-PO line has no matching row there");
 });
