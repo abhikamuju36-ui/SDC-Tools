@@ -176,6 +176,17 @@ const GROUPS: NavGroup[] = [
           </Icon>
         ),
       },
+      {
+        href: "/job-cost-explorer",
+        label: "Job Cost Explorer",
+        isActive: (p) => p === "/job-cost-explorer",
+        icon: (
+          <Icon>
+            <circle cx="8" cy="8" r="6.25" />
+            <path d="M8 4.5 V11.5 M5.75 6.25 C5.75 5.25 6.75 4.75 8 4.75 C9.25 4.75 10.25 5.4 10.25 6.35 C10.25 8.1 5.75 7.5 5.75 9.4 C5.75 10.4 6.75 11.05 8 11.05 C9.25 11.05 10.25 10.5 10.25 9.5" strokeLinecap="round" />
+          </Icon>
+        ),
+      },
     ],
   },
 ];

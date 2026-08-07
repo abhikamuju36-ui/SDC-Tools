@@ -729,3 +729,60 @@ model RefreshLock {
   holder    String?  @db.VarChar(128) // the refreshId currently holding it
   startedAt DateTime?
 }
+
+// ── Job Cost Explorer: shared rate/allocation state ─────────────────────────
+//
+// Ported from the standalone "Job Cost Explorer" app (D:\AI Projects\new app),
+// where the equivalent of these three tables lived in each browser's own
+// localStorage — meaning two managers could silently see different profit
+// numbers for the same job with no way to tell why. These three models make
+// that state shared and server-side instead, matching how every other piece
+// of editable state in this app already works.
+//
+// Accessed by raw SQL for the same reason as MonthlyReportSubmission/RefreshRun/
+// DepartmentEtcCompletion above: `prisma generate` cannot run while a server
+// process holds node_modules/.prisma open, and this box runs this app's own
+// production instance — see lib/job-cost-actions.ts.
+
+// ONE row, id = 1 — the fallback Eng/Shop $/hr and PM/Mfg % applied to any
+// year with no JobCostYearRate override, and to ETC (future) hours, which
+// have no year yet. Mirrors the original app's "top-bar inputs".
+model JobCostDefaultRate {
+  id            Int       @id @default(1)
+  engRate       Decimal   @default(200) @db.Decimal(8, 2)
+  shopRate      Decimal   @default(150) @db.Decimal(8, 2)
+  pmPct         Decimal   @default(10) @db.Decimal(5, 2)
+  mfgPct        Decimal   @default(10) @db.Decimal(5, 2)
+  updatedAt     DateTime  @updatedAt
+  updatedById   Int?
+}
+
+// Per-year override of the default rates above. A null field on a stored row
+// means "blank cell" in the original Rate Matrix UI — falls back to
+// JobCostDefaultRate for that one field, not to zero.
+model JobCostYearRate {
+  year          String    @id @db.VarChar(4)
+  engRate       Decimal?  @db.Decimal(8, 2)
+  shopRate      Decimal?  @db.Decimal(8, 2)
+  pmPct         Decimal?  @db.Decimal(5, 2)
+  mfgPct        Decimal?  @db.Decimal(5, 2)
+  updatedAt     DateTime  @updatedAt
+  updatedById   Int?
+}
+
+// Per-job manual hour allocation — one row per {hours, year} entry a manager
+// enters to split a job's Eng/Shop hours across years by hand, instead of
+// relying on the automatic year breakdown. Presence of ANY row for a job
+// overrides the automatic breakdown for that job's engineering or shop side
+// (matching the original app's all-or-nothing-per-type override rule).
+model JobCostHourAllocation {
+  id            Int       @id @default(autoincrement())
+  jobId         String    @db.VarChar(32) // Job.jobId, not the numeric PK — matches how the source app keyed it
+  type          String    @db.VarChar(8)  // "eng" | "shop"
+  year          String    @db.VarChar(4)
+  hours         Decimal   @db.Decimal(8, 2)
+  updatedAt     DateTime  @updatedAt
+  updatedById   Int?
+
+  @@index([jobId])
+}

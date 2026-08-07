@@ -38,7 +38,7 @@ import { PARTS_COST_SECTION } from "@/lib/sections";
 // Which months the punch import actually covers. Everything else falls back to
 // the frozen ETC figure. Derived from the data rather than configured, so it
 // widens on its own as the import's window grows.
-async function coveredMonths(): Promise<string[]> {
+export async function coveredMonths(): Promise<string[]> {
   const rows = await prisma.jobHoursDetail.groupBy({ by: ["month"] });
   return rows.map((r) => r.month);
 }

@@ -5459,3 +5459,117 @@ Three presentation-only changes to `src/app/(app)/page.tsx`, none touching a que
    elsewhere, on `/etc` and `/jobs/[id]` — only this one import site was dead).
 
 No new tests (presentational only); 832/832 existing tests pass, `tsc --noEmit` clean.
+
+---
+
+## 60. Job Cost Explorer integrated as a new tab (§80, 2026-08-07)
+
+Folded a separate, unauthenticated internal tool — "Job Cost Explorer" (`D:\AI Projects\new app`,
+a ~2,500-line hand-rolled Express + vanilla-JS app, PM2 app `sdc-job-cost`, port 4200) — into
+this app as a new password-gated `/job-cost-explorer` tab, per an explicit integration
+request. Per-job profit/margin: Actual/Eng/Shop/Other hours, PM/Mfg $, Labor $, ETC, Parts
+Purchased/Invoiced, Sales $, % Complete, Profit, Margin.
+
+### 60.1 The audit — what was genuinely duplicate vs. genuinely new
+
+The standalone app sourced every column live from Power BI's "Job Hours Report" model, via an
+**external compiled exe** (`sdc-powerbi-mcp.exe`, DPAPI-cached auth requiring the interactive
+Windows user, run as a scheduled task for exactly that reason). Checked each column against
+what this app already computes:
+
+- **Job identity, actual hours (Eng/Shop/Other)** — real duplication. This app's own
+  `Job` table and Paylocity-sourced hours pipeline (`lib/actual-hours.ts`,
+  `lib/job-hours-source.ts`) already cover the same jobs, refreshed hourly, and are the
+  figures every other tab already trusts. **Reused directly** — a new
+  `loadJobHoursAndYears()` in `lib/job-cost-source.ts` buckets the same three-era read
+  `actual-hours.ts` established (migration snapshot + frozen ETC + live punches) by billing
+  group and by year, using `sections.ts`'s existing group field rather than a new mapping.
+  `coveredMonths()` was exported from `actual-hours.ts` (previously module-private) so this
+  reuses the exact same "which months does the punch import cover" definition instead of a
+  second one.
+- **Parts Purchased / Invoiced (lifetime)** — real duplication, and the standalone app's
+  version had a known bug: a hardcoded `PART_COST_DOUBLED_JOB_IDS` patch halving 18 specific
+  jobs' Part Cost because Power BI's measure was confirmed returning ~2× the true value for
+  that batch. **Reused this app's own Total ETO-direct reads instead** —
+  `getPartsCostSpentByJob` (already used elsewhere for the Projects grid's lifetime column,
+  called the same 1990–2100-window way) for Purchased, and a new `getPartsInvoicedByJob` for
+  Invoiced. Neither has the doubling bug; the patch was not ported.
+- **Sales Price, hours-by-year breakdown** — genuinely new; nothing in this app tracks a
+  job's sale price at all (`Job.costQuoted` is quoted *cost*, a different concept). Kept
+  querying Power BI for Sales Price only, via **this app's own `runDax()`
+  (`lib/powerbi-client.ts`)** rather than the external exe — same dataset, one Power BI access
+  mechanism app-wide instead of two, and the interactive-user/DPAPI/scheduled-task
+  requirement is retired for this data. Machine Type stays blank — the standalone app's own
+  comment already noted the Power BI model has no such column either.
+- **ETC (Eng/Shop/Parts cost projection)** — the standalone app read a hand-maintained
+  `etc-data.json` ("from Standard Fees.xlsx"); this app has a live, continuously-computed ETC
+  pipeline for the same jobs. Different data lifecycles, not proven equivalent — **kept the
+  static snapshot as the one driving cost/profit**, and added a **separate reference figure**
+  (`loadLiveEtcReference()`: this app's own latest-month `effectiveNewEtc` summed by billing
+  group) shown alongside via a "Show live ETC" toggle, never silently substituted.
+- **Rate Matrix / Hour Allocation** — genuinely new capability, but its storage
+  (`localStorage`, per-browser) meant two managers could silently see different profit
+  numbers for the same job. **New shared Prisma models** — `JobCostDefaultRate`,
+  `JobCostYearRate`, `JobCostHourAllocation` — so every signed-in user sees the same
+  assumptions, broadcast live via `recordChanges()` (no `cellKey`, the same
+  "something-changed, refetch" signal the refresh pipeline uses).
+- **CSV/XLSX export** — the standalone app loaded SheetJS from a CDN. **Reused this app's own
+  `lib/export/{sheet,csv,xlsx}.ts`** (a new `exportJobCostRows()` server action) instead —
+  one export pipeline app-wide, no new external script dependency.
+
+### 60.2 Access
+
+New, self-contained `lib/job-cost-explorer-gate.ts` — same HMAC-cookie shape as
+`audit-log-gate.ts`, but deliberately **not** routed through `lib/button-password.ts`: that
+module is one shared "are-you-sure" phrase across five destructive-action gates: this is a
+distinct access password for a whole tab. Default `"lisasdc"`, `JOB_COST_EXPLORER_PASSWORD`
+env override available. Password is compared server-side only via HMAC + `timingSafeEqual`;
+never sent to the client, never logged. `(app)/job-cost-explorer/layout.tsx` copies
+`audit-log/layout.tsx`'s exact shape — unlocking is a Server Action on the same route, so it
+re-renders the segment rather than reloading the page, exactly like every other gated tab.
+
+### 60.3 A real bug found during verification, and how it was handled
+
+Reusing `getPartsCostBookedByJob` (the existing §41/§30 monthly "Money Spent Month" function)
+with a 1990–2100 lifetime window — never its designed use case, every existing caller passes
+one month — broke on its **second** sequential query (`ConnectionError: Connection is
+closed`), reproduced live. Rather than modify that function (used in production for the live
+Monthly ETC figure) to cope with an untested range, added the new single-query
+`getPartsInvoicedByJob` alongside it instead, matching `getPartsCostSpentByJob`'s
+already-proven-safe one-query shape. Zero risk to the existing monthly figure; fixes this
+page's batch case. Both new Total ETO calls are also wrapped in `withTimeoutOrNull` (25s
+budget — batch, not per-job, so more generous than `/job-hours`'s measured 12s) so a slow or
+unreachable Total ETO degrades Parts Purchased/Invoiced to "—" with a banner, instead of
+throwing the whole page into the generic error boundary the way the unwrapped call did before
+this was found.
+
+### 60.4 Schema note
+
+Three new tables added via `prisma migrate dev --skip-generate` — this box runs this app's own
+production instance on port 3010, so `prisma generate`'s rewrite of
+`node_modules/.prisma/client` can't run without an unplanned prod interruption (the same
+constraint `MonthlyReportSubmission`/`RefreshRun`/`DepartmentEtcCompletion` already documented
+in schema.prisma). `lib/job-cost-actions.ts` reads/writes these three tables via
+`prisma.$queryRaw`/`$executeRaw` for now; swap for the typed `prisma.jobCostDefaultRate`/etc.
+client calls the next real deploy window, once `generate` can run.
+
+### 60.5 Verified live
+
+832/832 tests pass (12 new, `tests/job-cost.test.ts`, pinning the ported `compute()`/
+`laborForType()` formulas against the same input/output the original app's logic implies),
+`tsc --noEmit` clean, production build clean, `/job-cost-explorer` in the route list. Live in
+browser: gate blocks/unblocks correctly with no full reload; 229 real jobs rendered with
+correct figures; edited a rate, watched the change-notification banner fire and Labor $
+recalculate on reload (then reverted the test edit so the shared database is left clean); the
+per-job Hour Allocation modal opened pre-filled with the job's real hours; the "Open in Job
+Hour Details" per-row link resolves to `/job-hours?jobs=<id>`. Regression-checked `/etc` and
+`/job-hours` (both share files touched here — `actual-hours.ts`, `sync-totaleto.ts`) — both
+render identically to before.
+
+### 60.6 Not done
+
+The standalone app at `D:\AI Projects\new app` (and its PM2 process `sdc-job-cost`) is left
+untouched and running — decommissioning it is a decision for whoever relied on it, not
+something to do silently as part of this change. The deep re-nesting `docs/CODEBASE-STRUCTURE.md`
+describes as future work is unaffected; this integration added flat files matching the
+existing convention (`lib/job-cost*.ts`, `components/JobCost*.tsx`), not a new pattern.

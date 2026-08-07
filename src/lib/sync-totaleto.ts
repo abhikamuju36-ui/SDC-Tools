@@ -243,6 +243,43 @@ export async function getPartsCostBookedByJob(
   }
 }
 
+// Net AP-document amount per job over an arbitrary window, as a SINGLE query —
+// for Job Cost Explorer's lifetime "Parts Invoiced" column (§ integration with
+// the standalone Job Cost Explorer app). Deliberately NOT a call to
+// getPartsCostBookedByJob above with a 1990-2100 window: that function's SECOND
+// query (the unmatched-lines diagnostic, only meaningful for a single ETC
+// month) left the connection in a bad state under a multi-decade window in
+// testing ("Connection is closed" on the second request) — a failure mode its
+// existing callers, all scoped to one month, never hit. This mirrors
+// getPartsCostSpentByJob's already-proven-safe one-query shape for a wide
+// window instead of extending the two-query function into an untested range.
+export async function getPartsInvoicedByJob(monthStart: Date, monthEndExclusive: Date): Promise<Map<string, number>> {
+  const pool = await sql.connect({ ...config, requestTimeout: 180000 });
+  try {
+    const amt = AP_LINE_AMOUNT;
+    const result = await pool
+      .request()
+      .input("start", sql.DateTime, monthStart)
+      .input("end", sql.DateTime, monthEndExclusive)
+      .query(
+        `SELECT APDD.ProjectID AS JobId, SUM(${amt}) AS NetAmt
+           FROM tblAPDocumentDetails APDD WITH(NOLOCK)
+                INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID
+          WHERE APBD.APDocDate >= @start AND APBD.APDocDate < @end
+            AND APDD.ProjectID IS NOT NULL
+          GROUP BY APDD.ProjectID`,
+      );
+    const net = new Map<string, number>();
+    for (const r of result.recordset) {
+      const n = Number(r.NetAmt);
+      if (Number.isFinite(n)) net.set(String(Number(r.JobId)), n);
+    }
+    return net;
+  } finally {
+    await pool.close();
+  }
+}
+
 // Parts Cost cumulative "Parts Cost Actual" per job, straight from TotalETO —
 // SUM(Total Price) for rows whose Invoiced Date falls in [monthStart,
 // monthEndExclusive). Keyed by numeric Job Id string (e.g. "1150"), matching
