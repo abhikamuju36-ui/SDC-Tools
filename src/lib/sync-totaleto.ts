@@ -281,16 +281,61 @@ export async function getPartsInvoicedByJob(monthStart: Date, monthEndExclusive:
 }
 
 // Parts Cost cumulative "Parts Cost Actual" per job, straight from TotalETO —
-// SUM(Total Price) for rows whose Invoiced Date falls in [monthStart,
-// monthEndExclusive). Keyed by numeric Job Id string (e.g. "1150"), matching
-// how the rest of the app keys jobs. A longer request timeout than the
-// project sync since this query fans out across the full PO/AP history.
+// SUM(Total Price) across EVERY PO/Extra-Cost line the job has, invoiced or
+// not. Keyed by numeric Job Id string (e.g. "1150"), matching how the rest of
+// the app keys jobs. A longer request timeout than the project sync since
+// this query fans out across the full PO/AP history.
 //
 // NOT Money Spent Month — see getPartsCostBookedByJob above for that. `[Total Price]`
 // includes each PO's uninvoiced remaining balance, which is meaningful for the Projects
-// grid's lifetime-to-date column (called with a 1990-2100 window) and badly wrong for a
-// single month. Do not window this by month and call it a monthly spend.
-export async function getPartsCostSpentByJob(monthStart: Date, monthEndExclusive: Date): Promise<Map<string, number>> {
+// grid's and Job Cost Explorer's lifetime-to-date total and badly wrong for a single
+// month — do not window this by month and call it a monthly spend.
+//
+// UNWINDOWED ON PURPOSE (bug found 2026-08-07): this used to take a date window and
+// filter `WHERE [Invoiced Date] >= @start AND [Invoiced Date] < @end`, called with a
+// 1990-2100 "lifetime" range from both callers below. That still excluded every line
+// with NOTHING invoiced against it yet — `[Invoiced Date]` is NULL for an open PO, and
+// `NULL >= @start` is SQL's UNKNOWN, not true, so the row silently dropped out of the
+// WHERE clause no matter how wide the window was. A job sitting on a large open PO with
+// zero invoices vanished from the result map entirely (never touched by
+// syncPartsCostActual's update loop below, frozen at whatever it last was); a job with
+// a mix of invoiced and open lines undercounted by exactly the open lines' value.
+// Verified live across every job with a nonzero Job.costActualHistorical: the gap
+// between this query's old result and getJobPartsCost's per-job total (which has NO
+// invoiced-date filter — the drill-through/Job Hour Details basis) matched the sum of
+// that job's zero-invoice lines to the cent, for all of them. Fixed by dropping the
+// invoiced-date filter (and the now-pointless date parameters) entirely — this is
+// supposed to be "every dollar committed to the job, ever," the same thing
+// getJobPartsCost already computes one job at a time; this is that same computation as
+// one aggregate query across every job, which is what both callers actually need.
+export async function getPartsCostSpentByJob(): Promise<Map<string, number>> {
+  const pool = await sql.connect({ ...config, requestTimeout: 120000 });
+  try {
+    const result = await pool.request().query(
+      `WITH pp AS (\n${PART_PURCHASE_SQL}\n)\n` +
+        `SELECT [Job ID] AS JobId, SUM([Total Price]) AS Spent FROM pp ` +
+        `WHERE [Job ID] IS NOT NULL ` +
+        `GROUP BY [Job ID]`
+    );
+    const map = new Map<string, number>();
+    for (const r of result.recordset) {
+      const spent = Number(r.Spent);
+      if (Number.isFinite(spent)) map.set(String(Number(r.JobId)), spent);
+    }
+    return map;
+  } finally {
+    await pool.close();
+  }
+}
+
+// Frozen copy of getPartsCostSpentByJob's PRE-2026-08-07 behavior — windowed on
+// [Invoiced Date], which silently drops every never-invoiced line (see the fix note
+// above). Exists ONLY so the historical diagnostic scripts that compared this exact
+// (buggy) basis against others — scripts/parts-spent-audit.ts,
+// scripts/archive/parts-spent-recon.ts, scripts/archive/_recon_july_2026.ts — still
+// run and still reproduce the numbers their own commentary discusses. The real app
+// never calls this; do not add a new caller.
+export async function legacyPartsCostSpentByJobWindowed(monthStart: Date, monthEndExclusive: Date): Promise<Map<string, number>> {
   const pool = await sql.connect({ ...config, requestTimeout: 120000 });
   try {
     const result = await pool
@@ -507,19 +552,19 @@ interface TotalEtoCosting {
 // TotalETO over Power BI, deliberately. getPartsCostSpentByJob runs the same
 // query Power BI's own 'Part Purchase' table runs, verified 2026-07-19 to match
 // its [Part Cost Purchased] to the dollar for every real project job — so the two
-// agree, and TotalETO is live where the model waits for a scheduled refresh. It
-// is also already the source for the ETC grid's "Money Spent Month", so this
-// column and that row can never tell different stories.
+// agree, and TotalETO is live where the model waits for a scheduled refresh.
+// NOT the same source as the ETC grid's "Money Spent Month" (§41 moved that to
+// getPartsCostBookedByJob's AP-document basis) — this is deliberately a
+// different, lifetime question, not a monthly one.
 //
-// Cumulative, not per-month: the column is a running actual. Windowed from 1990
-// to 2100 rather than by a "since" date, because a job's parts can be invoiced
-// long before its ETC tracking starts.
+// Cumulative, not per-month: the column is a running actual, unwindowed — see
+// getPartsCostSpentByJob's own comment for why a date window can't apply here.
 //
 // Every job with a real Type, whatever its Status — Complete jobs are precisely
 // the ones whose parts spend is finished and worth reporting, and they were the
 // rows sitting empty.
 export async function syncPartsCostActual(): Promise<{ jobsUpdated: number; jobsNotFound: number }> {
-  const spentByJobId = await getPartsCostSpentByJob(new Date(Date.UTC(1990, 0, 1)), new Date(Date.UTC(2100, 0, 1)));
+  const spentByJobId = await getPartsCostSpentByJob();
 
   const jobs = await prisma.job.findMany({
     where: { type: { in: [...VALID_JOB_TYPES] } },

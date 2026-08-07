@@ -248,7 +248,7 @@ export async function loadJobCostRows(): Promise<JobCostData> {
 
   const [hoursByJobPk, partsPurchased, partsInvoiced, inventory, etcSnapshot, salesFallback, liveEtcByJobPk] = await Promise.all([
     loadJobHoursAndYears(jobPks),
-    withTimeoutOrNull("Total ETO parts purchased (Job Cost Explorer)", PARTS_BATCH_BUDGET_MS, () => getPartsCostSpentByJob(LIFETIME_START, LIFETIME_END_EXCLUSIVE), onPartsFail),
+    withTimeoutOrNull("Total ETO parts purchased (Job Cost Explorer)", PARTS_BATCH_BUDGET_MS, () => getPartsCostSpentByJob(), onPartsFail),
     withTimeoutOrNull("Total ETO parts invoiced (Job Cost Explorer)", PARTS_BATCH_BUDGET_MS, () => getPartsInvoicedByJob(LIFETIME_START, LIFETIME_END_EXCLUSIVE), onPartsFail),
     loadInventoryOverrides(),
     loadEtcSnapshot(),

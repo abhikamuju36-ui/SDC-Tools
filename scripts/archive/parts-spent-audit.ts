@@ -22,14 +22,17 @@
 // records nobody is counting. It CHANGES NOTHING.
 
 import "dotenv/config";
-import { prisma } from "../src/lib/prisma";
-import { PARTS_COST_SECTION } from "../src/lib/sections";
-import { etcActiveJobFilter } from "../src/lib/job-filters";
+import { prisma } from "@/lib/prisma";
+import { PARTS_COST_SECTION } from "@/lib/sections";
+import { etcActiveJobFilter } from "@/lib/job-filters";
 import {
   getPartsCostPurchasedByJob,
-  getPartsCostSpentByJob,
-} from "../src/lib/sync-totaleto";
-import { round2 } from "../src/lib/etc";
+  // Archived 2026-08-07: getPartsCostSpentByJob itself lost its date window when the
+  // NULL-invoiced-date exclusion bug it was reproducing here got fixed for real use.
+  // This alias keeps the script's original monthly-window comparison meaningful.
+  legacyPartsCostSpentByJobWindowed as getPartsCostSpentByJob,
+} from "@/lib/sync-totaleto";
+import { round2 } from "@/lib/etc";
 
 const month = process.argv[2] ?? "2026-07";
 const [year, monthNum] = month.split("-").map(Number);

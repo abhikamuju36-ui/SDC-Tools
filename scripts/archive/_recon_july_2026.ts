@@ -11,7 +11,8 @@ import { prisma } from "@/lib/prisma";
 import { ETC_TRACKED_CODES } from "@/lib/sections";
 import { round2 } from "@/lib/etc";
 import { fetchJobHoursRows, hoursByJobSection } from "@/lib/job-hours-source";
-import { getPartsCostSpentByJob } from "@/lib/sync-totaleto";
+// Archived 2026-08-07 — see the note in scripts/archive/parts-spent-audit.ts.
+import { legacyPartsCostSpentByJobWindowed as getPartsCostSpentByJob } from "@/lib/sync-totaleto";
 
 const Y = 2026, MO = 7;
 const HOURS_EPS = 0.02;

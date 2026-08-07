@@ -24,10 +24,14 @@
 
 import "dotenv/config";
 import sql from "mssql";
-import { prisma } from "../src/lib/prisma";
-import { PARTS_COST_SECTION } from "../src/lib/sections";
-import { getPartsCostPurchasedByJob, getPartsCostSpentByJob } from "../src/lib/sync-totaleto";
-import { round2 } from "../src/lib/etc";
+import { prisma } from "@/lib/prisma";
+import { PARTS_COST_SECTION } from "@/lib/sections";
+import {
+  getPartsCostPurchasedByJob,
+  // Archived 2026-08-07 — see the note in scripts/archive/parts-spent-audit.ts.
+  legacyPartsCostSpentByJobWindowed as getPartsCostSpentByJob,
+} from "@/lib/sync-totaleto";
+import { round2 } from "@/lib/etc";
 
 const MONTH = "2026-07";
 const monthStart = new Date(Date.UTC(2026, 6, 1));

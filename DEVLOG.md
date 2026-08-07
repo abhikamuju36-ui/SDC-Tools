@@ -5597,3 +5597,57 @@ current one locks" behavior the revert was supposed to restore). Deleted both mo
 outright once this was reported; July is again the sole in-progress month, matching pre-§66
 behavior. The 3 orphaned schema columns are still on the table, still uncommitted, and still
 inert — no code path reads or writes them.
+
+## 62. Project-level Parts Cost total silently dropped every never-invoiced PO line (2026-08-07)
+
+Reported: `Job.costActualHistorical` (the Quoted page's "Parts Cost Actual" column) and Job
+Cost Explorer's "Parts Purchased" column — the two per-job LIFETIME Parts Cost totals in the
+app, both fed by `getPartsCostSpentByJob` — didn't match the Parts Spent drill-through's own
+line items for the same job. Money Spent Month (the ETC grid's monthly figure,
+`getPartsCostBookedByJob`, §41) was explicitly out of scope and untouched.
+
+**Root cause**: `getPartsCostSpentByJob` filtered `WHERE [Invoiced Date] >= @start AND
+[Invoiced Date] < @end`, called with a 1990-2100 "lifetime" window from both callers.
+`[Invoiced Date]` (`INVOICED.APDocDate`, a `LEFT JOIN`) is NULL for any PO line nothing has
+been invoiced against yet — a normal state for an open order. In SQL, `NULL >= x` is UNKNOWN,
+not true, so the row silently dropped out of the `WHERE` clause **no matter how wide the
+window was** — the exclusion was never about the date being out of range, it was about the
+date being absent. `getJobPartsCost` (the drill-through / Job Hour Details basis) has no such
+filter and includes these lines, which is why the two disagreed.
+
+Verified live across every job with a nonzero `costActualHistorical`: the gap between the old
+figure and `getJobPartsCost`'s true per-job total matched the sum of that job's zero-invoice
+lines to the cent, on all of them (examples: job 1101 undercounted by $42,439, job 1130 by
+$13,198). A related, separate finding turned out NOT to be a bug: 115 of 215 jobs with a
+stored `costActualHistorical` are entirely absent from the live query's result, and every one
+checked is a `Complete` job — TotalETO itself stops serving live PO detail rows for a closed
+job at some point (archived on its side), and `syncPartsCostActual`'s "only touch jobs present
+in this pass's result" loop correctly leaves those alone rather than zeroing out real
+historical spend just because the source no longer echoes it back. Left as-is.
+
+**Fix**: dropped the invoiced-date filter (and the now-pointless date-window parameters)
+entirely — `getPartsCostSpentByJob()` is now unconditionally lifetime, summing every PO/Extra
+Cost line a job has, invoiced or not, exactly like `getJobPartsCost` already does per-job, just
+as one aggregate query across every job at once. Re-ran `syncPartsCostActual()` live: 76 jobs'
+stored figures corrected (job 1101: $746,064.13 → $788,503.13, now equal to the drill-through's
+own total to the cent). Job Cost Explorer's `loadJobCostRows()` computes this live per page
+load (no cache), so it picked up the fix immediately — verified job 1101's `partCost` there
+also reads $788,503.13.
+
+Three historical one-off diagnostic scripts intentionally reproduced the OLD windowed
+behavior for comparison purposes (`scripts/archive/parts-spent-audit.ts`,
+`scripts/archive/parts-spent-recon.ts`, `scripts/archive/_recon_july_2026.ts` — the first two
+moved into `scripts/archive/` as part of this fix, joining the third). Rather than leave them
+broken or silently change what they measure, added `legacyPartsCostSpentByJobWindowed` — a
+frozen copy of the pre-fix query, used only by those three scripts, with a comment making
+clear the real app never calls it. `tests/parts-cost-spent-by-job.test.ts` guards the fix by
+inspecting the source (no TotalETO connection in CI, same pattern as
+`tests/parts-spent-drill-invoiced.test.ts`): the function takes no parameters, its query never
+mentions `[Invoiced Date]`, both real callers pass no arguments, and the legacy copy still has
+the old filter.
+
+`tsc`/`eslint` clean, 849/849 tests pass (5 new). Two stale doc comments claiming Money Spent
+Month and `costActualHistorical` "come from the same query" / "can never tell different
+stories" (in `sync-totaleto.ts` and `sync-powerbi.ts`) were corrected in passing — that was
+never true after §41 moved Money Spent Month to `getPartsCostBookedByJob`, and the wrong
+comment could have misled whoever debugged this next.

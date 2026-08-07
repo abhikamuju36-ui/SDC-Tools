@@ -366,10 +366,9 @@ export async function syncHoursWorked(
 // Modeled as an EtcEntry row with section = PARTS_COST_SECTION rather than a
 // new table, since the shape matches the hours departments exactly.
 //
-// Money Spent Month comes DIRECTLY from TotalETO now (getPartsCostSpentByJob),
-// not Power BI — verified 2026-07-19 to match Power BI's [Part Cost Purchased]
-// to the dollar for every real project job, and it removes the last
-// PBI/gateway dependency for the live month. Prior ETC is the app's own prior-
+// Money Spent Month comes DIRECTLY from TotalETO now (getPartsCostBookedByJob,
+// the AP-document basis — see §41 below), not Power BI, and it removes the
+// last PBI/gateway dependency for the live month. Prior ETC is the app's own prior-
 // month confirmed New ETC (the authoritative running balance now that the
 // monthly review lives in the app); no prior entry -> opens at 0.
 // Creates the row if it doesn't exist yet (unlike the hours sync, which only
