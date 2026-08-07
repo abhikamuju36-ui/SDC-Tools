@@ -72,7 +72,7 @@ async function main() {
   // No date filter: every hour the model holds, at the job/section grain the
   // grid renders. SELECTCOLUMNS isn't needed here because SUMMARIZECOLUMNS never
   // touches the broken 'Hours Actual'[Hours Actual Est to Date] calculated
-  // column (see SEMANTIC-MODEL-MAP.md).
+  // column (see docs/SEMANTIC-MODEL-MAP.md).
   const dax = `
 EVALUATE
 FILTER(

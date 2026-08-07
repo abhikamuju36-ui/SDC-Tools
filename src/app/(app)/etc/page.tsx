@@ -1197,7 +1197,7 @@ export default async function MonthlyEtcPage({
                   which Power BI folds into Engineering/Shop and the ETC grid's fixed
                   9+4-code formula deliberately excludes (signed off 2026-07-31).
               So the vintage is named, and the source with it, because the whole point is
-              that the two systems are at different ones. See PAYLOCITY-INGESTION.md §43. */}
+              that the two systems are at different ones. See docs/PAYLOCITY-INGESTION.md §43. */}
           {hoursActualFreshness?.refreshedThrough && (
             <>
               {" · "}

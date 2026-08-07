@@ -12,7 +12,7 @@
 //     edits survive a refusal. Nothing about submission throws up here.
 //   • So what this boundary actually catches is render and data faults on /etc — a brief
 //     TotalETO or Power BI hiccup, a database blip, or a stale chunk. It had already
-//     misled once on exactly that: GRAPH-APP-ONLY-SETUP.md records a user-triggered
+//     misled once on exactly that: docs/GRAPH-APP-ONLY-SETUP.md records a user-triggered
 //     Refresh surfacing as "Submission rejected".
 //   • And there is frequently no "value above" at all: when the page fails before the
 //     grid renders, the advice names a control that is not on screen.

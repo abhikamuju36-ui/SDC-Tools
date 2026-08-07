@@ -12,7 +12,7 @@
  *                                          tenant-wide but not on THIS site)
  *   5. Can it download the hours file?
  *
- * Read-only throughout. See GRAPH-APP-ONLY-SETUP.md for the admin steps.
+ * Read-only throughout. See docs/GRAPH-APP-ONLY-SETUP.md for the admin steps.
  */
 import { ConfidentialClientApplication } from "@azure/msal-node";
 

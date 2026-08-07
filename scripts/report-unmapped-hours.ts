@@ -1,4 +1,4 @@
-// Generates UNMAPPED-HOURS.md — every hour in the Power BI hours feed that does
+// Generates docs/UNMAPPED-HOURS.md — every hour in the Power BI hours feed that does
 // NOT reach a per-job figure in the app, listed job by job and code by code.
 //
 // Three distinct populations, which matter for different reasons:
@@ -28,7 +28,7 @@ type Row = {
 };
 
 const normJobId = (raw: string) => raw.trim().replace(/^0+(?=\d)/, "");
-const OUT = "UNMAPPED-HOURS.md";
+const OUT = "docs/UNMAPPED-HOURS.md";
 
 // Same classification the reader applies, but reported instead of acted on.
 // Uses the model-derived code->column map, so this report and the sync can never
