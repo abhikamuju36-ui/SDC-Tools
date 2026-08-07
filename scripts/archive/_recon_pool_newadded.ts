@@ -9,7 +9,7 @@
 //
 // Run: npx tsx scripts/_recon_pool_newadded.ts
 import "dotenv/config";
-import { prisma } from "../src/lib/prisma";
+import { prisma } from "@/lib/prisma";
 
 const POOL_SECTION: Record<string, string> = {
   ENGINEERING_PM: "10-111",

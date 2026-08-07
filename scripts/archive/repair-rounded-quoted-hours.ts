@@ -15,7 +15,7 @@
 //           npx tsx scripts/repair-rounded-quoted-hours.ts --fix     (report + repair)
 import * as XLSX from "xlsx";
 import { PrismaClient } from "@prisma/client";
-import { SECTIONS } from "../src/lib/sections";
+import { SECTIONS } from "@/lib/sections";
 
 const prisma = new PrismaClient();
 const FIX = process.argv.includes("--fix");

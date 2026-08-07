@@ -16,11 +16,11 @@
 //
 // Run: npx tsx scripts/_recon_pool_hours_baseline.ts
 import "dotenv/config";
-import { runDax } from "../src/lib/powerbi-client";
-import { prisma } from "../src/lib/prisma";
-import { fetchJobHoursRowsWithIssues } from "../src/lib/job-hours-source";
-import { POOL_CATEGORIES, type PoolCategory } from "../src/lib/sections";
-import { round2 } from "../src/lib/etc";
+import { runDax } from "@/lib/powerbi-client";
+import { prisma } from "@/lib/prisma";
+import { fetchJobHoursRowsWithIssues } from "@/lib/job-hours-source";
+import { POOL_CATEGORIES, type PoolCategory } from "@/lib/sections";
+import { round2 } from "@/lib/etc";
 
 const POOL_CATEGORY: Record<string, PoolCategory> = {
   "Engineering|PM": "ENGINEERING_PM",

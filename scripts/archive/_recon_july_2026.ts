@@ -6,12 +6,12 @@
 //
 // Run: npx tsx scripts/_recon_july_2026.ts
 import "dotenv/config";
-import { runDax } from "../src/lib/powerbi-client";
-import { prisma } from "../src/lib/prisma";
-import { ETC_TRACKED_CODES } from "../src/lib/sections";
-import { round2 } from "../src/lib/etc";
-import { fetchJobHoursRows, hoursByJobSection } from "../src/lib/job-hours-source";
-import { getPartsCostSpentByJob } from "../src/lib/sync-totaleto";
+import { runDax } from "@/lib/powerbi-client";
+import { prisma } from "@/lib/prisma";
+import { ETC_TRACKED_CODES } from "@/lib/sections";
+import { round2 } from "@/lib/etc";
+import { fetchJobHoursRows, hoursByJobSection } from "@/lib/job-hours-source";
+import { getPartsCostSpentByJob } from "@/lib/sync-totaleto";
 
 const Y = 2026, MO = 7;
 const HOURS_EPS = 0.02;

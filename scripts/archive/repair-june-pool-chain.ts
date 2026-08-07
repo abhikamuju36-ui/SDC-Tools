@@ -1,8 +1,8 @@
 import "dotenv/config";
 import { writeFileSync } from "fs";
-import { prisma } from "../src/lib/prisma";
-import { computeCategoryPoolsLocally, newProjectsEnteringMonth } from "../src/lib/standard-pool-local";
-import { round2 } from "../src/lib/etc";
+import { prisma } from "@/lib/prisma";
+import { computeCategoryPoolsLocally, newProjectsEnteringMonth } from "@/lib/standard-pool-local";
+import { round2 } from "@/lib/etc";
 
 // June 2026's pools were frozen on 2026-07-08 from Power BI's archive, with
 // New Hours Added of 726h. Jobs 1161/1162 have since been re-quoted and now

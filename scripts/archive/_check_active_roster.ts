@@ -1,5 +1,5 @@
 import "dotenv/config";
-import { prisma } from "../src/lib/prisma";
+import { prisma } from "@/lib/prisma";
 
 async function main() {
   const all = await prisma.employee.findMany({ select: { department: true, active: true } });

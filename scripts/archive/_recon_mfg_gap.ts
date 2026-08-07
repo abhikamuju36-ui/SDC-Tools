@@ -13,10 +13,10 @@
 //
 // Run: npx tsx scripts/_recon_mfg_gap.ts
 import "dotenv/config";
-import { runDax } from "../src/lib/powerbi-client";
-import { prisma } from "../src/lib/prisma";
-import { fetchJobHoursRows, latestWorkDate } from "../src/lib/job-hours-source";
-import { round2 } from "../src/lib/etc";
+import { runDax } from "@/lib/powerbi-client";
+import { prisma } from "@/lib/prisma";
+import { fetchJobHoursRows, latestWorkDate } from "@/lib/job-hours-source";
+import { round2 } from "@/lib/etc";
 
 // What PBI calls Manufacturing (function 414) and what the app codes it as.
 const MFG_SECTIONS = new Set(["10-413", "10-414"]);

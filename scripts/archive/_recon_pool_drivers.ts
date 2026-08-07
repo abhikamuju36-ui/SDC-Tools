@@ -5,8 +5,8 @@
 //
 // Run: npx tsx scripts/_recon_pool_drivers.ts
 import "dotenv/config";
-import { prisma } from "../src/lib/prisma";
-import { VALID_JOB_TYPES } from "../src/lib/job-filters";
+import { prisma } from "@/lib/prisma";
+import { VALID_JOB_TYPES } from "@/lib/job-filters";
 
 // The four pools ARE the four sections the ETC grid excludes.
 const POOL_SECTION: Record<string, string> = {

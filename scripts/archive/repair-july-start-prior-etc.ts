@@ -20,9 +20,9 @@
 //   dry run:  npx tsx scripts/repair-july-start-prior-etc.ts 2026-07
 //   for real: npx tsx scripts/repair-july-start-prior-etc.ts 2026-07 --write
 import "dotenv/config";
-import { prisma } from "../src/lib/prisma";
-import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "../src/lib/sections";
-import { calcHoursLeft, round2 } from "../src/lib/etc";
+import { prisma } from "@/lib/prisma";
+import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
+import { calcHoursLeft, round2 } from "@/lib/etc";
 
 async function main() {
   const month = process.argv[2];

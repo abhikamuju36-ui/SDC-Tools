@@ -1,6 +1,6 @@
 import "dotenv/config";
-import { prisma } from "../src/lib/prisma";
-import { latestPriorEtcByKey, calcHoursLeft, round2, isMonthLocked } from "../src/lib/etc";
+import { prisma } from "@/lib/prisma";
+import { latestPriorEtcByKey, calcHoursLeft, round2, isMonthLocked } from "@/lib/etc";
 
 // Repairs Prior ETC on the OPEN month for job/sections whose carry-forward fell
 // back to quoted hours because the immediately-preceding month had no row.

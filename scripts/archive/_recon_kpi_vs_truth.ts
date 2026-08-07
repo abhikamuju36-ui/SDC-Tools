@@ -5,10 +5,10 @@
 //
 // Run: npx tsx scripts/_recon_kpi_vs_truth.ts
 import "dotenv/config";
-import { prisma } from "../src/lib/prisma";
-import { ETC_SECTIONS } from "../src/lib/sections";
-import { round2 } from "../src/lib/etc";
-import { fetchJobHoursRows, hoursByJobSection } from "../src/lib/job-hours-source";
+import { prisma } from "@/lib/prisma";
+import { ETC_SECTIONS } from "@/lib/sections";
+import { round2 } from "@/lib/etc";
+import { fetchJobHoursRows, hoursByJobSection } from "@/lib/job-hours-source";
 
 const MONTH = "2026-07";
 const Y = 2026, MO = 7;

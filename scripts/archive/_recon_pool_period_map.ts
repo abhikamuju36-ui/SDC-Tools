@@ -11,8 +11,8 @@
 //
 // Run: npx tsx scripts/_recon_pool_period_map.ts
 import "dotenv/config";
-import { runDax } from "../src/lib/powerbi-client";
-import { prisma } from "../src/lib/prisma";
+import { runDax } from "@/lib/powerbi-client";
+import { prisma } from "@/lib/prisma";
 
 const POOL_SECTION: Record<string, string> = {
   ENGINEERING_PM: "10-111",

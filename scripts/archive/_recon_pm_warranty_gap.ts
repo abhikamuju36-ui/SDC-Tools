@@ -12,11 +12,11 @@
 //
 // Run: npx tsx scripts/_recon_pm_warranty_gap.ts
 import "dotenv/config";
-import { runDax } from "../src/lib/powerbi-client";
-import { prisma } from "../src/lib/prisma";
-import { fetchJobHoursRowsWithIssues } from "../src/lib/job-hours-source";
-import { type PoolCategory } from "../src/lib/sections";
-import { round2 } from "../src/lib/etc";
+import { runDax } from "@/lib/powerbi-client";
+import { prisma } from "@/lib/prisma";
+import { fetchJobHoursRowsWithIssues } from "@/lib/job-hours-source";
+import { type PoolCategory } from "@/lib/sections";
+import { round2 } from "@/lib/etc";
 
 const MONTHS = ["2026-01", "2026-02", "2026-03", "2026-04", "2026-05", "2026-06"];
 

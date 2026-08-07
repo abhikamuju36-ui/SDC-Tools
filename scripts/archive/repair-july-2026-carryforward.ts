@@ -30,10 +30,10 @@
 //   dry run:  npx tsx scripts/repair-july-2026-carryforward.ts 2026-07
 //   for real: npx tsx scripts/repair-july-2026-carryforward.ts 2026-07 --write
 import "dotenv/config";
-import { prisma } from "../src/lib/prisma";
-import { derivePriorEtcForMonth, cascadePriorEtcForward } from "../src/lib/etc-prior-etc";
-import { latestPriorEtcByKey, priorEtcForMonth, round2, suggestNewEtc } from "../src/lib/etc";
-import { PARTS_COST_SECTION } from "../src/lib/sections";
+import { prisma } from "@/lib/prisma";
+import { derivePriorEtcForMonth, cascadePriorEtcForward } from "@/lib/etc-prior-etc";
+import { latestPriorEtcByKey, priorEtcForMonth, round2, suggestNewEtc } from "@/lib/etc";
+import { PARTS_COST_SECTION } from "@/lib/sections";
 
 const money = (n: number) => n.toLocaleString(undefined, { style: "currency", currency: "USD", maximumFractionDigits: 0 });
 

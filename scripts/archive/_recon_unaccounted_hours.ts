@@ -9,7 +9,7 @@
 import "dotenv/config";
 import * as XLSX from "xlsx";
 import fs from "fs/promises";
-import { ETC_TRACKED_CODES, HOURS_IMPORT_CODES, poolCategoryForPunch } from "../src/lib/sections";
+import { ETC_TRACKED_CODES, HOURS_IMPORT_CODES, poolCategoryForPunch } from "@/lib/sections";
 
 // Same aliases sharepoint-hours.ts applies, kept in step by hand — this script
 // deliberately re-reads the raw workbook rather than calling the app helper,

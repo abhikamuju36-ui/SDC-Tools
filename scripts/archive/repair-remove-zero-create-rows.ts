@@ -16,7 +16,7 @@
 // dry run:  npx tsx scripts/repair-remove-zero-create-rows.ts 2026-06 2026-07
 // for real: ... --write
 import "dotenv/config";
-import { prisma } from "../src/lib/prisma";
+import { prisma } from "@/lib/prisma";
 
 async function main() {
   const write = process.argv.includes("--write");

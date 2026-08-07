@@ -12,9 +12,9 @@
 //
 // Run: npx tsx scripts/_recon_actuals_gap_split.ts
 import "dotenv/config";
-import { runDax } from "../src/lib/powerbi-client";
-import { prisma } from "../src/lib/prisma";
-import { SECTIONS } from "../src/lib/sections";
+import { runDax } from "@/lib/powerbi-client";
+import { prisma } from "@/lib/prisma";
+import { SECTIONS } from "@/lib/sections";
 
 type Row = {
   "Job[Job Id]": string | null;

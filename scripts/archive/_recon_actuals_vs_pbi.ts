@@ -14,8 +14,8 @@
 //
 // Run: npx tsx scripts/_recon_actuals_vs_pbi.ts
 import "dotenv/config";
-import { runDax } from "../src/lib/powerbi-client";
-import { prisma } from "../src/lib/prisma";
+import { runDax } from "@/lib/powerbi-client";
+import { prisma } from "@/lib/prisma";
 
 // actual-hours.ts can't be imported here: it starts with `import "server-only"`,
 // which resolves through Next's bundler alias and does not exist as a real
@@ -164,7 +164,7 @@ FILTER(
 
   // Section-code sanity: does the model's Section-Function Code vocabulary match
   // the app's? A mismatch here would look exactly like "missing actuals".
-  const { SECTIONS } = await import("../src/lib/sections");
+  const { SECTIONS } = await import("@/lib/sections");
   const appCodes = new Set(SECTIONS.map((s) => s.code));
   const pbiCodes = new Set([...pbi.keys()].map((k) => k.split("::")[1]));
   const unknown = [...pbiCodes].filter((c) => !appCodes.has(c));

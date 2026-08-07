@@ -4,7 +4,7 @@
 //
 // Run: npx tsx scripts/_check_etc_period_map.ts
 import "dotenv/config";
-import { fetchEtcPeriods, resolveEtcPeriodName } from "../src/lib/etc-period";
+import { fetchEtcPeriods, resolveEtcPeriodName } from "@/lib/etc-period";
 
 async function main() {
   const periods = await fetchEtcPeriods();

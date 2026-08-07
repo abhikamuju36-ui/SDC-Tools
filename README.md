@@ -83,8 +83,8 @@ job to put it against — so it is stated rather than left as an unexplained gap
 between the app's totals and payroll.
 
 > To check the data against its source rather than trusting the header, run
-> `scripts/_recon_kpi_vs_truth.ts` (stored vs a fresh pull) or
-> `scripts/_recon_july_2026.ts` (the app's transforms vs Power BI's measures).
+> `scripts/archive/_recon_kpi_vs_truth.ts` (stored vs a fresh pull) or
+> `scripts/archive/_recon_july_2026.ts` (the app's transforms vs Power BI's measures).
 
 The committed `Job Hours Report - *.Report` / `.SemanticModel` folders are the
 Power BI source of truth this app replicates; the `.SemanticModel` TMDL holds

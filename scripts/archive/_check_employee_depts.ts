@@ -3,7 +3,7 @@
 //
 // Run: npx tsx scripts/_check_employee_depts.ts
 import "dotenv/config";
-import { prisma } from "../src/lib/prisma";
+import { prisma } from "@/lib/prisma";
 
 const TARGET = [
   "Business Development",

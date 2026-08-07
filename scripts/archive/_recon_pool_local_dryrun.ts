@@ -9,11 +9,11 @@
 //
 // Run: npx tsx scripts/_recon_pool_local_dryrun.ts
 import "dotenv/config";
-import { prisma } from "../src/lib/prisma";
-import { fetchJobHoursRowsWithIssues } from "../src/lib/job-hours-source";
-import { POOL_CATEGORIES, POOL_QUOTED_SECTION, type PoolCategory } from "../src/lib/sections";
-import { VALID_JOB_TYPES } from "../src/lib/job-filters";
-import { round2 } from "../src/lib/etc";
+import { prisma } from "@/lib/prisma";
+import { fetchJobHoursRowsWithIssues } from "@/lib/job-hours-source";
+import { POOL_CATEGORIES, POOL_QUOTED_SECTION, type PoolCategory } from "@/lib/sections";
+import { VALID_JOB_TYPES } from "@/lib/job-filters";
+import { round2 } from "@/lib/etc";
 
 // Mirrors standard-pool-local.ts's quotedHoursEnteringMonth. Duplicated rather
 // than imported because that module is "server-only" and a plain tsx script

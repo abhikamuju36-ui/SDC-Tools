@@ -13,8 +13,8 @@
 //
 // Run: npx tsx scripts/_recon_pool_pbi_live.ts
 import "dotenv/config";
-import { runDax } from "../src/lib/powerbi-client";
-import { prisma } from "../src/lib/prisma";
+import { runDax } from "@/lib/powerbi-client";
+import { prisma } from "@/lib/prisma";
 
 // Local copy of sync-powerbi.ts's (unexported) monthToEtcName.
 const MONTH_NUM_TO_NAME = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];

@@ -17,7 +17,7 @@ cells. That equivalence was real — and it was measured across **settled months
 it could not reveal the one property that mattered: the model lags the file.
 
 Three-way reconciliation, 2026-08-05, before any change
-(`scripts/_recon_workbook_vs_pbi_vs_db.ts`):
+(`scripts/archive/_recon_workbook_vs_pbi_vs_db.ts`):
 
 | month | Lisa's workbook | Power BI | database |
 |---|---:|---:|---:|
@@ -221,7 +221,7 @@ indexed table.
 
 ### 13. Reconciliation results, before and after
 
-**Hours reaching the database** (`scripts/_verify_hours_import.ts`):
+**Hours reaching the database** (`scripts/archive/_verify_hours_import.ts`):
 
 | month | before | after | delta |
 |---|---:|---:|---:|
@@ -271,7 +271,7 @@ reproduces the stored data exactly at storage precision; 2026-06 reproduces Powe
   collision with the yellow rule, no layout shift, error/conflict/invalid separation.
 * `scripts/paylocity-workbook-smoke.ts` — real-file smoke test; **fails the run** if any
   settled month diverges.
-* `scripts/_verify_hours_import.ts` — end-to-end before/after with reconciliation.
+* `scripts/archive/_verify_hours_import.ts` — end-to-end before/after with reconciliation.
 
 **Suite: 621 tests, 621 pass.**
 
@@ -290,7 +290,7 @@ serves the Engineering/Shop/Parts drills. Power BI reading is retained behind
 Reported 2026-08-05: the report shows July 2026 Engineering **3,020**, Shop **2,680**,
 Manufacturing **676**; the app's grid footer shows Engineering **3,154**, Shop **2,698**.
 
-Reconciled with `scripts/_recon_pbi_definitions.ts`, which parses the workbook **raw**
+Reconciled with `scripts/archive/_recon_pbi_definitions.ts`, which parses the workbook **raw**
 rather than through `readPaylocityWorkbook` — that reader has already applied the app's
 column mapping, and the mapping is the thing under test. Comparing a mapping against
 itself proves nothing.
