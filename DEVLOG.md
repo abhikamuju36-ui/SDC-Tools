@@ -5573,3 +5573,21 @@ untouched and running — decommissioning it is a decision for whoever relied on
 something to do silently as part of this change. The deep re-nesting `docs/CODEBASE-STRUCTURE.md`
 describes as future work is unaffected; this integration added flat files matching the
 existing convention (`lib/job-cost*.ts`, `components/JobCost*.tsx`), not a new pattern.
+
+## 61. Intelligent month-to-month ETC reporting — built, live-verified, then reverted (2026-08-07)
+
+Implemented the full spec (relaxed `assertMonthSeedable`, a three-way pending/decided/quoted
+carry-forward rule, live and persisted resolution, a companion multi-month fix to
+`auto-sync.ts`, waiting-cell UI, partial KPI totals, and a submission block on pending rows)
+and verified it live against the real database via the `sdc-etc-planner-verify` launch config
+— including finding and fixing a genuine bug in the carry-forward lookup (it could reach past
+an undecided latest predecessor to an older decided value underneath it). Reverted the same
+day at request, before any of it was committed — every touched file was restored to its prior
+state and the full verification suite (`tsc`, `eslint`, 844/844 tests) confirmed clean.
+
+The real production database still carries two side effects from the live verification: the
+three `EtcEntry` columns added by migration `20260807150428_add_etc_entry_pending_lineage`
+(that migration itself was left uncommitted, and does not match the reverted schema.prisma —
+do not run it against another environment), and 451 real August 2026 `EtcEntry` rows seeded
+during live testing (none carry a saved New ETC draft). Asked and decided: left as-is. The
+reverted code reads and writes neither, so both are inert dead weight rather than a live risk.
