@@ -7,9 +7,14 @@ import { UndefinedHoursPanel } from "@/components/UndefinedHoursPanel";
 // The drill card's height ceiling and its one scrolling region (§49). The two panels
 // below are hand-rolled rather than DrillPanel, so they read the same two classes the
 // shared panel does — the alternative is four opinions about how tall a drill may be.
-import { DRILL_BODY, DRILL_CAP } from "@/components/ui/Drill";
+import { DRILL_BODY, DRILL_CAP, DrillControls, DrillFilterRow, DrillGroupOption, DrillGroupTray } from "@/components/ui/Drill";
+// The shared filter model (§73). These two drills had NO filters — the requirement is
+// filters "beside the existing Group By options" in every Monthly ETC drill-through, and
+// these are the two that had neither.
+import { matchesDrillFilters } from "@/lib/drill-filters";
+import { useDrillFilters } from "@/components/useDrillFilters";
 import { ETC_SECTIONS } from "@/lib/sections";
-import { offGridBySection, sectionName, type OffGridJob } from "@/lib/off-grid-hours";
+import { compareSections, offGridBySection, sectionName, type OffGridJob } from "@/lib/off-grid-hours";
 import type { EtcMonthKpis } from "@/lib/etc-month-kpis";
 // The strip's CONTENT — which blocks exist, what each one says, which drill it opens —
 // is a pure function of the reconciled figures (§37). See the header note there for why
@@ -53,6 +58,21 @@ const SECTION_GROUP = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]))
 // The formatters the blocks are built with. Module-level and frozen, so building the
 // strip cannot depend on anything that changes per render.
 const KPI_FORMAT = { hours: fmtHours, usd } as const;
+
+// ── How a parts row answers the two filter dimensions (§73) ──────────────────
+//
+// Module-level, so the option list and the predicate are guaranteed to produce the same
+// string for the same row. A filter whose menu says "1105 — Foo" and whose predicate
+// compares against "1105" matches nothing and looks like an empty month.
+function partsJobLabel(r: { jobId: string; jobName: string }): string {
+  return `${r.jobId} — ${r.jobName}`;
+}
+// "Status" for a parts row is whether anybody has actually decided its New ETC — the
+// `decided` flag PartsSpentRow already carries for the same reason (an undecided cell
+// contributes 0 to the variance, and the panel must not print a figure nobody chose).
+function partsStatus(decided: boolean): string {
+  return decided ? "Entered" : "Not entered";
+}
 
 // Re-exported so the page's existing `import type { OffGridJob }` keeps working; the
 // type and the rollup both live in lib/off-grid-hours.ts now, where a plain test can
@@ -139,12 +159,65 @@ export function EtcMonthKpiCards({
   // Summed through the same helpers the summary blocks use (lib/etc-kpi-strip.ts), so a
   // block and the drill panel that opens from it cannot disagree about the figure
   // (§37.13 #6). Both are cheap reductions over data already in props.
-  const offGridTotal = offGridTotalHours(offGridJobs);
   // "By job" is the default because the ACTION lives on the job — setting it back to
   // Active is what saves the hours. "By section" answers the other question: what kind
   // of work is about to be lost.
   const [offGridView, setOffGridView] = useState<"job" | "section">("job");
-  const offGridSections = useMemo(() => offGridBySection(offGridJobs), [offGridJobs]);
+
+  // ── Off-grid filters (§73) ──────────────────────────────────────────────────
+  //
+  // Job, status and section, all multi-select, keyed on the month so switching the report
+  // month drops them (this component stays mounted across one — see useDrillFilters).
+  //
+  // Section is the one that cannot go through matchesDrillFilters: an off-grid job carries
+  // SEVERAL sections, so "is this row's section selected" is the wrong question. Filtering
+  // by section narrows each job's section list and re-sums its hours from what survives —
+  // which is what makes the two views and the footer still total the same figure as each
+  // other after a filter, exactly as they had to before one existed.
+  const offGridFilters = useDrillFilters(month);
+  const filteredOffGridJobs = useMemo(() => {
+    const sel = offGridFilters.filters.values.section ?? [];
+    const out: OffGridJob[] = [];
+    for (const j of offGridJobs) {
+      if (!matchesDrillFilters({ job: `${j.jobId} — ${j.jobName}`, status: j.status }, offGridFilters.filters)) continue;
+      if (sel.length === 0) {
+        out.push(j);
+        continue;
+      }
+      const sections = j.sections.filter((s) => sel.includes(s.section));
+      if (sections.length === 0) continue;
+      out.push({ ...j, sections, hours: sections.reduce((t, s) => t + s.hours, 0) });
+    }
+    return out;
+  }, [offGridJobs, offGridFilters.filters]);
+  const offGridTotal = offGridTotalHours(filteredOffGridJobs);
+  const offGridSections = useMemo(() => offGridBySection(filteredOffGridJobs), [filteredOffGridJobs]);
+  // Options from the UNFILTERED jobs, so ticking one section does not remove the boxes
+  // that would let you widen the selection again.
+  const offGridMenus = useMemo(
+    () => [
+      {
+        key: "job" as const,
+        options: offGridJobs
+          .map((j) => ({ value: `${j.jobId} — ${j.jobName}`, label: `${j.jobId} — ${j.jobName}` }))
+          .sort((a, b) => a.label.localeCompare(b.label)),
+        searchable: true,
+      },
+      {
+        key: "status" as const,
+        options: [...new Set(offGridJobs.map((j) => j.status ?? "—"))]
+          .sort((a, b) => a.localeCompare(b))
+          .map((s) => ({ value: s, label: s })),
+      },
+      {
+        key: "section" as const,
+        options: [...new Set(offGridJobs.flatMap((j) => j.sections.map((s) => s.section)))]
+          .sort(compareSections)
+          .map((code) => ({ value: code, label: sectionName(code) ?? code, suffix: code })),
+      },
+    ],
+    [offGridJobs],
+  );
 
   const [drill, setDrill] = useState<DrillScope | null>(null); // null = closed
   // The punch rows behind the Engineering / Shop / People cards, fetched on first
@@ -177,6 +250,47 @@ export function EtcMonthKpiCards({
   const [partsError, setPartsError] = useState<string | null>(null);
   const [loadingUnattributed, startUnattributed] = useTransition();
   const [unattributedError, setUnattributedError] = useState<string | null>(null);
+
+  // ── Parts filters (§73) ─────────────────────────────────────────────────────
+  //
+  // Job, and whether a New ETC has been entered — which is the "status, where applicable"
+  // for this table, and the one that answers "which jobs still have no parts plan". The
+  // other columns on a parts row are money, and a money filter is a different control from
+  // the ones this row holds.
+  //
+  // Keyed on the month, like the off-grid filters above: this component survives a month
+  // change, so without that a job filter set on July would narrow August to a job that may
+  // not be in it.
+  const partsFilters = useDrillFilters(month);
+  const partsRows = useMemo(
+    () =>
+      (parts?.rows ?? []).filter((r) =>
+        matchesDrillFilters({ job: partsJobLabel(r), status: partsStatus(r.decided) }, partsFilters.filters),
+      ),
+    [parts, partsFilters.filters],
+  );
+  // Summed from the FILTERED rows, so the figure under the table is the figure in it. The
+  // card's own total stays where it is and the footer's label says which of the two this
+  // is — a filtered subtotal must never be readable as the KPI.
+  const partsShown = partsRows.reduce((t, r) => t + r.spent, 0);
+  // Options from the UNFILTERED rows — see the same note on the off-grid menus.
+  const partsMenus = useMemo(
+    () => [
+      {
+        key: "job" as const,
+        options: (parts?.rows ?? [])
+          .map((r) => ({ value: partsJobLabel(r), label: partsJobLabel(r) }))
+          .sort((a, b) => a.label.localeCompare(b.label)),
+        searchable: true,
+      },
+      {
+        key: "status" as const,
+        label: "New ETC",
+        options: [true, false].map((d) => ({ value: partsStatus(d), label: partsStatus(d) })),
+      },
+    ],
+    [parts],
+  );
 
   // The drill shows ONLY the sections belonging to the card that opened it —
   // Engineering from the Engineering card, Shop from Shop. It used to hand the
@@ -578,6 +692,24 @@ export function EtcMonthKpiCards({
             Money invoiced against each job this month, biggest first. Click a row to see the purchase-order lines behind it.
           </p>
 
+          {/* The filters (§73). This drill has no Group By tray — a parts row IS a job, so
+              there is nothing to roll it up by — so the filter row sits on its own where a
+              tray-and-filters row sits on every other drill. Rendered only once the rows
+              are in: menus built from an empty list are five empty menus. */}
+          {!partsError && parts && parts.rows.length > 0 && (
+            <DrillControls className="mb-2">
+              <DrillFilterRow
+                filters={partsFilters.filters}
+                menus={partsMenus}
+                activeCount={partsFilters.count}
+                onToggle={partsFilters.toggle}
+                onSetAll={partsFilters.setAll}
+                onRange={partsFilters.setRange}
+                onClear={partsFilters.clear}
+              />
+            </DrillControls>
+          )}
+
           {partsError && <p className="text-note font-medium text-sdc-red-text">{partsError}</p>}
           {!partsError && loadingParts && !parts && <p className="text-note text-sdc-gray-600">Loading the parts detail…</p>}
           {!partsError && parts && parts.rows.length === 0 && (
@@ -600,7 +732,7 @@ export function EtcMonthKpiCards({
                   </tr>
                 </thead>
                 <tbody>
-                  {parts.rows.map((r) => {
+                  {partsRows.map((r) => {
                     const open = openJob === r.jobId;
                     const lines = jobLines[r.jobId];
                     return (
@@ -625,7 +757,11 @@ export function EtcMonthKpiCards({
                               )}
                               {!jobLinesError && lines && lines.lines.length === 0 && (
                                 <p className="text-xs font-medium text-sdc-gray-700">
-                                  TotalETO holds no purchase-order lines for job {r.jobId}.
+                                  {/* §77: this can now mean either "TotalETO has nothing for
+                                      this job" or "everything it has is still uninvoiced" —
+                                      the drill only shows invoiced lines, so the wording no
+                                      longer claims there is nothing at all. */}
+                                  No invoiced purchase-order lines for job {r.jobId} yet.
                                 </p>
                               )}
                               {!jobLinesError && lines && lines.lines.length > 0 && (
@@ -633,11 +769,15 @@ export function EtcMonthKpiCards({
                                   {/* Says outright that these are the job's WHOLE purchase
                                       history, not the month's — a part invoiced in July can
                                       have been ordered in March, and the PO is what is being
-                                      examined. Without this the two totals look wrong. */}
+                                      examined. Without this the two totals look wrong.
+                                      "Invoiced" rather than "All" (§77, by request): a line
+                                      that has been ordered but not yet billed is dropped
+                                      before this ever reaches the client, so "All" would be
+                                      a claim the list itself no longer backs up. */}
                                   <p className="mb-2 text-note leading-relaxed font-medium text-sdc-gray-700">
-                                    All purchase lines for job {r.jobId} — <strong>{usd(lines.purchased)} purchased</strong>,{" "}
+                                    Invoiced purchase lines for job {r.jobId} — <strong>{usd(lines.purchased)} purchased</strong>,{" "}
                                     {usd(lines.paid)} invoiced, {usd(lines.leftToPay)}{" "}
-                                    left to pay. This is the job&apos;s whole history,
+                                    left to pay. This is the job&apos;s whole invoiced history,
                                     not just {month}, so it will not equal the {usd(r.spent)} above.
                                   </p>
                                   <div className="styled-scrollbar max-h-64 overflow-auto rounded border border-sdc-border bg-white">
@@ -696,12 +836,28 @@ export function EtcMonthKpiCards({
                   })}
                 </tbody>
                 <tfoot>
+                  {/* "Shown" the moment a filter is on, and the figure is the sum of the
+                      rows above it rather than the month's total — the two must never be
+                      confusable, because the unfiltered one is the KPI. */}
                   <tr className="border-t-2 border-sdc-border bg-sdc-gray-50 font-bold text-sdc-navy">
-                    <td className="px-2 py-2 text-left">{parts.rows.length} jobs</td>
-                    <td className="px-2 py-2 text-right tabular-nums">{usd(parts.totals.spent)}</td>
+                    <td className="px-2 py-2 text-left">
+                      {partsFilters.count > 0 ? "Shown" : "Total"} — {partsRows.length} jobs
+                    </td>
+                    <td className="px-2 py-2 text-right tabular-nums">{usd(partsShown)}</td>
                   </tr>
                 </tfoot>
               </table>
+              {partsRows.length === 0 && (
+                <p className="px-2 py-6 text-note text-sdc-muted">No job matches these filters.</p>
+              )}
+              {/* What the filtered subtotal is a subtotal OF, said out loud rather than
+                  leaving the reader to wonder why the footer no longer matches the card. */}
+              {partsFilters.count > 0 && (
+                <p className="mt-2 text-label text-sdc-muted">
+                  Filtered — {usd(partsShown)} of the {usd(parts.totals.spent)} spent this month. Clear the filters to
+                  reconcile against the card.
+                </p>
+              )}
               {/* Says so out loud when the footer and the card differ, rather than
                   leaving somebody to spot it. They can legitimately differ by the
                   quiet jobs excluded above — nothing else should move them apart. */}
@@ -723,29 +879,41 @@ export function EtcMonthKpiCards({
         <div className={`motion-panel flex ${DRILL_CAP} flex-col rounded-xl border border-sdc-red-border bg-white p-4 shadow-sm`}>
           {/* Two readings of the same 181 hours. Both total identically — they have to,
               since the card above shows that figure too. */}
-          <div className="mb-2 flex items-center gap-1.5">
-            <span className="text-label font-medium text-sdc-muted">Split by</span>
-            {(["job", "section"] as const).map((v) => (
-              <button
-                key={v}
-                type="button"
-                onClick={() => setOffGridView(v)}
-                aria-pressed={offGridView === v}
-                title={
-                  v === "job"
-                    ? "One row per job — the job is where the fix is (set it back to Active)"
-                    : "One row per section, summed across every off-grid job"
-                }
-                className={`h-6 rounded-md border px-2 text-label font-medium motion-interactive ${
-                  offGridView === v
-                    ? "border-sdc-blue bg-sdc-blue text-white"
-                    : "border-sdc-border bg-white text-sdc-navy hover:bg-sdc-blue-light"
-                }`}
-              >
-                {v === "job" ? "Job" : "Section"}
-              </button>
-            ))}
-          </div>
+          {/* ── Split by, and the filters beside it (§47, §73) ────────────────
+              "Split by" IS this drill's Group By, so it now uses the shared tray rather
+              than two solid-blue filled buttons — which read as two primary actions and
+              matched neither the other drills' trays nor anything else in the app. The
+              behaviour is unchanged: two readings of the same hours, one at a time.
+              The filters sit beside it, and the two are independent — narrowing to a
+              section does not change which split is showing, and switching the split does
+              not touch the filters. */}
+          <DrillControls className="mb-2">
+            <DrillGroupTray label="Split by">
+              {(["job", "section"] as const).map((v) => (
+                <DrillGroupOption
+                  key={v}
+                  on={offGridView === v}
+                  onClick={() => setOffGridView(v)}
+                  title={
+                    v === "job"
+                      ? "One row per job — the job is where the fix is (set it back to Active)"
+                      : "One row per section, summed across every off-grid job"
+                  }
+                >
+                  {v === "job" ? "Job" : "Section"}
+                </DrillGroupOption>
+              ))}
+            </DrillGroupTray>
+            <DrillFilterRow
+              filters={offGridFilters.filters}
+              menus={offGridMenus}
+              activeCount={offGridFilters.count}
+              onToggle={offGridFilters.toggle}
+              onSetAll={offGridFilters.setAll}
+              onRange={offGridFilters.setRange}
+              onClear={offGridFilters.clear}
+            />
+          </DrillControls>
           {/* Was a flat 18rem; now it takes whatever the card's ceiling leaves it (§49).
               The footnote below stays outside it, so it cannot be scrolled away. */}
           <div className={`${DRILL_BODY} rounded-lg border border-sdc-border`}>
@@ -770,7 +938,7 @@ export function EtcMonthKpiCards({
               </thead>
               <tbody>
                 {offGridView === "job"
-                  ? offGridJobs.map((j) => (
+                  ? filteredOffGridJobs.map((j) => (
                       <tr key={j.jobId} className="border-t border-sdc-border-soft align-top">
                         <td className="px-2 py-1.5">
                           <span className="font-mono font-semibold text-sdc-blue-dark">{j.jobId}</span>
@@ -815,15 +983,28 @@ export function EtcMonthKpiCards({
                     ))}
               </tbody>
               <tfoot>
+                {/* Both splits still total the same figure after a filter — the by-section
+                    view is derived from the same filtered jobs (see filteredOffGridJobs),
+                    so the two readings cannot disagree. "Shown" once a filter is on, so a
+                    subtotal is not read as the card's figure. */}
                 <tr className="border-t-2 border-sdc-navy bg-sdc-gray-50 font-semibold">
                   <td className="px-2 py-1.5" colSpan={offGridView === "job" ? 3 : 2}>
-                    Total
+                    {offGridFilters.count > 0 ? "Shown" : "Total"}
                   </td>
                   <td className="px-2 py-1.5 text-right tabular-nums text-sdc-navy">{fmtHours(offGridTotal)}</td>
                 </tr>
               </tfoot>
             </table>
+            {filteredOffGridJobs.length === 0 && (
+              <p className="px-2 py-6 text-note text-sdc-muted">No job matches these filters.</p>
+            )}
           </div>
+          {offGridFilters.count > 0 && (
+            <p className="mt-2 text-label text-sdc-muted">
+              Filtered — {fmtHours(offGridTotal)} of the {fmtHours(offGridTotalHours(offGridJobs))} off the grid this
+              month. Clear the filters to reconcile against the card.
+            </p>
+          )}
           {/* Parts Cost is excluded upstream: it stores DOLLARS in the same column
               these hours come from, so including it would put money in an hours
               total. Said here because a reader comparing this against the job's
@@ -879,6 +1060,13 @@ export function EtcMonthKpiCards({
           </p>
         ) : (
           <HoursDetailPanel
+            // Remounted per scope and per month (§73), which is how "reset the filters when
+            // the report month changes" holds here. Closing the drill unmounts the panel and
+            // takes its filters with it, but switching Engineering → Shop or July → August
+            // does NOT: this component stays mounted deliberately, so without the key a
+            // section filter set on Engineering would carry into Shop, where those sections
+            // do not exist, and the table would open empty.
+            key={`${drill}-${month}`}
             detail={scopedDetail}
             note={scopeNote}
             // Names the scope rather than where the click came from: "Engineering

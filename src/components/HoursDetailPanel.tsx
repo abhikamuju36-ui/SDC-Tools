@@ -9,15 +9,18 @@ import {
   DRILL_TOTAL_LABEL,
   DrillControls,
   DrillEmpty,
-  DrillFilters,
+  DrillFilterRow,
   DrillGroup,
   DrillGroupOption,
   DrillGroupTray,
   DrillLines,
   DrillPanel,
-  DrillSelect,
   DrillTable,
 } from "@/components/ui/Drill";
+// One filter model for every drill on this page (§73) — the same vocabulary the rollup
+// uses, so "Section" cannot mean one thing to Group By and another to a filter.
+import { dateBounds, filterOptions, matchesDrillFilters, type DrillFilterKey } from "@/lib/drill-filters";
+import { useDrillFilters } from "@/components/useDrillFilters";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
 // The two canonical orders the grid itself reads in — see the note on groupHoursRows.
 import { EMPLOYEE_TEAMS, teamFor } from "@/lib/employee-teams";
@@ -188,24 +191,30 @@ export function HoursDetailPanel({
   note?: string;
   onClose: () => void;
 }) {
-  const [section, setSection] = useState<string>(
-    initialSection && detail.sections.some((s) => s.code === initialSection) ? initialSection : "",
-  );
-  const [employee, setEmployee] = useState<string>("");
+  // ── Filters (§73) ───────────────────────────────────────────────────────────
+  //
+  // Four dimensions and a date range, all multi-select, over the shared model — where
+  // this panel previously had three single-choice selects and no way to ask about two
+  // departments at once. Department is new here: it was the DEFAULT rollup and yet the
+  // one dimension you could not narrow to, so "show me only Mechanical's punches, by
+  // employee" was not expressible.
+  //
+  // `initialSection` still preselects the section you drilled from — as a one-value
+  // selection now rather than a select's value. See useDrillFilters for why Clear filters
+  // returns to it rather than to nothing.
+  const seededSection =
+    initialSection && detail.sections.some((s) => s.code === initialSection) ? initialSection : null;
+  const filterState = useDrillFilters(undefined, () => ({
+    values: seededSection ? { section: [seededSection] } : {},
+    from: "",
+    to: "",
+  }));
+  const { filters } = filterState;
 
-  const employees = useMemo(
-    () => [...new Set(detail.rows.map((r) => r.employee))].sort((a, b) => a.localeCompare(b)),
-    [detail.rows],
-  );
   // The Job column only appears when the detail actually spans jobs (the Monthly
   // ETC month view). On the per-job drill it would repeat the page heading on
   // every row, so it's inferred from the data rather than passed as a flag.
   const showJob = detail.rows.some((r) => r.job);
-  const jobs = useMemo(
-    () => [...new Set(detail.rows.map((r) => r.job).filter((j): j is string => Boolean(j)))].sort((a, b) => a.localeCompare(b)),
-    [detail.rows],
-  );
-  const [job, setJob] = useState<string>("");
 
   // ── Group by ────────────────────────────────────────────────────────────────
   //
@@ -242,17 +251,54 @@ export function HoursDetailPanel({
       return next;
     });
 
-  const rows = useMemo(
-    () =>
-      detail.rows.filter(
-        (r) =>
-          (!section || r.section === section) &&
-          (!employee || r.employee === employee) &&
-          (!job || r.job === job),
-      ),
-    [detail.rows, section, employee, job],
-  );
+  // One predicate for every dimension, so adding a filter cannot leave the row set and
+  // the "Shown" wording disagreeing about whether anything is narrowed — which is what
+  // happened when the job select was added to the three-condition version of this.
+  const rows = useMemo(() => detail.rows.filter((r) => matchesDrillFilters(r, filters)), [detail.rows, filters]);
   const total = rows.reduce((s, r) => s + r.hours, 0);
+
+  // ── The menus' options come from the UNFILTERED rows ─────────────────────────
+  //
+  // Deliberately not from `rows`: an option list that shrinks as you tick removes the
+  // box you would use to widen the selection again, which is a filter you can enter and
+  // not leave. Memoised on detail.rows alone for the same reason — these do not move
+  // when a filter changes.
+  const menus = useMemo(() => {
+    const list: { key: DrillFilterKey; options: { value: string; label: string; suffix?: string }[]; searchable?: boolean }[] = [
+      {
+        key: "department",
+        options: filterOptions(detail.rows, "department").map((d) => ({ value: d, label: d })),
+      },
+      {
+        key: "employee",
+        options: filterOptions(detail.rows, "employee").map((e) => ({ value: e, label: e })),
+        searchable: true,
+      },
+      {
+        // Section options come from `detail.sections`, not from a scan of the rows: that
+        // list is already scoped to the card that opened the drill (see scopedDetail in
+        // EtcMonthKpiCards) and it carries the names and the per-section hours the old
+        // select showed.
+        key: "section",
+        options: detail.sections.map((s) => ({
+          value: s.code,
+          label: `${s.code} — ${s.name}`,
+          suffix: Math.round(s.hours).toLocaleString(),
+        })),
+        searchable: true,
+      },
+    ];
+    if (showJob) {
+      list.push({
+        key: "job",
+        options: filterOptions(detail.rows, "job").map((j) => ({ value: j, label: j })),
+        searchable: true,
+      });
+    }
+    return list;
+  }, [detail.rows, detail.sections, showJob]);
+
+  const bounds = useMemo(() => dateBounds(detail.rows), [detail.rows]);
 
   // null when nothing is grouped — the punch list renders instead. See groupHoursRows.
   const grouped = useMemo(() => groupHoursRows(rows, groupBy), [rows, groupBy]);
@@ -287,13 +333,19 @@ export function HoursDetailPanel({
       ? "Every punch booked this month"
       : "Every punch booked on this job";
 
+  // Whether a filter is narrowing the table, read from the filter state rather than by
+  // comparing row counts. Same figure the badge shows, so the total's label and the badge
+  // can never contradict each other — and it is what keeps a FILTERED subtotal from being
+  // read as the KPI: filtered, the total row says "Shown", not "Total".
+  const filtering = filterState.count > 0;
+
   return (
     // Spacing is the caller's business (`className`) — the panel used to hardcode `mt-4`,
     // which was right for its only caller at the time and wrong the moment it sat BESIDE
     // the card that opens it rather than below it.
     <DrillPanel
       title={title ?? "Hours Detail"}
-      meta={`${meta}${detail.truncated ? " · oldest punches omitted past the cap" : ""}`}
+      meta={`${meta}${filtering ? " · filtered" : ""}${detail.truncated ? " · oldest punches omitted past the cap" : ""}`}
       note={note}
       onClose={onClose}
       className={className}
@@ -341,34 +393,21 @@ export function HoursDetailPanel({
             </DrillGroupOption>
           </DrillGroupTray>
 
-          <DrillFilters>
-            <DrillSelect value={section} onChange={setSection} label="Filter by section">
-              <option value="">All sections</option>
-              {detail.sections.map((s) => (
-                <option key={s.code} value={s.code}>
-                  {s.code} — {s.name} ({Math.round(s.hours).toLocaleString()})
-                </option>
-              ))}
-            </DrillSelect>
-            <DrillSelect value={employee} onChange={setEmployee} label="Filter by employee">
-              <option value="">All employees</option>
-              {employees.map((e) => (
-                <option key={e} value={e}>
-                  {e}
-                </option>
-              ))}
-            </DrillSelect>
-            {showJob && (
-              <DrillSelect value={job} onChange={setJob} label="Filter by job">
-                <option value="">All jobs</option>
-                {jobs.map((j) => (
-                  <option key={j} value={j}>
-                    {j}
-                  </option>
-                ))}
-              </DrillSelect>
-            )}
-          </DrillFilters>
+          {/* The filters, BESIDE the tray and independent of it (§73): the tray decides
+              what a row is, these decide which rows there are. Nothing here touches
+              `groupBy` and nothing there touches `filters`, so either can be changed
+              without disturbing the other — and grouping applies to the filtered rows, so
+              the two compose rather than compete. */}
+          <DrillFilterRow
+            filters={filters}
+            menus={menus}
+            activeCount={filterState.count}
+            onToggle={filterState.toggle}
+            onSetAll={filterState.setAll}
+            onRange={filterState.setRange}
+            onClear={filterState.clear}
+            dateBounds={bounds}
+          />
         </DrillControls>
       }
     >
@@ -384,7 +423,7 @@ export function HoursDetailPanel({
         <DrillTable
           columns={groupBy.map((k) => GROUP_LABEL[k])}
           unit="Hours"
-          totalLabel={rows.length === detail.rows.length ? "Total" : "Shown"}
+          totalLabel={filtering ? "Shown" : "Total"}
           total={fmtHours(total)}
           totalTitle={hoursExact(total)}
         >
@@ -449,8 +488,9 @@ export function HoursDetailPanel({
         // inside a panel that was otherwise unbounded; the panel is now capped and its
         // body is the scroller, so a second one here would mean two scrollbars, the
         // shorter of the two winning, and the Lines view showing less than the rollup
-        // beside it on the same screen. The sticky header and footer work against the
-        // panel's scroller exactly as they did against this one.
+        // beside it on the same screen. The sticky HEADER works against the panel's
+        // scroller exactly as it did against this one; the footer is plain flow, not
+        // sticky (§75), so it needs nothing special from this wrapper at all.
         <>
           <DrillLines
             head={
@@ -467,7 +507,7 @@ export function HoursDetailPanel({
             foot={
               <tr>
                 <td className={DRILL_TOTAL_LABEL} colSpan={flatCols.length - 1}>
-                  {rows.length === detail.rows.length ? "Total" : "Shown"}
+                  {filtering ? "Shown" : "Total"}
                 </td>
                 <td className={`${DRILL_NUM} text-sm font-semibold`} title={hoursExact(total)}>
                   {fmtHours(total)}

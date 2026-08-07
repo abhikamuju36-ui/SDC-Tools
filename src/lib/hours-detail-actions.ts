@@ -4,7 +4,7 @@ import { auth } from "@/lib/auth";
 import { isValidMonth } from "@/lib/etc";
 import { getEtcMonthHoursDetail, type JobHoursDetail } from "@/lib/job-hours-detail";
 import { getPartsSpentDetail, type PartsSpentDetail } from "@/lib/parts-spent";
-import { getJobPartsCost, type JobPartsCost } from "@/lib/sync-totaleto";
+import { getJobPartsCost, invoicedOnly, type JobPartsCost } from "@/lib/sync-totaleto";
 
 // The punch drill-through behind the Monthly ETC cards, fetched WHEN IT IS OPENED.
 //
@@ -72,11 +72,22 @@ export async function loadPartsSpentDetail(month: string, jobIds: number[]): Pro
 // purchase history, because a part invoiced in July may have been ordered in March and
 // the PO is the thing being examined. The panel says so rather than implying the lines
 // sum to the month's figure.
+//
+// ── Invoiced-only, for THIS drill specifically (§77, by request) ────────────────
+//
+// invoicedOnly (lib/sync-totaleto.ts) does the actual filtering and re-totalling; it is
+// applied HERE, at the one action this drill calls, rather than inside getJobPartsCost
+// itself — that function is also read directly by the Job Hour Details / Procurement
+// page (job-hours/page.tsx), where an ordered-but-unbilled part is exactly what a reader
+// is there to see. Filtering at this action boundary means the exclusion is real (the
+// client never receives the zero-invoice rows — this is still a server action, so "in
+// the backend" holds even though there is no second SQL query) and scoped to the one
+// caller that asked for it.
 export async function loadJobPartsLines(jobNumber: string): Promise<JobPartsCost> {
   const session = await auth();
   if (!session?.user) throw new Error("Not signed in.");
   // Job numbers are digits in this app ("1142"); anything else is a crafted request,
   // and this value reaches a SQL parameter.
   if (!/^\d{1,10}$/.test(jobNumber)) throw new Error(`Invalid job number "${jobNumber}".`);
-  return getJobPartsCost(jobNumber);
+  return invoicedOnly(await getJobPartsCost(jobNumber));
 }

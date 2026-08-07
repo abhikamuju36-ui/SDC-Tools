@@ -1,12 +1,14 @@
 "use client";
 
 import { useEffect, useRef, useState, useSyncExternalStore, useTransition } from "react";
-import { BUTTON_SECONDARY } from "@/components/ui/classnames";
+import { BUTTON_SECONDARY, TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_BTN_NEUTRAL, TOOLBAR_MIN_W } from "@/components/ui/classnames";
 import { verifyStandardSheetPassword } from "@/lib/standard-sheet-gate";
 import {
   closeStandardsPrompt,
+  hideStandardSheet,
   markStandardsUnlocked,
   readStandardsState,
+  revealStandardSheet,
   serverStandardsState,
   subscribeStandards,
 } from "@/lib/standards-reveal";
@@ -116,5 +118,48 @@ export function StandardsGate({
         {error}
       </span>
     </div>
+  );
+}
+
+// ── Hide / Show, once already authorized (§76) ───────────────────────────────
+//
+// Replaces the toolbar's old `<form action={lockStandardSheet}>`, which cleared the
+// unlock cookie and called `revalidatePath("/etc")` — a full re-render of the heaviest
+// page in the app to hide six columns and a card, and the exact round trip §48 already
+// removed from the OPPOSITE direction. Worse, it never told THIS store the reveal had
+// ended, so `StandardFeesCard` — which decides its own visibility independently — kept
+// showing whatever it last fetched. That mismatch is the bug this component fixes: one
+// click now flips the SAME `hidden` flag every Standard Sheet consumer reads (see the
+// note beside hideStandardSheet in lib/standards-reveal.ts for why that flag exists
+// instead of reusing `unlocked`).
+//
+// Still a real `<form action={lockAction}>` underneath, not a bare button — a client
+// that never hydrates falls through to the old behaviour (relock + full reload) rather
+// than losing the control entirely, the same trade StandardsGate's own no-JS path makes
+// for showing.
+export function StandardsVisibilityToggle({ lockAction }: { lockAction: () => Promise<void> }) {
+  const { hidden } = useSyncExternalStore(subscribeStandards, readStandardsState, serverStandardsState);
+  return (
+    <form action={lockAction}>
+      <button
+        type="submit"
+        onClick={(e) => {
+          // Once this handler runs, JS has hydrated and the click is fully handled
+          // here — instant, no request of any kind — so the <form>'s own submission
+          // (which WOULD relock and reload) must not also fire.
+          e.preventDefault();
+          if (hidden) revealStandardSheet();
+          else hideStandardSheet();
+        }}
+        className={`${TOOLBAR_BTN} ${TOOLBAR_MIN_W} ${hidden ? TOOLBAR_BTN_NEUTRAL : TOOLBAR_BTN_ACTIVE} justify-center`}
+        title={
+          hidden
+            ? "Show the Standard Sheet columns and the Standard Fees card again."
+            : "Standard Sheet columns and the Standard Fees card are showing — click to hide them."
+        }
+      >
+        {hidden ? "Show Standards" : "Standards"}
+      </button>
+    </form>
   );
 }

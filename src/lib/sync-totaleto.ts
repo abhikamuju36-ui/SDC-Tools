@@ -365,6 +365,26 @@ SELECT
 FROM vwCostingExtraCostsDetailed EC WITH(NOLOCK)
 WHERE EC.ProjectID = @job`;
 
+// ── Invoiced-only, for the Parts Spent drill-through specifically (§77) ──────
+//
+// A line with nothing invoiced yet answers "what's on order", not "what was spent" —
+// and the Parts Spent drill is specifically about spend. Pure and separate from
+// getJobPartsCost itself: that function is also read directly by the Job Hour
+// Details / Procurement page, where an ordered-but-unbilled part is exactly what a
+// reader is there to see, so the exclusion belongs at the ONE caller that asked for
+// it (lib/hours-detail-actions.ts's loadJobPartsLines) rather than in the shared
+// query every consumer goes through.
+//
+// purchased/paid/leftToPay are recomputed from the KEPT lines, not sliced from the
+// input's own totals — those summed the FULL history, and once the zero-invoice
+// lines are gone the returned totals must still be the sum of the returned lines.
+export function invoicedOnly(full: JobPartsCost): JobPartsCost {
+  const lines = full.lines.filter((l) => l.invoicedAmount > 0);
+  const purchased = lines.reduce((s, l) => s + l.totalPrice, 0);
+  const paid = lines.reduce((s, l) => s + l.invoicedAmount, 0);
+  return { purchased, paid, leftToPay: purchased - paid, lines };
+}
+
 export async function getJobPartsCost(jobId: string): Promise<JobPartsCost> {
   const numericJob = Number(jobId);
   if (!Number.isFinite(numericJob)) return { purchased: 0, paid: 0, leftToPay: 0, lines: [] };

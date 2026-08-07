@@ -5219,3 +5219,243 @@ side by side — the two screenshots in the report are of different job selectio
 no way to run the report's DAX for the same job from here. The mapping and the arithmetic are
 the app's existing ones, unchanged; what remains unproven is only whether the REPORT agrees
 on this job, which needs someone with the report open on job 1142.
+
+---
+
+## 53. One filter model for every Monthly ETC drill-through (§73, 2026-08-06)
+
+The drills already shared a rollup (`groupHoursRows`) and a design (`ui/Drill.tsx`, §47), but
+filtered however each panel had grown: `HoursDetailPanel` had three single-choice `<select>`s,
+`UndefinedHoursPanel` had free-text search plus reason cards, and the two hand-rolled drills on
+the KPI strip (Parts spent, Hours off the grid) had no filtering at all.
+
+### 53.1 One vocabulary, no React, fully testable
+
+`lib/drill-filters.ts` defines `DrillFilters = {values, from, to}` and a handful of pure
+functions — `toggleFilterValue`, `setFilterValues`, `setFilterRange`, `matchesDrillFilters`,
+`filterOptions`, `dateBounds`, `activeFilterCount`. Three properties matter and are asserted
+by `tests/drill-filters.test.ts`, not just implemented:
+
+* **Multi-select, OR within a dimension, AND across dimensions** — ticking a second department
+  can never remove a row a first department already matched.
+* **An empty selection means "not filtering," never "match nothing."** A menu opens with
+  nothing ticked and must show everything.
+* **The active count is a count of filters, never of rows** — §62 already banned row counts on
+  every drill; this doesn't reopen that door.
+
+`useDrillFilters.ts` wraps the model in a hook with a `resetKey` (typically the report month) —
+`EtcMonthKpiCards`' off-grid and parts drills stay MOUNTED across a month switch, so without a
+reset a section filter ticked in July would silently narrow August to sections that may not
+even exist in it. `initial` is also what "Clear filters" returns to, not merely a seed: the
+hours drill can arrive pre-filtered to the section just clicked, and Clear must not discard the
+context the user clicked in with — which is also why that filter counts as active however it
+got there.
+
+### 53.2 New shared UI, one old one retired
+
+`ui/Drill.tsx` gained `DrillFilterMenu`, `DrillDateRange`, `DrillFilterSummary`, and
+`DrillFilterRow`, and lost the old single-choice `DrillSelect`. Every drill now renders the
+same menus/date-range/badge/Clear-filters row instead of inventing its own.
+
+Menu options are built from the **unfiltered** rows on purpose: an option list that shrinks as
+you tick would remove the box you'd need to widen the selection again — a filter you can enter
+but never leave.
+
+The one dimension that couldn't go through the generic `matchesDrillFilters`: off-grid jobs
+carry MULTIPLE sections each (the "Hours off the grid" KPI lists a job once per section it's
+missing), so a section filter there narrows each job's own section list and re-sums hours
+directly, rather than filtering whole rows. That's what keeps the KPI's "by job" and "by
+section" views still totaling identically after a filter is applied.
+
+New tests in `tests/drill-filters.test.ts`; `tests/drill-design.test.ts` extended to assert the
+old `DrillSelect` is gone and every drill panel reaches for the shared filter row instead of a
+bespoke one.
+
+---
+
+## 54. Job Procurement's "loose parts" ignored the collapse state (§74, 2026-08-06)
+
+A section's loose parts (parts with no parent sub-assembly) rendered via
+`section.parts.length > 0 && <PartsDetailTable .../>` in `JobProcurement.tsx` — bypassing the
+same `collapsed` Set every `AssemblyRow` already checked. So "collapsed by default" and
+Expand All / Collapse All were true in name only for any section with loose parts: they showed
+the instant the page loaded, regardless of what the rest of the tree was doing.
+
+Fix adds `loosePartsKey(section)` into the same `allKeys`/`collapsed` set every other row uses,
+gated by a new `LoosePartsRow` behind the identical `isOpen`/`toggle` mechanism. `LoosePartsRow`
+computes priced/received/cost/readiness inline from a flat `BomPart[]`, since loose parts have
+no parent `BomNode` to read a precomputed `.stats` off — that computation had to be written
+once for this row rather than reused from the assembly path.
+
+`tests/job-procurement-collapse.test.ts` (new) asserts a section with dozens of loose parts
+starts collapsed, and that Expand All / Collapse All reach it exactly like any assembly row.
+
+---
+
+## 55. The sticky Total row was floating over content, not pinned to it (§75, 2026-08-06)
+
+`sticky bottom-0` pins an element to the bottom of the **viewport** it's scrolling in, not the
+bottom of its **content** — so for as long as a `DrillTable`/`DrillLines` had more rows below
+the fold, the Total row floated and painted over whichever line happened to be last on screen,
+not the actual last row. `DrillGroup`'s own `max-h-[18rem] overflow-auto` cap compounded it: a
+group could grow past a screenful with no independent way to reach its true bottom, so the
+overlap was reachable on almost any drill with enough rows.
+
+Both had to be fixed together. Capping the group alone still glues the Total over the last
+visible line before the outer scroll reaches bottom; removing only the sticky behavior while
+keeping the cap just lengthens the glued stretch. Fix removes `sticky bottom-0` from
+`DrillTable`'s Total row and `DrillLines`' `tfoot`, and removes `DrillGroup`'s height cap
+entirely — an expanded group now grows to its natural height and scrolls with the panel around
+it, the same way every other part of a drill already does. `overflow-x-auto` stays on
+`DrillGroup` on purpose: wide lines still need to scroll sideways within a group without
+scrolling the whole panel.
+
+`UndefinedHoursPanel`'s group tray, filters, and meta line moved outside the scroller
+accordingly (they don't belong to the thing that no longer needs an independent scroll frame).
+`tests/drill-design.test.ts` extended to assert neither `sticky` class nor the height cap
+survives in these three components.
+
+---
+
+## 56. "Fix Standard Sheet and Standard Fees Visibility" (§76, 2026-08-06)
+
+The toolbar's "Standards" button was a real `<form action={lockStandardSheet}>`: it cleared the
+server unlock cookie and called `revalidatePath("/etc")`. That's immediate for the grid's
+Standard Sheet columns (server JSX, gone on the next render without the cookie) — but it never
+told `standards-reveal.ts`'s client-side store the reveal had ended, so `StandardFeesCard`,
+which decides its own visibility from that store's `unlocked` flag, kept showing whatever
+figures it had already fetched. Two components, two notions of "hidden," and only one of them
+moved when the button was clicked.
+
+### 56.1 A third field, not a repurposed one
+
+The fix is `hidden: boolean`, added alongside `unlocked` rather than folded into it:
+`unlocked` already means "has this tab proven the password," and both `StandardsGate` and
+`StandardFeesCard` depend on that exact meaning. Folding "currently displayed" into it would
+mean re-checking the password just to bring a hidden view back — precisely the round trip §48
+removed. `hideStandardSheet()`/`revealStandardSheet()` toggle `hidden` without ever touching
+the unlock cookie, so hiding and re-showing cost nothing: no request, no re-render of the grid,
+no risk to an unsaved Contingency/Notes edit sitting in one of its inputs, because the grid's
+mount never changes either way. `hidden` starts `false` on both the server and client snapshots
+— no seeding race, no flash-of-content to guard against.
+
+A real relock (`markStandardsLocked()`) still exists but isn't wired to any button anymore —
+left in place for whatever eventually wants an actual re-prompt rather than a collapse.
+
+### 56.2 Every consumer checks the same two flags
+
+`EtcStandardCells`, `StandardGrandCells`, both header blocks in `page.tsx`, and
+`StandardFeesCard`'s own `show` all now gate on `unlocked && !hidden` (or the card's
+`(unlocked || initialData != null) && !hidden`, which additionally covers a server-rendered
+initial reveal). A new `StandardsVisibilityToggle` in `StandardsGate.tsx` keeps a real
+`<form action={lockAction}>` for a no-JS fallback, calling `preventDefault()` once hydrated so
+the common case is instant.
+
+`tests/standards-reveal.test.ts` extended: hiding never calls `setData(null)` (cached figures
+must survive a hide/show round trip), and hide/reveal are each idempotent — no duplicate
+subscriber notifications on a repeated call.
+
+---
+
+## 57. Parts Spent drill: purchase lines filtered to invoiced-only (§77, 2026-08-06)
+
+The Parts Spent KPI drill's purchase-line table listed every TotalETO line for a job,
+including ones with nothing invoiced against them yet. A line with nothing invoiced answers
+"what's on order," not "what was spent" — and the Parts Spent drill is specifically about
+spend.
+
+New `invoicedOnly()` in `sync-totaleto.ts`, applied only inside `loadJobPartsLines`
+(`hours-detail-actions.ts`) — the one action this specific drill calls. Keeps lines where
+`invoicedAmount > 0` strictly; a negative/credit-note line is dropped too, since the
+acceptance criteria carve out no exception for it. `purchased`/`paid`/`leftToPay` shown in the
+drill are **recomputed from the surviving lines**, not sliced from the job's full totals, so
+the drill's stated totals always match the rows visible beneath them.
+
+`getJobPartsCost` (used by Job Hour Details and Procurement) is deliberately untouched —
+that page needs to show ordered-but-unbilled parts too, so there are now two legitimately
+different, differently-scoped reads of the same underlying TotalETO lines. `EtcMonthKpiCards`'
+copy changed to match: "Invoiced purchase lines for job…" replacing "All purchase lines…", and
+"No invoiced purchase-order lines for job {id} yet" replacing "TotalETO holds no purchase-order
+lines for job {id}" — the old wording would now be a false claim of total absence when
+unbilled lines might still exist.
+
+New `tests/parts-spent-drill-invoiced.test.ts`.
+
+---
+
+## 58. Parts Cost chart: incremental stacked bar replaced by four absolute rows (§78, 2026-08-06/07)
+
+§61 settled the Parts Cost visual as one vertical bar whose segments were INCREMENTS —
+`green = paid`, `blue = purchased − paid`, `orange = projection − purchased` — stacking to a
+shared total. Per a new mockup (`reference/Parts Cost Chart.dc.html`, kept gitignored rather
+than committed — see §53's sibling note below), the ask changed again: separate the four
+figures back out, but this time state each one's own ABSOLUTE amount rather than an increment.
+
+### 58.1 Four rows, one shared scale, no increments
+
+`PartsCostSummary.tsx` was rewritten: Budget, Amount Invoiced, Total Parts Cost Spent, and
+Projection each render as their own horizontal row, filled to their value as a percentage of
+the largest value among the rows actually shown. Budget is a genuinely new row — previously it
+only fed the variance meter's baseline, never appearing itself. The three "already happened"
+rows use a sequential navy→blue-dark→blue ramp; Projection instead carries a STATUS color (red
+over estimate, green at-or-under), since it's the one forward-looking figure. A budget-line
+tick is drawn inside Projection's track at Budget's own fill percentage — reused from Budget's
+row, not recomputed, so the tick and Budget's bar can never drift apart. No hover tooltips on
+any bar: every value is already printed as plain text beside its label.
+
+`charts/theme.ts`'s `PARTS_BAR` palette (green/blue/orange) was deleted — nothing draws
+increments anymore. A first attempt tried building this as four ECharts bars and was abandoned:
+a shared-scale bullet-row layout has no natural ECharts option shape, so it's hand-rolled CSS
+here, the same call §61's stacked bar made and for the same reason.
+
+### 58.2 The full arc, so the next request has the whole history
+
+§52 (4-5 unlabeled bars, one-glance became multi-glance) → §58 (one stacked bar) → §60 (three
+GROUPED bars, reverted) → §61 (back to one incremental stacked bar, declared settled) → **§78**
+(four separate rows, each its own absolute number). §78 is a genuinely different shape from
+§60's reverted grouped bars — §60 grouped three values as bars-from-zero side by side in one
+chart area; §78 gives each value its own full-width row with a label and number — so §78 does
+not retroactively violate §60's lesson. A future request to re-introduce a stacked/incremental
+view would be reverting past both §60 and §61's reasoning and should be flagged, not silently
+done.
+
+Nothing about the underlying figures changed — `paid`, `purchased`, and
+`budgetProjection.total` still come from the same functions (§41/§30), this was a
+presentation-layer rewrite only.
+
+### 58.3 Follow-up: card padding tightened (2026-08-07)
+
+Measured live via `getBoundingClientRect()` on the real card (a 1fr grid column, ~250px wide):
+the bar tracks reached only 87.6% of the card's width, losing ~15.7px to the shared `p-4` card
+padding on each side. Changed to `px-3 py-4` — horizontal only, vertical row rhythm untouched —
+which measured at 90.5% track width / ~11.9px margin after the change. Verified at both the
+3-column desktop layout and the `<lg` single-column stacked layout (card goes full row width
+there); no clipping, budget-line marker and labels stayed aligned in both.
+
+No new tests (a CSS padding class change, not a logic change); 832/832 existing tests continued
+to pass. `reference/` (the design mockup this section works from) is intentionally gitignored,
+not committed — see below.
+
+---
+
+## 59. Home dashboard decluttered: one KPI strip, compact refresh-status row (§79, 2026-08-06)
+
+Three presentation-only changes to `src/app/(app)/page.tsx`, none touching a query result:
+
+1. **KPI strip.** Four separately bordered/shadowed/padded cards became one outer frame with
+   hairline (`gap-px`) dividers between equal-height cells — the same "one card, not N" pattern
+   the Monthly ETC summary strip already uses (`KPI_GRID_CLASS`, `lib/etc-kpi-strip.ts`), so the
+   app's two consolidated KPI strips now read as one design language instead of two that
+   evolved independently.
+2. **Refresh-status row.** Seven per-source three-line blocks (name, optional failure/waiting
+   line, right-aligned two-line timestamp) became one row of small wrapping chips
+   ("Paylocity · Aug 6, 2:04 PM") separated by `|`. Nothing was dropped, only relocated: the
+   "open month only" note, the data-through date, and the full failure/waiting text all moved
+   into the chip's `title` tooltip, since a compact row has no room to print them inline. The
+   status dot and a `⚠` glyph both stay visible in the row itself, unhidden by design — colour
+   alone would fail anyone who can't distinguish the dot's red from its green.
+3. **"Recently Added Jobs" removed outright** — the section, its `recentJobs` Prisma query
+   (`orderBy: createdAt desc, take: 8`), and the now-unused `StatusBadge` import (still used
+   elsewhere, on `/etc` and `/jobs/[id]` — only this one import site was dead).
+
+No new tests (presentational only); 832/832 existing tests pass, `tsc --noEmit` clean.

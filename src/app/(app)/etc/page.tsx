@@ -20,10 +20,16 @@ import { EtcIssuesIndicator } from "@/components/EtcIssuesIndicator";
 import { buildEtcIssues } from "@/lib/etc-issues";
 import { PartsCostNewEtcCell } from "@/components/PartsCostNewEtcCell";
 import { EtcSectionCells } from "@/components/EtcSectionCells";
-import { StandardRatesProvider, EtcStandardCells, StandardGrandCells } from "@/components/EtcStandardColumns";
+import {
+  StandardRatesProvider,
+  EtcStandardCells,
+  StandardGrandCells,
+  StandardHeaderVisible,
+  NoJobsMessageRow,
+} from "@/components/EtcStandardColumns";
 import type { StandardJobBase, StandardRates, FrozenStandardRow, PoolRowInput } from "@/components/EtcStandardColumns";
 import { EtcRatesButton } from "@/components/EtcRatesButton";
-import { StandardsGate } from "@/components/StandardsGate";
+import { StandardsGate, StandardsVisibilityToggle } from "@/components/StandardsGate";
 import { StandardFeesCard } from "@/components/StandardFeesCard";
 import { POOL_PANEL_META } from "@/lib/pool-panel-meta";
 import type { PoolPanelRow, NewProjectRow } from "@/components/StandardPoolPanel";
@@ -45,7 +51,7 @@ import { MonthYearSelect } from "@/components/MonthYearSelect";
 import { JobCellMenuHost } from "@/components/JobCellMenuHost";
 import { jobCellMenuProps } from "@/lib/job-cell-menu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
-import { BUTTON_SECONDARY, TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_MIN_W, TABLE_HEADER_ROW, TABLE_GRID, GRID_SCROLLER, ETC_COL_W, PARTS_COL_W } from "@/components/ui/classnames";
+import { BUTTON_SECONDARY, TOOLBAR_MIN_W, TABLE_HEADER_ROW, TABLE_GRID, GRID_SCROLLER, ETC_COL_W, PARTS_COL_W } from "@/components/ui/classnames";
 import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
@@ -1094,16 +1100,17 @@ export default async function MonthlyEtcPage({
                 controls").
                 It is also what makes the row fit on one line when Standards is
                 unlocked: "Hide Standards" needs 131px against a 98px floor, and it was
-                the single control keeping the toolbar 25px over budget. */}
-            <form action={lockStandardSheet}>
-              <button
-                type="submit"
-                className={`${TOOLBAR_BTN} ${TOOLBAR_MIN_W} ${TOOLBAR_BTN_ACTIVE} justify-center`}
-                title="Standard Sheet columns are showing — click to hide them."
-              >
-                Standards
-              </button>
-            </form>
+                the single control keeping the toolbar 25px over budget.
+
+                ── Why this is StandardsVisibilityToggle, not the button directly (§76) ──
+                The button used to submit straight to lockStandardSheet — clear the
+                cookie, revalidate the whole page. That hid the grid's columns (they are
+                server JSX, gone the moment the render lacks the cookie) but never told
+                StandardFeesCard, which decides its OWN visibility from client state, so
+                the card kept showing stale figures. The toggle component flips one
+                shared flag instead; see its own note for why hiding does not also
+                relock. */}
+            <StandardsVisibilityToggle lockAction={lockStandardSheet} />
             <EtcRatesButton
               engrRate={standardRates.engrRate}
               shopRate={standardRates.shopRate}
@@ -1338,13 +1345,15 @@ export default async function MonthlyEtcPage({
                     Parts Cost
                   </th>
                   {showStandards && (
-                    <th
-                      rowSpan={4}
-                      colSpan={STANDARD_LEAF_COLUMNS.length}
-                      className={`${STD_EDGE} bg-sdc-blue-light px-3 py-1.5 text-center align-middle text-sdc-blue-dark`}
-                    >
-                      Standard Sheet
-                    </th>
+                    <StandardHeaderVisible>
+                      <th
+                        rowSpan={4}
+                        colSpan={STANDARD_LEAF_COLUMNS.length}
+                        className={`${STD_EDGE} bg-sdc-blue-light px-3 py-1.5 text-center align-middle text-sdc-blue-dark`}
+                      >
+                        Standard Sheet
+                      </th>
+                    </StandardHeaderVisible>
                   )}
                 </tr>
                 {/* Billing-group row: Engineering / Shop per phase, like the sheet. */}
@@ -1478,17 +1487,20 @@ export default async function MonthlyEtcPage({
                       {colHeaderLabel(col)}
                     </th>
                   ))}
-                  {showStandards &&
-                    STANDARD_LEAF_COLUMNS.map((col) => (
-                      <th
-                        key={`std-${col}`}
-                        // Heavy divider before each Standard block; "% Total"
-                        // stays thin as it shares the Total ETC block.
-                        className={`${col === "% Total" ? "border-l border-sdc-border" : STD_EDGE} bg-sdc-blue-light/60 px-1 py-1.5 text-center text-label text-sdc-blue-dark`}
-                      >
-                        {col}
-                      </th>
-                    ))}
+                  {showStandards && (
+                    <StandardHeaderVisible>
+                      {STANDARD_LEAF_COLUMNS.map((col) => (
+                        <th
+                          key={`std-${col}`}
+                          // Heavy divider before each Standard block; "% Total"
+                          // stays thin as it shares the Total ETC block.
+                          className={`${col === "% Total" ? "border-l border-sdc-border" : STD_EDGE} bg-sdc-blue-light/60 px-1 py-1.5 text-center text-label text-sdc-blue-dark`}
+                        >
+                          {col}
+                        </th>
+                      ))}
+                    </StandardHeaderVisible>
+                  )}
                 </tr>
               </thead>
               <tbody>
@@ -2000,19 +2012,11 @@ export default async function MonthlyEtcPage({
                   );
                 })}
                 {visibleJobs.length === 0 && (
-                  <tr>
-                    <td
-                      colSpan={
-                        3 +
-                        (visibleCols.length + visibleGroups.length) * SUB_COLUMNS.length +
-                        PARTS_COST_SUB_COLUMNS.length +
-                        (showStandards ? STANDARD_LEAF_COLUMNS.length : 0)
-                      }
-                      className="px-4 py-5 text-center text-sdc-gray-400"
-                    >
-                      {jobs.length === 0 ? "No active jobs found." : "No jobs match the Billable filter."}
-                    </td>
-                  </tr>
+                  <NoJobsMessageRow
+                    baseColSpan={3 + (visibleCols.length + visibleGroups.length) * SUB_COLUMNS.length + PARTS_COST_SUB_COLUMNS.length}
+                    standardsColumnCount={showStandards ? STANDARD_LEAF_COLUMNS.length : 0}
+                    message={jobs.length === 0 ? "No active jobs found." : "No jobs match the Billable filter."}
+                  />
                 )}
               </tbody>
               {/* tfoot, not the last row of tbody: it's what takes the totals out

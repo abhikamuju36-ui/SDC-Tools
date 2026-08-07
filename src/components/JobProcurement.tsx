@@ -644,6 +644,16 @@ const ASM_GRID = "minmax(200px,max-content) minmax(260px,3fr) 92px 72px 108px 15
 function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClick: (p: DrillablePart) => void; onOpenPo: (supplier: string | null, poNumber: string | null) => void }) {
   const now = useMemo(() => Date.now(), []);
   // Every assembly node key — for Expand/Collapse All + collapsed-by-default.
+  //
+  // ── The section's own loose parts get a key too ─────────────────────────
+  //
+  // `section.parts` (job-bom.ts: the flattened-away top node's own direct parts —
+  // "no parent sub-assembly") used to render unconditionally below the section's
+  // assembly list, with no header, no caret and no membership in `collapsed` at
+  // all — so a section with 40 loose parts showed all 40 the moment the page
+  // loaded, collapse-by-default or not. `loosePartsKey` gives that block the same
+  // kind of key an assembly has, so it collapses, expands, and joins Expand
+  // All/Collapse All exactly like every other row.
   const { pricedByKey, allKeys } = useMemo(() => {
     const priced = new Map<string, { priced: number; total: number }>();
     const keys = new Set<string>();
@@ -662,7 +672,10 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
       priced.set(n.key, { priced: leaves.filter((p) => p.unitPrice > 0).length, total: leaves.length });
       n.children.forEach(visit);
     };
-    bom.roots.forEach((sec) => sec.children.forEach(visit));
+    bom.roots.forEach((sec) => {
+      sec.children.forEach(visit);
+      if (sec.parts.length > 0) keys.add(loosePartsKey(sec));
+    });
     return { pricedByKey: priced, allKeys: keys };
   }, [bom]);
 
@@ -721,7 +734,21 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
                 {section.children.map((asm) => (
                   <AssemblyRow key={asm.key} node={asm} depth={0} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />
                 ))}
-                {section.parts.length > 0 && <PartsDetailTable parts={section.parts} depth={0} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />}
+                {/* The section's own loose parts — collapsed by default like every
+                    assembly, via the same `collapsed` set and the same key vocabulary
+                    (see the note above `allKeys`). */}
+                {section.parts.length > 0 && (
+                  <LoosePartsRow
+                    keyId={loosePartsKey(section)}
+                    parts={section.parts}
+                    depth={0}
+                    collapsed={collapsed}
+                    toggle={toggle}
+                    onPartClick={onPartClick}
+                    onOpenPo={onOpenPo}
+                    now={now}
+                  />
+                )}
               </div>
             </div>
           ))}
@@ -814,6 +841,89 @@ function AssemblyRow({
           {node.parts.length > 0 && <PartsDetailTable parts={node.parts} depth={depth + 1} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />}
         </div>
       )}
+    </div>
+  );
+}
+
+// The collapse key for a section's OWN loose parts (job-bom.ts: `section.parts`, the
+// flattened-away top node's direct children — parts with no parent sub-assembly). A
+// section's own `key` ("S30") already names its assembly children's parent; this is a
+// sibling key for the one group of parts that has no assembly of its own to be keyed by.
+function loosePartsKey(section: BomNode): string {
+  return `${section.key}::loose`;
+}
+
+// A collapsible row for a section's loose parts — same look and the same `collapsed`
+// membership as AssemblyRow, but built from a flat BomPart[] rather than a BomNode: there
+// is no sub-assembly here to carry a part number, a child count or its own `.stats`, so
+// those are computed inline from the parts themselves instead of read off a node.
+//
+// Without this, `section.parts` rendered unconditionally — the defect this fixes. A
+// section with dozens of parts belonging to no sub-assembly showed every one of them on
+// load, with no header, no caret, and no way to hide them — collapsed-by-default in name
+// only.
+function LoosePartsRow({
+  parts,
+  depth,
+  keyId,
+  collapsed,
+  toggle,
+  onPartClick,
+  onOpenPo,
+  now,
+}: {
+  parts: BomPart[];
+  depth: number;
+  keyId: string;
+  collapsed: Set<string>;
+  toggle: (key: string) => void;
+  onPartClick: (p: DrillablePart) => void;
+  onOpenPo: (supplier: string | null, poNumber: string | null) => void;
+  now: number;
+}) {
+  const isOpen = !collapsed.has(keyId);
+  // Priced/received/cost/readiness, the same four figures AssemblyRow shows — computed
+  // directly over this flat list rather than via `pricedByKey` (that map is built by
+  // walking BomNode trees; there is no node here, and the list is never large enough for
+  // the recompute-on-every-render to matter).
+  const total = parts.length;
+  const priced = parts.filter((p) => p.unitPrice > 0).length;
+  const received = parts.filter((p) => partStatus(p, now).key === "received").length;
+  const cost = parts.reduce((s, p) => s + p.unitPrice * p.qty, 0);
+  const pct = total ? Math.round((received / total) * 100) : 0;
+  const { text } = barClasses(pct);
+
+  return (
+    <div className="border-b border-sdc-border-soft/60">
+      <div
+        onClick={() => toggle(keyId)}
+        className="grid cursor-pointer items-center gap-3 py-2 pr-3 hover:bg-sdc-blue-light/30"
+        style={{ gridTemplateColumns: ASM_GRID }}
+      >
+        <div className="flex min-w-0 items-center gap-2" style={{ paddingLeft: `${8 + depth * 18}px` }}>
+          <span aria-label={isOpen ? "Collapse" : "Expand"} className="inline-flex h-5 w-5 shrink-0 items-center justify-center rounded text-sdc-blue">
+            <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="2.2" className={`motion-interactive ${isOpen ? "rotate-90" : ""}`}>
+              <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          </span>
+          {/* No part-number chip — unlike a real assembly, this group has no PN of its
+              own. The em dash keeps the column's alignment rather than leaving it blank. */}
+          <span className="shrink-0 text-note font-bold text-sdc-gray-400">—</span>
+        </div>
+        <div className="min-w-0 truncate text-sm font-bold italic text-sdc-gray-600" title="Parts listed directly under this section, outside any sub-assembly">
+          Loose parts
+        </div>
+        <span className="text-right text-note font-semibold tabular-nums text-sdc-gray-600" title="Parts with a price">
+          {priced}/{total} parts
+        </span>
+        <span className="text-right text-note font-semibold tabular-nums text-sdc-gray-600" title="Received / total parts">
+          <span className={`font-bold ${text}`}>{received}</span>/{total}
+        </span>
+        <span className="text-right text-sm font-bold tabular-nums text-sdc-navy">{cost ? usd(cost) : "—"}</span>
+        <ReadinessBar pct={pct} />
+      </div>
+
+      {isOpen && <PartsDetailTable parts={parts} depth={depth + 1} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />}
     </div>
   );
 }

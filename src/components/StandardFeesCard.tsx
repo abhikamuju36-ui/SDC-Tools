@@ -38,7 +38,7 @@ export function StandardFeesCard({
   initialData: StandardFeesCardData | null;
   savePoolsAction: (formData: FormData) => Promise<void>;
 }) {
-  const { unlocked } = useSyncExternalStore(subscribeStandards, readStandardsState, serverStandardsState);
+  const { unlocked, hidden } = useSyncExternalStore(subscribeStandards, readStandardsState, serverStandardsState);
   const [data, setData] = useState<StandardFeesCardData | null>(initialData);
   const [error, setError] = useState<string | null>(null);
 
@@ -52,7 +52,14 @@ export function StandardFeesCard({
   const loadingFor = useRef<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const show = unlocked || initialData != null;
+  // ── Hidden is a separate, later veto (§76) ──────────────────────────────────
+  //
+  // `unlocked || initialData != null` answers "is this tab authorized"; `hidden` answers
+  // "has the user collapsed it anyway", and it must be checked LAST — an authorized-but-
+  // hidden card must not show, and toggling `hidden` back off must not have to re-answer
+  // the authorization question (it doesn't: `data` below is never cleared by hiding, so
+  // showing again is instant and re-uses whatever this card already fetched).
+  const show = (unlocked || initialData != null) && !hidden;
 
   useEffect(() => {
     // Nothing to do unless the card is on screen and its figures are missing.

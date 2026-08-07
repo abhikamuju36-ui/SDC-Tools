@@ -10,18 +10,23 @@ import {
   DRILL_NUM,
   DRILL_TOTAL_LABEL,
   DrillControls,
-  DrillFilters,
+  DrillFilterRow,
   DrillGroup,
   DrillGroupOption,
   DrillGroupTray,
   DrillLines,
   DrillTable,
 } from "@/components/ui/Drill";
-import { reconcileUndefined, reconciliationMessage, type UndefinedReason } from "@/lib/undefined-hours-rules";
+import { reconcileUndefined, reconciliationMessage } from "@/lib/undefined-hours-rules";
 import type { UnattributedDetail } from "@/lib/unattributed-hours";
 // One rollup implementation for every drill on this page — including the grid's
 // department and section ordering. See the note on groupHoursRows.
 import { groupHoursRows, GROUP_LABEL, type GroupKey } from "@/components/HoursDetailPanel";
+// The same filter model as every other drill on this page (§73). The reason cards above
+// are a filter too, and they write into the same state rather than keeping a second one —
+// see the note where the panel's filters are declared.
+import { dateBounds, filterOptions, matchesDrillFilters, type DrillFilterKey } from "@/lib/drill-filters";
+import { useDrillFilters } from "@/components/useDrillFilters";
 
 // ── The Undefined Hours drill-through (§42.11, §42.27, §42.28) ──────────────
 //
@@ -58,12 +63,30 @@ export function UndefinedHoursPanel({
   month: string;
   onClose: () => void;
 }) {
-  // Which reason is being looked at. `null` = all counted rows, which is the state in
-  // which the visible total equals the KPI — the §42.11 identity. Filtering narrows
-  // the list and the panel says so, so a filtered subtotal is never mistaken for the
-  // headline.
-  const [reason, setReason] = useState<UndefinedReason | null>(null);
+  // ── Filters (§73) ─────────────────────────────────────────────────────────
+  //
+  // No filters at all = every counted row, which is the state in which the visible total
+  // equals the KPI — the §42.11 identity. Any filter narrows the list and the panel says
+  // so, so a filtered subtotal is never mistaken for the headline.
+  //
+  // The reason cards above are part of THIS state, not a second one beside it. They were a
+  // single-select `reason` variable, which meant the panel had two independent notions of
+  // "narrowed" — the cards' and the search box's — and adding four more dimensions to that
+  // arrangement would have given it six. Clicking a card now toggles that reason in the
+  // shared model, so it is counted by the badge, undone by Clear filters, and combinable:
+  // two reasons at once is a real question ("everything a supervisor has to re-code"), and
+  // the single-select version could not ask it.
+  const filterState = useDrillFilters(month);
+  const { filters } = filterState;
+  const reasons = filters.values.reason ?? [];
   const [query, setQuery] = useState("");
+  // One way out for everything narrowing the table — the search box included. A "Clear
+  // filters" that left text in the box would leave the table narrowed after the control
+  // that says it un-narrows it.
+  const clearAll = () => {
+    filterState.clear();
+    setQuery("");
+  };
 
   // ── Grouped by department by default (2026-08-05, by request) ─────────────
   //
@@ -83,7 +106,7 @@ export function UndefinedHoursPanel({
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
     return detail.rows.filter((r) => {
-      if (reason && r.reason !== reason) return false;
+      if (!matchesDrillFilters(r, filters)) return false;
       if (!q) return true;
       return (
         r.employee.toLowerCase().includes(q) ||
@@ -92,10 +115,56 @@ export function UndefinedHoursPanel({
         r.date.includes(q)
       );
     });
-  }, [detail.rows, reason, query]);
+  }, [detail.rows, filters, query]);
+
+  // The menus' options come from the UNFILTERED rows — see the same note in
+  // HoursDetailPanel: a shrinking option list is a filter you can enter and not leave.
+  //
+  // "Undefined Job" rather than "Job cell" (§76, by request — the previous name read as
+  // a spreadsheet coordinate, and "Job" alone would claim it WAS one): the value is the
+  // raw, unusable cell contents that made the row undefined in the first place — "NOT
+  // DEFINED", "2026 SERVICE", or a numeric-looking code like "2026" that just has no
+  // matching Job in the app (see lib/paylocity-workbook.ts's JOB_NOT_FOUND widening),
+  // never a real job number. The table's own column was renamed alongside it, so the
+  // filter and the header still use the same word for the same thing.
+  const menus = useMemo(() => {
+    const list: { key: DrillFilterKey; label?: string; options: { value: string; label: string; suffix?: string }[]; searchable?: boolean }[] = [
+      { key: "department", options: filterOptions(detail.rows, "department").map((d) => ({ value: d, label: d })) },
+      {
+        key: "employee",
+        options: filterOptions(detail.rows, "employee").map((e) => ({ value: e, label: e })),
+        searchable: true,
+      },
+      {
+        key: "section",
+        options: detail.sections.map((s) => ({
+          value: s.code,
+          label: s.name === s.code ? s.code : `${s.code} — ${s.name}`,
+          suffix: Math.round(s.hours).toLocaleString(),
+        })),
+        searchable: true,
+      },
+      {
+        key: "job",
+        label: "Undefined Job",
+        options: filterOptions(detail.rows, "job").map((j) => ({ value: j, label: j })),
+        searchable: true,
+      },
+      {
+        // The reason menu and the reason cards are two ways into one selection — the cards
+        // for the guided path (they carry the corrective action), the menu for combining a
+        // reason with a department in one pass over the row.
+        key: "reason",
+        options: detail.groups.map((g) => ({ value: g.reason, label: g.label })),
+      },
+    ];
+    return list;
+  }, [detail.rows, detail.sections, detail.groups]);
+
+  const bounds = useMemo(() => dateBounds(detail.rows), [detail.rows]);
 
   const shownTotal = rows.reduce((s, r) => s + r.hours, 0);
-  const filtered = reason != null || query.trim() !== "";
+  const filtered = filterState.count > 0 || query.trim() !== "";
   const recon = reconcileUndefined(detail.total, detail.storedTotal);
   const groups = useMemo(() => groupHoursRows(rows, groupBy), [rows, groupBy]);
 
@@ -150,24 +219,30 @@ export function UndefinedHoursPanel({
         {!recon.ok && <span className="font-normal">— this is an application fault, not a display issue. Please report it.</span>}
       </p>
 
-      {/* The scrolling body. The reason cards, the controls and the table are all in it
-          together: the cards are the tallest block on the panel and the controls sit
-          between them and the table, so pinning the controls would mean pinning the cards
-          too and leaving the table a sliver. The table's own header stays visible while
-          the rows scroll — that is what `sticky` on DrillLines' thead is for. */}
-      <div className={`${DRILL_BODY} px-4 py-3`}>
+      {/* ── Fixed: reason cards, Group by, filters, and the meta line (§75) ────────
+          None of this scrolls with the table any more. It used to live inside the same
+          scrolling body as the records — "the cards are the tallest block, so pinning
+          the controls would leave the table a sliver" — but that traded away the actual
+          requirement: a filter or the Group tray must stay reachable, and the meta line
+          must stay legible ("what am I looking at"), however far down the records you've
+          scrolled. Every other drill already keeps its controls outside the scroller (see
+          DrillPanel) — this is the one place that didn't, because this panel hand-rolls
+          its own shell (see the header note for why it isn't DrillPanel). */}
+      <div className="px-4 py-3">
         {/* ── Reasons, with what to do about each (§42.12, §42.27) ───────── */}
         {detail.groups.length > 0 && (
           <>
             <h4 className="mb-1.5 text-label font-semibold uppercase tracking-wide text-sdc-muted">Why these are undefined</h4>
             <ul className="mb-3 grid gap-1.5 md:grid-cols-2">
               {detail.groups.map((g) => {
-                const active = reason === g.reason;
+                const active = reasons.includes(g.reason);
                 return (
                   <li key={g.reason}>
                     <button
                       type="button"
-                      onClick={() => setReason(active ? null : g.reason)}
+                      // Toggles this reason in the shared filter state, so two cards can be
+                      // active at once and the badge and Clear filters both know about it.
+                      onClick={() => filterState.toggle("reason", g.reason)}
                       aria-pressed={active}
                       className={`w-full rounded-lg border px-3 py-2 text-left motion-interactive ${REASON_TONE.fault} ${
                         active ? "ring-2 ring-sdc-blue ring-offset-1" : "hover:border-sdc-yellow-text"
@@ -236,28 +311,33 @@ export function UndefinedHoursPanel({
             </DrillGroupOption>
           </DrillGroupTray>
 
-          <DrillFilters>
-            <input
-              type="search"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search employee, job, section or date"
-              aria-label="Search undefined hours"
-              className="h-7 min-w-[12rem] flex-1 rounded-md border border-sdc-border-soft px-2 text-note outline-none motion-interactive focus:border-sdc-blue"
-            />
-            {filtered && (
-              <button
-                type="button"
-                onClick={() => {
-                  setReason(null);
-                  setQuery("");
-                }}
-                className="h-7 shrink-0 rounded-md border border-sdc-border bg-white px-2 text-note font-medium text-sdc-muted motion-interactive hover:text-sdc-navy"
-              >
-                Clear filters
-              </button>
-            )}
-          </DrillFilters>
+          {/* The five dimension menus, the date range, the badge and Clear filters — the
+              same row, in the same order, as every other drill (§73). The search box rides
+              along as `extra` because it is this panel's alone: it spans four fields at
+              once, which is the right control for hunting a specific bad punch and the
+              wrong one for narrowing to a department.
+              `count` includes the search box, so the badge counts everything narrowing the
+              table rather than everything narrowing it that happens to be a menu. */}
+          <DrillFilterRow
+            filters={filters}
+            menus={menus}
+            activeCount={filterState.count + (query.trim() ? 1 : 0)}
+            onToggle={filterState.toggle}
+            onSetAll={filterState.setAll}
+            onRange={filterState.setRange}
+            onClear={clearAll}
+            dateBounds={bounds}
+            extra={
+              <input
+                type="search"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search employee, job, section or date"
+                aria-label="Search undefined hours"
+                className="h-7 min-w-[12rem] flex-1 rounded-md border border-sdc-border-soft px-2 text-note outline-none motion-interactive focus:border-sdc-blue"
+              />
+            }
+          />
         </DrillControls>
 
         {/* What the table currently IS — the shared design's meta line, in the position
@@ -278,8 +358,16 @@ export function UndefinedHoursPanel({
             </>
           )}
         </p>
+      </div>
 
-        {/* ── The records ──────────────────────────────────────────────────── */}
+      {/* ── The ONE scrolling region — only the records (§75) ──────────────────────
+          Everything that decides what the table shows now lives above, outside this
+          div; everything below is what got decided. The table's own header stays
+          visible while its rows scroll — that is what `sticky` on DrillLines' thead is
+          for — and the Total row at the bottom is plain flow, not pinned (see the note
+          on DrillTable in ui/Drill.tsx for why a sticky one used to paint over rows that
+          had not scrolled into view yet). */}
+      <div className={`${DRILL_BODY} border-t border-sdc-border px-4 py-3`}>
         {detail.rows.length === 0 ? (
           <p className="rounded-lg border border-dashed border-sdc-border bg-sdc-gray-50 px-3 py-6 text-center text-note text-sdc-muted">
             Every punch this month has a valid job number. Nothing to correct.
@@ -316,7 +404,7 @@ export function UndefinedHoursPanel({
                     <>
                       <th className="w-24">Date</th>
                       <th>Employee</th>
-                      <th className="w-32">Job cell</th>
+                      <th className="w-32">Undefined Job</th>
                       <th className="w-48">Section</th>
                       <th className="w-36">Reason</th>
                       <th className="w-20 text-right">Hours</th>
@@ -348,8 +436,9 @@ export function UndefinedHoursPanel({
         ) : (
           // No scroll container of its own (§49): the panel body above IS the scroller,
           // and a second one nested inside it would cap the Lines view shorter than the
-          // rollup it toggles with. The sticky header and total row work against the
-          // body's scroller exactly as they did against this one.
+          // rollup it toggles with. The sticky HEADER still works against the body's
+          // scroller the same way it did against this one; the total row is plain flow
+          // now, not sticky (§75), so it needs nothing special from this wrapper at all.
           <div className="border-t border-sdc-border">
             <DrillLines
               head={
@@ -357,7 +446,7 @@ export function UndefinedHoursPanel({
                   <th className="w-24">Date</th>
                   <th>Employee</th>
                   <th className="w-40">Department</th>
-                  <th className="w-32">Job cell</th>
+                  <th className="w-32">Undefined Job</th>
                   <th className="w-48">Section</th>
                   <th className="w-36">Reason</th>
                   <th className="w-20 text-right">Hours</th>

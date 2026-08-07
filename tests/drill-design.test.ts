@@ -254,31 +254,86 @@ test("the scrolling body is basis-auto, never flex-1", () => {
   assert.match(DRILL, /export const DRILL_BODY = "[^"]*min-h-0/);
 });
 
-test("the total stays on screen while the rollup scrolls", () => {
-  // Before the card had a ceiling this row was simply the last thing in a content-height
-  // panel, so it was always visible. Once the body scrolls, a fifty-group rollup pushes the
-  // figure the drill exists to reconcile out of sight unless it is pinned.
+// ── One scroller, plain flow beneath it (§75) ───────────────────────────────
+//
+// A `sticky bottom-0` Total row and a per-group height cap were both removed together:
+// the sticky Total painted over an open group's own bottom rows for as long as there was
+// more of the ONE scroller (DRILL_BODY) left to reach, and it only got bad enough to
+// notice once a group could grow past a screen's worth of lines with no cap of its own.
+// Removing either alone would not have fixed the report — a capped group with a sticky
+// Total would still glue the Total over the group's last visible line whenever the
+// panel's OWN scroll (above the group) hadn't reached bottom; an uncapped group with the
+// sticky Total kept would just make the glued-over stretch longer. Both go together.
+
+test("the Total row is plain flow, not pinned over the rows above it", () => {
   const total = /role="row"\s*\n?\s*className="([^"]*)"/.exec(
     DRILL.slice(DRILL.indexOf("The total, on the same template")),
   );
   assert.ok(total, "the total row must carry a class list");
-  assert.match(total[1], /sticky bottom-0/, "pin the total to the bottom of the scroller");
-  // Opaque, or the rows travelling underneath read through it.
+  assert.doesNotMatch(
+    total[1],
+    /sticky|fixed|absolute/,
+    "a pinned Total floats over whatever the scroller hasn't reached yet — see §75",
+  );
+  // Opaque stays relevant even unpinned: DrillGroup's tinted expansion sits directly
+  // above it in the DOM, and an opaque row is what keeps the hairline separating them
+  // crisp rather than letting the tint bleed through.
   assert.match(total[1], /bg-sdc-gray-50/);
+});
+
+test("DrillLines' own total row (the ungrouped case) is plain flow too", () => {
+  const tfoot = /<tfoot className="([^"]*)"/.exec(DRILL);
+  assert.ok(tfoot, "DrillLines' tfoot must carry a class list");
+  assert.doesNotMatch(tfoot[1], /sticky|fixed|absolute/, "same defect, same fix, in the ungrouped table's own footer");
+  // The thead stays sticky-TOP — that is the unrelated, non-overlapping "frozen header"
+  // pattern (content already scrolled PAST hides under it, which is expected), and §75
+  // only targets bottom-pinning.
+  assert.match(DRILL, /<thead className="sticky top-0[^"]*">/, "the header stays pinned — only the footer was the bug");
+});
+
+test("an expanded group gets its full height — no vertical cap, no nested scroller", () => {
+  // The other half of §75: a `max-h-[18rem] overflow-auto` on DrillGroup's own expansion
+  // used to bound (and separately scroll) an open group's lines. That scroll position
+  // moved independently of DRILL_BODY's, so scrolling THIS box never changed how far the
+  // (then-sticky) Total had floated down — it just sat glued over whatever this box's own
+  // scrollbar had brought into view. Removing the cap means the group's true height
+  // becomes part of the ONE scroller's content, which is what "give each expanded group
+  // enough dynamic height for all detail rows" asks for.
+  const expansion = /\{open && \(([\s\S]*?)\)\}/.exec(DRILL.slice(DRILL.indexOf("function DrillGroup")));
+  assert.ok(expansion, "DrillGroup's expansion must be present");
+  assert.doesNotMatch(expansion[1], /max-h-\[18rem\]/, "no fixed height cap on an open group any more");
+  assert.doesNotMatch(expansion[1], /overflow-y-auto|(?<!-x-)overflow-auto\b/, "no vertical scroll of its own — DRILL_BODY is the one scroller");
+  // Horizontal overflow stays: a group's own lines can still be wider than the panel, and
+  // this is what keeps THAT scrolling sideways on its own rather than the whole panel.
+  assert.match(expansion[1], /overflow-x-auto/, "wide lines must still scroll sideways within the group, not the panel");
 });
 
 test("no drill nests a second fixed-height scroller inside its scrolling body", () => {
   // The two that did: HoursDetailPanel's flat punch list (24rem) and UndefinedHoursPanel's
   // (20rem). Both predate the ceiling, and both capped the ungrouped view shorter than the
-  // rollup beside it once the panel itself started scrolling.
-  //
-  // DrillGroup's own 18rem scroller is deliberately NOT covered here: it bounds the lines
-  // inside ONE expanded group so the total row stays reachable, which is a different job.
+  // rollup beside it once the panel itself started scrolling. DrillGroup's own 18rem cap
+  // (the shared component, not a per-panel one) is covered by the test above instead — it
+  // is gone rather than merely "not this pattern".
   for (const f of ["HoursDetailPanel.tsx", "UndefinedHoursPanel.tsx"]) {
     const body = code(join(SRC, "components", f));
     const offenders = body.match(/max-h-(?:80|\[24rem\])[^"`]*overflow-auto/g) ?? [];
     assert.deepEqual(offenders, [], `${f}: the panel body is the scroller — a nested cap fights it`);
   }
+});
+
+test("UndefinedHoursPanel keeps its Group tray, filters and meta line OUTSIDE the scrolling body", () => {
+  // The one place §75 required a real layout change, not just removing a class: this
+  // panel hand-rolls its own shell (it isn't DrillPanel — see its header note), and
+  // until now its `DrillControls` (Group tray + filters) sat INSIDE the same scrolling
+  // div as the table, so scrolling to an open group's rows scrolled the filters away too
+  // — the opposite of "keep filters visible while the table body scrolls". DrillPanel
+  // already got this right (controls sit above its `${DRILL_BODY}` div); this asserts
+  // UndefinedHoursPanel now matches it.
+  const body = code(join(SRC, "components", "UndefinedHoursPanel.tsx"));
+  const controlsAt = body.indexOf("<DrillControls>");
+  const scrollerAt = body.lastIndexOf("DRILL_BODY");
+  assert.ok(controlsAt > 0 && scrollerAt > 0, "both the controls and the scrolling body must be present");
+  assert.ok(controlsAt < scrollerAt, "DrillControls must appear before (outside) the scrolling DRILL_BODY div");
 });
 
 // ── No footer, no punch counts (§62) ────────────────────────────────────────

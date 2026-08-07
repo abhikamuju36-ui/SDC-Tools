@@ -53,9 +53,24 @@ type State = {
    * figures exist — the server only sends them to a request carrying the cookie.
    */
   unlocked: boolean;
+  /**
+   * The Standard Sheet columns and the Standard Fees card are both collapsed by
+   * choice, in a tab that is otherwise still authorized (§76 — "Fix Standard Sheet
+   * and Standard Fees Visibility"). Deliberately a THIRD field, not a repurposing of
+   * `unlocked`: `unlocked` already has an established meaning ("has this tab proven
+   * the password") that both `StandardsGate` and `StandardFeesCard` depend on, and
+   * folding "currently displayed" into it would mean re-checking the password just
+   * to bring a hidden view back — which is exactly the round trip §48 removed.
+   *
+   * `hidden` starts `false` on every fresh render (server and client snapshots
+   * agree), so there is no seeding race and no flash-of-content to guard against —
+   * unlike `unlocked`, nothing needs to happen on mount for the default case to be
+   * correct.
+   */
+  hidden: boolean;
 };
 
-let state: State = { promptOpen: false, unlocked: false };
+let state: State = { promptOpen: false, unlocked: false, hidden: false };
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -73,7 +88,7 @@ export function readStandardsState(): State {
 export function serverStandardsState(): State {
   return CLOSED;
 }
-const CLOSED: State = Object.freeze({ promptOpen: false, unlocked: false });
+const CLOSED: State = Object.freeze({ promptOpen: false, unlocked: false, hidden: false });
 
 export function subscribeStandards(onChange: () => void): () => void {
   listeners.add(onChange);
@@ -102,13 +117,57 @@ export function closeStandardsPrompt(): void {
 
 /** Called after the server action reports the password was right. */
 export function markStandardsUnlocked(): void {
-  state = { promptOpen: false, unlocked: true };
+  state = { promptOpen: false, unlocked: true, hidden: false };
   emit();
 }
 
-/** "Hide Standards" — drops the reveal in this tab. The cookie is cleared server-side. */
+/**
+ * Revokes this tab's reveal outright — the password will be asked for again. Not
+ * currently wired to any button (§76 renamed the toolbar's "Hide Standards" to a
+ * pure visibility toggle instead — see hideStandardSheet below); kept for whatever
+ * eventually wants a real relock rather than a collapse.
+ */
 export function markStandardsLocked(): void {
-  state = { promptOpen: false, unlocked: false };
+  state = { promptOpen: false, unlocked: false, hidden: false };
+  emit();
+}
+
+// ── Hide / Show, without touching the unlock (§76) ──────────────────────────
+//
+// The toolbar's "Standards" button used to submit a real `<form action={lockStandardSheet}>`
+// — clearing the server cookie and calling `revalidatePath("/etc")` to hide the grid's
+// Standard Sheet columns. That IS immediate for the columns (they are server JSX, gone
+// the moment the page re-renders without the cookie) but it never told THIS store the
+// reveal had ended, so `StandardFeesCard` — which decides its own visibility from
+// `unlocked` — kept right on showing whatever it last fetched. Two components, two
+// notions of "hidden", and only one of them moved.
+//
+// The fix is not to make the button ALSO call `markStandardsLocked()`: that would fix
+// the card but reintroduce the OTHER half of the bug for "Show Standards" afterwards —
+// revoking the cookie means the grid's columns, which only ever come down as part of a
+// full server render, cannot come back without one, so showing again would need the same
+// `revalidatePath` round trip §48 already proved is too slow for this page. A relock and
+// an instant re-reveal cannot both be true of the same action.
+//
+// So hiding stays a pure DISPLAY toggle. The cookie is never touched, the grid's columns
+// and the card's fetched figures stay exactly where they are in memory, and both of
+// these plus `!hidden` is the one condition every Standard Sheet consumer now checks —
+// EtcStandardCells, StandardGrandCells, the two header blocks in page.tsx, and
+// StandardFeesCard's own `show`. Toggling therefore costs nothing: no request, no
+// re-render, no risk of losing an unsaved Contingency/Notes edit sitting in one of the
+// grid's own inputs, because nothing about the grid's mount ever changes.
+
+/** "Hide Standards" — collapses the columns and the card in this tab. Still authorized. */
+export function hideStandardSheet(): void {
+  if (state.hidden) return; // nothing changed — do not wake the subscribers
+  state = { ...state, hidden: true };
+  emit();
+}
+
+/** "Show Standards" when this tab is already authorized — the reverse, equally instant. */
+export function revealStandardSheet(): void {
+  if (!state.hidden) return;
+  state = { ...state, hidden: false };
   emit();
 }
 
@@ -159,7 +218,7 @@ export function noteEtcClick(): boolean {
 
 /** Test seam — the streak is module state, so a test needs a way back to zero. */
 export function resetStandardsForTest(): void {
-  state = { promptOpen: false, unlocked: false };
+  state = { promptOpen: false, unlocked: false, hidden: false };
   streak = 0;
   if (streakTimer) clearTimeout(streakTimer);
   streakTimer = null;

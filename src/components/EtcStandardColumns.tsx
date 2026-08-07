@@ -1,6 +1,6 @@
 "use client";
 
-import { createContext, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { createContext, useContext, useEffect, useMemo, useRef, useState, useSyncExternalStore, type ReactNode } from "react";
 import { usd as currency, usdExact as currencyExact } from "@/components/ui/format";
 import {
   calcTotalEtcDollars,
@@ -11,6 +11,10 @@ import {
 } from "@/lib/standard-fees";
 import { saveContingencyAmount, saveJobNotes } from "@/lib/standard-sheet-actions";
 import { useEtcLiveTotals } from "@/lib/etc-live-totals";
+// The same store StandardFeesCard reads (§76 — "Fix Standard Sheet and Standard Fees
+// Visibility"): one shared `hidden` flag is what makes the grid's columns and the card
+// collapse and reappear together, rather than each keeping its own notion of visible.
+import { readStandardsState, serverStandardsState, subscribeStandards } from "@/lib/standards-reveal";
 
 // Same weight/treatment as the Monthly ETC grid's other block dividers.
 const STD_EDGE = "border-l-8! border-l-[#808080]!";
@@ -340,14 +344,26 @@ function useStandardRates(): Ctx {
   return ctx;
 }
 
+// One subscription, shared by every Standard Sheet consumer in this file (§76): the
+// grid's per-row cells, its grand-total row, and the header wrapper below all need the
+// SAME answer to "has the user hidden this", and a single hook is what guarantees they
+// can never read it out of step with each other.
+function useStandardsHidden(): boolean {
+  return useSyncExternalStore(subscribeStandards, readStandardsState, serverStandardsState).hidden;
+}
+
 // Renders one job's Standard Sheet Fragment inside the Monthly ETC grid's
 // row — reads live totals from StandardRatesProvider (driven by the global
 // ETC Rates). The per-job ENGR/Shop/Parts rate columns were removed; those
 // rates are now set once via the "ETC Rates" toolbar button.
 export function EtcStandardCells({ job }: { job: StandardJobBase }) {
   const { getComputed, editable } = useStandardRates();
+  const hidden = useStandardsHidden();
   const std = getComputed(job.jobId);
-  if (!std) return null;
+  // `hidden` collapses the row's own cells the same instant it collapses the header
+  // above them (§76) — both read the same store, so there is never a render where one
+  // has hidden its columns and the other has not.
+  if (!std || hidden) return null;
 
   const cell = (edge: boolean) => `${edge ? STD_EDGE : "border-l border-sdc-border"} px-2 py-1 text-center text-label text-sdc-navy`;
 
@@ -500,7 +516,9 @@ function ContingencyNotesInputs({
 // a transparent cell in a sticky row lets the scrolling data show through it.
 export function StandardGrandCells() {
   const { getGrandTotals } = useStandardRates();
+  const hidden = useStandardsHidden();
   const grand = getGrandTotals();
+  if (hidden) return null;
 
   return (
     <>
@@ -521,5 +539,52 @@ export function StandardGrandCells() {
       </td>
       <td className={`${STD_EDGE} bg-sdc-gray-100 px-2 py-2.5 text-center`} />
     </>
+  );
+}
+
+// ── The two header blocks, hidden in lockstep with the rows (§76) ───────────
+//
+// page.tsx renders these as plain server JSX — the "Standard Sheet" merged banner and
+// the six leaf-column labels — because a header label needs no per-job data and was
+// never worth a client component before. But EtcStandardCells now hides its OWN cells
+// on `hidden`, and a header sitting above columns that have vanished from every row is a
+// worse defect than the one this fixes: a "Standard Sheet" banner spanning six columns
+// of nothing. Wrapping the (already server-rendered) header markup in this one client
+// component — a Fragment when shown, nothing when hidden — is what keeps the header row
+// and every body row losing (and regaining) the same columns on the same frame, without
+// turning the header itself into something that has to compute its own data.
+export function StandardHeaderVisible({ children }: { children: ReactNode }) {
+  const hidden = useStandardsHidden();
+  if (hidden) return null;
+  return <>{children}</>;
+}
+
+// ── The "no jobs" placeholder row's colSpan, kept honest (§76) ──────────────
+//
+// A `<td colSpan={N}>` for the empty-grid message has to span exactly as many columns as
+// are actually visible, or the cell either falls short of the table's right edge or (with
+// a table that auto-sizes) reads as a stray gap. `standardsColumnCount` is 0 when
+// `showStandards` was false for this render (the columns never existed at all) and
+// STANDARD_LEAF_COLUMNS.length when it was true — this component's OWN job is only the
+// part that can change without a server render: subtracting them back out again once the
+// user hides them, same as every other Standard Sheet consumer here.
+export function NoJobsMessageRow({
+  baseColSpan,
+  standardsColumnCount,
+  message,
+}: {
+  /** Every column this row must span EXCEPT the Standard Sheet block. */
+  baseColSpan: number;
+  /** STANDARD_LEAF_COLUMNS.length when showStandards was true this render, else 0. */
+  standardsColumnCount: number;
+  message: string;
+}) {
+  const hidden = useStandardsHidden();
+  return (
+    <tr>
+      <td colSpan={baseColSpan + (hidden ? 0 : standardsColumnCount)} className="px-4 py-5 text-center text-sdc-gray-400">
+        {message}
+      </td>
+    </tr>
   );
 }

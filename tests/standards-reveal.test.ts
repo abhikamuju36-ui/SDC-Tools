@@ -6,12 +6,14 @@ import {
   GESTURE_CLICKS,
   GESTURE_WINDOW_MS,
   closeStandardsPrompt,
+  hideStandardSheet,
   markStandardsLocked,
   markStandardsUnlocked,
   noteEtcClick,
   openStandardsPrompt,
   readStandardsState,
   resetStandardsForTest,
+  revealStandardSheet,
   serverStandardsState,
   subscribeStandards,
 } from "../src/lib/standards-reveal";
@@ -53,6 +55,8 @@ const CARD_ACTION = code("lib", "standard-fees-card.ts");
 const SIDEBAR = code("components", "Sidebar.tsx");
 const GATE_UI = code("components", "StandardsGate.tsx");
 const CARD_UI = code("components", "StandardFeesCard.tsx");
+const COLUMNS_UI = code("components", "EtcStandardColumns.tsx");
+const ETC_PAGE = code("app", "(app)", "etc", "page.tsx");
 
 beforeEach(() => resetStandardsForTest());
 
@@ -100,25 +104,121 @@ test("the streak survives a re-render and resets on its own", async () => {
 test("the server snapshot never opens the prompt", () => {
   // It is rendered on the server for every visitor; a truthy snapshot would put a password
   // box on the page for everyone.
-  assert.deepEqual(serverStandardsState(), { promptOpen: false, unlocked: false });
+  assert.deepEqual(serverStandardsState(), { promptOpen: false, unlocked: false, hidden: false });
 });
 
 test("accepting the password closes the prompt and reveals in one step", () => {
   openStandardsPrompt();
   markStandardsUnlocked();
-  assert.deepEqual(readStandardsState(), { promptOpen: false, unlocked: true });
+  assert.deepEqual(readStandardsState(), { promptOpen: false, unlocked: true, hidden: false });
 });
 
 test("locking drops both", () => {
   markStandardsUnlocked();
   markStandardsLocked();
-  assert.deepEqual(readStandardsState(), { promptOpen: false, unlocked: false });
+  assert.deepEqual(readStandardsState(), { promptOpen: false, unlocked: false, hidden: false });
 });
 
 test("escaping the prompt does not unlock anything", () => {
   openStandardsPrompt();
   closeStandardsPrompt();
-  assert.deepEqual(readStandardsState(), { promptOpen: false, unlocked: false });
+  assert.deepEqual(readStandardsState(), { promptOpen: false, unlocked: false, hidden: false });
+});
+
+// ── Standard Sheet and Standard Fees hide/show together (§76) ───────────────
+//
+// The bug: clicking the toolbar's "Standards" button submitted a real
+// `<form action={lockStandardSheet}>` — clearing the unlock cookie and revalidating the
+// whole page. That hid the grid's columns (server JSX, gone once the render lacks the
+// cookie) but never told this store the reveal had ended, so StandardFeesCard — which
+// decides its own visibility from `unlocked` — kept showing stale figures. Two
+// components, two notions of "hidden".
+//
+// The fix adds ONE more flag, `hidden`, that every Standard Sheet consumer now checks
+// alongside its existing visibility condition. These tests hold the properties that
+// make the fix actually work: hide/show is instant (no request, which the OTHER half of
+// this file already proves nothing here ever costs), it never disturbs `unlocked` or
+// `promptOpen` (so a genuine relock and a mere collapse stay two different things), and
+// it does not repeat notifications for a state that has not changed.
+
+test("hiding does not touch the authorization state", () => {
+  markStandardsUnlocked();
+  hideStandardSheet();
+  const state = readStandardsState();
+  assert.equal(state.hidden, true);
+  assert.equal(state.unlocked, true, "hiding must not revoke the tab's authorization");
+  assert.equal(state.promptOpen, false);
+});
+
+test("showing again after a hide needs no password", () => {
+  markStandardsUnlocked();
+  hideStandardSheet();
+  revealStandardSheet();
+  assert.deepEqual(readStandardsState(), { promptOpen: false, unlocked: true, hidden: false });
+});
+
+test("hide and show are each idempotent — no duplicate notifications", () => {
+  let notifications = 0;
+  subscribeStandards(() => notifications++);
+  hideStandardSheet();
+  hideStandardSheet();
+  hideStandardSheet();
+  assert.equal(notifications, 1, "repeated hides must not wake subscribers again");
+  revealStandardSheet();
+  revealStandardSheet();
+  assert.equal(notifications, 2, "one more notification for the one real change back");
+});
+
+test("hidden defaults to false, so a fresh render never opens already-collapsed", () => {
+  // No seeding, no bootstrap effect, no flash: both snapshots start unhidden, exactly
+  // like `unlocked` and `promptOpen` already do — see the note beside the `hidden`
+  // field for why that is what makes this safe to add without a mount-time race.
+  assert.equal(serverStandardsState().hidden, false);
+  assert.equal(readStandardsState().hidden, false);
+});
+
+test("every Standard Sheet consumer checks the same hidden flag", () => {
+  // The grid's per-row cells, its grand-total row, the two header blocks, and the
+  // Fees card must all read `hidden` from THIS module — not a locally re-derived
+  // boolean, which is exactly how the original bug had two independent answers.
+  assert.match(COLUMNS_UI, /if \(!std \|\| hidden\) return null;/, "EtcStandardCells must hide with the row's own data");
+  assert.match(COLUMNS_UI, /if \(hidden\) return null;/, "StandardGrandCells must hide too");
+  assert.match(COLUMNS_UI, /export function StandardHeaderVisible/, "the header blocks need the same gate");
+  assert.match(CARD_UI, /&& !hidden/, "the card's own show formula must veto on hidden");
+});
+
+test("the header blocks in the grid are wrapped, not left to hide alone", () => {
+  const occurrences = ETC_PAGE.match(/<StandardHeaderVisible>/g) ?? [];
+  assert.equal(occurrences.length, 2, "both header blocks (the banner and the leaf labels) must be wrapped");
+});
+
+test("hiding never clears the card's already-fetched figures", () => {
+  // §76's "values are preserved when hidden and shown again". `setData(null)` legitimately
+  // appears twice already — the "Try again" retry and the month-switch resync — so the
+  // guard is not "never call it" but "never call it BECAUSE of `hidden`": nothing in the
+  // file may read `hidden` anywhere near clearing the cached figures.
+  assert.doesNotMatch(CARD_UI, /hidden[\s\S]{0,80}setData\(null\)/, "hiding must not discard cached figures");
+  assert.doesNotMatch(CARD_UI, /setData\(null\)[\s\S]{0,80}hidden/, "…in either order");
+});
+
+test("the toggle button handles its own click and never lets the form submit", () => {
+  // The instant path only works if the real <form action={lockAction}> (the no-JS
+  // fallback, kept deliberately per §48's reasoning) is prevented once JS has hydrated
+  // — otherwise every click would ALSO relock and revalidate, silently reintroducing
+  // the slow path this fixes.
+  const toggle = GATE_UI.slice(GATE_UI.indexOf("export function StandardsVisibilityToggle"));
+  assert.match(toggle, /e\.preventDefault\(\)/, "the client handler must suppress the form submission");
+  assert.match(toggle, /hideStandardSheet\(\)/);
+  assert.match(toggle, /revealStandardSheet\(\)/);
+  assert.doesNotMatch(toggle, /revalidatePath|router\.(push|refresh)/, "the toggle itself must never trigger a re-render");
+});
+
+test("the toolbar no longer submits Hide straight to the server action", () => {
+  // The old `<form action={lockStandardSheet}>` around a plain submit button is gone —
+  // it is StandardsVisibilityToggle now, which still ACCEPTS lockAction (for the no-JS
+  // path) but intercepts the click before that form ever fires.
+  assert.doesNotMatch(ETC_PAGE, /<form action=\{lockStandardSheet\}>/, "the bare form-submits-to-lock button must be gone");
+  assert.match(ETC_PAGE, /<StandardsVisibilityToggle lockAction=\{lockStandardSheet\}/, "the toggle must still carry the no-JS fallback through");
 });
 
 // ── No round trip is reintroduced (the whole point) ─────────────────────────

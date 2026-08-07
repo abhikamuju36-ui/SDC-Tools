@@ -63,31 +63,6 @@ const DIFF_GREEN = "#15803d"; // under (Quoted − Actual > 0)
 const DIFF_RED = "#dc2626"; // over
 const DIFF_GRAY = "#94a3b8"; // even
 
-// Colors for the Parts Cost visual (§52) — a hand-rolled single-bar "bullet"
-// built in PartsCostSummary.tsx directly (CSS, not ECharts: one filled bar plus
-// two dashed markers on one shared scale has no natural ECharts option shape,
-// and this app already hand-rolls comparable bars — see the variance meter in
-// the same component, and SectionHierarchyChart above). Colors stay here so the
-// two hours charts and the Parts Cost bar draw from one palette.
-//
-// Was a 4-5 row horizontal bar chart (Purchased / Estimated / Paid / Left to
-// Pay / Projection) — replaced because five separate bars made "how do these
-// three relate" a multi-glance comparison instead of a one-glance one. See
-// DEVLOG §52.
-//
-// Per-bar colors mirror the Power BI report's own table, where the measure
-// names are colored: Part Cost Purchased in blue, Part Cost Paid in green.
-// Validated with the dataviz palette validator (light surface):
-//   #408bf7 / #15803d / #b45309 — lightness band PASS, CVD separation PASS,
-//   normal-vision floor PASS, contrast PASS (all ≥ 3:1).
-export const PARTS_BAR = {
-  purchased: SERIES.planned, // blue — matches the two hours charts above; "Total Parts Cost Spent" marker
-  paid: "#15803d", // green — same token as IndicatorCard's Paid bullet; "Amount Invoiced" fill
-  // Amber for "Projection" — the only forward-looking figure, so it shouldn't
-  // share a color with money actually purchased or invoiced.
-  projection: "#b45309",
-} as const;
-
 export function groupedBarOption(opts: {
   categories: string[];
   planned: number[];

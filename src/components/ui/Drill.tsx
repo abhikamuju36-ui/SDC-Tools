@@ -1,6 +1,8 @@
 "use client";
 
-import { type ReactNode } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
+import { DRILL_FILTER_LABEL, type DrillFilterKey, type DrillFilters } from "@/lib/drill-filters";
 
 // ── The drill-through panel, one design (§47) ────────────────────────────────
 //
@@ -181,8 +183,12 @@ export function DrillPanel({
  * chips, three selects and the Close button wrapped into an unreadable pile beside the
  * heading.
  */
-export function DrillControls({ children }: { children: ReactNode }) {
-  return <div className="flex flex-wrap items-center gap-3 px-4 py-2.5">{children}</div>;
+export function DrillControls({ children, className }: { children: ReactNode; className?: string }) {
+  // The padding is overridable because the two hand-rolled drill cards on the Monthly ETC
+  // strip pad themselves (p-4), and inheriting this row's px-4 on top of that indented the
+  // controls 16px further than the table they control. `className` REPLACES the padding
+  // rather than adding to it, which is why it is spliced in place of the default.
+  return <div className={`flex flex-wrap items-center gap-3 ${className ?? "px-4 py-2.5"}`}>{children}</div>;
 }
 
 /**
@@ -235,37 +241,284 @@ export function DrillFilters({ children }: { children: ReactNode }) {
   return <div className="flex min-w-[14rem] flex-1 flex-wrap items-center gap-1.5">{children}</div>;
 }
 
+// ── Filters (§73) ───────────────────────────────────────────────────────────
+//
+// These replace the single-choice <select> pills the hours drill used to have. A select
+// can only ever ask one question per dimension ("which ONE department"), and the question
+// people actually bring to these tables is "these two, not the rest" — so every filter is
+// now a multi-select menu over the same DrillFilters model (lib/drill-filters.ts).
+//
+// The pill keeps the select's look, including the tint that distinguished "All sections"
+// from an active choice, because that distinction is the one thing a filter row must make
+// legible at a glance. Its `min-w-0 max-w-[14rem]` is still load-bearing and still for
+// §45's reason: full job names must not be able to push a horizontal scrollbar onto the
+// page.
+//
+// Every tick applies IMMEDIATELY and the menu stays open — no draft, no debounce, no
+// navigation. Unlike the Projects toolbar menus (useDraftParamsMenu), nothing here is in
+// the URL and nothing has to reach the server: the rows are already in the panel, so
+// filtering is a synchronous re-filter of an array and the honest latency is zero. A
+// debounce would be pure added delay (§32.7).
+
+const FILTER_PILL =
+  "flex h-7 min-w-0 max-w-[14rem] cursor-pointer list-none items-center gap-1 rounded-md border px-1.5 text-note outline-none motion-interactive";
+
 /**
- * A filter <select> styled as the reference's dropdown pill, and tinted when it is
- * actually filtering — so "All sections" and "10-211 ME Gen" do not look alike.
+ * One dimension's filter, as a checkbox menu behind a pill.
  *
- * `min-w-0 max-w-[14rem]` is load-bearing and predates this redesign: a native select
- * sizes to its widest option and as a flex item will not shrink below it, so the job
- * filter's full job names pushed a horizontal scrollbar onto the whole page (§45).
+ * `options` are the values present in the UNFILTERED rows — passed in rather than derived
+ * from what is on screen, so ticking one department cannot make the others vanish from the
+ * menu that would let you tick them back.
  */
-export function DrillSelect({
-  value,
-  onChange,
+export function DrillFilterMenu({
+  filterKey,
   label,
-  children,
+  options,
+  selected,
+  onToggle,
+  onSetAll,
+  searchable,
 }: {
-  value: string;
-  onChange: (v: string) => void;
-  label: string;
-  children: ReactNode;
+  filterKey: DrillFilterKey;
+  /** Overrides the shared dimension name — the undefined-hours drill says "Undefined Job". */
+  label?: string;
+  options: { value: string; label: string; suffix?: string }[];
+  selected: string[];
+  onToggle: (value: string) => void;
+  onSetAll: (values: string[]) => void;
+  /** A search box above the list. Set it for the long ones — employees, jobs. */
+  searchable?: boolean;
 }) {
-  const active = value !== "";
+  const name = label ?? DRILL_FILTER_LABEL[filterKey];
+  const active = selected.length > 0;
+  const detailsRef = useRef<HTMLDetailsElement>(null);
+  const [query, setQuery] = useState("");
+
+  // Close on a click anywhere else. Same one-line treatment the toolbar menus use — a
+  // <details> does not do this for itself, and a filter menu left standing open over the
+  // table it just narrowed hides the result of the click.
+  useEffect(() => {
+    function onClickOutside(e: MouseEvent) {
+      const el = detailsRef.current;
+      if (el?.open && !el.contains(e.target as Node)) el.open = false;
+    }
+    document.addEventListener("click", onClickOutside);
+    return () => document.removeEventListener("click", onClickOutside);
+  }, []);
+
+  const q = query.trim().toLowerCase();
+  const shown = q ? options.filter((o) => o.label.toLowerCase().includes(q)) : options;
+
   return (
-    <select
-      value={value}
-      onChange={(e) => onChange(e.target.value)}
-      aria-label={label}
-      className={`h-7 min-w-0 max-w-[14rem] flex-1 rounded-md border px-1.5 text-note outline-none motion-interactive focus:border-sdc-blue ${
-        active ? "border-sdc-border bg-sdc-gray-100 text-sdc-navy" : "border-sdc-border-soft bg-white text-sdc-muted"
-      }`}
-    >
-      {children}
-    </select>
+    <details ref={detailsRef} className="group/f relative">
+      <summary
+        aria-label={`Filter by ${name.toLowerCase()}`}
+        className={`${FILTER_PILL} ${
+          active ? "border-sdc-border bg-sdc-gray-100 text-sdc-navy" : "border-sdc-border-soft bg-white text-sdc-muted"
+        }`}
+      >
+        <span className="min-w-0 flex-1 truncate">
+          {name}
+          {/* The selection, stated on the pill so the row can be read without opening
+              anything: one tick names itself, several are counted. Counting SELECTIONS is
+              not counting rows — §62 removed row counts from these panels and this is a
+              count of the filter, which is what the badge above the row totals too. */}
+          {selected.length === 1 && (
+            <span className="font-medium text-sdc-navy">
+              {": "}
+              {options.find((o) => o.value === selected[0])?.label ?? selected[0]}
+            </span>
+          )}
+          {selected.length > 1 && <span className="font-medium text-sdc-navy">{` (${selected.length})`}</span>}
+        </span>
+        <svg
+          viewBox="0 0 16 16"
+          width="9"
+          height="9"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.8"
+          aria-hidden
+          className="shrink-0 opacity-70 motion-interactive group-open/f:rotate-180"
+        >
+          <path d="M3.5 6 L8 10.5 L12.5 6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </summary>
+      {/* motion-menu-panel (§36.5): opacity and a small rise, no height animation, so the
+          menu opens at the same speed whether it holds four sections or two hundred jobs.
+          z-30 keeps this dropdown above the table content it opens over — the Total row
+          it used to specifically clear is plain flow now, not an overlapping layer (§75). */}
+      <div className="motion-menu-panel styled-scrollbar absolute left-0 top-full z-30 mt-1 max-h-[calc(var(--app-vh)_*_0.6)] w-64 overflow-y-auto rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
+        {searchable && options.length > 8 && (
+          <input
+            type="search"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder={`Search ${name.toLowerCase()}…`}
+            aria-label={`Search ${name.toLowerCase()} options`}
+            className="mb-1 h-7 w-full rounded-md border border-sdc-border-soft px-2 text-note outline-none motion-interactive focus:border-sdc-blue"
+          />
+        )}
+        {/* Select all / Clear act on the FULL option list, never the search-filtered view
+            — a "Clear" that only cleared what you had typed would be a trap. */}
+        <MenuBulkActions onAll={() => onSetAll(options.map((o) => o.value))} onNone={() => onSetAll([])} />
+        {shown.map((o) => (
+          <MenuCheckbox
+            key={o.value}
+            label={o.label}
+            suffix={o.suffix}
+            checked={selected.includes(o.value)}
+            onChange={() => onToggle(o.value)}
+          />
+        ))}
+        {shown.length === 0 && <p className="px-1.5 py-1 text-xs text-sdc-gray-400">No matches</p>}
+      </div>
+    </details>
+  );
+}
+
+/**
+ * The date filter: two bounds, inclusive, applied as typed.
+ *
+ * One control rather than two independent filters, which is also how it is counted — see
+ * activeFilterCount. `min`/`max` come from the rows so the pickers open on the month in
+ * question instead of on today.
+ */
+export function DrillDateRange({
+  from,
+  to,
+  min,
+  max,
+  onChange,
+}: {
+  from: string;
+  to: string;
+  min?: string;
+  max?: string;
+  onChange: (from: string, to: string) => void;
+}) {
+  const active = Boolean(from || to);
+  const box = `h-7 min-w-0 rounded-md border px-1 text-note outline-none motion-interactive focus:border-sdc-blue ${
+    active ? "border-sdc-border bg-sdc-gray-100 text-sdc-navy" : "border-sdc-border-soft bg-white text-sdc-muted"
+  }`;
+  return (
+    <div className="flex min-w-0 items-center gap-1">
+      <span className="shrink-0 text-label font-semibold uppercase tracking-[0.04em] text-sdc-muted">Date</span>
+      <input
+        type="date"
+        value={from}
+        min={min}
+        max={max}
+        onChange={(e) => onChange(e.target.value, to)}
+        aria-label="Filter from date"
+        className={box}
+      />
+      <span aria-hidden className="shrink-0 text-note text-sdc-muted">
+        –
+      </span>
+      <input
+        type="date"
+        value={to}
+        min={min}
+        max={max}
+        onChange={(e) => onChange(from, e.target.value)}
+        aria-label="Filter to date"
+        className={box}
+      />
+    </div>
+  );
+}
+
+/**
+ * "2 filters · Clear filters" — how many filters are narrowing the table, and the way out.
+ *
+ * Renders NOTHING when nothing is filtering: "0 filters" is not information, and a Clear
+ * button with nothing to clear is a control that does nothing. That also keeps the row
+ * from reserving width for a state it spends most of its life in.
+ *
+ * The count is of FILTERS, never of rows — §62 removed every row/punch/record count from
+ * these panels and this is deliberately not a way back in.
+ */
+export function DrillFilterSummary({ activeCount, onClear }: { activeCount: number; onClear: () => void }) {
+  if (activeCount === 0) return null;
+  return (
+    <div className="flex shrink-0 items-center gap-1.5">
+      <span
+        className="rounded-md bg-sdc-blue-light px-1.5 py-0.5 text-label font-semibold text-sdc-blue-dark"
+        // The accessible name spells out what is being counted; the visible chip stays short.
+        aria-label={`${activeCount} ${activeCount === 1 ? "filter" : "filters"} active`}
+      >
+        {activeCount} {activeCount === 1 ? "filter" : "filters"}
+      </span>
+      <button
+        type="button"
+        onClick={onClear}
+        className="h-7 shrink-0 rounded-md border border-sdc-border bg-white px-2 text-note font-medium text-sdc-muted motion-interactive hover:text-sdc-navy"
+      >
+        Clear filters
+      </button>
+    </div>
+  );
+}
+
+/**
+ * The filter row for a drill whose rows carry the standard dimensions — one menu per
+ * dimension it is given, the date range, the count and Clear filters, in one consistent
+ * order.
+ *
+ * Assembled here rather than at each call site so the panels cannot end up offering the
+ * same filters in three different orders, which is the state their Group By trays were in
+ * before §47. A panel with a filter nothing else has (the undefined drill's search box)
+ * passes it as `extra`.
+ */
+export function DrillFilterRow({
+  filters,
+  menus,
+  onToggle,
+  onSetAll,
+  onRange,
+  onClear,
+  activeCount,
+  dateBounds,
+  extra,
+}: {
+  filters: DrillFilters;
+  menus: { key: DrillFilterKey; label?: string; options: { value: string; label: string; suffix?: string }[]; searchable?: boolean }[];
+  onToggle: (key: DrillFilterKey, value: string) => void;
+  onSetAll: (key: DrillFilterKey, values: string[]) => void;
+  onRange: (from: string, to: string) => void;
+  onClear: () => void;
+  /**
+   * How many filters are narrowing the table. Named `activeCount` rather than `count`
+   * deliberately: §62's guard forbids a `count=` prop on these panels because DrillGroup
+   * used one to state how many punches were behind a row. This one counts FILTERS, which
+   * is a different thing entirely, and the distinct name keeps the guard meaningful.
+   */
+  activeCount: number;
+  /** Omit to leave the date filter off — the parts and off-grid drills have no dates. */
+  dateBounds?: { min: string; max: string };
+  extra?: ReactNode;
+}) {
+  return (
+    <DrillFilters>
+      {extra}
+      {menus.map((m) => (
+        <DrillFilterMenu
+          key={m.key}
+          filterKey={m.key}
+          label={m.label}
+          options={m.options}
+          selected={filters.values[m.key] ?? []}
+          onToggle={(v) => onToggle(m.key, v)}
+          onSetAll={(vs) => onSetAll(m.key, vs)}
+          searchable={m.searchable}
+        />
+      ))}
+      {dateBounds && (
+        <DrillDateRange from={filters.from} to={filters.to} min={dateBounds.min} max={dateBounds.max} onChange={onRange} />
+      )}
+      <DrillFilterSummary activeCount={activeCount} onClear={onClear} />
+    </DrillFilters>
   );
 }
 
@@ -319,15 +572,23 @@ export function DrillTable({
 
       {/* The total, on the same template. Faint fill rather than the heavy navy rule two
           of the panels used — the reference's way of closing a report block.
-          Pinned to the bottom of the scrolling body (§49). Before the card had a ceiling
-          this row was simply the last thing in a panel that was as tall as its content, so
-          it was always on screen; once the body scrolls, a fifty-group rollup would push
-          the figure the drill exists to reconcile out of sight. The fill is opaque and the
-          hairline separates it from the rows travelling underneath. DrillLines' own tfoot
-          has worked this way all along. */}
+          ── Why this is NOT `sticky bottom-0` any more (§75) ──────────────────────
+          It used to be, on the reasoning that a fifty-group rollup would otherwise push
+          the figure the drill exists to reconcile below the fold. But `sticky bottom-0`
+          pins the row to the BOTTOM OF THE VIEWPORT the moment any content follows it in
+          the scroll, not to the bottom of the CONTENT — so for as long as there is more
+          to scroll to, it floats and paints over whatever currently occupies that same
+          screen position, which is the row directly above it in an open group. A group
+          with only a handful of lines rarely scrolled far enough for this to be visible;
+          once DrillGroup stopped capping an open group's own height (see the note below),
+          a department with many punches could scroll for a while with the Total glued
+          over its bottom few rows the entire time — reported as rows "overlapping" the
+          Total. Plain flow means the Total is wherever the content actually ends: always
+          reachable by scrolling the card's one scrolling region, never drawn on top of a
+          row that has not scrolled into view yet. */}
       <div
         role="row"
-        className="sticky bottom-0 z-10 grid items-center gap-3 border-t border-sdc-border-soft bg-sdc-gray-50 px-4 py-2"
+        className="grid items-center gap-3 border-t border-sdc-border-soft bg-sdc-gray-50 px-4 py-2"
         style={{ gridTemplateColumns: cols }}
       >
         <span
@@ -409,10 +670,21 @@ export function DrillGroup({
       </button>
 
       {open && (
-        // Indented and tinted, with its own scroll so a 300-line group cannot push the
-        // total row off the screen. min-w-max + overflow-x so the line columns can be
-        // wider than the panel without the panel itself scrolling sideways.
-        <div className="styled-scrollbar max-h-[18rem] overflow-auto border-t border-sdc-border-soft bg-sdc-gray-50/60 pl-6">
+        // Indented and tinted. NO height cap and no vertical scroll of its own any more
+        // (§75) — a fixed-height, vertically-scrolling wrapper used to sit here, on the
+        // reasoning that a 300-line group should not be able to push the Total row off
+        // the screen. That stopped being true the moment the Total stopped being sticky
+        // (see the note in DrillTable): the Total is now wherever the content ends, so
+        // there is nothing left for a tall group to push "off" — it just makes the
+        // panel's own scroller taller. A second, nested scroll region here was also the
+        // other half of the original bug: this div's own scroll position moved
+        // independently of the panel's, so scrolling THIS box never changed how far down
+        // the (then-sticky) Total had floated, and it sat glued over whatever this box's
+        // own scrollbar had brought into view.
+        // `overflow-x-auto` stays — a group's lines can still be wider than the panel
+        // (more columns than fit), and this is what lets THAT scroll sideways on its own
+        // rather than the whole panel.
+        <div className="overflow-x-auto border-t border-sdc-border-soft bg-sdc-gray-50/60 pl-6">
           {children}
         </div>
       )}
@@ -449,8 +721,12 @@ export function DrillLines({
       <tbody className="[&>tr]:border-t [&>tr]:border-sdc-border-soft [&>tr:hover]:bg-white [&>tr>td]:px-2 [&>tr>td]:py-1">
         {children}
       </tbody>
+      {/* Plain flow, not `sticky bottom-0` (§75 — see the matching note on DrillTable's
+          total row): the ungrouped punch list is exactly the case a long list plus a
+          sticky footer breaks — the footer would float over the last visible rows of a
+          long unfiltered month for as long as there was more to scroll to. */}
       {foot && (
-        <tfoot className="sticky bottom-0 bg-sdc-gray-50 [&>tr>td]:border-t [&>tr>td]:border-sdc-border [&>tr>td]:px-2 [&>tr>td]:py-2">
+        <tfoot className="bg-sdc-gray-50 [&>tr>td]:border-t [&>tr>td]:border-sdc-border [&>tr>td]:px-2 [&>tr>td]:py-2">
           {foot}
         </tfoot>
       )}
