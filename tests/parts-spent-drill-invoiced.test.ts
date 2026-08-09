@@ -51,17 +51,25 @@ test("getJobPartsCost itself is never filtered or windowed — other pages still
   assert.doesNotMatch(fnBody, /@start|@end/, "getJobPartsCost must stay unwindowed — Job Hour Details needs the whole history");
 });
 
-test("only loadJobPartsLines — the Parts Spent drill's own action — calls getJobPartsInvoicedInMonth", () => {
+test("loadJobPartsLines — the Parts Spent drill's own action — calls getJobPartsInvoicedInMonth", () => {
   const ACTIONS = code("lib", "hours-detail-actions.ts");
   const fnBody = functionBody(ACTIONS, "loadJobPartsLines");
   assert.match(fnBody, /getJobPartsInvoicedInMonth\(/, "the drill's action must call the month-scoped query");
   assert.doesNotMatch(fnBody, /getJobPartsCost\(/, "must not also call the unwindowed whole-history query");
+});
 
-  // And nothing else in the same file (loadEtcMonthHoursDetail, loadPartsSpentDetail —
-  // the punch drill and the job-level rows) reaches for it; neither of those is about
-  // individual purchase lines at all.
-  const others = ACTIONS.replace(fnBody, "");
-  assert.doesNotMatch(others, /getJobPartsInvoicedInMonth\(/, "no other action in this file should call the month-scoped query");
+// Widened 2026-08-09: loadPartsListInvoicedInWindow (the Parts List
+// Invoiced+range fix, see tests/parts-list-invoiced-window-action.test.ts) is
+// now a second, deliberate caller — it reuses this exact query so Parts List
+// reconciles to the cent with this same drill. Only these two may call it;
+// everything else in the file (the punch drill, the job-level rows) is about
+// a different grain of data entirely.
+test("only loadJobPartsLines and loadPartsListInvoicedInWindow call getJobPartsInvoicedInMonth", () => {
+  const ACTIONS = code("lib", "hours-detail-actions.ts");
+  const known = functionBody(ACTIONS, "loadJobPartsLines") + functionBody(ACTIONS, "loadPartsListInvoicedInWindow");
+  const others = ACTIONS.replace(functionBody(ACTIONS, "loadJobPartsLines"), "").replace(functionBody(ACTIONS, "loadPartsListInvoicedInWindow"), "");
+  assert.match(known, /getJobPartsInvoicedInMonth\(/g, "sanity check: the two known callers must actually call it");
+  assert.doesNotMatch(others, /getJobPartsInvoicedInMonth\(/, "no OTHER action in this file should call the month-scoped query");
 });
 
 test("getJobPartsInvoicedInMonth filters by APDocDate BEFORE aggregating, not by a lifetime max()", () => {

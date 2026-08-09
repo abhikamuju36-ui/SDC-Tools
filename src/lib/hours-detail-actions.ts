@@ -96,3 +96,44 @@ export async function loadJobPartsLines(jobNumber: string, month: string): Promi
   const { start, endExclusive } = monthWindowUtc(month);
   return getJobPartsInvoicedInMonth(jobNumber, start, endExclusive);
 }
+
+const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
+// Open-ended sentinel bounds — same convention this file's own callers of
+// getPartsCostSpentByJob already used for a "lifetime" window before that
+// function was fixed to drop its date params entirely (see sync-totaleto.ts).
+const OPEN_START = new Date(Date.UTC(1990, 0, 1));
+const OPEN_END = new Date(Date.UTC(2100, 0, 1));
+
+// ── Parts List's own "Invoiced" + date-range filter, reusing the ETC drill's
+// already-verified query (2026-08-09) ────────────────────────────────────────
+//
+// Job Hour Details → Parts List had never received the fix loadJobPartsLines/
+// getJobPartsInvoicedInMonth got above: its own date-range picker filtered
+// getJobPartsCost's LIFETIME, PurchaseDetailID-collapsed invoicedAmount by a
+// row's single most-recent invoice date, showing the wrong figure for the
+// exact reason described in the comment above this function. This calls the
+// SAME already-correct, already-tested query loadJobPartsLines uses — its
+// window was never actually restricted to a calendar month (nothing in
+// getJobPartsInvoicedInMonth's own implementation assumes one), so reusing it
+// for an arbitrary toolbar-picked range is safe and is what keeps this
+// reconciling to the cent with the ETC drill: same function, same query, same
+// tested attribution rule — not a new, unverified one.
+//
+// JobProcurement.tsx (the Parts List client component) re-groups this
+// function's line-level result by PART NUMBER via
+// lib/parts-cost-window-attribution.ts's attributeInvoicedWindow — see that
+// file for why part number, not PurchaseDetailID, is the right join key here.
+export async function loadPartsListInvoicedInWindow(jobNumber: string, from: string, to: string): Promise<JobPartsCost> {
+  const session = await auth();
+  if (!session?.user) throw new Error("Not signed in.");
+  if (!/^\d{1,10}$/.test(jobNumber)) throw new Error(`Invalid job number "${jobNumber}".`);
+  if (from && !ISO_DATE.test(from)) throw new Error(`Invalid "from" date "${from}".`);
+  if (to && !ISO_DATE.test(to)) throw new Error(`Invalid "to" date "${to}".`);
+  if (!from && !to) throw new Error("A date range is required.");
+  const start = from ? new Date(`${from}T00:00:00.000Z`) : OPEN_START;
+  // `to` is inclusive of its whole day, so the exclusive bound is the NEXT day —
+  // the same half-open-window reasoning monthWindowUtc's own comment gives for
+  // why a month's end bound is "< the 1st of the next month", not "<= the 31st".
+  const endExclusive = to ? new Date(new Date(`${to}T00:00:00.000Z`).getTime() + 86_400_000) : OPEN_END;
+  return getJobPartsInvoicedInMonth(jobNumber, start, endExclusive);
+}

@@ -1,11 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import type { BomNode, BomPart, JobBom, PoLineGroup, Vendor } from "@/lib/job-bom";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
 import { usd } from "@/components/ui/format";
 import { useToast } from "@/components/ui/Toast";
 import { DragScroll } from "@/components/DragScroll";
+import { normPn, attributeInvoicedWindow, type WindowAttribution } from "@/lib/parts-cost-window-attribution";
+import { loadPartsListInvoicedInWindow } from "@/lib/hours-detail-actions";
+import { sequenced } from "@/lib/request-sequence";
 
 // A minimal shape shared by BOM leaf parts (Assemblies detail table) and the
 // flattened Parts List rows — enough to drill + copy.
@@ -134,11 +137,6 @@ function fmtDate(s: string | null | undefined): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-// Normalize a part number for join/dedupe — trim, collapse whitespace, upper.
-function normPn(s: string | null | undefined): string {
-  return (s ?? "").replace(/\s+/g, " ").trim().toUpperCase();
-}
-
 // Days between two ISO dates (b − a), or null if either is missing/invalid.
 function daysBetween(a: string | null | undefined, b: string | null | undefined): number | null {
   if (!a || !b) return null;
@@ -246,11 +244,17 @@ type FlatPart = BomPart & {
   leadDays: number | null;
   st: PartStatus;
   // Power BI "Parts Cost" money fields — from the matched PartsCostLine.
-  totalPrice: number; // line totalPrice (fallback unitPrice * qty)
-  invoicedAmount: number;
-  pctInvoiced: number; // round(invoiced / total * 100)
-  jobCostExclSdc: number; // totalPrice, 0 when in-house (SDC)
-  leftToSpend: number; // totalPrice - invoicedAmount
+  totalPrice: number; // line totalPrice (fallback unitPrice * qty), always lifetime
+  invoicedAmount: number; // lifetime, OR window-scoped when an Invoiced+range window is active
+  // null when a window is active: totalPrice stays lifetime while invoicedAmount
+  // becomes window-scoped, so "% of lifetime committed value invoiced THIS
+  // window" and "lifetime committed minus this window's invoiced slice" are
+  // both numbers with no coherent business meaning — not shown rather than
+  // silently mixing a monthly figure with a lifetime one (the exact
+  // anti-pattern sync-totaleto.ts's own comments repeatedly call out).
+  pctInvoiced: number | null; // round(invoiced / total * 100)
+  jobCostExclSdc: number; // totalPrice, 0 when in-house (SDC) — always lifetime, untouched by this fix
+  leftToSpend: number | null; // totalPrice - invoicedAmount
 };
 
 // In-house = made by SDC (manufacturer SDC, or supplier is Steven Douglas / SDC).
@@ -455,6 +459,74 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
     return m;
   }, [partsLines]);
 
+  // Every normalized part number in the CURRENT BOM tree — independent of
+  // lineIndex/partsLines (which come from TotalETO's purchasing data, not the
+  // BOM). Needed so attributeInvoicedWindow can tell "a real invoiced line
+  // whose part isn't in this job's BOM at all" apart from "a real BOM part
+  // with zero invoice activity in the window" — found live (job 1142, July
+  // 2026): nine AP lines (several "Shipping" line items, a corrosion
+  // inhibitor, cable-tie mounts...) resolve to a part number, just not one
+  // that's in the BOM — without this set that money would sit in
+  // byPartNumber under a key no row ever looks up, missing from both a part
+  // row and the reconciliation footer.
+  const bomPartNumbers = useMemo(() => {
+    const set = new Set<string>();
+    const walk = (node: BomNode) => {
+      for (const p of node.parts) set.add(normPn(p.pn));
+      for (const c of node.children) walk(c);
+    };
+    for (const section of bom.roots) {
+      for (const p of section.parts) set.add(normPn(p.pn));
+      walk(section);
+    }
+    return set;
+  }, [bom]);
+
+  // ── Window-scoped invoiced totals for "Invoiced" + a date range ────────────
+  //
+  // Fetched on demand (not with the page) — the SAME lazy-drill judgement
+  // hours-detail-actions.ts's own sibling actions already make, and for the
+  // same reason: this hits the live TotalETO connection, which has a
+  // documented multi-minute failure mode (see job-hours/page.tsx's own
+  // withTimeoutOrNull commentary), and most visits to this tab never touch
+  // the date filter at all.
+  //
+  // `windowResult` caches only the MOST RECENTLY resolved window. Keyed by
+  // job + exact from/to so a job switch (JobProcurement is not remounted on
+  // one — page.tsx doesn't `key=` it, unlike AssembliesTab's own
+  // `key={bom.jobId}`) or any change to the range invalidates it rather than
+  // silently reusing a stale answer.
+  const [pendingWindow, startWindowFetch] = useTransition();
+  const [windowResult, setWindowResult] = useState<{ jobId: string; from: string; to: string; attribution: WindowAttribution } | null>(null);
+  const [windowError, setWindowError] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (dateType !== "invoice" || (!from && !to)) return;
+    const jobId = bom.jobId;
+    const key = `${jobId}::${from}::${to}`;
+    if (windowResult && `${windowResult.jobId}::${windowResult.from}::${windowResult.to}` === key) return; // already resolved
+    startWindowFetch(async () => {
+      const out = await sequenced("parts-list-window", key, () => loadPartsListInvoicedInWindow(jobId, from, to));
+      if (out.ok) {
+        setWindowResult({ jobId, from, to, attribution: attributeInvoicedWindow(out.value.lines, bomPartNumbers) });
+        setWindowError(null);
+      } else if (out.reason === "error") {
+        setWindowError(out.error instanceof Error ? out.error.message : "Could not load invoiced totals for this range.");
+      }
+    });
+  }, [dateType, from, to, bom.jobId, windowResult, bomPartNumbers]);
+
+  // The resolved attribution to actually USE right now — null covers every
+  // case that must fall back to lifetime figures: Purchase mode, Invoiced
+  // mode with no range, still loading, a failed/timed-out fetch, or a cached
+  // result that no longer matches the current job/from/to (a range or job
+  // changed since it resolved). Never applies a stale or wrong-job result.
+  const activeAttribution: WindowAttribution | null =
+    dateType === "invoice" && (from || to) && windowResult && windowResult.jobId === bom.jobId && windowResult.from === from && windowResult.to === to
+      ? windowResult.attribution
+      : null;
+  const windowRequested = dateType === "invoice" && Boolean(from || to);
+
   // Every BOM leaf part flattened + enriched + deduped by part id, so this is a
   // true procurement buy-list (each physical part once) — the source for the
   // Parts List table, the two summary cards, and the top readiness line.
@@ -469,8 +541,24 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
       const line = lineIndex.get(normPn(p.pn))?.[0] ?? null;
       const supplier = p.supplier ?? line?.supplier ?? null;
       const totalPrice = line?.totalPrice ?? p.unitPrice * p.qty;
-      const invoicedAmount = line?.invoicedAmount ?? 0;
-      const pctInvoiced = totalPrice > 0 ? Math.round((invoicedAmount / totalPrice) * 100) : invoicedAmount > 0 ? 100 : 0;
+
+      // Lifetime by default (unchanged from before this fix). When an
+      // Invoiced+range window is active AND resolved, invoicedAmount becomes
+      // exactly what was invoiced against THIS part's number within that
+      // window (attributeInvoicedWindow already summed across every PO line
+      // the part has ever had, not just the newest one lineIndex shows —
+      // see that function's own comment for why), and pctInvoiced/
+      // leftToSpend become null rather than mixing a windowed figure with
+      // totalPrice's lifetime one.
+      const windowedInvoiced = activeAttribution?.byPartNumber.get(normPn(p.pn));
+      const invoicedAmount = activeAttribution ? (windowedInvoiced ?? 0) : (line?.invoicedAmount ?? 0);
+      const pctInvoiced = activeAttribution
+        ? null
+        : totalPrice > 0
+          ? Math.round((invoicedAmount / totalPrice) * 100)
+          : invoicedAmount > 0
+            ? 100
+            : 0;
       const jobCostExclSdc = isInHouse(p.manufacturer, supplier) ? 0 : totalPrice;
       const flat: FlatPart = {
         ...p,
@@ -489,7 +577,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
         invoicedAmount,
         pctInvoiced,
         jobCostExclSdc,
-        leftToSpend: totalPrice - invoicedAmount,
+        leftToSpend: activeAttribution ? null : totalPrice - invoicedAmount,
       };
       out.push(flat);
     };
@@ -507,7 +595,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
       for (const c of section.children) walk(c, sectionId, sectionLabel);
     }
     return out;
-  }, [bom, lineIndex]);
+  }, [bom, lineIndex, activeAttribution]);
 
   // Top summary line.
   const summary = useMemo(() => {
@@ -584,6 +672,14 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
           onPartClick={drillToPart}
           onCopy={copyText}
           onOpenPo={openPoFor}
+          windowStatus={{
+            requested: windowRequested,
+            pending: pendingWindow,
+            error: windowError,
+            active: activeAttribution !== null,
+            unattachedAmount: activeAttribution?.unattachedAmount ?? 0,
+            unattachedCount: activeAttribution?.unattachedCount ?? 0,
+          }}
         />
       )}
 
@@ -1091,6 +1187,20 @@ const ALL_COLS: { key: ColKey; label: string; align?: "right"; title?: string }[
 // "Show all" doing the identical thing (clear the set), so Reset never reset.
 const DEFAULT_HIDDEN_COLS: ColKey[] = ["parent", "category", "exp", "lead", "due"];
 
+// Invoiced+range window fetch status — passed down so PartsListTab can show a
+// fail-soft status message and PartsTableView can render the reconciliation
+// footer row. `active` mirrors JobProcurement's own activeAttribution check
+// (null falls back to lifetime figures everywhere); when active is true,
+// unattachedAmount/unattachedCount are meaningful.
+type WindowStatus = {
+  requested: boolean; // Invoiced mode + a range is set, whether or not it has resolved yet
+  pending: boolean;
+  error: string | null;
+  active: boolean;
+  unattachedAmount: number;
+  unattachedCount: number;
+};
+
 type PartsListState = {
   view: "list" | "card";
   setView: (v: "list" | "card") => void;
@@ -1153,6 +1263,7 @@ function PartsListTab({
   onPartClick,
   onCopy,
   onOpenPo,
+  windowStatus,
 }: {
   parts: FlatPart[];
   state: PartsListState;
@@ -1161,6 +1272,7 @@ function PartsListTab({
   onPartClick: (p: DrillablePart) => void;
   onCopy: (text: string, label?: string) => void;
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
+  windowStatus: WindowStatus;
 }) {
   const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, upcomingWeek, setUpcomingWeek, colWidths, setColWidths, clearFilters } = state;
   const now = useMemo(() => Date.now(), []);
@@ -1225,11 +1337,27 @@ function PartsListTab({
       if (manufacturer !== "all" && p.manufacturer !== manufacturer) return false;
       if (supplier !== "all" && p.supplier !== supplier) return false;
       if (from || to) {
-        const d = dateType === "purchase" ? p.purchasedDate : p.invoicedDate;
-        if (!d) return false;
-        const day = d.slice(0, 10);
-        if (from && day < from) return false;
-        if (to && day > to) return false;
+        if (windowStatus.active) {
+          // Invoiced mode, window resolved: inclusion is "did this part have
+          // any real invoice activity in the window" — attributeInvoicedWindow
+          // already summed across every PO line the part has ever had, not
+          // just the newest one this row is otherwise built from. A part with
+          // zero in-window invoiced amount is excluded, mirroring
+          // getJobPartsInvoicedInMonth's own zero-invoice rule. This is the
+          // fix's other half: a part invoiced in this window via an OLDER PO
+          // line (not the newest) now correctly appears, instead of being
+          // invisible because that older line's lifetime-latest invoice fell
+          // in a different month.
+          if (p.invoicedAmount === 0) return false;
+        } else {
+          // Purchase mode (always), or Invoiced mode before the window has
+          // resolved (loading/failed) — unchanged from before this fix.
+          const d = dateType === "purchase" ? p.purchasedDate : p.invoicedDate;
+          if (!d) return false;
+          const day = d.slice(0, 10);
+          if (from && day < from) return false;
+          if (to && day > to) return false;
+        }
       }
       if (q) {
         const hay = `${p.pn} ${p.desc} ${p.manufacturer} ${p.supplier ?? ""} ${p.parentPN} ${p.parentDesc} ${p.poNumber ?? ""} ${p.category ?? ""}`.toLowerCase();
@@ -1237,9 +1365,22 @@ function PartsListTab({
       }
       return true;
     });
-  }, [parts, status, category, manufacturer, supplier, from, to, dateType, query]);
+  }, [parts, status, category, manufacturer, supplier, from, to, dateType, query, windowStatus.active]);
 
-  const visibleCols = ALL_COLS.filter((c) => !hidden.has(c.key));
+  // A windowed Invoiced figure means something different from the lifetime one
+  // ALL_COLS's static label describes (that array also drives the Columns-
+  // visibility menu, so it has to stay mode-agnostic) — a per-render override
+  // here makes the change visible in the header, not just discoverable by
+  // hovering a tooltip. % Inv/Left to Spend need no header change: every cell
+  // in those columns already renders "—" when null (PartRowCells), which is
+  // self-evident on its own — the title still explains why.
+  const windowedRangeLabel = windowStatus.active ? `${from || "…"} – ${to || "…"}` : "";
+  const visibleCols = ALL_COLS.filter((c) => !hidden.has(c.key)).map((c) => {
+    if (!windowStatus.active) return c;
+    if (c.key === "invoiced") return { ...c, label: "Invoiced $ (window)", title: `Invoiced within ${windowedRangeLabel}, not lifetime` };
+    if (c.key === "pctinv" || c.key === "leftspend") return { ...c, title: "Not meaningful for a windowed Invoiced $ figure" };
+    return c;
+  });
 
   return (
     <div ref={rootRef} className="flex flex-col gap-3">
@@ -1320,6 +1461,17 @@ function PartsListTab({
           </button>
         )}
 
+        {/* Fail-soft status for the Invoiced+range window fetch — never blanks
+            the table, just discloses which figures are currently showing. */}
+        {windowStatus.requested && windowStatus.pending && (
+          <span className="whitespace-nowrap text-label text-sdc-gray-400">Loading invoiced totals for this range…</span>
+        )}
+        {windowStatus.requested && !windowStatus.pending && windowStatus.error && (
+          <span className="whitespace-nowrap text-label font-medium text-sdc-red-text" title={windowStatus.error}>
+            Couldn&apos;t load this range — showing lifetime totals
+          </span>
+        )}
+
         {/* Search */}
         <div className="flex h-8 min-w-[160px] flex-1 items-center gap-2 rounded-md border border-sdc-border bg-white px-2.5">
           <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-sdc-gray-400">
@@ -1338,7 +1490,7 @@ function PartsListTab({
           No parts match the current filters.
         </p>
       ) : view === "list" ? (
-        <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} colWidths={colWidths} setColWidths={setColWidths} />
+        <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} colWidths={colWidths} setColWidths={setColWidths} windowStatus={windowStatus} />
       ) : (
         <PartsCardView parts={filtered} vendors={vendors} onCopy={onCopy} onOpenPo={onOpenPo} />
       )}
@@ -1410,11 +1562,19 @@ function PartRowCells({
       case "invoiced":
         return <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy">{usd(p.invoicedAmount)}</span>;
       case "pctinv":
-        return <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-gray-600">{p.pctInvoiced}%</span>;
+        return (
+          <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-gray-600" title={p.pctInvoiced === null ? "Not meaningful for a windowed Invoiced $ figure" : undefined}>
+            {p.pctInvoiced === null ? "—" : `${p.pctInvoiced}%`}
+          </span>
+        );
       case "jobcost":
         return <span className="whitespace-nowrap font-mono text-note font-semibold tabular-nums text-sdc-navy" title="Job parts cost, excl SDC supplier">{p.jobCostExclSdc > 0 ? usd(p.jobCostExclSdc) : "—"}</span>;
       case "leftspend":
-        return <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy">{usd(p.leftToSpend)}</span>;
+        return (
+          <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy" title={p.leftToSpend === null ? "Not meaningful for a windowed Invoiced $ figure" : undefined}>
+            {p.leftToSpend === null ? "—" : usd(p.leftToSpend)}
+          </span>
+        );
       case "status":
         return <StatusPill st={p.st} />;
     }
@@ -1441,6 +1601,7 @@ function PartsTableView({
   now,
   colWidths,
   setColWidths,
+  windowStatus,
 }: {
   parts: FlatPart[];
   cols: { key: ColKey; label: string; align?: "right"; title?: string }[];
@@ -1449,6 +1610,7 @@ function PartsTableView({
   now: number;
   colWidths: Partial<Record<ColKey, number>>;
   setColWidths: (updater: (prev: Partial<Record<ColKey, number>>) => Partial<Record<ColKey, number>>) => void;
+  windowStatus: WindowStatus;
 }) {
   const widthOf = (key: ColKey) => colWidths[key] ?? DEFAULT_COL_WIDTH[key];
   const totalWidth = cols.reduce((s, c) => s + widthOf(c.key), 0);
@@ -1477,7 +1639,11 @@ function PartsTableView({
   };
 
   // Column totals for the sticky footer (over the currently-filtered rows),
-  // mirroring the Power BI Parts Cost total row.
+  // mirroring the Power BI Parts Cost total row. leftToSpend/pctInvoiced are
+  // `number | null` now (null uniformly, component-wide, exactly when
+  // windowStatus.active — see JobProcurement's enrich()), so the footer skips
+  // summing them in that case rather than silently summing nulls-as-zero into
+  // a number that would look real but mean nothing.
   const tot = parts.reduce(
     (a, p) => {
       a.qty += p.qty;
@@ -1485,21 +1651,21 @@ function PartsTableView({
       a.total += p.totalPrice;
       a.invoiced += p.invoicedAmount;
       a.jobcost += p.jobCostExclSdc;
-      a.left += p.leftToSpend;
+      if (p.leftToSpend !== null) a.left += p.leftToSpend;
       return a;
     },
     { qty: 0, unit: 0, total: 0, invoiced: 0, jobcost: 0, left: 0 },
   );
-  const totPct = tot.total > 0 ? Math.round((tot.invoiced / tot.total) * 100) : tot.invoiced > 0 ? 100 : 0;
+  const totPct = windowStatus.active ? null : tot.total > 0 ? Math.round((tot.invoiced / tot.total) * 100) : tot.invoiced > 0 ? 100 : 0;
   const footCell = (key: ColKey, idx: number): string => {
     switch (key) {
       case "qty": return num(tot.qty);
       case "unit": return usd(tot.unit);
       case "total": return usd(tot.total);
       case "invoiced": return usd(tot.invoiced);
-      case "pctinv": return `${totPct}%`;
+      case "pctinv": return totPct === null ? "—" : `${totPct}%`;
       case "jobcost": return usd(tot.jobcost);
-      case "leftspend": return usd(tot.left);
+      case "leftspend": return windowStatus.active ? "—" : usd(tot.left);
       default: return idx === 0 ? "Total" : "";
     }
   };
@@ -1557,6 +1723,32 @@ function PartsTableView({
                 </td>
               ))}
             </tr>
+            {/* Reconciliation row — invoiced money in this window that doesn't
+                attach to any part row shown above (non-PO AP lines: freight,
+                tariffs, direct reimbursements; or a PO line for a part outside
+                the current BOM). Never silently dropped — this is what makes
+                the grand total match the Monthly ETC Parts Spent drill exactly
+                rather than falling quietly short by whatever doesn't attach to
+                a BOM part. Deliberately NOT reactive to Status/Category/
+                Manufacturer/Supplier/search — it reflects the whole window,
+                not "the currently-visible rows", so it stays a stable
+                structural figure rather than one that silently moves with an
+                unrelated filter. Shown only when the Invoiced $ column itself
+                is visible (nothing to align it under otherwise) and there's
+                actually something to report. */}
+            {windowStatus.active && windowStatus.unattachedAmount !== 0 && cols.some((c) => c.key === "invoiced") && (
+              <tr className="bg-sdc-navy text-label font-semibold text-white/80">
+                {cols.map((c, idx) => (
+                  <td key={c.key} className={`overflow-hidden border-r border-white/10 px-2 py-1.5 align-middle font-mono tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
+                    {c.key === "invoiced"
+                      ? usd(windowStatus.unattachedAmount)
+                      : idx === 0
+                        ? `Other invoiced this window — no matching part row (${num(windowStatus.unattachedCount)} line${windowStatus.unattachedCount === 1 ? "" : "s"})`
+                        : ""}
+                  </td>
+                ))}
+              </tr>
+            )}
           </tfoot>
         </table>
     </DragScroll>
