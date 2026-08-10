@@ -21,12 +21,39 @@ import { reconcileUndefined, reconciliationMessage } from "@/lib/undefined-hours
 import type { UnattributedDetail } from "@/lib/unattributed-hours";
 // One rollup implementation for every drill on this page — including the grid's
 // department and section ordering. See the note on groupHoursRows.
-import { groupHoursRows, GROUP_LABEL, type GroupKey } from "@/components/HoursDetailPanel";
+import { groupHoursRows, rollupSortColumns, GROUP_LABEL, type GroupKey } from "@/components/HoursDetailPanel";
 // The same filter model as every other drill on this page (§73). The reason cards above
 // are a filter too, and they write into the same state rather than keeping a second one —
 // see the note where the panel's filters are declared.
 import { dateBounds, filterOptions, matchesDrillFilters, type DrillFilterKey } from "@/lib/drill-filters";
 import { useDrillFilters } from "@/components/useDrillFilters";
+import { useColumnSort } from "@/components/useColumnSort";
+import { SortableTh } from "@/components/ui/SortableHeader";
+import { sortRows, type SortColumns } from "@/lib/table-sort";
+
+// ── Line sorting ─────────────────────────────────────────────────────────────
+//
+// One shared sort state for both the grouped lines and the ungrouped list — they show
+// the same row shape, just with Department and Row hidden in the grouped view (see the
+// two <DrillLines> heads below; unlike HoursDetailPanel this panel never shows
+// Department at the line level even when grouped by something else, so there is no
+// detailCols-style conditional to track here).
+type LineSortKey = "date" | "employee" | "department" | "job" | "section" | "reason" | "hours" | "row";
+
+const LINE_COLUMNS: SortColumns<UnattributedDetail["rows"][number], LineSortKey> = {
+  date: { type: "date", value: (r) => r.date },
+  employee: { type: "text", value: (r) => r.employee || null },
+  department: { type: "text", value: (r) => (r.department && r.department !== "—" ? r.department : null) },
+  // The raw, unusable cell value ("NOT DEFINED", "2026 SERVICE") — never a real job
+  // number, so `text`, not `id`.
+  job: { type: "text", value: (r) => r.job || null },
+  // Sorts on exactly what the cell displays — the combined "code — name" whenever the
+  // two differ, the bare code otherwise.
+  section: { type: "text", value: (r) => (r.sectionName && r.sectionName !== r.section ? `${r.section} — ${r.sectionName}` : r.section) },
+  reason: { type: "status", value: (r) => r.reasonLabel },
+  hours: { type: "hours", value: (r) => r.hours },
+  row: { type: "number", value: (r) => r.sourceRow || null },
+};
 
 // ── The Undefined Hours drill-through (§42.11, §42.27, §42.28) ──────────────
 //
@@ -102,6 +129,12 @@ export function UndefinedHoursPanel({
   // does not — WHOSE time this is, and therefore who to go and ask.
   const [groupBy, setGroupBy] = useState<GroupKey[]>(["department"]);
   const [openGroup, setOpenGroup] = useState<string | null>(null);
+
+  // Sort is independent of filtering and grouping (§73's own principle, extended) — see
+  // table-sort.ts.
+  const rollupSort = useColumnSort<GroupKey | "hours">();
+  const lineSort = useColumnSort<LineSortKey>();
+  const rollupColumns = useMemo(() => rollupSortColumns(groupBy), [groupBy]);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -285,6 +318,15 @@ export function UndefinedHoursPanel({
                     // other drills already work this way.
                     setGroupBy((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
                     setOpenGroup(null);
+                    // The rollup's columns change identity whenever groupBy does.
+                    rollupSort.setSort(null);
+                    // The grouped lines never show Department/Row regardless of which
+                    // dimension(s) are chosen — only the ungrouped<->grouped TRANSITION
+                    // changes the line columns. groupBy.length === 0 here means "currently
+                    // ungrouped", so this click is exactly that transition.
+                    if (groupBy.length === 0 && (lineSort.sort?.key === "department" || lineSort.sort?.key === "row")) {
+                      lineSort.setSort(null);
+                    }
                   }}
                   title={
                     on
@@ -302,6 +344,7 @@ export function UndefinedHoursPanel({
               onClick={() => {
                 setGroupBy([]);
                 setOpenGroup(null);
+                rollupSort.setSort(null);
               }}
               title="Show the individual punches"
             >
@@ -383,13 +426,16 @@ export function UndefinedHoursPanel({
              glyph swap and a colspan'd nested table — none of which matched the hours
              drill doing the identical job. */
           <DrillTable
-            columns={groupBy.map((k) => GROUP_LABEL[k])}
+            columns={groupBy.map((k) => ({ label: GROUP_LABEL[k], key: k }))}
             unit="Hours"
+            unitSortKey="hours"
+            sort={rollupSort.sort}
+            onSort={rollupSort.onSort}
             totalLabel={filtered ? "Shown" : "Total"}
             total={fmtHours(shownTotal)}
             totalTitle={hoursExact(shownTotal)}
           >
-            {groups.map((g) => (
+            {sortRows(groups, rollupSort.sort, rollupColumns).map((g) => (
               <DrillGroup
                 key={g.key}
                 values={g.values}
@@ -402,17 +448,16 @@ export function UndefinedHoursPanel({
                 <DrillLines
                   head={
                     <>
-                      <th className="w-24">Date</th>
-                      <th>Employee</th>
-                      <th className="w-32">Undefined Job</th>
-                      <th className="w-48">Section</th>
-                      <th className="w-36">Reason</th>
-                      <th className="w-20 text-right">Hours</th>
-                      <th className="w-16 text-right">Row</th>
+                      <SortableTh label="Date" sortKey="date" type="date" sort={lineSort.sort} onSort={lineSort.onSort} className="w-24" />
+                      <SortableTh label="Employee" sortKey="employee" type="text" sort={lineSort.sort} onSort={lineSort.onSort} />
+                      <SortableTh label="Undefined Job" sortKey="job" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-32" />
+                      <SortableTh label="Section" sortKey="section" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-48" />
+                      <SortableTh label="Reason" sortKey="reason" type="status" sort={lineSort.sort} onSort={lineSort.onSort} className="w-36" />
+                      <SortableTh label="Hours" sortKey="hours" type="hours" sort={lineSort.sort} onSort={lineSort.onSort} className="w-20" />
                     </>
                   }
                 >
-                  {(g.rows as UnattributedDetail["rows"]).map((r, i) => (
+                  {sortRows(g.rows as UnattributedDetail["rows"], lineSort.sort, LINE_COLUMNS).map((r, i) => (
                     <tr key={`${r.date}-${r.sourceRow}-${i}`}>
                       <td className="whitespace-nowrap font-mono tabular-nums text-sdc-muted">{r.date}</td>
                       <td className="text-sdc-gray-700">{r.employee}</td>
@@ -443,15 +488,15 @@ export function UndefinedHoursPanel({
             <DrillLines
               head={
                 <>
-                  <th className="w-24">Date</th>
-                  <th>Employee</th>
-                  <th className="w-40">Department</th>
-                  <th className="w-32">Undefined Job</th>
-                  <th className="w-48">Section</th>
-                  <th className="w-36">Reason</th>
-                  <th className="w-20 text-right">Hours</th>
+                  <SortableTh label="Date" sortKey="date" type="date" sort={lineSort.sort} onSort={lineSort.onSort} className="w-24" />
+                  <SortableTh label="Employee" sortKey="employee" type="text" sort={lineSort.sort} onSort={lineSort.onSort} />
+                  <SortableTh label="Department" sortKey="department" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-40" />
+                  <SortableTh label="Undefined Job" sortKey="job" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-32" />
+                  <SortableTh label="Section" sortKey="section" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-48" />
+                  <SortableTh label="Reason" sortKey="reason" type="status" sort={lineSort.sort} onSort={lineSort.onSort} className="w-36" />
+                  <SortableTh label="Hours" sortKey="hours" type="hours" sort={lineSort.sort} onSort={lineSort.onSort} className="w-20" />
                   {/* The source row, so somebody can open the workbook and find it. */}
-                  <th className="w-16 text-right">Row</th>
+                  <SortableTh label="Row" sortKey="row" type="number" sort={lineSort.sort} onSort={lineSort.onSort} className="w-16" />
                 </>
               }
               foot={
@@ -466,7 +511,7 @@ export function UndefinedHoursPanel({
                 </tr>
               }
             >
-              {rows.map((r, i) => (
+              {sortRows(rows, lineSort.sort, LINE_COLUMNS).map((r, i) => (
                 <tr key={`${r.date}-${r.employee}-${r.section}-${r.sourceRow}-${i}`}>
                   <td className="whitespace-nowrap font-mono tabular-nums text-sdc-muted">{r.date}</td>
                   <td className="text-sdc-gray-700">{r.employee}</td>

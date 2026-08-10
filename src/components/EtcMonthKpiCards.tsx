@@ -13,8 +13,11 @@ import { DRILL_BODY, DRILL_CAP, DrillControls, DrillFilterRow, DrillGroupOption,
 // these are the two that had neither.
 import { matchesDrillFilters } from "@/lib/drill-filters";
 import { useDrillFilters } from "@/components/useDrillFilters";
+import { useColumnSort } from "@/components/useColumnSort";
+import { SortableTh } from "@/components/ui/SortableHeader";
+import { sortRows, type SortColumns } from "@/lib/table-sort";
 import { ETC_SECTIONS } from "@/lib/sections";
-import { compareSections, offGridBySection, sectionName, type OffGridJob } from "@/lib/off-grid-hours";
+import { compareSections, offGridBySection, sectionName, type OffGridJob, type OffGridSection } from "@/lib/off-grid-hours";
 import type { EtcMonthKpis } from "@/lib/etc-month-kpis";
 // The strip's CONTENT — which blocks exist, what each one says, which drill it opens —
 // is a pure function of the reconciled figures (§37). See the header note there for why
@@ -31,8 +34,8 @@ import type { JobHoursDetail } from "@/lib/job-hours-detail";
 import type { UnattributedDetail } from "@/lib/unattributed-hours";
 import { loadUnattributedDetail } from "@/lib/unattributed-actions";
 import { loadEtcMonthHoursDetail, loadPartsSpentDetail, loadJobPartsLines } from "@/lib/hours-detail-actions";
-import type { PartsSpentDetail } from "@/lib/parts-spent";
-import type { JobPartsCost } from "@/lib/sync-totaleto";
+import type { PartsSpentDetail, PartsSpentRow } from "@/lib/parts-spent";
+import type { JobPartsCost, PartsCostLine } from "@/lib/sync-totaleto";
 import { readKpiStripOpen, writeKpiStripOpen, subscribeKpiStrip } from "@/lib/kpi-strip-pref";
 import { subscribeKpiDrillRequest, readKpiDrillRequest, serverKpiDrillRequest } from "@/lib/etc-drill-request";
 // Newest-wins ordering and in-flight de-duplication for every drill fetch below
@@ -58,6 +61,42 @@ const SECTION_GROUP = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]))
 // The formatters the blocks are built with. Module-level and frozen, so building the
 // strip cannot depend on anything that changes per render.
 const KPI_FORMAT = { hours: fmtHours, usd } as const;
+
+// ── Column maps for the four sortable regions on this page ──────────────────
+//
+// Module-level constants: every accessor closes over nothing but the row itself, so
+// there is nothing to recompute per render. See table-sort.ts for the mechanism these
+// feed — one shared sort, applied here exactly as it is in HoursDetailPanel/
+// UndefinedHoursPanel.
+
+const PARTS_ROW_COLUMNS: SortColumns<PartsSpentRow, "job" | "spent"> = {
+  job: { type: "id", value: (r) => r.jobId },
+  spent: { type: "currency", value: (r) => r.spent },
+};
+
+const PARTS_LINE_COLUMNS: SortColumns<PartsCostLine, "po" | "invoiced" | "supplier" | "part" | "qty" | "unit" | "amount"> = {
+  po: { type: "id", value: (l) => l.poNumber },
+  invoiced: { type: "date", value: (l) => l.invoicedDate },
+  supplier: { type: "text", value: (l) => l.supplier },
+  part: { type: "text", value: (l) => l.partNumber ?? l.description },
+  qty: { type: "number", value: (l) => l.quantity },
+  unit: { type: "currency", value: (l) => l.unitPrice },
+  amount: { type: "currency", value: (l) => l.invoicedAmount },
+};
+
+// The "Sections" (by-job) and "Jobs" (by-section) columns are deliberately left out —
+// each cell holds a variable-length LIST with no single scalar to compare, unlike every
+// other column here.
+const OFF_GRID_JOB_COLUMNS: SortColumns<OffGridJob, "job" | "status" | "hours"> = {
+  job: { type: "id", value: (j) => j.jobId },
+  status: { type: "status", value: (j) => j.status },
+  hours: { type: "hours", value: (j) => j.hours },
+};
+
+const OFF_GRID_SECTION_COLUMNS: SortColumns<OffGridSection, "section" | "hours"> = {
+  section: { type: "text", value: (s) => s.name ?? s.section },
+  hours: { type: "hours", value: (s) => s.hours },
+};
 
 // ── How a parts row answers the two filter dimensions (§73) ──────────────────
 //
@@ -163,6 +202,10 @@ export function EtcMonthKpiCards({
   // Active is what saves the hours. "By section" answers the other question: what kind
   // of work is about to be lost.
   const [offGridView, setOffGridView] = useState<"job" | "section">("job");
+  // Independent per view — switching Job/Section split does not disturb either's own
+  // sort preference, matching how switching filters never disturbs sort either.
+  const offGridJobSort = useColumnSort<"job" | "status" | "hours">();
+  const offGridSectionSort = useColumnSort<"section" | "hours">();
 
   // ── Off-grid filters (§73) ──────────────────────────────────────────────────
   //
@@ -262,6 +305,7 @@ export function EtcMonthKpiCards({
   // change, so without that a job filter set on July would narrow August to a job that may
   // not be in it.
   const partsFilters = useDrillFilters(month);
+  const partsSort = useColumnSort<"job" | "spent">();
   const partsRows = useMemo(
     () =>
       (parts?.rows ?? []).filter((r) =>
@@ -458,6 +502,10 @@ export function EtcMonthKpiCards({
   // fires on a prop change costs an extra commit-then-rerender the render-time
   // adjustment does not).
   const [openJob, setOpenJob] = useState<string | null>(null);
+  // One sort state shared across whichever job is currently expanded — not reset when a
+  // different job opens, since carrying "newest invoice first" between jobs is plausibly
+  // wanted rather than surprising.
+  const poLineSort = useColumnSort<"po" | "invoiced" | "supplier" | "part" | "qty" | "unit" | "amount">();
   const [jobLines, setJobLines] = useState<Record<string, JobPartsCost>>({});
   const [loadingJobLines, startJobLines] = useTransition();
   const [jobLinesError, setJobLinesError] = useState<string | null>(null);
@@ -747,12 +795,12 @@ export function EtcMonthKpiCards({
               <table className="w-full border-collapse text-xs">
                 <thead className="sticky top-0 bg-white">
                   <tr className="border-b-2 border-sdc-border text-sdc-navy">
-                    <th className="px-2 py-2 text-left font-bold">Job</th>
-                    <th className="px-2 py-2 text-right font-bold">Money spent</th>
+                    <SortableTh label="Job" sortKey="job" type="id" sort={partsSort.sort} onSort={partsSort.onSort} className="px-2 py-2 font-bold" />
+                    <SortableTh label="Money spent" sortKey="spent" type="currency" sort={partsSort.sort} onSort={partsSort.onSort} className="px-2 py-2 font-bold" />
                   </tr>
                 </thead>
                 <tbody>
-                  {partsRows.map((r) => {
+                  {sortRows(partsRows, partsSort.sort, PARTS_ROW_COLUMNS).map((r) => {
                     const open = openJob === r.jobId;
                     const lines = jobLines[`${r.jobId}::${month}`];
                     return (
@@ -810,36 +858,38 @@ export function EtcMonthKpiCards({
                                     <table className="w-full border-collapse text-note">
                                       <thead className="sticky top-0 bg-sdc-gray-50">
                                         <tr className="border-b border-sdc-border text-sdc-navy">
-                                          <th className="px-2 py-1.5 text-left font-bold">PO</th>
-                                          {/* Blank for a non-PO AP line (freight, a tariff, an expense
-                                              reimbursement) — there is no purchase order to place a
-                                              date on. Sorted newest-invoiced-first (see below), so this
-                                              column is not the sort order for these rows. */}
-                                          <th className="px-2 py-1.5 text-left font-bold whitespace-nowrap">Purchased on</th>
+                                          <SortableTh label="PO" sortKey="po" type="id" sort={poLineSort.sort} onSort={poLineSort.onSort} className="px-2 py-1.5 font-bold" />
                                           {/* The AP document date — every row is windowed on this field
                                               landing in {month}, the same field and window the row's own
                                               "Money spent" figure above is computed from. Always present:
                                               every row here IS an invoice event, unlike getJobPartsCost's
                                               whole-history view where an ordered-but-unbilled line has none. */}
-                                          <th className="px-2 py-1.5 text-left font-bold whitespace-nowrap">Invoiced on</th>
-                                          <th className="px-2 py-1.5 text-left font-bold">Supplier</th>
-                                          <th className="px-2 py-1.5 text-left font-bold">Part</th>
-                                          <th className="px-2 py-1.5 text-right font-bold">Qty</th>
-                                          <th className="px-2 py-1.5 text-right font-bold">Unit</th>
+                                          <SortableTh
+                                            label="Invoiced on"
+                                            sortKey="invoiced"
+                                            type="date"
+                                            sort={poLineSort.sort}
+                                            onSort={poLineSort.onSort}
+                                            className="px-2 py-1.5 font-bold whitespace-nowrap"
+                                          />
+                                          <SortableTh label="Supplier" sortKey="supplier" type="text" sort={poLineSort.sort} onSort={poLineSort.onSort} className="px-2 py-1.5 font-bold" />
+                                          <SortableTh label="Part" sortKey="part" type="text" sort={poLineSort.sort} onSort={poLineSort.onSort} className="px-2 py-1.5 font-bold" />
+                                          <SortableTh label="Qty" sortKey="qty" type="number" sort={poLineSort.sort} onSort={poLineSort.onSort} className="px-2 py-1.5 font-bold" />
+                                          <SortableTh label="Unit" sortKey="unit" type="currency" sort={poLineSort.sort} onSort={poLineSort.onSort} className="px-2 py-1.5 font-bold" />
                                           {/* One dollar column, not two: at this grain (one row = one
                                               invoice event) "purchased" and "invoiced" are the same
                                               number by construction, unlike getJobPartsCost's lifetime
                                               view where an open PO's remaining balance makes them differ. */}
-                                          <th className="px-2 py-1.5 text-right font-bold">Invoiced</th>
+                                          <SortableTh label="Invoiced" sortKey="amount" type="currency" sort={poLineSort.sort} onSort={poLineSort.onSort} className="px-2 py-1.5 font-bold" />
                                         </tr>
                                       </thead>
                                       <tbody>
-                                        {lines.lines.map((l, i) => (
+                                        {/* No explicit sort chosen -> biggest invoiced amount first, not
+                                            whatever order the source query returned. Clicking any header
+                                            still overrides this exactly as it did before (§ column sort). */}
+                                        {sortRows(lines.lines, poLineSort.sort ?? { key: "amount", direction: "desc" }, PARTS_LINE_COLUMNS).map((l, i) => (
                                           <tr key={i} className="border-b border-sdc-border-soft/50" title={l.description ?? undefined}>
                                             <td className="px-2 py-1.5 text-left font-mono font-semibold text-sdc-navy">{l.poNumber ?? "—"}</td>
-                                            <td className="px-2 py-1.5 text-left font-medium whitespace-nowrap text-sdc-navy">
-                                              {l.purchaseDate ?? "—"}
-                                            </td>
                                             <td className="px-2 py-1.5 text-left font-medium whitespace-nowrap text-sdc-gray-700">
                                               {l.invoicedDate ?? "—"}
                                             </td>
@@ -954,23 +1004,27 @@ export function EtcMonthKpiCards({
                 <tr className="text-left text-label font-semibold uppercase tracking-wide text-sdc-muted">
                   {offGridView === "job" ? (
                     <>
-                      <th className="px-2 py-1.5">Job</th>
-                      <th className="px-2 py-1.5">Status</th>
+                      <SortableTh label="Job" sortKey="job" type="id" sort={offGridJobSort.sort} onSort={offGridJobSort.onSort} className="px-2 py-1.5" />
+                      <SortableTh label="Status" sortKey="status" type="status" sort={offGridJobSort.sort} onSort={offGridJobSort.onSort} className="px-2 py-1.5" />
+                      {/* Not sortable — this cell holds one line PER section, a list with
+                          no single scalar to compare, unlike every other column here. */}
                       <th className="px-2 py-1.5">Sections</th>
-                      <th className="px-2 py-1.5 text-right">Hours</th>
+                      <SortableTh label="Hours" sortKey="hours" type="hours" sort={offGridJobSort.sort} onSort={offGridJobSort.onSort} className="px-2 py-1.5" />
                     </>
                   ) : (
                     <>
-                      <th className="px-2 py-1.5">Section</th>
+                      <SortableTh label="Section" sortKey="section" type="text" sort={offGridSectionSort.sort} onSort={offGridSectionSort.onSort} className="px-2 py-1.5" />
+                      {/* Not sortable — a comma-joined list of job ids, same reason as
+                          "Sections" in the by-job view. */}
                       <th className="px-2 py-1.5">Jobs</th>
-                      <th className="px-2 py-1.5 text-right">Hours</th>
+                      <SortableTh label="Hours" sortKey="hours" type="hours" sort={offGridSectionSort.sort} onSort={offGridSectionSort.onSort} className="px-2 py-1.5" />
                     </>
                   )}
                 </tr>
               </thead>
               <tbody>
                 {offGridView === "job"
-                  ? filteredOffGridJobs.map((j) => (
+                  ? sortRows(filteredOffGridJobs, offGridJobSort.sort, OFF_GRID_JOB_COLUMNS).map((j) => (
                       <tr key={j.jobId} className="border-t border-sdc-border-soft align-top">
                         <td className="px-2 py-1.5">
                           <span className="font-mono font-semibold text-sdc-blue-dark">{j.jobId}</span>
@@ -1002,7 +1056,7 @@ export function EtcMonthKpiCards({
                         <td className="px-2 py-1.5 text-right font-semibold tabular-nums text-sdc-navy">{fmtHours(j.hours)}</td>
                       </tr>
                     ))
-                  : offGridSections.map((s) => (
+                  : sortRows(offGridSections, offGridSectionSort.sort, OFF_GRID_SECTION_COLUMNS).map((s) => (
                       <tr key={s.section} className="border-t border-sdc-border-soft align-top">
                         <td className="px-2 py-1.5 whitespace-nowrap text-sdc-navy">
                           {/* Name only, matching the by-job view. Falls back to the code

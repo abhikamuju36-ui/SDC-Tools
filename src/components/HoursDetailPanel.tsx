@@ -21,6 +21,9 @@ import {
 // uses, so "Section" cannot mean one thing to Group By and another to a filter.
 import { dateBounds, filterOptions, matchesDrillFilters, type DrillFilterKey } from "@/lib/drill-filters";
 import { useDrillFilters } from "@/components/useDrillFilters";
+import { useColumnSort } from "@/components/useColumnSort";
+import { SortableTh } from "@/components/ui/SortableHeader";
+import { sortRows, type SortColumns } from "@/lib/table-sort";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
 // The two canonical orders the grid itself reads in — see the note on groupHoursRows.
 import { EMPLOYEE_TEAMS, teamFor } from "@/lib/employee-teams";
@@ -156,6 +159,42 @@ export function sectionRank(label: string): number {
   return i === -1 ? UNRANKED : i;
 }
 
+// ── Punch-line sorting ──────────────────────────────────────────────────────
+//
+// One shared sort state serves both the ungrouped punch list and every expanded group's
+// lines — they show the same row shape, just with some columns hidden (see detailCols).
+// A module-level constant, not a useMemo: every accessor closes over nothing but the row
+// itself, so there is nothing to recompute per render.
+type LineSortKey = "date" | "job" | "employee" | "department" | "section" | "sectionName" | "hours";
+
+const LINE_COLUMNS: SortColumns<JobHoursDetail["rows"][number], LineSortKey> = {
+  date: { type: "date", value: (r) => r.date },
+  // The pre-joined "1105 — Cell A" display string; split so it sorts on the job number
+  // like the rest of the app (see compareByType's `id` handling), not the whole string.
+  job: { type: "id", value: (r) => (r.job ? r.job.split(" — ")[0] : null) },
+  employee: { type: "text", value: (r) => (r.employee && r.employee !== "—" ? r.employee : null) },
+  department: { type: "text", value: (r) => (r.department && r.department !== "—" ? r.department : null) },
+  section: { type: "text", value: (r) => r.section || null },
+  sectionName: { type: "text", value: (r) => r.sectionName || null },
+  hours: { type: "hours", value: (r) => r.hours },
+};
+
+/**
+ * The rollup's own column map for the currently-chosen `groupBy` — one text accessor per
+ * grouped dimension (reading the group's `values[i]` at that dimension's position), plus
+ * Hours. Shared by HoursDetailPanel and UndefinedHoursPanel — both roll up through
+ * groupHoursRows onto the identical `HoursGroup` shape, so a second copy of this loop
+ * would be exactly the kind of page-by-page duplicate the shared sort mechanism exists
+ * to avoid.
+ */
+export function rollupSortColumns(groupBy: GroupKey[]): SortColumns<HoursGroup, GroupKey | "hours"> {
+  const cols: Partial<SortColumns<HoursGroup, GroupKey | "hours">> = { hours: { type: "hours", value: (g) => g.hours } };
+  groupBy.forEach((k, i) => {
+    cols[k] = { type: "text", value: (g) => g.values[i] };
+  });
+  return cols as SortColumns<HoursGroup, GroupKey | "hours">;
+}
+
 // In-app equivalent of the Power BI report's "Hours Detail" drillthrough page:
 // every punch on the job — date, who, their department, section, hours — with a
 // total at the bottom.
@@ -175,6 +214,8 @@ export function HoursDetailPanel({
   note,
   onClose,
   className,
+  defaultGroupBy,
+  hideFilters,
 }: {
   detail: JobHoursDetail;
   initialSection?: string | null;
@@ -189,6 +230,16 @@ export function HoursDetailPanel({
   // and the figure on the card that opened it, rather than leaving the reader to
   // spot the difference and assume something is broken.
   note?: string;
+  // Opens grouped by something other than Department (still one of the same
+  // GROUP_KEYS toggles below — every caller keeps the full tray, just a
+  // different starting point for this one). Defaults to `["department"]" so
+  // every existing caller is unaffected.
+  defaultGroupBy?: GroupKey[];
+  // Drops these dimensions from the filter dropdowns entirely, for a caller whose
+  // own initialSection + surrounding context already narrows the drill enough
+  // that offering a second Department/Employee narrowing is redundant. Grouping
+  // by that dimension is untouched — this only hides the FILTER, not the tray.
+  hideFilters?: DrillFilterKey[];
   onClose: () => void;
 }) {
   // ── Filters (§73) ───────────────────────────────────────────────────────────
@@ -204,7 +255,12 @@ export function HoursDetailPanel({
   // returns to it rather than to nothing.
   const seededSection =
     initialSection && detail.sections.some((s) => s.code === initialSection) ? initialSection : null;
-  const filterState = useDrillFilters(undefined, () => ({
+  // Keyed on `initialSection` (§73's resetKey, same mechanism EtcMonthKpiCards keys on
+  // `month`) — without it, clicking a second bar updated SectionDrill above (plain props)
+  // but left this panel's Section filter seeded from whichever bar was clicked FIRST:
+  // this state is `useState`-lazy-initialized once and this component never unmounts
+  // between clicks, so nothing told it to re-seed.
+  const filterState = useDrillFilters(initialSection ?? undefined, () => ({
     values: seededSection ? { section: [seededSection] } : {},
     from: "",
     to: "",
@@ -234,15 +290,33 @@ export function HoursDetailPanel({
   // first view: 25 lines of "NOT DEFINED / Jake Wiegand" answers "which punches" when the
   // question being asked is "where did the time go". Department is the coarsest useful
   // answer, and the chips take you finer or back to the lines in one click.
-  const [groupBy, setGroupBy] = useState<GroupKey[]>(["department"]);
+  const [groupBy, setGroupBy] = useState<GroupKey[]>(defaultGroupBy ?? ["department"]);
   // Which groups are opened to show the punches inside them. Cleared whenever the
   // grouping changes, because the keys it holds describe the OLD shape — a stale key
   // wouldn't crash (it simply wouldn't match) but it would leave rows silently open or
   // shut for reasons the reader can't see.
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
+
+  // Sort is a THIRD, independent concern from filtering and grouping (§73's own "Group
+  // By stays entirely separate" principle, extended) — see table-sort.ts.
+  const rollupSort = useColumnSort<GroupKey | "hours">();
+  const lineSort = useColumnSort<LineSortKey>();
+
   const toggleGroup = (k: GroupKey) => {
     setExpanded(new Set());
-    setGroupBy((prev) => (prev.includes(k) ? prev.filter((g) => g !== k) : [...prev, k]));
+    // The rollup's columns change identity whenever groupBy does, so any prior rollup
+    // sort is stale by construction.
+    rollupSort.setSort(null);
+    setGroupBy((prev) => {
+      const next = prev.includes(k) ? prev.filter((g) => g !== k) : [...prev, k];
+      // A line sort survives a groupBy change UNLESS the column it's sorting on just
+      // became one of the grouped (hidden) dimensions — date/hours are never hidden.
+      const sortedKey = lineSort.sort?.key;
+      if (sortedKey && sortedKey !== "date" && sortedKey !== "hours" && sortedKey !== "sectionName" && next.includes(sortedKey as GroupKey)) {
+        lineSort.setSort(null);
+      }
+      return next;
+    });
   };
   const toggleExpanded = (key: string) =>
     setExpanded((prev) => {
@@ -250,6 +324,9 @@ export function HoursDetailPanel({
       if (!next.delete(key)) next.add(key);
       return next;
     });
+
+  // Rebuilt only when groupBy changes, since the accessors close over its shape.
+  const rollupColumns = useMemo(() => rollupSortColumns(groupBy), [groupBy]);
 
   // One predicate for every dimension, so adding a filter cannot leave the row set and
   // the "Shown" wording disagreeing about whether anything is narrowed — which is what
@@ -295,8 +372,8 @@ export function HoursDetailPanel({
         searchable: true,
       });
     }
-    return list;
-  }, [detail.rows, detail.sections, showJob]);
+    return hideFilters ? list.filter((m) => !hideFilters.includes(m.key)) : list;
+  }, [detail.rows, detail.sections, showJob, hideFilters]);
 
   const bounds = useMemo(() => dateBounds(detail.rows), [detail.rows]);
 
@@ -386,6 +463,7 @@ export function HoursDetailPanel({
               onClick={() => {
                 setGroupBy([]);
                 setExpanded(new Set());
+                rollupSort.setSort(null);
               }}
               title="Show the individual punches"
             >
@@ -421,13 +499,16 @@ export function HoursDetailPanel({
         </DrillEmpty>
       ) : grouped ? (
         <DrillTable
-          columns={groupBy.map((k) => GROUP_LABEL[k])}
+          columns={groupBy.map((k) => ({ label: GROUP_LABEL[k], key: k }))}
           unit="Hours"
+          unitSortKey="hours"
+          sort={rollupSort.sort}
+          onSort={rollupSort.onSort}
           totalLabel={filtering ? "Shown" : "Total"}
           total={fmtHours(total)}
           totalTitle={hoursExact(total)}
         >
-          {grouped.map((g) => (
+          {sortRows(grouped, rollupSort.sort, rollupColumns).map((g) => (
             <DrillGroup
               key={g.key}
               values={g.values}
@@ -443,16 +524,18 @@ export function HoursDetailPanel({
               <DrillLines
                 head={
                   <>
-                    <th className="w-24">Date</th>
-                    {detailCols.job && <th className="w-56">Job</th>}
-                    {detailCols.employee && <th>Employee</th>}
-                    {detailCols.department && <th className="w-44">Department</th>}
-                    {detailCols.section && <th className="w-40">Section</th>}
-                    <th className="w-20 text-right">Hours</th>
+                    <SortableTh label="Date" sortKey="date" type="date" sort={lineSort.sort} onSort={lineSort.onSort} className="w-24" />
+                    {detailCols.job && <SortableTh label="Job" sortKey="job" type="id" sort={lineSort.sort} onSort={lineSort.onSort} className="w-56" />}
+                    {detailCols.employee && <SortableTh label="Employee" sortKey="employee" type="text" sort={lineSort.sort} onSort={lineSort.onSort} />}
+                    {detailCols.department && (
+                      <SortableTh label="Department" sortKey="department" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-44" />
+                    )}
+                    {detailCols.section && <SortableTh label="Section" sortKey="section" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-40" />}
+                    <SortableTh label="Hours" sortKey="hours" type="hours" sort={lineSort.sort} onSort={lineSort.onSort} className="w-20" />
                   </>
                 }
               >
-                {g.rows.map((r, ri) => (
+                {sortRows(g.rows, lineSort.sort, LINE_COLUMNS).map((r, ri) => (
                   <tr key={`${r.date}-${r.employee}-${r.section}-${ri}`}>
                     <td className="font-mono tabular-nums text-sdc-muted">{r.date}</td>
                     {detailCols.job && (
@@ -495,13 +578,13 @@ export function HoursDetailPanel({
           <DrillLines
             head={
               <>
-                <th className="w-24">Date</th>
-                {showJob && <th className="w-56">Job</th>}
-                <th>Employee</th>
-                <th className="w-44">Department</th>
-                <th className="w-20">Section</th>
-                <th className="w-40">Section Name</th>
-                <th className="w-20 text-right">Hours</th>
+                <SortableTh label="Date" sortKey="date" type="date" sort={lineSort.sort} onSort={lineSort.onSort} className="w-24" />
+                {showJob && <SortableTh label="Job" sortKey="job" type="id" sort={lineSort.sort} onSort={lineSort.onSort} className="w-56" />}
+                <SortableTh label="Employee" sortKey="employee" type="text" sort={lineSort.sort} onSort={lineSort.onSort} />
+                <SortableTh label="Department" sortKey="department" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-44" />
+                <SortableTh label="Section" sortKey="section" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-20" />
+                <SortableTh label="Section Name" sortKey="sectionName" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-40" />
+                <SortableTh label="Hours" sortKey="hours" type="hours" sort={lineSort.sort} onSort={lineSort.onSort} className="w-20" />
               </>
             }
             foot={
@@ -515,7 +598,7 @@ export function HoursDetailPanel({
               </tr>
             }
           >
-            {rows.map((r, i) => (
+            {sortRows(rows, lineSort.sort, LINE_COLUMNS).map((r, i) => (
               <tr key={`${r.date}-${r.employee}-${r.section}-${i}`}>
                 <td className="font-mono tabular-nums text-sdc-muted">{r.date}</td>
                 {showJob && (

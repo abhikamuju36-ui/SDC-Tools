@@ -6,7 +6,10 @@ import { nextParams, notePendingParams } from "@/lib/url-params";
 import type { EChartsOption } from "echarts";
 import { EChart } from "@/components/charts/EChart";
 import { card } from "@/components/ui/classnames";
-import type { PunchExplorer } from "@/lib/data-quality";
+import type { PunchExplorer, PunchRow } from "@/lib/data-quality";
+import { useColumnSort } from "@/components/useColumnSort";
+import { SortableTh } from "@/components/ui/SortableHeader";
+import { sortRows, type SortColumns } from "@/lib/table-sort";
 
 // The Power BI Data Quality page's own layout: three header cards, its four
 // slicers, the punch table with Is Punch Valid, and the stacked hours-by-
@@ -19,8 +22,31 @@ import type { PunchExplorer } from "@/lib/data-quality";
 // belongs in the browser.
 
 const SELECT = "h-8 rounded-lg border border-sdc-border bg-white px-2 text-xs text-sdc-navy outline-none focus:border-sdc-blue";
-const TH = "px-2 py-1.5 text-left text-label font-bold uppercase tracking-wide text-white whitespace-nowrap";
+// No text-left baked in — every header is a SortableTh, which supplies its own
+// alignment (see the matching note in DataQualityDrill.tsx).
+const TH = "px-2 py-1.5 text-label font-bold uppercase tracking-wide text-white whitespace-nowrap";
 const TD = "px-2 py-1 text-left text-note text-sdc-navy whitespace-nowrap";
+
+type PunchRowSortKey = "department" | "employeeId" | "employee" | "date" | "jobId" | "jobName" | "status" | "complete" | "section" | "hours" | "valid";
+
+// "(undefined)" is THIS reader's specific sentinel for an unresolved employee/department
+// (data-quality.ts:257,259) — different from the "—" HoursDetailPanel/UndefinedHoursPanel
+// use — and must be normalized to null the same way, or it sorts into the middle of the
+// alphabet instead of consistently last.
+const PUNCH_ROW_COLUMNS: SortColumns<PunchRow, PunchRowSortKey> = {
+  department: { type: "text", value: (r) => (r.department === "(undefined)" ? null : r.department) },
+  employeeId: { type: "id", value: (r) => r.employeeId },
+  employee: { type: "text", value: (r) => (r.employee === "(undefined)" ? null : r.employee) },
+  date: { type: "date", value: (r) => r.date },
+  jobId: { type: "id", value: (r) => r.jobId },
+  jobName: { type: "text", value: (r) => r.jobName },
+  status: { type: "status", value: (r) => r.jobStatus },
+  complete: { type: "date", value: (r) => r.completeDate },
+  section: { type: "text", value: (r) => r.section },
+  hours: { type: "hours", value: (r) => r.hours },
+  // Sorts on exactly what the cell displays — "Valid" or the failure reason.
+  valid: { type: "status", value: (r) => (r.valid ? "Valid" : r.reason) },
+};
 
 function Kpi({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
@@ -36,6 +62,12 @@ export function DataQualityExplorer({ data }: { data: PunchExplorer }) {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  // Local state, independent of the URL-param-driven slicers above — confirmed safe: the
+  // Data Quality tab stays mounted via `hidden` (DashboardTabs.tsx), never remounted by a
+  // slicer's router.push, so this survives every filter change exactly the way
+  // useDraftParamsMenu's own draft state already relies on elsewhere in the app.
+  const sort = useColumnSort<PunchRowSortKey>();
+  const sortedRows = useMemo(() => sortRows(data.rows, sort.sort, PUNCH_ROW_COLUMNS), [data.rows, sort.sort]);
 
   // Every slicer writes the same way: set or clear one param, keep the rest, and
   // keep ?tab=quality so changing a filter doesn't bounce you back to Overview.
@@ -157,21 +189,21 @@ export function DataQualityExplorer({ data }: { data: PunchExplorer }) {
             <table className="w-full border-collapse">
               <thead className="sticky top-0 z-[1] bg-sdc-navy">
                 <tr>
-                  <th className={TH}>Department</th>
-                  <th className={TH}>Emp Id</th>
-                  <th className={TH}>Employee</th>
-                  <th className={TH}>Date</th>
-                  <th className={TH}>Job Id</th>
-                  <th className={TH}>Job Name</th>
-                  <th className={TH}>Status</th>
-                  <th className={TH}>Complete</th>
-                  <th className={TH}>Section-Function</th>
-                  <th className={`${TH} text-right`}>Hours</th>
-                  <th className={TH}>Is Punch Valid</th>
+                  <SortableTh label="Department" sortKey="department" type="text" sort={sort.sort} onSort={sort.onSort} className={TH} />
+                  <SortableTh label="Emp Id" sortKey="employeeId" type="id" sort={sort.sort} onSort={sort.onSort} className={TH} />
+                  <SortableTh label="Employee" sortKey="employee" type="text" sort={sort.sort} onSort={sort.onSort} className={TH} />
+                  <SortableTh label="Date" sortKey="date" type="date" sort={sort.sort} onSort={sort.onSort} className={TH} />
+                  <SortableTh label="Job Id" sortKey="jobId" type="id" sort={sort.sort} onSort={sort.onSort} className={TH} />
+                  <SortableTh label="Job Name" sortKey="jobName" type="text" sort={sort.sort} onSort={sort.onSort} className={TH} />
+                  <SortableTh label="Status" sortKey="status" type="status" sort={sort.sort} onSort={sort.onSort} className={TH} />
+                  <SortableTh label="Complete" sortKey="complete" type="date" sort={sort.sort} onSort={sort.onSort} className={TH} />
+                  <SortableTh label="Section-Function" sortKey="section" type="text" sort={sort.sort} onSort={sort.onSort} className={TH} />
+                  <SortableTh label="Hours" sortKey="hours" type="hours" sort={sort.sort} onSort={sort.onSort} className={TH} />
+                  <SortableTh label="Is Punch Valid" sortKey="valid" type="status" sort={sort.sort} onSort={sort.onSort} className={TH} />
                 </tr>
               </thead>
               <tbody>
-                {data.rows.map((r, i) => (
+                {sortedRows.map((r, i) => (
                   <tr key={`${r.employeeId}-${r.date}-${r.section}-${r.jobId}-${i}`} className={i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}>
                     <td className={`${TD} text-sdc-muted`}>{r.department}</td>
                     <td className={`${TD} font-mono text-label`}>{r.employeeId}</td>

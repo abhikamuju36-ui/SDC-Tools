@@ -3,8 +3,11 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { createPortal } from "react-dom";
 import { useRouter } from "next/navigation";
-import { getEmployeePunches, type EmployeePunchDetail } from "@/lib/data-quality-actions";
+import { getEmployeePunches, type EmployeePunchDetail, type EmployeePunch } from "@/lib/data-quality-actions";
 import type { PunchIssue } from "@/lib/data-quality";
+import { useColumnSort } from "@/components/useColumnSort";
+import { SortableTh } from "@/components/ui/SortableHeader";
+import { sortRows, type SortColumns } from "@/lib/table-sort";
 
 // Drill-through for the Data Quality findings, following what the Power BI
 // report actually offers rather than inventing new destinations. Its pages drill
@@ -28,13 +31,29 @@ import type { PunchIssue } from "@/lib/data-quality";
 // The header treatment matches DrillLines exactly (see components/ui/Drill.tsx); it is
 // spelled out here rather than imported because these are plain <table>s that predate
 // the shared component and do not have groups to hang off it.
-const TH =
-  "px-2 py-1 text-left text-label font-semibold uppercase tracking-[0.08em] text-sdc-muted whitespace-nowrap";
+// No text-left/text-right here any more — every header in this file is now a
+// SortableTh, which supplies its own alignment (numeric types right, everything else
+// left) via table-sort.ts's defaultAlign. Baking text-left in here would fight that
+// class on every numeric column, since both would target the same <th>.
+const TH = "px-2 py-1 text-label font-semibold uppercase tracking-[0.08em] text-sdc-muted whitespace-nowrap";
 const TD = "border-t border-sdc-border-soft px-2 py-1 text-left text-note text-sdc-gray-700";
 /** The header row's own fill + rule, replacing `bg-sdc-navy`. */
 const THEAD = "bg-sdc-gray-50 [&_th]:border-b [&_th]:border-sdc-border";
 
+type PunchIssueSortKey = "date" | "employee" | "department" | "job" | "completed" | "section" | "hours";
+
+const PUNCH_ISSUE_COLUMNS: SortColumns<PunchIssue, PunchIssueSortKey> = {
+  date: { type: "date", value: (r) => r.date },
+  employee: { type: "text", value: (r) => r.employee || null },
+  department: { type: "text", value: (r) => r.department || null },
+  job: { type: "id", value: (r) => r.jobId },
+  completed: { type: "date", value: (r) => r.completeDate },
+  section: { type: "text", value: (r) => r.section },
+  hours: { type: "hours", value: (r) => r.hours },
+};
+
 export function DataQualityDrill({ rows, showCompleted }: { rows: PunchIssue[]; showCompleted?: boolean }) {
+  const sort = useColumnSort<PunchIssueSortKey>();
   const router = useRouter();
   const [menu, setMenu] = useState<{ x: number; y: number; row: PunchIssue } | null>(null);
   const [panel, setPanel] = useState<EmployeePunchDetail | null>(null);
@@ -79,17 +98,17 @@ export function DataQualityDrill({ rows, showCompleted }: { rows: PunchIssue[]; 
         <table className="w-full border-collapse">
           <thead className={`sticky top-0 z-[1] ${THEAD}`}>
             <tr>
-              <th className={TH}>Date</th>
-              <th className={TH}>Employee</th>
-              <th className={TH}>Department</th>
-              <th className={TH}>Job</th>
-              {showCompleted && <th className={TH}>Completed</th>}
-              <th className={TH}>Section</th>
-              <th className={`${TH} text-right`}>Hours</th>
+              <SortableTh label="Date" sortKey="date" type="date" sort={sort.sort} onSort={sort.onSort} className={TH} />
+              <SortableTh label="Employee" sortKey="employee" type="text" sort={sort.sort} onSort={sort.onSort} className={TH} />
+              <SortableTh label="Department" sortKey="department" type="text" sort={sort.sort} onSort={sort.onSort} className={TH} />
+              <SortableTh label="Job" sortKey="job" type="id" sort={sort.sort} onSort={sort.onSort} className={TH} />
+              {showCompleted && <SortableTh label="Completed" sortKey="completed" type="date" sort={sort.sort} onSort={sort.onSort} className={TH} />}
+              <SortableTh label="Section" sortKey="section" type="text" sort={sort.sort} onSort={sort.onSort} className={TH} />
+              <SortableTh label="Hours" sortKey="hours" type="hours" sort={sort.sort} onSort={sort.onSort} className={TH} />
             </tr>
           </thead>
           <tbody>
-            {rows.map((r, i) => (
+            {sortRows(rows, sort.sort, PUNCH_ISSUE_COLUMNS).map((r, i) => (
               <tr
                 key={`${r.employeeId}-${r.date}-${r.section}-${i}`}
                 onClick={() => openJob(r)}
@@ -146,9 +165,17 @@ export function DataQualityDrill({ rows, showCompleted }: { rows: PunchIssue[]; 
 // The unrecognised-ID table, drillable the same way. There is no job on these
 // rows — the finding IS the employee — so a click goes straight to the employee
 // drill rather than offering a menu with one useful item in it.
-export function EmployeeIdDrill({ ids }: { ids: { employeeId: string; rows: number; hours: number }[] }) {
+type EmployeeIdRow = { employeeId: string; rows: number; hours: number };
+const EMPLOYEE_ID_COLUMNS: SortColumns<EmployeeIdRow, "employeeId" | "rows" | "hours"> = {
+  employeeId: { type: "id", value: (r) => r.employeeId },
+  rows: { type: "number", value: (r) => r.rows },
+  hours: { type: "hours", value: (r) => r.hours },
+};
+
+export function EmployeeIdDrill({ ids }: { ids: EmployeeIdRow[] }) {
   const [panel, setPanel] = useState<EmployeePunchDetail | null>(null);
   const [pending, startTransition] = useTransition();
+  const sort = useColumnSort<"employeeId" | "rows" | "hours">();
 
   return (
     <>
@@ -156,14 +183,14 @@ export function EmployeeIdDrill({ ids }: { ids: { employeeId: string; rows: numb
         <table className="w-full border-collapse">
           <thead className={THEAD}>
             <tr>
-              <th className={TH}>Payroll ID</th>
-              <th className={`${TH} text-right`}>Punches</th>
-              <th className={`${TH} text-right`}>Hours</th>
+              <SortableTh label="Payroll ID" sortKey="employeeId" type="id" sort={sort.sort} onSort={sort.onSort} className={TH} />
+              <SortableTh label="Punches" sortKey="rows" type="number" sort={sort.sort} onSort={sort.onSort} className={TH} />
+              <SortableTh label="Hours" sortKey="hours" type="hours" sort={sort.sort} onSort={sort.onSort} className={TH} />
             </tr>
           </thead>
           <tbody>
             {/* No row index any more — it was only ever used for the zebra stripe. */}
-            {ids.map((r) => (
+            {sortRows(ids, sort.sort, EMPLOYEE_ID_COLUMNS).map((r) => (
               <tr
                 key={r.employeeId}
                 onClick={() => startTransition(async () => setPanel(await getEmployeePunches(r.employeeId)))}
@@ -184,9 +211,20 @@ export function EmployeeIdDrill({ ids }: { ids: { employeeId: string; rows: numb
   );
 }
 
+const EMPLOYEE_PUNCH_COLUMNS: SortColumns<EmployeePunch, "date" | "job" | "status" | "section" | "hours"> = {
+  date: { type: "date", value: (r) => r.date },
+  job: { type: "id", value: (r) => r.jobId },
+  status: { type: "status", value: (r) => r.jobStatus },
+  section: { type: "text", value: (r) => r.section },
+  hours: { type: "hours", value: (r) => r.hours },
+};
+
 // The employee drill — the report's "Hours Detail" page filtered to one person.
-// Everything they booked, newest first, across every job.
+// Everything they booked, newest first by default, across every job.
 function EmployeePanel({ detail, onClose }: { detail: EmployeePunchDetail; onClose: () => void }) {
+  // Fully unmounts/remounts per employee (the parent only ever renders one at a time,
+  // conditionally) — no reset guard needed, a fresh employee always starts unsorted.
+  const sort = useColumnSort<"date" | "job" | "status" | "section" | "hours">();
   return (
     <div className="mt-3 rounded-lg border border-sdc-blue-100 bg-white p-3">
       <div className="mb-2 flex items-start justify-between gap-3">
@@ -213,15 +251,15 @@ function EmployeePanel({ detail, onClose }: { detail: EmployeePunchDetail; onClo
         <table className="w-full border-collapse">
           <thead className={`sticky top-0 z-[1] ${THEAD}`}>
             <tr>
-              <th className={TH}>Date</th>
-              <th className={TH}>Job</th>
-              <th className={TH}>Status</th>
-              <th className={TH}>Section</th>
-              <th className={`${TH} text-right`}>Hours</th>
+              <SortableTh label="Date" sortKey="date" type="date" sort={sort.sort} onSort={sort.onSort} className={TH} />
+              <SortableTh label="Job" sortKey="job" type="id" sort={sort.sort} onSort={sort.onSort} className={TH} />
+              <SortableTh label="Status" sortKey="status" type="status" sort={sort.sort} onSort={sort.onSort} className={TH} />
+              <SortableTh label="Section" sortKey="section" type="text" sort={sort.sort} onSort={sort.onSort} className={TH} />
+              <SortableTh label="Hours" sortKey="hours" type="hours" sort={sort.sort} onSort={sort.onSort} className={TH} />
             </tr>
           </thead>
           <tbody>
-            {detail.rows.map((r, i) => (
+            {sortRows(detail.rows, sort.sort, EMPLOYEE_PUNCH_COLUMNS).map((r, i) => (
               <tr key={`${r.date}-${r.jobId}-${r.section}-${i}`} className="hover:bg-sdc-gray-50">
                 <td className={`${TD} whitespace-nowrap font-mono text-label`}>{r.date}</td>
                 <td className={TD} title={r.jobName}>

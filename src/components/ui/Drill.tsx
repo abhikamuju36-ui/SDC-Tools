@@ -3,6 +3,8 @@
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
 import { DRILL_FILTER_LABEL, type DrillFilterKey, type DrillFilters } from "@/lib/drill-filters";
+import { SortableColumnHeader } from "@/components/ui/SortableHeader";
+import type { SortState } from "@/lib/table-sort";
 
 // ── The drill-through panel, one design (§47) ────────────────────────────────
 //
@@ -536,18 +538,29 @@ function template(dimensions: number): string {
   return `${dims} ${VALUE_COL}`;
 }
 
-export function DrillTable({
+/** One grouping dimension's header — its display label and the key sortRows/onSort key it by. */
+export type DrillColumn<K extends string = string> = { label: string; key: K };
+
+export function DrillTable<K extends string = string>({
   columns,
   unit,
+  unitSortKey,
+  sort,
+  onSort,
   total,
   totalLabel = "Total",
   totalTitle,
   children,
 }: {
-  /** The grouping dimension names, left to right. */
-  columns: string[];
+  /** The grouping dimensions, left to right. */
+  columns: DrillColumn<K>[];
   /** The value column's heading — "Hours", "Amount". */
   unit: string;
+  /** The sort key the value column (`unit`) answers to. */
+  unitSortKey: K;
+  /** Omit both to render plain, non-interactive headers. */
+  sort?: SortState<K>;
+  onSort?: (key: K) => void;
   total: ReactNode;
   /** "Shown" rather than "Total" when a filter is narrowing the set. */
   totalLabel?: string;
@@ -559,13 +572,9 @@ export function DrillTable({
     <div role="table" aria-rowcount={-1}>
       <div role="row" className={`${HEAD} grid gap-3`} style={{ gridTemplateColumns: cols }}>
         {columns.map((c) => (
-          <span role="columnheader" key={c}>
-            {c}
-          </span>
+          <SortableColumnHeader key={c.key} label={c.label} sortKey={c.key} type="text" sort={sort} onSort={onSort} />
         ))}
-        <span role="columnheader" className="text-right">
-          {unit}
-        </span>
+        <SortableColumnHeader label={unit} sortKey={unitSortKey} type="hours" align="right" sort={sort} onSort={onSort} />
       </div>
 
       {children}

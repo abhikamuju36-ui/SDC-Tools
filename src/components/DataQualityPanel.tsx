@@ -1,8 +1,13 @@
+"use client";
+
 import { card } from "@/components/ui/classnames";
 import { SectionTitle } from "@/components/ui/Typography";
-import type { DataQuality, PunchExplorer } from "@/lib/data-quality";
+import type { DataQuality, NonJobHours, PunchExplorer } from "@/lib/data-quality";
 import { DataQualityExplorer } from "@/components/DataQualityExplorer";
 import { DataQualityDrill, EmployeeIdDrill } from "@/components/DataQualityDrill";
+import { useColumnSort } from "@/components/useColumnSort";
+import { SortableTh } from "@/components/ui/SortableHeader";
+import { sortRows, type SortColumns } from "@/lib/table-sort";
 
 // The Power BI report's "Data Quality" page. Its rules — which punches count as
 // invalid, and why — are reproduced in lib/data-quality.ts, where each one is
@@ -60,8 +65,49 @@ function Finding({
   );
 }
 
-const TH = "px-2 py-1.5 text-left text-label font-bold uppercase tracking-wide text-white";
+// No text-left baked into TH — every header here is a SortableTh, which supplies its
+// own alignment (see the matching note in DataQualityDrill.tsx).
+const TH = "px-2 py-1.5 text-label font-bold uppercase tracking-wide text-white";
 const TD = "px-2 py-1 text-left text-note text-sdc-navy";
+
+const NON_JOB_HOURS_COLUMNS: SortColumns<NonJobHours, "month" | "label" | "rows" | "hours"> = {
+  // "YYYY-MM" — already chronological as a plain string, same reasoning as every other
+  // date-typed column in the app (see table-sort.ts).
+  month: { type: "date", value: (r) => r.month },
+  label: { type: "text", value: (r) => r.label },
+  rows: { type: "number", value: (r) => r.rows },
+  hours: { type: "hours", value: (r) => r.hours },
+};
+
+// Pulled out of Finding's children (was inlined there) so the sort state has a
+// component to live in — this file has no other stateful table.
+function NonJobHoursTable({ rows }: { rows: NonJobHours[] }) {
+  const sort = useColumnSort<"month" | "label" | "rows" | "hours">();
+  return (
+    <div className="overflow-hidden rounded-lg border border-sdc-border">
+      <table className="w-full border-collapse">
+        <thead className="bg-sdc-navy">
+          <tr>
+            <SortableTh label="Month" sortKey="month" type="date" sort={sort.sort} onSort={sort.onSort} className={TH} />
+            <SortableTh label="Booked to" sortKey="label" type="text" sort={sort.sort} onSort={sort.onSort} className={TH} />
+            <SortableTh label="Rows" sortKey="rows" type="number" sort={sort.sort} onSort={sort.onSort} className={TH} />
+            <SortableTh label="Hours" sortKey="hours" type="hours" sort={sort.sort} onSort={sort.onSort} className={TH} />
+          </tr>
+        </thead>
+        <tbody>
+          {sortRows(rows, sort.sort, NON_JOB_HOURS_COLUMNS).map((r, i) => (
+            <tr key={`${r.month}-${r.label}`} className={i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}>
+              <td className={`${TD} font-mono text-label`}>{r.month}</td>
+              <td className={TD}>{r.label}</td>
+              <td className={`${TD} text-right tabular-nums`}>{r.rows.toLocaleString()}</td>
+              <td className={`${TD} text-right tabular-nums`}>{fmtH(r.hours)}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
 
 export function DataQualityPanel({ dq, explorer }: { dq: DataQuality; explorer: PunchExplorer | null }) {
   return (
@@ -127,28 +173,7 @@ export function DataQualityPanel({ dq, explorer }: { dq: DataQuality; explorer: 
         hours={dq.nonJobHours.hours}
         unit="month/label pairs"
       >
-        <div className="overflow-hidden rounded-lg border border-sdc-border">
-          <table className="w-full border-collapse">
-            <thead className="bg-sdc-navy">
-              <tr>
-                <th className={TH}>Month</th>
-                <th className={TH}>Booked to</th>
-                <th className={`${TH} text-right`}>Rows</th>
-                <th className={`${TH} text-right`}>Hours</th>
-              </tr>
-            </thead>
-            <tbody>
-              {dq.nonJobHours.rows.map((r, i) => (
-                <tr key={`${r.month}-${r.label}`} className={i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}>
-                  <td className={`${TD} font-mono text-label`}>{r.month}</td>
-                  <td className={TD}>{r.label}</td>
-                  <td className={`${TD} text-right tabular-nums`}>{r.rows.toLocaleString()}</td>
-                  <td className={`${TD} text-right tabular-nums`}>{fmtH(r.hours)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
+        <NonJobHoursTable rows={dq.nonJobHours.rows} />
       </Finding>
 
       {dq.truncated && (
