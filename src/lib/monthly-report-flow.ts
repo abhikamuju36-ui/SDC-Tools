@@ -322,8 +322,8 @@ export function staleDialogMessage(monthName: string, cause: "month" | "data"): 
 
 // ── Failure, said in a way that names the cause (§26.9) ─────────────────────
 
-// The reasons the server action can return, plus the two the browser can decide
-// on its own (`network`, `pendingSave`). One union, both sides.
+// The reasons the server action can return, plus the three the browser can decide
+// on its own (`network`, `pendingSave`, `browser`). One union, both sides.
 export type SubmitFailureReason =
   | "validation"
   | "pendingSave"
@@ -332,6 +332,15 @@ export type SubmitFailureReason =
   | "network"
   | "duplicate"
   | "month"
+  // The submission could not even be STARTED by this browser — it never became a
+  // request, so the server has never heard of it. Distinct from `network` (which
+  // means it was sent and the reply did not arrive) and from `error` (which is the
+  // backend failing), because the corrective action is completely different: this
+  // one is about the browser or the page, not the data and not the server. The one
+  // real instance was `crypto.randomUUID()` being undefined on this app's
+  // non-secure origin, which threw in the click handler and made the button do
+  // nothing at all — see lib/client-uuid.ts.
+  | "browser"
   | "error";
 
 export type FailureExplanation = {
@@ -377,6 +386,19 @@ export function failureExplanation(reason: SubmitFailureReason, message: string)
         category: "Network",
         text: `${message} Your saved work is untouched — nothing needs to be re-entered.`,
         retryable: true,
+      };
+    case "browser":
+      return {
+        reason,
+        category: "Browser",
+        // Not retryable: the same click in the same page will fail the same way, and
+        // "press it again" is the advice that wastes the most time when the button
+        // is the thing that is broken. Reloading is what can actually change the
+        // outcome (a stale bundle), so that is what it says.
+        text:
+          `${message} Nothing was submitted and every figure you have entered is still saved. ` +
+          `Reload the page and try again; if it happens again, report it — the browser console has the detail.`,
+        retryable: false,
       };
     case "duplicate":
       return {

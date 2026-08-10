@@ -4,6 +4,7 @@ import { useEffect, useRef } from "react";
 import { useAutosave } from "@/components/useAutosave";
 import { SaveStatusChip } from "@/components/SaveStatusChip";
 import { useStandardPoolDirty } from "@/components/EtcStandardColumns";
+import { registerPoolAutosaveFlush } from "@/lib/etc-dirty-tracker";
 
 // Autosave for the Standard Fees panel's two manual cells (Hours being pulled, Rate).
 //
@@ -74,6 +75,11 @@ export function PoolAutosave({
     form.addEventListener("input", onEdit);
     return () => form.removeEventListener("input", onEdit);
   }, [schedule]);
+
+  // Let `Submit {Month} Report` wait for a pending pool save before it reads the
+  // month's CategoryPool rows out of the database — the other half of the flush
+  // EtcAutosave.tsx registers for the grid's New ETC cells.
+  useEffect(() => registerPoolAutosaveFlush(() => retry()), [retry]);
 
   return (
     <div className="flex items-center justify-center px-3 py-2">

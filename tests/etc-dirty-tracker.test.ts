@@ -6,6 +6,8 @@ import {
   updateEtcField,
   rebaselineEtcFields,
   isEtcDirty,
+  registerPoolAutosaveFlush,
+  flushPoolAutosave,
 } from "../src/lib/etc-dirty-tracker";
 
 // The tracker decides whether the Monthly ETC grid warns "you have unsaved
@@ -154,4 +156,58 @@ test("a save cannot invent baselines for unrelated form fields", () => {
   assert.equal(isEtcDirty(), true);
   forgetEtcField("hoursWorked__1");
   assert.equal(isEtcDirty(), false);
+});
+
+// ── The Standard Fees pool flush registry ───────────────────────────────────
+//
+// `Submit {Month} Report` calls this the same way it calls flushEtcAutosave — a
+// SECOND, separate registry (PoolAutosave.tsx registers into it, not
+// EtcAutosave.tsx) that used to not exist at all: the submission flushed the ETC
+// grid's debounce and never the pool panel's, so a "Hours being pulled" edit still
+// on its own 800ms debounce could be frozen over by loadStandardSheetRows reading
+// whatever CategoryPool already had saved.
+
+test("flushing with nothing registered is a safe no-op", async () => {
+  // A locked month, or a session that never unlocked the Standard view, mounts
+  // no PoolAutosave at all — the submission still has to be able to call this.
+  await assert.doesNotReject(flushPoolAutosave());
+});
+
+test("flushing calls the registered function", async () => {
+  let calls = 0;
+  const unregister = registerPoolAutosaveFlush(async () => {
+    calls++;
+  });
+  await flushPoolAutosave();
+  assert.equal(calls, 1);
+  unregister();
+});
+
+test("unregistering stops it from being called again", async () => {
+  let calls = 0;
+  const unregister = registerPoolAutosaveFlush(async () => {
+    calls++;
+  });
+  unregister();
+  await flushPoolAutosave();
+  assert.equal(calls, 0);
+});
+
+test("an unregister call cannot clobber a NEWER registration", async () => {
+  // Same guard as registerEtcAutosaveFlush, and for the same reason: a panel
+  // that unmounts while a second one (a fast month switch) has already
+  // registered its own flush must not silence the one still mounted.
+  let firstCalls = 0;
+  let secondCalls = 0;
+  const unregisterFirst = registerPoolAutosaveFlush(async () => {
+    firstCalls++;
+  });
+  const unregisterSecond = registerPoolAutosaveFlush(async () => {
+    secondCalls++;
+  });
+  unregisterFirst(); // stale — the second registration already replaced it
+  await flushPoolAutosave();
+  assert.equal(firstCalls, 0);
+  assert.equal(secondCalls, 1);
+  unregisterSecond();
 });

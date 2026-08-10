@@ -249,3 +249,30 @@ export async function flushEtcAutosave(): Promise<void> {
   if (!autosaveFlush) return;
   await autosaveFlush();
 }
+
+// ── The Standard Fees pool cells flush the same way, through a SEPARATE registry ──
+//
+// "Hours being pulled" and "Rate" are tracked by StandardRatesProvider
+// (EtcStandardColumns.tsx's isPoolDirty), not by this file's dirtyFields set, and
+// PoolAutosave.tsx — not EtcAutosave.tsx — owns their debounce. Without this second
+// registry, `Submit {Month} Report` only ever flushed the ETC grid: a pool edit still
+// on its own 800ms debounce would be sitting unsaved in the browser while
+// loadStandardSheetRows read (and froze) whatever was already in CategoryPool —
+// silently discarding the value on screen, despite the panel's own text promising
+// "the submission waits for them."
+let poolAutosaveFlush: (() => Promise<unknown>) | null = null;
+
+export function registerPoolAutosaveFlush(fn: () => Promise<unknown>): () => void {
+  poolAutosaveFlush = fn;
+  return () => {
+    if (poolAutosaveFlush === fn) poolAutosaveFlush = null;
+  };
+}
+
+// A no-op when no pool panel is mounted (a locked month, or a session that never
+// unlocked the Standard view) or when nothing on it is dirty — same contract as
+// flushEtcAutosave.
+export async function flushPoolAutosave(): Promise<void> {
+  if (!poolAutosaveFlush) return;
+  await poolAutosaveFlush();
+}

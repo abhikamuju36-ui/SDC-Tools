@@ -290,7 +290,28 @@ export async function submitMonthlyReport(
   // Push the freshly-locked New ETC values into the months that derive their Prior ETC
   // from them. A no-op on the current month; on a reopened historical month it is the
   // whole point of the correction.
-  const cascade = await cascadePriorEtcForward(month);
+  //
+  // Best-effort past this point, the same way recordChanges/logAudit already are — and
+  // for the same reason: the month IS submitted. The transaction above committed and
+  // recordSubmission just wrote status "submitted", so a throw here must not propagate
+  // out of this function the way it used to. It would reach the client's catch block as
+  // a "the submission could not reach the server" network failure — reporting a real,
+  // committed submission as a failure, with no receipt, while the database already has
+  // the month locked. (A retry used to half-recover, since checkMonthlyReport's
+  // `submitted` lookup would find it — but only on a SECOND click, after the first one
+  // told the user it failed.)
+  let cascade: Awaited<ReturnType<typeof cascadePriorEtcForward>> = {
+    monthsUpdated: [],
+    entriesUpdated: 0,
+    stoppedAtLockedMonth: null,
+  };
+  let cascadeError: string | null = null;
+  try {
+    cascade = await cascadePriorEtcForward(month);
+  } catch (err) {
+    cascadeError = err instanceof Error ? err.message : String(err);
+    console.error("[monthly-report] cascade to later months failed after a successful submission", month, err);
+  }
 
   // Announced to every connected browser: no cellKey, so each tab takes the throttled
   // route refresh (LiveRefresh) — which is right here, because a submission changes
@@ -318,7 +339,8 @@ export async function submitMonthlyReport(
     summary:
       `Submitted ${monthLabel(month)} report — ${entriesSubmitted} ETC entr${entriesSubmitted === 1 ? "y" : "ies"}, ` +
       `${standardRows.length} Standard Sheet row(s)` +
-      (cascade.entriesUpdated > 0 ? ` — carried forward into ${cascade.monthsUpdated.join(", ")}` : ""),
+      (cascade.entriesUpdated > 0 ? ` — carried forward into ${cascade.monthsUpdated.join(", ")}` : "") +
+      (cascadeError ? ` — WARNING: cascade to later months failed (${cascadeError}); re-run it for ${month} manually` : ""),
     // §26.15 — everything the audit record is asked to carry that is not already a
     // column on MonthlyReportSubmission (which holds month, year, userId, userName,
     // status, appVersion, the validation result and the three timestamps).
@@ -326,6 +348,7 @@ export async function submitMonthlyReport(
       submissionId: input.submissionId,
       sections: SECTIONS,
       cascade,
+      cascadeError,
       counts: validation.counts,
       validationOk: validation.ok,
       confirmedAt: confirmedAt?.toISOString() ?? null,

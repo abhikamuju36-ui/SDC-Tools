@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useRef, useState, useTransition } from "react";
 import { submitMonthlyReport, checkMonthlyReport, type MonthlyReportStatus } from "@/lib/monthly-report-actions";
-import { flushEtcAutosave, isEtcDirty } from "@/lib/etc-dirty-tracker";
+import { flushEtcAutosave, flushPoolAutosave, isEtcDirty } from "@/lib/etc-dirty-tracker";
+import { randomId } from "@/lib/client-uuid";
 import { useRealtimeChanges } from "@/components/RealtimeProvider";
 import {
   readinessLine,
@@ -256,8 +257,10 @@ export function SubmitReportAction({
     setPhase("validating");
     startTransition(async () => {
       // A draft still on the autosave debounce would simply not be in the month the
-      // submission freezes — it reads the database, not this form.
+      // submission freezes — it reads the database, not this form. Both grids: the
+      // ETC cells and the Standard Fees pool cells debounce independently.
       if (isEtcDirty()) await flushEtcAutosave();
+      await flushPoolAutosave();
 
       const fresh = await refreshStatus({ showSpinner: true });
       if (fresh === null) {
@@ -289,6 +292,23 @@ export function SubmitReportAction({
   }
 
   // ── Confirming (§26.6, "before processing the confirmed submission") ──────
+  //
+  // ── The whole synchronous prelude is guarded, deliberately ────────────────
+  //
+  // This handler used to mint the submission id with a bare `crypto.randomUUID()`,
+  // which is undefined on this app's own origin (plain HTTP on a LAN hostname is
+  // not a secure context — see lib/client-uuid.ts). It threw right here, ABOVE
+  // `setPhase("submitting")` and ABOVE `startTransition`, and outside the
+  // try/catch that guards the request itself. The result was the worst failure a
+  // button can have: the click did nothing whatsoever — no request, no
+  // "Submitting…", no error on screen, nothing in the server log — and the dialog
+  // sat there looking perfectly functional.
+  //
+  // `randomId()` is now contracted never to throw, so this catch should be
+  // unreachable. It stays because that is exactly what was assumed last time. Any
+  // synchronous fault before `startTransition` means NOTHING was sent, so the one
+  // correct response is to say so where the user is already looking, rather than
+  // to fail silently and leave them clicking a dead control.
   function confirmSubmit() {
     if (pending) return; // one confirm, one submission
     // The month cannot have changed without this component re-rendering with a new
@@ -298,9 +318,27 @@ export function SubmitReportAction({
       closeDialog("stale");
       return;
     }
-    confirmedAt.current = new Date().toISOString();
-    if (!attemptId.current) attemptId.current = crypto.randomUUID();
-    const submissionId = attemptId.current;
+
+    // Guarded because reaching `startTransition` is what makes the click visible:
+    // anything that throws above it leaves the user staring at a dead button.
+    let submissionId: string;
+    try {
+      confirmedAt.current = new Date().toISOString();
+      if (!attemptId.current) attemptId.current = randomId();
+      submissionId = attemptId.current;
+    } catch (err) {
+      // Nothing has been sent, so the month is untouched and every figure is still
+      // saved — `browser` says exactly that. Logged as well as shown, because the
+      // console is where the last instance of this was ultimately found.
+      console.error("[submit-report] could not prepare the submission in this browser", err);
+      setPhase("failed");
+      dialogMonth.current = null;
+      setFailure(
+        failureExplanation("browser", "This browser could not start the submission."),
+      );
+      return;
+    }
+
     const fingerprint = dialogFingerprint.current;
     setPhase("submitting");
 
@@ -309,6 +347,7 @@ export function SubmitReportAction({
       // runs BEFORE the staleness check on the server, so this user's own unsaved work
       // cannot read as somebody else's change.
       if (isEtcDirty()) await flushEtcAutosave();
+      await flushPoolAutosave();
 
       let result: Awaited<ReturnType<typeof submitMonthlyReport>>;
       try {
@@ -318,9 +357,29 @@ export function SubmitReportAction({
           confirmedAt: confirmedAt.current ?? undefined,
         });
       } catch {
-        // The request never came back. The attempt id is deliberately KEPT: if the
-        // submission did land, the retry will find it and report the first outcome
-        // rather than freezing the month a second time (§26.9).
+        // Either the request never reached the server, or it did and something AFTER
+        // the commit threw on the way back (a downstream step in submitMonthlyReport —
+        // see the guard added there, kept here as a second line of defence for any
+        // failure mode like it). Those two look identical from here: a rejected
+        // promise, no response. Ask the server what actually happened before
+        // reporting a failure — the whole point of the idempotency key is that a
+        // submission which DID land is discoverable by month, not just by this one
+        // response. Guessing "network" without checking is how a real, committed
+        // submission got told to the user as a failure, with no receipt, while the
+        // database already had the month locked.
+        const recheck = await refreshStatus().catch(() => null);
+        if (recheck?.submitted) {
+          attemptId.current = null;
+          dialogMonth.current = null;
+          setReceipt(recheck.submitted);
+          setPhase("submitted");
+          setFailure(null);
+          setNotice(null);
+          return;
+        }
+        // The attempt id is deliberately KEPT: if the submission did land after all
+        // (this recheck itself failed, say), the retry will find it and report the
+        // first outcome rather than freezing the month a second time (§26.9).
         setPhase("failed");
         dialogMonth.current = null;
         setFailure(failureExplanation("network", "The submission could not reach the server."));

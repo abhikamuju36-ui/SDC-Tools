@@ -288,12 +288,28 @@ test("each failure names its category and whether retrying is safe", () => {
     ["network", "Network", true],
     ["error", "Backend failure", true],
     ["duplicate", "Already submitted", false],
+    // The submission never became a request at all. Not retryable: the same click
+    // in the same page fails identically, so "press it again" would be the advice
+    // that wastes the most time.
+    ["browser", "Browser", false],
   ];
   for (const [reason, category, retryable] of cases) {
     const e = failureExplanation(reason, "Something happened.");
     assert.equal(e.category, category, reason);
     assert.equal(e.retryable, retryable, reason);
   }
+});
+
+test("a browser-side failure is not blamed on the backend or the data", () => {
+  // The one instance of this was crypto.randomUUID() being undefined on the app's
+  // non-secure origin. Reporting that as "Backend failure" would send whoever
+  // debugged it next straight to the server logs, where there is nothing to find —
+  // the request was never sent. It has to name the browser and offer the reload.
+  const e = failureExplanation("browser", "This browser could not start the submission.");
+  assert.equal(e.category, "Browser");
+  assert.match(e.text, /still saved/i);
+  assert.match(e.text, /reload/i);
+  assert.ok(!/backend/i.test(e.text), e.text);
 });
 
 test("a failure never suggests re-entering data that is already saved", () => {
