@@ -176,14 +176,18 @@ export function DepartmentEtcChecklist({ month, monthTitle, initial, manageable,
               const { [code]: _refused, ...rest } = m;
               return rest;
             });
-            toast(res.message, "error");
+            // critical: a permission/auth refusal on the ETC sign-off must always
+            // reach the manager, even from inside a subtree that suppresses routine
+            // toasts — see SuppressToasts in ui/Toast.tsx.
+            toast(res.message, "error", { critical: true });
           }
         } catch (err) {
           setMine((m) => {
             const { [code]: _failed, ...rest } = m;
             return rest;
           });
-          toast(err instanceof Error ? `Could not save — ${err.message}` : "Could not save the status.", "error");
+          // critical: a save failure on the sign-off checklist, same reason as above.
+          toast(err instanceof Error ? `Could not save — ${err.message}` : "Could not save the status.", "error", { critical: true });
         } finally {
           setPending((p) => {
             const { [code]: _done, ...rest } = p;

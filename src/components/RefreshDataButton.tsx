@@ -108,14 +108,17 @@ export function RefreshDataButton({
       if (!outcome.ok) {
         if (outcome.reason === "locked") {
           const since = outcome.runningSince ? new Date(outcome.runningSince).toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" }) : null;
+          // critical: refresh status, kept per the task's "Refresh failures/completion
+          // when useful" — see SuppressToasts in ui/Toast.tsx.
           toast(
             `A refresh is already running${since ? ` (started ${since})` : ""} — it will finish for everyone. Nothing was started twice.`,
             "info",
+            { critical: true },
           );
           setOthersRunningSince(outcome.runningSince);
           return;
         }
-        toast(`Refresh failed — ${outcome.message}. Nothing was updated; the hourly schedule will try again.`, "error");
+        toast(`Refresh failed — ${outcome.message}. Nothing was updated; the hourly schedule will try again.`, "error", { critical: true });
         return;
       }
 
@@ -128,7 +131,7 @@ export function RefreshDataButton({
       // manager comparing the two needs to see the two vintages, not two timestamps.
       const through = outcome.hoursThrough ? ` Hours are complete through ${outcome.hoursThrough}.` : "";
       if (outcome.status === "ok") {
-        toast(`All application data was refreshed successfully at ${at}.${through}${started}`, "success");
+        toast(`All application data was refreshed successfully at ${at}.${through}${started}`, "success", { critical: true });
       } else {
         // Explicitly NOT a success: names what failed, says what did update, and says
         // what happens next (§25.7).
@@ -136,6 +139,7 @@ export function RefreshDataButton({
           `Refreshed at ${at}, but ${outcome.failedLabels.length} source${outcome.failedLabels.length === 1 ? "" : "s"} failed: ` +
             `${outcome.failedLabels.join(", ")}. Everything else was updated; the hourly schedule will retry the rest.${started}`,
           "error",
+          { critical: true },
         );
       }
     });

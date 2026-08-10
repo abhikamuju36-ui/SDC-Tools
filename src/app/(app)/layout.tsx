@@ -4,7 +4,6 @@ import AppShell from "@/components/AppShell";
 import { COLLAPSED_COOKIE, WIDTH_COOKIE, parseSidebarPrefs } from "@/lib/sidebar-prefs";
 import { LiveRefresh } from "@/components/LiveRefresh";
 import { RealtimeProvider } from "@/components/RealtimeProvider";
-import { ChangeNotifications } from "@/components/ChangeNotifications";
 import { InteractionMetrics } from "@/components/InteractionMetrics";
 import { getSchedulerBaseUrl } from "@/lib/scheduler-link";
 import { withSchedulerSso } from "@/lib/scheduler-sso";
@@ -59,11 +58,12 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
       <LiveRefresh />
       {/* The realtime layer, also once for the whole app: one SSE connection per
           tab carrying presence ("who is editing this cell") and change events
-          ("what did somebody just save"). RealtimeProvider renders nothing —
-          it owns the connection; ChangeNotifications renders the banner. Both are
-          here rather than per-page so every tab behaves identically. */}
+          ("what did somebody just save"). RealtimeProvider renders nothing — it
+          owns the connection. ChangeNotifications (the change-event banner) is
+          no longer mounted here: since 2026-08-10 it renders from inside
+          AppShell's ToastProvider, which is the one place notifications share a
+          single fixed stack — see the note in ui/Toast.tsx. */}
       <RealtimeProvider />
-      <ChangeNotifications />
       {/* Interaction timing (§38.14), once for the whole app so every route is measured
           the same way. Renders nothing, sends nothing, and stays dormant in production
           until somebody asks for it with ?perf=1 — see the header note. */}

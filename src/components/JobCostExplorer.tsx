@@ -253,6 +253,19 @@ export function JobCostExplorer({
   const activeJobForAllocation = allocationJobId ? computed.find((r) => r.jobId === allocationJobId) ?? null : null;
 
   return (
+    // Job Cost Explorer's own export-result toasts are suppressed app-wide per the
+    // task's "no global side notifications from this area" — it has no critical-per-spec
+    // call sites (see lib/notification-stack.ts's shouldSuppress for the bypass a
+    // future critical one would need). Exports still succeed/fail identically; only the
+    // global toast is silenced.
+    //
+    // SuppressToasts is NOT wrapped here. A component cannot supply its own
+    // useToast() call — made above, in this component's OWN render scope — with a
+    // Provider it renders as part of its own returned JSX: useContext resolves
+    // against ANCESTORS at the point the hook actually runs, and a self-wrap is a
+    // descendant of that point, not an ancestor. The wrap lives one level up, at
+    // the call site in app/(app)/job-cost-explorer/page.tsx, which correctly makes
+    // it an ancestor of this whole component.
     <div className="flex flex-col gap-4">
       <div className={`${card("p-4")} flex flex-col gap-3`}>
         <div className="flex flex-wrap items-center gap-2">

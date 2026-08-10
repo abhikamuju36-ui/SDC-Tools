@@ -31,6 +31,7 @@ import type { StandardJobBase, StandardRates, FrozenStandardRow, PoolRowInput } 
 import { EtcRatesButton } from "@/components/EtcRatesButton";
 import { StandardsGate, StandardsVisibilityToggle } from "@/components/StandardsGate";
 import { StandardFeesCard } from "@/components/StandardFeesCard";
+import { SuppressToasts } from "@/components/ui/Toast";
 import { POOL_PANEL_META } from "@/lib/pool-panel-meta";
 import type { PoolPanelRow, NewProjectRow } from "@/components/StandardPoolPanel";
 import { newProjectsEnteringMonth } from "@/lib/standard-pool-local";
@@ -1090,6 +1091,11 @@ export default async function MonthlyEtcPage({
         {/* Sync History now lives inside the merged "Sync Data" menu above. */}
         {/* Password-gated Standard Sheet columns (Dan/Lisa only) — same
             unlock cookie as the /standard-sheet tab. */}
+        {/* SuppressToasts: the "Standard Sheet" area's own controls (ETC Rates, the
+            reveal gate) have no toast() calls today, but are wrapped so a future one
+            added here is silenced by default rather than leaking a global toast from
+            an area the task names explicitly. */}
+        <SuppressToasts>
         {showStandards ? (
           <>
             {/* ── "Standards", not "Hide Standards" (2026-08-05) ─────────────
@@ -1148,6 +1154,7 @@ export default async function MonthlyEtcPage({
             <StandardsGate initiallyUnlocked={false} />
           </>
         )}
+        </SuppressToasts>
 
         {/* ── The sign-off checklist, on the controls row (§50, moved here) ────
             It had a row to itself, which was the third line. It belongs here: five
@@ -2004,7 +2011,15 @@ export default async function MonthlyEtcPage({
                           if (!std) return null;
                           return (
                             <Fragment key="standards">
-                              <EtcStandardCells job={std} />
+                              {/* SuppressToasts: these ARE the "Standard Sheet" columns the
+                                  task names. No toast() call exists in EtcStandardCells today
+                                  (its Contingency/Notes autosave is silent by design), but the
+                                  wrap is here so a future one added to this cell defaults to
+                                  suppressed rather than leaking a global toast per keystroke
+                                  across an 1,100+-cell grid. */}
+                              <SuppressToasts>
+                                <EtcStandardCells job={std} />
+                              </SuppressToasts>
                             </Fragment>
                           );
                         })()}
@@ -2184,7 +2199,9 @@ export default async function MonthlyEtcPage({
                     })()}
                     {showStandards && (
                       <Fragment key="standards-total">
-                        <StandardGrandCells />
+                        <SuppressToasts>
+                          <StandardGrandCells />
+                        </SuppressToasts>
                       </Fragment>
                     )}
                   </tr>
@@ -2204,6 +2221,12 @@ export default async function MonthlyEtcPage({
               gets the card with no action call and no spinner, and a locked one is sent
               nothing at all. When the password is accepted mid-session the card shows its
               shell immediately and fetches only its own inputs. */}
+          {/* SuppressToasts: this is the "Standard Card" / Standard Fees panel the task
+              names — including SubmitReportAction, which has no useToast() call of its
+              own (its readiness line, dialog and receipt are all inline by design; see
+              its own header comment) and so is unaffected either way. Wrapped for the
+              same future-proofing as the Standard Sheet cells above. */}
+          <SuppressToasts>
           <StandardFeesCard
             month={month}
             initialData={
@@ -2223,6 +2246,7 @@ export default async function MonthlyEtcPage({
             }
             savePoolsAction={savePools.bind(null, month)}
           />
+          </SuppressToasts>
         </div>
         </StandardRatesProvider>
       )}

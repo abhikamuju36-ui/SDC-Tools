@@ -7,18 +7,96 @@
 //
 // useToast() returns a no-op when used outside the provider, so a component
 // that renders in isolation (tests, stories) never crashes.
+//
+// ── One physical stack, not two (2026-08-10) ────────────────────────────────
+//
+// Reported: notifications "spread in parallel" instead of reading as one clean
+// list. The cause was that this component and ChangeNotifications.tsx (the
+// realtime "who changed what" banner) were two entirely independent `fixed`
+// containers — bottom-right growing up here, top-right growing down there — with
+// no shared cap, no shared width, and (this half specifically) no dedup and no
+// cap at all. On a short viewport their bounding boxes could genuinely meet.
+//
+// They now render into ONE fixed container, owned here. The two producers'
+// STATE stays separate on purpose — a realtime change event and an arbitrary
+// action-result toast are shaped nothing alike (one is keyed on a grid cell and
+// groups repeats by cell; one is keyed on a message and groups repeats by exact
+// text) — but they share one position, one width, one z-index, and one padding
+// rhythm, so the result reads as one list rather than two. ChangeNotifications'
+// own cap (3) and dedup (by cell) are unchanged; this file's are new, in
+// lib/notification-stack.ts, deliberately shaped the same way so the two halves
+// stay recognisable as one system without being the same code.
+//
+// Two independent, hand-rolled notification-like elements were found in the same
+// audit and deliberately left alone rather than folded in here:
+//   - AddProjectButton.tsx's upload-error <span> (no close button, no timer)
+//   - SaveQuotedHoursButton.tsx's top-of-viewport save-result banner, whose own
+//     comment explains it does NOT also fire the shared toast because "two
+//     confirmations for one save is noise and the two could disagree"
+// Both are working, deliberate designs; absorbing them was a larger, separate
+// change than "stop the two real stacks from spreading" and was not done here.
 
-import { createContext, useCallback, useContext, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useMemo, useRef, useState } from "react";
 import { useExitList } from "@/components/useMotion";
+import { ChangeNotifications } from "@/components/ChangeNotifications";
+import {
+  foldToast,
+  capToasts,
+  shouldSuppress,
+  autoDismissMs,
+  MAX_VISIBLE_TOASTS,
+  type ToastItem,
+  type ToastKind,
+} from "@/lib/notification-stack";
 
-type ToastType = "success" | "error" | "info";
-type ToastItem = { id: number; message: string; type: ToastType };
-type ToastCtxValue = { toast: (message: string, type?: ToastType) => void };
+type ToastType = ToastKind;
+type ToastOpts = {
+  // Bypasses suppression (SuppressToasts, below) and the cap's trim order — see
+  // lib/notification-stack.ts. Reserve for the categories the task names as
+  // "keep notifications for": a save/autosave failure, a refresh failure or
+  // completion, a submission success/failure, a realtime connection issue, a
+  // permission/authorization error. Routine confirmations ("Copied X", "Saved
+  // view Y", an export finishing) are NOT critical, even when they are errors —
+  // an export failing is still just an export, not one of the five categories.
+  critical?: boolean;
+};
+type ToastCtxValue = { toast: (message: string, type?: ToastType, opts?: ToastOpts) => void };
 
 const ToastCtx = createContext<ToastCtxValue | null>(null);
 
+// Default false: nowhere is suppressed unless explicitly wrapped.
+const ToastSuppressCtx = createContext(false);
+
+/**
+ * Wrap a subtree to silence its ROUTINE toasts — Job Cost Explorer, the Standard
+ * Sheet grid columns, and the Standard Card / Standard Fees panel are the three
+ * named in the task. A `critical: true` toast called from inside still shows
+ * (shouldSuppress in lib/notification-stack.ts is the one place that rule lives).
+ *
+ * Deliberately a context, not a route-level or global flag: these three areas
+ * are component SUBTREES (Standard Sheet's cells are interleaved into the same
+ * grid rows as the un-suppressed Monthly ETC cells; Job Cost Explorer is one
+ * page among several under a shared layout), and a flag scoped any wider would
+ * either miss them or over-suppress a sibling that must not be. Nesting
+ * `SuppressToasts` around exactly the JSX that belongs to each area is what
+ * keeps the suppression as narrow as the request.
+ */
+export function SuppressToasts({ children }: { children: React.ReactNode }) {
+  return <ToastSuppressCtx.Provider value={true}>{children}</ToastSuppressCtx.Provider>;
+}
+
 export function useToast(): ToastCtxValue {
-  return useContext(ToastCtx) ?? { toast: () => {} };
+  const ctx = useContext(ToastCtx);
+  const suppressed = useContext(ToastSuppressCtx);
+  return useMemo<ToastCtxValue>(() => {
+    if (!ctx) return { toast: () => {} };
+    if (!suppressed) return ctx;
+    return {
+      toast: (message, type, opts) => {
+        if (!shouldSuppress(true, opts?.critical)) ctx.toast(message, type, opts);
+      },
+    };
+  }, [ctx, suppressed]);
 }
 
 function Glyph({ type }: { type: ToastType }) {
@@ -52,15 +130,52 @@ function Glyph({ type }: { type: ToastType }) {
 export function ToastProvider({ children }: { children: React.ReactNode }) {
   const [toasts, setToasts] = useState<ToastItem[]>([]);
   const idRef = useRef(0);
+  // One timer per toast id, so a bumped toast's OWN timer can be cleared and
+  // restarted rather than leaving the original timer to fire early on a card
+  // that has just been re-shown as "most recent". Bare setTimeout/clearTimeout,
+  // not window.-prefixed — matching components/useAutosave.ts's own ref typing,
+  // since `ReturnType<typeof window.setTimeout>` and the ambient Node `Timeout`
+  // type disagree under this project's mixed DOM+Node lib config.
+  const timers = useRef(new Map<number, ReturnType<typeof setTimeout>>());
 
-  const toast = useCallback((message: string, type: ToastType = "success") => {
-    const id = ++idRef.current;
-    setToasts((prev) => [...prev, { id, message, type }]);
-    // Errors linger longer than confirmations.
-    window.setTimeout(() => setToasts((prev) => prev.filter((t) => t.id !== id)), type === "error" ? 6000 : 4000);
+  const scheduleDismiss = useCallback((id: number, type: ToastType) => {
+    const existing = timers.current.get(id);
+    if (existing !== undefined) clearTimeout(existing);
+    const t = setTimeout(() => {
+      timers.current.delete(id);
+      setToasts((prev) => prev.filter((x) => x.id !== id));
+    }, autoDismissMs(type));
+    timers.current.set(id, t);
   }, []);
 
-  const dismiss = (id: number) => setToasts((prev) => prev.filter((t) => t.id !== id));
+  const toast = useCallback(
+    (message: string, type: ToastType = "success", opts?: ToastOpts) => {
+      const id = ++idRef.current;
+      // `target` is written inside the setState updater (a plain local variable,
+      // not a ref) purely to learn WHICH id survived the fold — foldToast may keep
+      // the incoming id or an existing one it bumped. The updater itself stays
+      // pure (no timers, no other side effects) so React re-invoking it (dev
+      // StrictMode) can never double-schedule a dismissal; the one side effect —
+      // arming the timer — happens once, after setToasts returns, below.
+      const target = { id };
+      setToasts((prev) => {
+        const { items, bumpedId } = foldToast(prev, { id, message, type, critical: opts?.critical ?? false });
+        target.id = bumpedId ?? id;
+        return capToasts(items, MAX_VISIBLE_TOASTS);
+      });
+      scheduleDismiss(target.id, type);
+    },
+    [scheduleDismiss],
+  );
+
+  const dismiss = useCallback((id: number) => {
+    const existing = timers.current.get(id);
+    if (existing !== undefined) {
+      clearTimeout(existing);
+      timers.current.delete(id);
+    }
+    setToasts((prev) => prev.filter((t) => t.id !== id));
+  }, []);
 
   // ── Enter and exit, not appear and vanish (§36.13) ────────────────────────
   //
@@ -78,7 +193,22 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
   return (
     <ToastCtx.Provider value={{ toast }}>
       {children}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-[100] flex w-80 max-w-[calc(var(--app-vw)_-_2rem)] flex-col gap-2" aria-live="polite" aria-atomic="false">
+      {/* ── The one notification stack for the whole app ──────────────────────
+          top-20/right-4, matching ChangeNotifications' own (already-tuned)
+          position: below the header/toolbar, clear of the grid's bottom
+          scrollbar. `--sidebar-w` bounds the width so a narrow window with the
+          sidebar dragged wide can never let this reach into the sidebar's own
+          span — the one positioning gap the audit found in both of the old,
+          separate containers. z-[45] sits above the sidebar/grid-sticky layer
+          (z-20) and below a modal dialog (z-50), so an open dialog always wins
+          a spatial overlap rather than being covered by a passive notification. */}
+      <div
+        className="pointer-events-none fixed right-4 top-20 z-[45] flex w-[320px] max-w-[calc(var(--app-vw)_-_var(--sidebar-w)_-_2rem)] flex-col gap-2"
+        aria-live="polite"
+        aria-atomic="false"
+        aria-label="Notifications"
+      >
+        <ChangeNotifications />
         {shown.map(({ key, item: t, leaving }) => (
           <div
             key={key}
@@ -96,7 +226,20 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             }`}
           >
             <Glyph type={t.type} />
-            <span className="min-w-0 flex-1 font-medium break-words">{t.message}</span>
+            <span className="min-w-0 flex-1 break-words font-medium">
+              {t.message}
+              {/* The dedup badge (lib/notification-stack.ts's foldToast): the SAME
+                  message firing again bumps this card's count instead of stacking
+                  a second, visually identical one. */}
+              {t.count > 1 && (
+                <span
+                  className="ml-1.5 inline-block shrink-0 rounded bg-black/10 px-1 align-middle text-label font-semibold leading-4"
+                  title={`Happened ${t.count} times`}
+                >
+                  ×{t.count}
+                </span>
+              )}
+            </span>
             <button
               type="button"
               onClick={() => dismiss(t.id)}

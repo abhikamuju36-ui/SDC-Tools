@@ -41,29 +41,42 @@ export default function AppShell({
   // would leave this at the width the SERVER rendered, which is precisely the "stale
   // expanded-sidebar dimension" §46.9 forbids. Both writers derive the value from
   // sidebarWidthCss, so there is one formula and not two.
+  // ── ToastProvider wraps the WHOLE shell, not just <main> (2026-08-10) ───────
+  //
+  // It used to wrap only {children} inside <main>, which left the Sidebar — and
+  // everything rendered inside it — outside the toast context entirely.
+  // RefreshDataButton lives in the Sidebar (moved there §41.16, 2026-08-05) and
+  // calls toast() on every refresh outcome; useToast() silently no-ops when
+  // there is no provider ancestor, so every one of those calls — including the
+  // ones marked `critical: true` specifically so they would always reach the
+  // user — has never actually rendered anything. Found auditing this exact
+  // guarantee, not reported on its own; fixed here rather than left for whoever
+  // next wonders why a "critical" refresh toast never shows.
   return (
-    <div
-      data-app-shell
-      className="flex min-h-[var(--app-vh)]"
-      style={{ "--sidebar-w": sidebarWidthCss(sidebar) } as React.CSSProperties}
-    >
-      {/* Keyboard/AT skip-link — jumps past the sidebar to the page content.
-          Visually hidden until focused. */}
-      <a
-        href="#main-content"
-        className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-sdc-navy focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
+    <ToastProvider>
+      <div
+        data-app-shell
+        className="flex min-h-[var(--app-vh)]"
+        style={{ "--sidebar-w": sidebarWidthCss(sidebar) } as React.CSSProperties}
       >
-        Skip to content
-      </a>
-      <Sidebar userEmail={userEmail} signOutAction={signOutAction} schedulerProjectsUrl={schedulerProjectsUrl} initial={sidebar} />
-      <main id="main-content" className="min-w-0 flex-1 bg-background">
-        <ToastProvider>{children}</ToastProvider>
-      </main>
-      {/* RowSelect (click-to-highlight-a-whole-row) removed 2026-08-03 by request —
-          see the note where its CSS used to live in globals.css. Hover highlighting
-          and Excel-style cell focus are unaffected. */}
-      <ExcelCellFocus />
-      <ColumnResize />
-    </div>
+        {/* Keyboard/AT skip-link — jumps past the sidebar to the page content.
+            Visually hidden until focused. */}
+        <a
+          href="#main-content"
+          className="sr-only focus:not-sr-only focus:absolute focus:left-3 focus:top-3 focus:z-50 focus:rounded-md focus:bg-sdc-navy focus:px-3 focus:py-2 focus:text-sm focus:font-semibold focus:text-white"
+        >
+          Skip to content
+        </a>
+        <Sidebar userEmail={userEmail} signOutAction={signOutAction} schedulerProjectsUrl={schedulerProjectsUrl} initial={sidebar} />
+        <main id="main-content" className="min-w-0 flex-1 bg-background">
+          {children}
+        </main>
+        {/* RowSelect (click-to-highlight-a-whole-row) removed 2026-08-03 by request —
+            see the note where its CSS used to live in globals.css. Hover highlighting
+            and Excel-style cell focus are unaffected. */}
+        <ExcelCellFocus />
+        <ColumnResize />
+      </div>
+    </ToastProvider>
   );
 }

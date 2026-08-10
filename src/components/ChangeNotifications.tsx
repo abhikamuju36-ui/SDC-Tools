@@ -9,14 +9,26 @@ import { useExitList } from "@/components/useMotion";
 // Rules it exists to satisfy, and how:
 //   • appears without a refresh          — fed by the SSE stream, not a poll
 //   • shown to every connected user      — the hub broadcasts to all subscribers
-//   • does not block normal app usage    — fixed, bottom-right, pointer-events
-//                                          only on the cards themselves
-//   • queued/grouped, not replaced       — a stack, newest first, capped at 4 on
-//                                          screen with a count for the remainder
+//   • does not block normal app usage    — pointer-events-none on the container it
+//                                          renders into (owned by ui/Toast.tsx since
+//                                          2026-08-10 — see the note below), auto on
+//                                          the cards themselves
+//   • queued/grouped, not replaced       — a stack, newest first, capped at VISIBLE (3)
+//                                          on screen with a count for the remainder
 //   • distinguishes added/edited/removed — colour AND the wording of the line
 //   • no sensitive or internal data      — it prints the user's display name, the
 //                                          tab, the row, the column and the two
 //                                          values. No ids, no SQL, no stack traces.
+//
+// ── No longer its own fixed corner (2026-08-10) ─────────────────────────────
+//
+// This used to render its own `fixed right-4 top-20 z-40` container, entirely
+// independent of ui/Toast.tsx's `fixed bottom-4 right-4 z-[100]` one — reported
+// as notifications "spreading" instead of forming one clean stack, because that
+// is exactly what two uncoordinated fixed corners look like. ToastProvider now
+// owns the ONE fixed container for both; this component renders only its
+// content (see the return statement) and is mounted from inside it, not from
+// app/(app)/layout.tsx any more.
 
 const TONE: Record<string, { dot: string; label: string }> = {
   added: { dot: "bg-sdc-green-text", label: "Added" },
@@ -123,26 +135,27 @@ export function ChangeNotifications() {
   const cards = useExitList(shown, (g) => `${g.head.tab}|${g.head.rowRef}|${g.head.columnName}`);
   if (cards.length === 0 && !offline) return null;
 
+  // ── No fixed wrapper here any more (2026-08-10) ─────────────────────────────
+  //
+  // This used to be its own `fixed right-4 top-20 z-40` container, entirely
+  // independent of Toast.tsx's `fixed bottom-4 right-4 z-[100]` one — two
+  // uncoordinated notification surfaces, which is the "spreads across the
+  // screen instead of one clean stack" report. ToastProvider now renders this
+  // component INSIDE its own single fixed container (see ui/Toast.tsx), so this
+  // returns only its content — a Fragment, not a positioned box — and every
+  // pointer-events-auto card still works exactly as it did, just one level
+  // higher up the tree than before. The cap (VISIBLE=3), the per-cell dedup, the
+  // 7s auto-dismiss and the "refused changes never auto-dismiss" rule are all
+  // unchanged: only the OUTER box moved.
+  //
+  // Padding is now px-3.5 py-2.5, up from px-3 py-2, to match Toast's cards —
+  // "keep consistent... padding" (the task's own wording) means a change-card
+  // and a toast-card sitting back to back in one stack should not visibly step
+  // in size between them.
   return (
-    <div
-      // pointer-events-none on the container, auto on the cards: the banner must not
-      // swallow clicks meant for whatever is underneath it.
-      //
-      // TOP-right since 2026-08-05, by request (was bottom-right). The bottom-right
-      // corner is where the grid's own horizontal scrollbar and its last rows are, so
-      // the stack sat on top of the part of the table people scroll to. The top-right
-      // of this app is empty — the header and toolbar are left-aligned — so the cards
-      // now cover nothing.
-      //
-      // top-20, not top-4: the page header and the toolbar row occupy the first ~5rem,
-      // and a card overlapping the month picker or Export would be trading one
-      // obstruction for another.
-      className="pointer-events-none fixed right-4 top-20 z-40 flex w-[320px] flex-col gap-2"
-      aria-live="polite"
-      aria-label="Recent changes by other users"
-    >
+    <>
       {offline && (
-        <div className="motion-toast-in pointer-events-auto rounded-lg border border-sdc-border bg-white px-3 py-2 text-note text-sdc-gray-600 shadow-lg">
+        <div className="motion-toast-in pointer-events-auto rounded-lg border border-sdc-border bg-white px-3.5 py-2.5 text-note text-sdc-gray-600 shadow-lg">
           <span className="mr-1.5 inline-block h-1.5 w-1.5 rounded-full bg-sdc-red align-middle" />
           Live updates disconnected — reconnecting. Your edits are still being saved.
         </div>
@@ -155,7 +168,7 @@ export function ChangeNotifications() {
         return (
           <div
             key={key}
-            className={`pointer-events-auto rounded-lg border border-sdc-border bg-white px-3 py-2 shadow-lg ${
+            className={`pointer-events-auto rounded-lg border border-sdc-border bg-white px-3.5 py-2.5 shadow-lg ${
               leaving ? "motion-toast-out" : "motion-toast-in"
             }`}
           >
@@ -195,6 +208,6 @@ export function ChangeNotifications() {
           + {hidden} more cell{hidden === 1 ? "" : "s"} changed — clear all
         </button>
       )}
-    </div>
+    </>
   );
 }

@@ -5715,3 +5715,199 @@ to guard the new query's structural properties (source-inspection style, same re
 `APDD.ProjectID` not the PO chain, the PO tables `LEFT JOIN`ed not `INNER`, the date filter in
 SQL before aggregation not a JS filter over a pre-aggregated result. `tsc`/`eslint` clean,
 845/845 tests pass.
+
+## 64. `Submit {Month} Report` did nothing on the real deployment — `crypto.randomUUID()` is secure-context only (2026-08-09)
+
+Reported twice: the confirmation dialog opens, `Yes, Submit Report` is clicked, and **nothing
+happens at all**. No "Submitting…", no error, no receipt, no row in `MonthlyReportSubmission`,
+nothing in the server log. The dialog just sits there with a live-looking button.
+
+**Root cause**: `SubmitReportAction.confirmSubmit()` minted the submission's idempotency key with
+a bare `crypto.randomUUID()`. That method is gated to **secure contexts** — HTTPS, or `localhost`.
+This app is served at `http://server-app1:3010`: plain HTTP on a LAN hostname, which is neither.
+Measured in a browser on `http://10.0.0.7:3021` (same shape of origin):
+
+    isSecureContext            false
+    typeof crypto.randomUUID   "undefined"
+    crypto.randomUUID()        TypeError: crypto.randomUUID is not a function
+    typeof crypto.getRandomValues  "function"   <- NOT gated
+
+The call sat on line 304, **above** `setPhase("submitting")` and **above** `startTransition`, and
+outside the try/catch that guards the request — that catch only ever wrapped the server call. So
+it threw synchronously in a React event handler: no state change, no request, no server log. The
+worst failure shape a button has, because every visible signal says the app is fine.
+
+**Why it survived everything.** `localhost` IS a secure context, so it never reproduced in local
+verification. Node has `crypto.randomUUID`, so the 946-test suite never saw it. The bug was
+reachable only from the origin real users type, and nothing in the loop tested that origin. An
+earlier pass at this report fixed two genuine but unrelated defects (below) and shipped without
+reproducing the reported symptom — the failure was assuming a repro rather than obtaining one.
+
+**Fix**: `lib/client-uuid.ts` — `randomId()`, contracted to **never throw**: prefers
+`crypto.randomUUID()` where it exists (secure contexts, and Node), falls back to a v4 built from
+`crypto.getRandomValues()` (not gated, so this is the path production takes), and finally to
+`Math.random()` so "no RNG" degrades to a working button rather than a dead one. The id is still
+minted CLIENT-side, deliberately: a retry must carry the same one or idempotency is lost
+(§26.9), which a server-minted id could not do.
+
+The synchronous prelude of `confirmSubmit` is now wrapped, with a new `browser` failure reason
+(category "Browser", not retryable, tells the user to reload) — distinct from `network` (sent, no
+reply) and `error` (backend failed) because the corrective action is completely different, and
+because "Backend failure" would have sent the next person to server logs that hold nothing. That
+guard should now be unreachable; it stays precisely because unreachability was the last
+assumption that cost two rounds.
+
+**Two unrelated defects found in the same audit and fixed:**
+
+* `submitMonthlyReport` called `cascadePriorEtcForward()` **after** the transaction had committed
+  and the submission was already recorded `submitted`, with no guard — unlike the neighbouring
+  `recordChanges`/`logAudit`, which are explicitly best-effort. A throw there propagated out and
+  the client reported a **committed** submission as a network failure. Now caught, logged, and
+  carried into the audit metadata as `cascadeError`. The client also re-checks the server's
+  authoritative status on any thrown error before declaring failure, so a landed submission can
+  never again be reported as a failed one.
+* The Standard Fees pool cells were **never flushed** before submission. `SubmitReportAction`
+  only called `flushEtcAutosave()`, and the pool panel debounces through completely separate
+  machinery (`PoolAutosave.tsx` / `StandardRatesProvider`), so a "Hours being pulled" edit still
+  on its ~800ms debounce was silently discarded by `loadStandardSheetRows` — despite the panel's
+  own text promising "the submission waits for them". Added `registerPoolAutosaveFlush` /
+  `flushPoolAutosave` alongside the ETC pair, registered by `PoolAutosave` and awaited at both
+  points the ETC flush already runs.
+
+`tsc`/`eslint` clean, 958/958 tests pass (12 new). Verified in a real browser at an insecure
+origin: the old expression throws, `randomId()` returns a valid v4, 2000/2000 unique, no throw.
+
+**The lesson worth keeping**: verifying on `localhost` cannot prove a browser API works for these
+users. `localhost` is privileged. Anything secure-context-gated — `crypto.randomUUID`,
+`crypto.subtle`, `navigator.clipboard` — is present locally and absent in production. A sweep
+found the only other instances are two `navigator.clipboard` calls in `JobProcurement.tsx`; both
+already use `?.` and `.catch()`, so their copy buttons silently do nothing on the deployment
+rather than throwing. Left alone here, but they are real and worth a look.
+
+## 65. Side notifications consolidated into one stack; suppressed in Job Cost Explorer / Standard Sheet / Standard Card (2026-08-10)
+
+Reported: notifications "spread in parallel" instead of reading as one clean vertical
+stack. An audit (multi-angle sweep: every `useToast()` call site, every fixed/absolute
+"notification-like" element in the app, and what "Standard Sheet"/"Standard Card" even
+refer to today) found the actual cause was structural: there were, in effect, up to four
+independent notification surfaces competing for the screen at once.
+
+**What was found:**
+
+* `ui/Toast.tsx` (`ToastProvider`) — `fixed bottom-4 right-4 z-[100]`, no cap, no dedup.
+  20 `toast()` call sites across 8 files.
+* `ChangeNotifications.tsx` (the realtime "who changed what" banner) — a SEPARATE
+  `fixed right-4 top-20 z-40` container, already capped at 3 with per-cell dedup and a
+  7s auto-dismiss (added 2026-08-05, unrelated prior fix). Mounted independently in
+  `app/(app)/layout.tsx`.
+* Two more, hand-rolled, bypassing both: `AddProjectButton.tsx`'s upload-error `<span>`
+  and `SaveQuotedHoursButton.tsx`'s full-width top banner (`z-[110]`, deliberately not
+  using the shared toast — its own comment: "two confirmations for one save is noise").
+* Neither shared system referenced `--sidebar-w` (which `AppShell.tsx` already
+  publishes for exactly this), so a narrow window with the sidebar dragged wide could
+  let either reach into the sidebar's own span. Toast's old `z-[100]` also sat ABOVE
+  every modal dialog (`z-50`), so a toast could visually cover an open dialog.
+* Of the three areas the report asks to suppress, exactly ONE has any `toast()` calls
+  today: `JobCostExplorer.tsx`'s export success/failure (2 sites). The Standard Sheet
+  grid columns (`EtcStandardColumns.tsx`) and the Standard Card / Standard Fees panel
+  (`StandardFeesCard.tsx` → `StandardPoolPanel.tsx` → `PoolAutosave.tsx` /
+  `SubmitReportAction.tsx`) give feedback entirely through inline JSX / `SaveStatusChip`
+  / `aria-live` regions and have never called `useToast()` — so suppressing them today
+  is a no-op in practice, but the wrap is there so a FUTURE toast added inside either
+  defaults to silenced rather than leaking.
+
+**The fix:**
+
+* `lib/notification-stack.ts` (new, dependency-free, matching `lib/motion.ts`'s
+  pure-logic-plus-React-glue split) — `foldToast` (dedup by exact message+type,
+  bumps count and moves to newest rather than stacking a duplicate),
+  `capToasts` (trims the OLDEST *non-critical* toasts first when over
+  `MAX_VISIBLE_TOASTS` — a critical one can never be evicted to make room for
+  routine noise), `shouldSuppress`. 16 tests.
+* `ui/Toast.tsx` now owns the ONE fixed stack (`top-20 right-4 z-[45]`,
+  `max-w-[calc(var(--app-vw)_-_var(--sidebar-w)_-_2rem)]`) and renders
+  `<ChangeNotifications />` as its first child. `ChangeNotifications.tsx` lost its
+  own wrapper div (now returns a Fragment) and moved out of `layout.tsx` into being
+  rendered from here — its cap/dedup/auto-dismiss/refused-never-dismiss logic is
+  otherwise untouched. Card padding aligned (`px-3.5 py-2.5` on both) so the two
+  producers' cards read as one rhythm.
+* `SuppressToasts` (new context + wrapper) plus a `critical: true` opt-out on
+  `toast()`, enforced by `useToast()` itself (not by the provider) since suppression
+  is a property of WHERE a component sits in the tree. Wrapped precisely around
+  `JobCostExplorer.tsx`'s whole subtree, and around `EtcStandardCells`/
+  `StandardGrandCells`/`EtcRatesButton`+`StandardsGate`/`StandardFeesCard` in
+  `etc/page.tsx` — not around `StandardRatesProvider`, which also wraps the ordinary
+  Monthly ETC grid cells that must stay un-suppressed.
+* Marked the 6 call sites that match the task's "keep notifications for" list
+  `{ critical: true }`: `DepartmentEtcChecklist.tsx`'s permission-refusal and
+  save-failure toasts, and all 4 of `RefreshDataButton.tsx`'s (already-running /
+  failed / succeeded / partial-failure).
+* Left the two rogue elements alone — both are deliberate, working, and folding
+  them in was a separate, larger change than "stop the two real stacks from
+  spreading."
+
+**Verification:** `tsc`/`eslint` clean, 974 tests pass (16 new). Caught one real bug
+via the test suite itself: the dedup "×N" badge used `text-[11px]`, which this repo's
+typography test forbids (raw pixel sizes) — fixed to `text-label`. Live in a real
+browser: fired the ETC page's own export twice back-to-back and confirmed the SAME
+card folds to "×2" rather than stacking a second one; confirmed the merged
+container's computed style (`fixed`, `top-20 right-4`, `z-45`, sidebar-aware
+max-width) with the export toast rendered inside it. Did NOT click through Job Cost
+Explorer's suppression live — it is password-gated in this deployment and entering
+a password on the user's behalf is out of bounds regardless of stakes; that half is
+verified by the 4 dedicated `shouldSuppress` tests and by direct diff inspection of
+the wrap boundary instead. Also did not generate a real `ChangeNotifications` card
+live, to avoid writing a throwaway edit into the shared production database's
+August 2026 ETC data merely to watch a card render — the merge is verified
+structurally (no console/server error with `ChangeNotifications` mounted from its
+new location; its own logic is byte-for-byte unchanged apart from the wrapper).
+
+One flagged, not fixed: `JobCostExplorer.tsx` has a pre-existing, unrelated
+`react-hooks/set-state-in-effect` lint violation (confirmed via `git diff` — not
+touched by this change) — spun off as its own follow-up rather than bundled in here.
+
+### 65.1 Two more found by an adversarial review pass, both fixed the same day
+
+Ran a second, independent review specifically hunting for gaps in the above: suppression
+completeness (every `useToast()` call site — is it correctly covered or correctly left
+alone?), critical-bypass correctness, and regression risk from moving
+`ChangeNotifications` out of `layout.tsx`. Two real findings, verified by re-reading the
+actual source rather than trusting the description:
+
+* **`JobCostExplorer.tsx`'s `<SuppressToasts>` wrap did nothing at all.** It wrapped the
+  component's own RETURNED JSX — `return (<SuppressToasts><div>...</div></SuppressToasts>)`
+  — which makes the Provider a DESCENDANT of the point where this same component's own
+  `useToast()` call already ran, earlier in its render. `useContext` resolves against
+  ancestors at the moment the hook executes; a component cannot supply its own hook call
+  with a Provider it renders as part of its own output. Net effect: `suppressed` stayed at
+  its default `false`, so Job Cost Explorer's export toasts were never actually silenced —
+  directly contradicting the comment sitting right above the wrap. Fixed by moving the wrap
+  to the call site instead: `app/(app)/job-cost-explorer/page.tsx` (a server component) now
+  wraps `<JobCostExplorer .../>` in `<SuppressToasts>` from the outside, where it is a true
+  ancestor. `etc/page.tsx`'s wraps around `EtcStandardCells`/`StandardGrandCells`/etc. were
+  already correct — they wrap *children*, not their own component's output — so this bug
+  was specific to `JobCostExplorer.tsx`'s self-wrap.
+* **`RefreshDataButton`'s toasts — all four, including the ones just marked
+  `critical: true`, specifically so they would always reach the user — have never rendered
+  anything, before or after this refactor.** `AppShell.tsx` mounted `<ToastProvider>` only
+  around `{children}` inside `<main>`, and `RefreshDataButton` has lived in the Sidebar
+  (a sibling of `<main>`, not a descendant) since §41.16 moved it there on 2026-08-05.
+  `useToast()` silently no-ops with no provider ancestor, so this has been broken for five
+  days independent of anything in this task — the review's own verifier correctly refused
+  to count it as a regression THIS diff introduced, but it is squarely the guarantee this
+  diff's `critical: true` markers on that exact button were supposed to provide, so it was
+  fixed rather than left for whoever next wonders why a "critical" refresh toast never
+  shows. Fix: `<ToastProvider>` now wraps the ENTIRE shell in `AppShell.tsx` — the Sidebar,
+  `<main>`, `ExcelCellFocus`, `ColumnResize`, all of it — not just `<main>`'s children.
+  `position: fixed` positioning is unaffected by which ancestor renders it, so this is a
+  pure context-visibility fix with no visual change.
+
+Re-verified after both fixes: `tsc`/`eslint` clean (same one pre-existing, unrelated
+finding as before), 974/974 tests pass, and the dedup/positioning live-check redone from
+a fresh browser tab against a freshly-rebuilt dev server (the previous one had wedged its
+Turbopack cache mid-edit twice this session — confirmed both times by `tsc --noEmit`
+disagreeing with the dev server's parse error on a file read directly off disk; both
+resolved by stopping the server, deleting `.next-verify`, and restarting). Did not trigger
+an actual "Refresh Data" run to watch the Sidebar fix live — that pulls from Power BI /
+TotalETO / SharePoint for real, which is a needless real-world cost merely to observe a
+context-visibility fix that's otherwise fully verified.

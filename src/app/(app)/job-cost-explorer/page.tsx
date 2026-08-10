@@ -2,6 +2,7 @@ import { PageTitle } from "@/components/ui/Typography";
 import { loadJobCostRows } from "@/lib/job-cost-source";
 import { loadCostRates, loadHourAllocations } from "@/lib/job-cost-actions";
 import { JobCostExplorer } from "@/components/JobCostExplorer";
+import { SuppressToasts } from "@/components/ui/Toast";
 
 // "Job Cost Explorer" — integrated from the standalone app at
 // D:\AI Projects\new app. Per-job profit/margin, reusing this app's own job,
@@ -21,16 +22,25 @@ export default async function JobCostExplorerPage() {
         <PageTitle>Job Cost Explorer</PageTitle>
         <p className="text-note text-sdc-gray-400">Per-job profit and margin — hours and parts cost from this app&apos;s own data</p>
       </div>
-      <JobCostExplorer
-        rows={rows}
-        defaultRates={defaults}
-        yearRateOverrides={overrides}
-        hourAllocations={Object.fromEntries(allocations)}
-        liveEtcByJobId={Object.fromEntries(liveEtcByJobId)}
-        inventoryAsOf={inventoryAsOf}
-        etcRefreshedThru={etcRefreshedThru}
-        partsCostAvailable={partsCostAvailable}
-      />
+      {/* SuppressToasts belongs HERE, wrapping the call site — not inside
+          JobCostExplorer.tsx wrapping its own return value. A component cannot
+          supply its own useToast() call with a Provider it renders as part of
+          its own output: useContext resolves against ANCESTORS at the point the
+          hook runs, and a self-wrap is a descendant of that point, not an
+          ancestor. This is a server component, so it can render the client
+          SuppressToasts wrapper directly, same as any other client child. */}
+      <SuppressToasts>
+        <JobCostExplorer
+          rows={rows}
+          defaultRates={defaults}
+          yearRateOverrides={overrides}
+          hourAllocations={Object.fromEntries(allocations)}
+          liveEtcByJobId={Object.fromEntries(liveEtcByJobId)}
+          inventoryAsOf={inventoryAsOf}
+          etcRefreshedThru={etcRefreshedThru}
+          partsCostAvailable={partsCostAvailable}
+        />
+      </SuppressToasts>
     </div>
   );
 }
