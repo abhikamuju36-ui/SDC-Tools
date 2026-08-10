@@ -1,0 +1,299 @@
+import Link from "next/link";
+import { PageTitle } from "@/components/ui/Typography";
+import { card } from "@/components/ui/classnames";
+import { IndicatorCard } from "@/components/charts/IndicatorCard";
+import { ExportMenu } from "@/components/ExportMenu";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { HoursFilterMenu, type HoursFilterSpec } from "@/components/HoursFilterMenu";
+import { HoursDateFilter } from "@/components/HoursDateFilter";
+import { HoursGroupByMenu } from "@/components/HoursGroupByMenu";
+import { HoursGroupedTree } from "@/components/HoursGroupedTree";
+import { HoursViewsMenu } from "@/components/HoursViewsMenu";
+import { getHoursFilterOptions, queryHoursGrouped, queryHoursRows, queryHoursSummary, type HoursRow } from "@/lib/hours-explorer";
+import { parseHoursFilters, parseHoursGroupByList, parseHoursSort, type HoursDetailSortKey } from "@/lib/hours-filters";
+import { cycleSortState, type SortState } from "@/lib/table-sort";
+import { listSharedHoursViews } from "@/lib/hours-saved-views-actions";
+
+// ── The Hours tab — a filterable, paginated view over JobHoursDetail ────────
+//
+// Server-rendered and URL-param-driven throughout (filters, date range, page, sort,
+// group by), the same architecture Projects (lib/projects-query.ts) already uses — not
+// a client component fetching over server actions. That is what makes the export match
+// the table "for free": both read the query string through hours-filters.ts's one
+// parser.
+//
+// Detail rows are paginated (skip/take in hours-explorer.ts) rather than loaded whole —
+// the table never renders more than one page's worth of DOM rows, which is what the "not
+// every punch in the browser at once" requirement asks for, with no new pagination
+// library. Grouping supports MULTIPLE ordered dimensions now (HoursGroupByMenu +
+// HoursGroupedTree) — level 0 is still computed here, server-side, exactly like the old
+// single-dimension view; every deeper level is fetched lazily, on expand, by the tree
+// component itself.
+
+const PAGE_SIZE = 100;
+
+type HoursPageSearchParams = {
+  jobs?: string;
+  employees?: string;
+  sections?: string;
+  departments?: string;
+  from?: string;
+  to?: string;
+  page?: string;
+  groupBy?: string;
+  sort?: string;
+  dir?: string;
+};
+
+export default async function HoursPage({ searchParams }: { searchParams: Promise<HoursPageSearchParams> }) {
+  const sp = await searchParams;
+  const filters = parseHoursFilters(sp);
+  const groupByLevels = parseHoursGroupByList(sp.groupBy);
+  const sort = parseHoursSort(sp.sort, sp.dir);
+  const page = Math.max(1, Number(sp.page) || 1);
+  const grouped = groupByLevels.length > 0;
+
+  const [options, summary, rootRows, detail, sharedViewsResult] = await Promise.all([
+    getHoursFilterOptions(),
+    queryHoursSummary(filters),
+    grouped ? queryHoursGrouped(filters, groupByLevels[0]) : Promise.resolve(null),
+    grouped ? Promise.resolve(null) : queryHoursRows(filters, { page, pageSize: PAGE_SIZE, sort }),
+    listSharedHoursViews(),
+  ]);
+
+  const filterSpecs: HoursFilterSpec[] = [
+    {
+      key: "jobs",
+      label: "Jobs / Machines",
+      searchable: true,
+      selected: filters.jobIds ?? [],
+      options: options.jobs.map((j) => ({ value: j.jobId, label: `${j.jobId} — ${j.jobName}` })),
+    },
+    {
+      key: "employees",
+      label: "Employees",
+      searchable: true,
+      selected: filters.employeeIds ?? [],
+      options: options.employees.map((e) => ({ value: e.employeeId, label: e.name })),
+    },
+    {
+      key: "sections",
+      label: "Function / Section",
+      searchable: true,
+      selected: filters.sections ?? [],
+      options: options.sections.map((s) => ({ value: s.code, label: `${s.code} — ${s.name}` })),
+    },
+    {
+      key: "departments",
+      label: "Department",
+      selected: filters.departments ?? [],
+      options: options.departments.map((d) => ({ value: d, label: d })),
+    },
+  ];
+
+  // Builds a /hours?<qs> link that carries every currently-set param except the ones
+  // being overridden — used by the detail table's sort headers and the pager, both
+  // plain navigations (no client JS needed for either).
+  function hrefWith(extra: Record<string, string | undefined>): string {
+    const next = new URLSearchParams();
+    const base: HoursPageSearchParams = { ...sp, ...extra };
+    for (const [k, v] of Object.entries(base)) {
+      if (v) next.set(k, v);
+    }
+    const s = next.toString();
+    return s ? `/hours?${s}` : "/hours";
+  }
+
+  const hasAnyFilter = Boolean(sp.jobs || sp.employees || sp.sections || sp.departments || sp.from || sp.to);
+
+  // Remounts HoursGroupedTree (dropping its expand/fetch state) only when the filters
+  // or chosen levels themselves change — NOT on a routine LiveRefresh re-render with
+  // the same filters/levels, which would otherwise collapse every open node every
+  // 45s-5min. See HoursGroupedTree's own header for how it handles a same-key refresh.
+  const treeKey = JSON.stringify({ filters, groupByLevels });
+
+  return (
+    <div className="flex flex-col gap-4 p-6">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <PageTitle>Hours</PageTitle>
+        <div className="flex items-center gap-2">
+          <HoursFilterMenu filters={filterSpecs} />
+          <HoursDateFilter from={sp.from ?? ""} to={sp.to ?? ""} />
+          <HoursGroupByMenu groupBy={groupByLevels} />
+          <HoursViewsMenu sharedViews={sharedViewsResult.shared} />
+          <ExportMenu report="hours" />
+        </div>
+      </div>
+
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+        <IndicatorCard label="Total Hours" value={summary.totalHours.toLocaleString(undefined, { maximumFractionDigits: 0 })} />
+        <IndicatorCard label="Jobs" value={summary.jobs.toLocaleString()} />
+        <IndicatorCard label="Employees" value={summary.employees.toLocaleString()} />
+        <IndicatorCard label="Functions / Sections" value={summary.sections.toLocaleString()} />
+      </div>
+
+      <div className={card("p-4")}>
+        {grouped && rootRows ? (
+          rootRows.length === 0 ? (
+            <EmptyState
+              title="No punches match these filters"
+              message={hasAnyFilter ? "Try widening the date range or clearing a filter." : undefined}
+            />
+          ) : (
+            <HoursGroupedTree key={treeKey} rootRows={rootRows} groupByLevels={groupByLevels} filters={filters} />
+          )
+        ) : detail ? (
+          detail.rows.length === 0 ? (
+            <EmptyState
+              title="No punches match these filters"
+              message={hasAnyFilter ? "Try widening the date range or clearing a filter." : undefined}
+            />
+          ) : (
+            <>
+              <DetailTable rows={detail.rows} sort={sort} hrefWith={hrefWith} />
+              <Pager page={detail.page} pageSize={detail.pageSize} total={detail.total} hrefWith={hrefWith} />
+            </>
+          )
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+const TH = "border-b border-sdc-border px-3 py-1.5 text-left text-label font-semibold uppercase tracking-[0.08em] text-sdc-muted";
+const TD = "border-b border-sdc-border-soft px-3 py-1.5 text-sm text-sdc-navy";
+const TD_NUM = "border-b border-sdc-border-soft px-3 py-1.5 text-right font-mono text-sm tabular-nums text-sdc-navy";
+
+// A server-rendered sortable header cell — a plain Link with a precomputed next-state
+// href (cycleSortState, none -> asc -> desc -> none), the same "compute the next state
+// as a Link" pattern this file already used for the old single-dimension Group By chips.
+// No client component needed just for the detail table's sort: it's server-paginated,
+// so the sort has to be a real Prisma ORDER BY (see hours-explorer.ts's orderByForSort)
+// triggered by a navigation either way.
+function SortLinkTh({
+  label,
+  sortKey,
+  align,
+  sort,
+  hrefWith,
+}: {
+  label: string;
+  sortKey: HoursDetailSortKey;
+  align?: "right";
+  sort: SortState<HoursDetailSortKey>;
+  hrefWith: (extra: Record<string, string | undefined>) => string;
+}) {
+  const active = sort?.key === sortKey;
+  const next = cycleSortState(sort, sortKey);
+  const href = hrefWith({ sort: next?.key, dir: next?.direction, page: undefined });
+  return (
+    <th aria-sort={active ? (sort!.direction === "desc" ? "descending" : "ascending") : "none"} className={`${TH} ${align === "right" ? "text-right" : ""}`}>
+      <Link
+        href={href}
+        className={`inline-flex w-full items-center gap-1 motion-interactive hover:opacity-70 ${align === "right" ? "justify-end" : ""}`}
+      >
+        <span>{label}</span>
+        <svg
+          viewBox="0 0 16 16"
+          width="9"
+          height="9"
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="2"
+          aria-hidden
+          className={`shrink-0 ${active ? "opacity-100" : "opacity-30"} ${active && sort!.direction === "desc" ? "rotate-180" : ""}`}
+        >
+          <path d="M4 9 L8 5 L12 9" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </Link>
+    </th>
+  );
+}
+
+function DetailTable({
+  rows,
+  sort,
+  hrefWith,
+}: {
+  rows: HoursRow[];
+  sort: SortState<HoursDetailSortKey>;
+  hrefWith: (extra: Record<string, string | undefined>) => string;
+}) {
+  return (
+    <div className="styled-scrollbar overflow-x-auto">
+      <table className="w-full border-collapse">
+        <thead>
+          <tr>
+            <SortLinkTh label="Date" sortKey="date" sort={sort} hrefWith={hrefWith} />
+            <th className={TH}>Employee</th>
+            <th className={TH}>Department</th>
+            <SortLinkTh label="Job Id" sortKey="jobId" sort={sort} hrefWith={hrefWith} />
+            <SortLinkTh label="Job / Machine" sortKey="jobName" sort={sort} hrefWith={hrefWith} />
+            <SortLinkTh label="Function / Section" sortKey="section" sort={sort} hrefWith={hrefWith} />
+            <SortLinkTh label="Hours" sortKey="hours" align="right" sort={sort} hrefWith={hrefWith} />
+          </tr>
+        </thead>
+        <tbody>
+          {rows.map((r) => (
+            <tr key={r.id} className="hover:bg-sdc-gray-50">
+              <td className={TD}>{r.date}</td>
+              <td className={TD}>{r.employee}</td>
+              <td className={TD}>{r.department}</td>
+              <td className={TD}>{r.jobId}</td>
+              <td className={`${TD} max-w-xs truncate`} title={r.jobName}>
+                {r.jobName}
+              </td>
+              <td className={TD}>
+                {r.section} — {r.sectionName}
+              </td>
+              <td className={TD_NUM}>{r.hours.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+function Pager({
+  page,
+  pageSize,
+  total,
+  hrefWith,
+}: {
+  page: number;
+  pageSize: number;
+  total: number;
+  hrefWith: (extra: Record<string, string | undefined>) => string;
+}) {
+  const from = total === 0 ? 0 : (page - 1) * pageSize + 1;
+  const to = Math.min(total, page * pageSize);
+  const hasPrev = page > 1;
+  const hasNext = to < total;
+  return (
+    <div className="mt-3 flex items-center justify-between gap-3 text-xs text-sdc-muted">
+      <span>
+        {from.toLocaleString()}–{to.toLocaleString()} of {total.toLocaleString()} punches
+      </span>
+      <div className="flex items-center gap-1.5">
+        <PagerLink href={hrefWith({ page: page - 1 > 1 ? String(page - 1) : undefined })} disabled={!hasPrev}>
+          Previous
+        </PagerLink>
+        <PagerLink href={hrefWith({ page: String(page + 1) })} disabled={!hasNext}>
+          Next
+        </PagerLink>
+      </div>
+    </div>
+  );
+}
+
+function PagerLink({ href, disabled, children }: { href: string; disabled: boolean; children: React.ReactNode }) {
+  if (disabled) {
+    return <span className="cursor-not-allowed rounded-md border border-sdc-border px-2.5 py-1 text-sdc-gray-300">{children}</span>;
+  }
+  return (
+    <Link href={href} className="rounded-md border border-sdc-border px-2.5 py-1 text-sdc-navy motion-interactive hover:bg-sdc-blue-light">
+      {children}
+    </Link>
+  );
+}

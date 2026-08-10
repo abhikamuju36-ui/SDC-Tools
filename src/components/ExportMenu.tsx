@@ -33,7 +33,7 @@ export function ExportMenu({
   flushBeforeExport = false,
   className,
 }: {
-  report: "projects" | "etc";
+  report: "projects" | "etc" | "hours";
   fixedParams?: Record<string, string>;
   flushBeforeExport?: boolean;
   className?: string;

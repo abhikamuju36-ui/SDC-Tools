@@ -119,9 +119,14 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
 // feed returns its whole span (2025-02 onward), so in practice every month is
 // rewritten each pass. The rule stays because "absent" must never mean "delete" —
 // a failed or partial read would otherwise erase history.
-async function syncJobHoursDetail(
+export async function syncJobHoursDetail(
   rows: JobHoursRow[],
   jobByJobId: Map<string, { id: number; jobId: string }>,
+  // Exported (and given this param) for scripts/backfill-hours-2025.ts, which writes the
+  // exact same replace-by-(job, month) shape from a different source file and needs the
+  // provenance to say so rather than claim "power_bi" for rows that came from a workbook.
+  // Every existing caller is unaffected — the default is unchanged.
+  source = "power_bi",
 ): Promise<number> {
   // job pk + month -> the rows for it
   const byJobMonth = new Map<string, { jobPk: number; month: string; rows: JobHoursRow[] }>();
@@ -159,7 +164,7 @@ async function syncJobHoursDetail(
           workDate: m.workDate,
           employeeId: m.employeeId,
           hours: round2(m.hours),
-          source: "power_bi",
+          source,
         })),
       }),
     ]);
