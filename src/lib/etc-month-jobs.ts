@@ -1,6 +1,6 @@
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { etcActiveJobFilter, validJobTypeFilter } from "@/lib/job-filters";
+import { etcActiveJobFilter, etcEligibleJobFilter } from "@/lib/job-filters";
 
 // The single source of truth for "which jobs belong to an ETC month" — used by
 // the Monthly ETC grid AND the Standard Sheet so both always list the exact
@@ -28,10 +28,26 @@ export async function getEtcMonthJobWhere(month: string): Promise<{ where: Prism
   const monthIsLocked = entryCount > 0 && pendingCount === 0;
   const isHistorical = entryCount > 0 && latest != null && month < latest.month;
   return {
-    // The entries-based branch still applies the type gate — app-seeded entries
-    // all came through etcActiveJobFilter, but the Power BI history backfill can
-    // create entries on type-less jobs, and those must never render anywhere.
-    where: monthIsLocked || isHistorical ? { etcEntries: { some: { month } }, ...validJobTypeFilter } : etcActiveJobFilter,
+    // ── The entries-based branch applies ELIGIBILITY, not lifecycle (2026-08-10) ──
+    //
+    // It used to apply only the type gate, which let a submitted or historical month
+    // render every job that merely HAD entries in it — including the non-billable
+    // ones the live month excludes. Measured before this change: June (locked) showed
+    // 48 jobs of which 4 were non-billable, and JULY showed 55 of which 7 were —
+    // July because `isHistorical` fires the moment August is started, so an
+    // in-progress month silently switched job universes underneath the team and its
+    // Engineering/Shop/Parts Spent KPIs jumped with it.
+    //
+    // etcEligibleJobFilter is the half of etcActiveJobFilter that is NOT about
+    // lifecycle (see job-filters.ts): billable, not HeadStart, valid type. Completed
+    // jobs still render, which is the whole point of this branch — 1115 Wet Hi-Pot is
+    // Complete and billable, and its June rows are real submitted history. What no
+    // longer renders is a job that was never an ETC project at all.
+    //
+    // This is what makes the scope IDENTICAL before and after submission: both
+    // branches now answer to the same eligibility rule, and only the lifecycle half
+    // differs — deliberately, and only for months that are already closed.
+    where: monthIsLocked || isHistorical ? { etcEntries: { some: { month } }, ...etcEligibleJobFilter } : etcActiveJobFilter,
     monthIsLocked,
   };
 }

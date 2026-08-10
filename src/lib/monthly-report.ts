@@ -4,6 +4,7 @@ import { createHash, randomUUID } from "crypto";
 import { calcHoursLeft, isMonthLocked, isValidMonth, newEtcSeedText, round2, suggestNewEtc, type NewEtcCellState } from "@/lib/etc";
 import { PARTS_COST_SECTION, SECTIONS } from "@/lib/sections";
 import { getEtcMonthJobWhere } from "@/lib/etc-month-jobs";
+import { etcEligibleJobFilter } from "@/lib/job-filters";
 import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/execution-etc";
 import { loadEffectivePools } from "@/lib/standard-sheet-actions";
 import {
@@ -464,8 +465,41 @@ export async function submitEtcEntriesInTx(tx: Tx, month: string, userId: number
   if (entries.length === 0) throw new Error(`${month} has no entries to submit.`);
   if (isMonthLocked(entries)) throw new Error(`${month} is already submitted and locked.`);
 
+  // ── Only QUALIFYING projects are frozen (2026-08-10) ──────────────────────
+  //
+  // This used to freeze every row the month contained, including rows left behind by
+  // jobs that are not ETC projects at all — 7 non-billable jobs held 20 pending July
+  // rows when this was written (SDC Showroom, 4000 Non-Billable, 7000 Team Initiatives,
+  // 1155, 7001 and both Spare Parts buckets, carrying $29,465 of PARTS_COST between
+  // them). Freezing those is what made a month's scope change at submission: the rows
+  // became permanent history (needsReview=false is never pruned), so the totals a
+  // manager signed off could not be reproduced afterwards.
+  //
+  // They are DELETED rather than frozen, which is not a new judgement about them —
+  // pruneStaleEntries already deletes exactly this set on the next Refresh Data (see
+  // etc-actions.ts). Doing it here makes the submitted month self-consistent at the
+  // moment it closes instead of one refresh later, and it is what keeps `isMonthLocked`
+  // true: leaving them pending would mean the month could never lock at all.
+  //
+  // Deliberately scoped to `needsReview: true`. An ineligible job's ALREADY-frozen rows
+  // from an earlier submission are real history and are left exactly alone; the grid
+  // simply no longer renders them (getEtcMonthJobWhere). Nothing here touches
+  // JobHoursDetail, so every one of these hours stays visible in "Hours off the grid",
+  // the punch drill and data-quality review — the exclusion must not hide them.
+  const eligibleJobs = await tx.job.findMany({ where: etcEligibleJobFilter, select: { id: true } });
+  // Zero eligible jobs means something is wrong upstream (empty Job table, broken
+  // filter) — `notIn: []` would delete every pending row in the month. Same guard
+  // pruneStaleEntries makes, for the same reason.
+  if (eligibleJobs.length === 0) throw new Error(`${month} cannot be submitted: no eligible ETC jobs were found.`);
+  const eligibleIds = new Set(eligibleJobs.map((j) => j.id));
+  await tx.etcEntry.deleteMany({
+    where: { month, needsReview: true, jobId: { notIn: [...eligibleIds] } },
+  });
+
   let written = 0;
   for (const entry of entries) {
+    // Pruned above — never frozen, and never counted as submitted.
+    if (!eligibleIds.has(entry.jobId)) continue;
     const priorEtc = Number(entry.priorEtc);
     const hoursWorked = Number(entry.hoursWorked);
     // An already-confirmed row is history; leave it exactly as it is.

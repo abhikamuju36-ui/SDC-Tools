@@ -54,7 +54,32 @@ export const DEFAULT_VISIBLE_STATUSES: JobStatus[] = ["Active", "HeadStart"];
 // 7000), and those hours then surface on the "Hours off the grid" KPI card, which
 // is exactly what that card is for. The punch rows in JobHoursDetail are untouched,
 // so the Projects grid and Job Hour Details still count them.
-export const etcActiveJobFilter = { status: "Active", completeDate: null, billable: true, ...validJobTypeFilter };
+// ── Eligibility vs lifecycle (2026-08-10) ───────────────────────────────────
+//
+// The two halves of the rule above, separated, because a SUBMITTED month must
+// re-apply one of them and must NOT re-apply the other.
+//
+// ELIGIBILITY (here) — non-billable and HeadStart. These say the job was never a
+// Monthly ETC project in the first place: internal work (SDC Showroom, 4000
+// Non-Billable, 7000 Team Initiatives, the Spare Parts buckets) is not planned
+// job-by-job, and a HeadStart job has no PO to bill against. Nothing about the
+// passage of time makes such a job retroactively belong on a month's grid, so
+// this half applies to EVERY month, submitted ones included.
+//
+// LIFECYCLE (etcActiveJobFilter below) — `status: "Active"` and `completeDate`.
+// These move on their own as work finishes. A job that was legitimately on July's
+// grid and COMPLETED in August is still part of July's history, so re-applying
+// this half to a closed month would erase real submitted work — the exact
+// regression getEtcMonthJobWhere's entries-based branch exists to prevent.
+//
+// Splitting them is what lets a locked month keep its completed jobs while still
+// excluding the ones that never qualified. See getEtcMonthJobWhere.
+export const etcEligibleJobFilter = { billable: true, status: { not: "HeadStart" }, ...validJobTypeFilter };
+
+// The one job universe the LIVE Monthly ETC month operates on — the grid, seeding,
+// pruning and submission all use this. Eligibility PLUS lifecycle: `status: "Active"`
+// deliberately overrides the `not: "HeadStart"` above with the stricter test.
+export const etcActiveJobFilter = { ...etcEligibleJobFilter, status: "Active", completeDate: null };
 
 // SDC's own internal projects are never billable to an outside customer — this
 // overrides whatever the Billable dropdown is set to, both when saving and for
