@@ -72,7 +72,19 @@ export function ProjectsLiveTotals({ engCodes, shopCodes }: { engCodes: string[]
       return total;
     };
 
+    // The row's Status <select>, read fresh each time rather than cached: it is
+    // itself editable, and changing it re-tints every cell in the row — the
+    // totals included, now that they carry the same tone as a section cell.
+    const isComplete = (jobId: string) =>
+      form.querySelector<HTMLSelectElement>(`select[name="jobField__${jobId}__status"]`)?.value === "Complete";
+
     const paint = (jobId: string) => {
+      // A "+ Add Project" row has no actual hours and no saved Status yet — the
+      // same reason onEdit below never retints ITS section cells — so its totals
+      // stay untoned too rather than reading "yellow" the instant any quote is
+      // typed, before there is any actual to compare it against.
+      const isNewRow = jobId.startsWith(NEW_ROW_PREFIX);
+      const jobComplete = !isNewRow && isComplete(jobId);
       for (const [kind, codes] of [
         ["eng", engCodes],
         ["shop", shopCodes],
@@ -88,9 +100,22 @@ export function ProjectsLiveTotals({ engCodes, shopCodes }: { engCodes: string[]
         if (target) target.textContent = Math.round(quoted).toString();
         // The tooltip states the same two numbers; leaving it on the old quoted
         // figure would have it contradict the cell it is attached to.
-        const actual = cell.getAttribute("data-actual") ?? "0";
+        const actualAttr = cell.getAttribute("data-actual") ?? "0";
         const label = kind === "eng" ? "Engineering" : "Shop";
-        cell.setAttribute("title", `${label} — Quoted ${hoursExact(quoted)} / Actual ${actual}`);
+        cell.setAttribute("title", `${label} — Quoted ${hoursExact(quoted)} / Actual ${actualAttr}`);
+        if (isNewRow) continue;
+        // Same rule as a section cell (lib/quoted-tone.ts), over the group's summed
+        // quoted/actual — the total's ACTUAL half is never edited here, so it comes
+        // straight off the data attribute the server rendered rather than being
+        // re-summed.
+        const actual = Number(actualAttr);
+        const tone = quotedCellTone({
+          quoted: Number.isFinite(quoted) ? quoted : 0,
+          actual: Number.isFinite(actual) ? actual : 0,
+          jobComplete,
+        });
+        cell.classList.remove(...TONE_CLASSES);
+        if (tone) cell.classList.add(tone);
       }
     };
 
@@ -112,11 +137,6 @@ export function ProjectsLiveTotals({ engCodes, shopCodes }: { engCodes: string[]
       if (next) td.classList.add(next);
     };
 
-    // The row's Status <select>, read fresh each time rather than cached: it is
-    // itself editable, and changing it re-tints every cell in the row.
-    const isComplete = (jobId: string) =>
-      form.querySelector<HTMLSelectElement>(`select[name="jobField__${jobId}__status"]`)?.value === "Complete";
-
     const onStatusChange = (e: Event) => {
       const el = e.target;
       if (!(el instanceof HTMLSelectElement)) return;
@@ -127,6 +147,9 @@ export function ProjectsLiveTotals({ engCodes, shopCodes }: { engCodes: string[]
       for (const input of form.querySelectorAll<HTMLInputElement>(`input[name^="quoted__${jobId}__"]`)) {
         retint(input, complete);
       }
+      // The totals' tone depends on jobComplete too now — a status flip must
+      // repaint them the same moment it re-tints the section cells above.
+      paint(jobId);
     };
 
     const onEdit = (e: Event) => {

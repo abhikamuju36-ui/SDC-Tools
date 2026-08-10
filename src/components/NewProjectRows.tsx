@@ -160,25 +160,25 @@ export function NewProjectRows({
           >
             <span data-total-quoted>0</span>
           </td>
-          <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-2 py-1.5 text-center align-middle text-label font-medium text-sdc-navy">
-            <div className="flex items-center justify-center gap-0.5">
+          <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-1 py-1.5 text-left align-middle text-label font-medium text-sdc-navy">
+            <div className="flex items-center gap-0.5">
               <span className="text-sdc-gray-400">$</span>
               <MoneyCell
                 name={`newRow__${tempId}__costQuoted`}
                 defaultValue=""
                 ariaLabel="New project Parts Cost Quoted"
-                className="w-full min-w-0 border-none bg-transparent text-right tabular-nums outline-none"
+                className="w-full min-w-0 border-none bg-transparent text-left tabular-nums outline-none"
               />
             </div>
           </td>
-          <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-2 py-1.5 text-center align-middle text-label text-sdc-gray-600">
-            <div className="flex items-center justify-center gap-0.5">
+          <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-1 py-1.5 text-left align-middle text-label text-sdc-gray-600">
+            <div className="flex items-center gap-0.5">
               <span className="text-sdc-gray-400">$</span>
               <MoneyCell
                 name={`newRow__${tempId}__costActualHistorical`}
                 defaultValue=""
                 ariaLabel="New project Parts Cost Actual"
-                className="w-full min-w-0 border-none bg-transparent text-right tabular-nums outline-none"
+                className="w-full min-w-0 border-none bg-transparent text-left tabular-nums outline-none"
               />
             </div>
           </td>

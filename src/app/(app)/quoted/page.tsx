@@ -110,13 +110,16 @@ const CELL_PADDING = "[&_td]:py-[0.4rem] [&_.qc]:px-[0.2667rem]";
 const DATA_COL = "calc(max(4.7rem, 72px) + 2 * 0.2667rem)";
 const DATA_COL_STYLE = { width: DATA_COL, minWidth: DATA_COL, maxWidth: DATA_COL } as const;
 
-// The two money columns (Parts Cost Quoted / Parts Cost Actual). Right-aligned, unlike the
-// rest of the grid: these are the only figures here with a variable digit count,
-// and a right edge is what lets "$8,600" and "$1,406,923" be compared at a
-// glance. tabular-nums keeps the digits in columns while editing.
+// The two money columns (Parts Cost Quoted / Parts Cost Actual). Left-aligned
+// (2026-08-10, by request) like the rest of the grid — they used to be
+// right-aligned and centred as a "$ number" unit inside the cell, which meant a
+// SHORT figure ("$0") and a LONG one ("$1,406,923") centred at different
+// offsets and neither edge lined up, reading as inconsistent padding rather
+// than the intended "compare digits at a glance" effect. tabular-nums still
+// keeps the digits themselves in fixed-width columns while editing.
 const EMPTY_ACTUALS: ReadonlyMap<string, number> = new Map();
 
-const MONEY_INPUT = "w-full min-w-0 border-none bg-transparent text-right tabular-nums outline-none";
+const MONEY_INPUT = "w-full min-w-0 border-none bg-transparent text-left tabular-nums outline-none";
 
 // Group sub-bands: lighter SDC brand tints, each distinct, all drawn from the
 // brand palette (blue/green/yellow tints + light blue), with one bold brand
@@ -789,12 +792,19 @@ export default async function QuotedPage({
                   Cost", which didn't say WHAT cost). The columns are still
                   Job.costQuoted and Job.costActualHistorical in the schema, in
                   the TotalETO sync and in the Power BI measures they come from,
-                  so don't rename those chasing this. */}
-              <th rowSpan={3} className="min-w-[90px] border-l border-sdc-border bg-sdc-green-bg px-2 py-2 text-center align-bottom text-sdc-green-text">
-                Parts Cost Quoted
+                  so don't rename those chasing this.
+                  Two lines, like SHOP TOTAL just to their left (2026-08-10, by
+                  request): on one line "Parts Cost Quoted" needs more width than
+                  any figure in the column, which held the column open wider than
+                  its own values ever needed. Left-aligned to match the values
+                  below them. */}
+              <th rowSpan={3} className="min-w-[80px] border-l border-sdc-border bg-sdc-green-bg px-1 py-2 text-left align-bottom text-sdc-green-text">
+                PARTS COST
+                <span className="block font-semibold">QUOTED</span>
               </th>
-              <th rowSpan={3} className="min-w-[90px] bg-sdc-green-bg px-2 py-2 text-center align-bottom text-sdc-green-text">
-                Parts Cost Actual
+              <th rowSpan={3} className="min-w-[80px] bg-sdc-green-bg px-1 py-2 text-left align-bottom text-sdc-green-text">
+                PARTS COST
+                <span className="block font-semibold">ACTUAL</span>
               </th>
             </tr>
             <tr className={TABLE_HEADER_ROW}>
@@ -1124,13 +1134,18 @@ export default async function QuotedPage({
                     const cell = (label: string, kind: "eng" | "shop", codes: string[]) => {
                       const q = sumQ(codes);
                       const a = sumA(codes);
+                      // Same rule as a section cell, over the billing group's SUMMED
+                      // quoted/actual rather than one section's — no separate meaning
+                      // for a total, just the same red/green/yellow/none over the
+                      // bigger numbers. Kept in step live by ProjectsLiveTotals.
+                      const tone = quotedCellTone({ quoted: q, actual: a, jobComplete: job.status === "Complete" });
                       return (
                         <td
                           data-total={kind}
                           data-job={job.id}
                           data-actual={exactHours(a) ?? "0"}
                           style={DATA_COL_STYLE}
-                          className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-blue-light px-1 py-1.5 text-center align-middle font-mono text-label font-medium"
+                          className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-1 py-1.5 text-center align-middle font-mono text-label font-medium ${tone}`}
                           title={`${label} — Quoted ${exactHours(q) ?? "0"} / Actual ${exactHours(a) ?? "0"}`}
                         >
                           <span data-total-quoted className="font-semibold text-sdc-blue-dark">{wholeHours(q)}</span>
@@ -1145,8 +1160,8 @@ export default async function QuotedPage({
                       </>
                     );
                   })()}
-                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center align-middle text-label font-medium text-sdc-navy ${zebra}`}>
-                    <div className="flex items-center justify-center gap-0.5">
+                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-1 py-1.5 text-left align-middle text-label font-medium text-sdc-navy ${zebra}`}>
+                    <div className="flex items-center gap-0.5">
                       <span className="text-sdc-gray-400">$</span>
                       <MoneyCell
                         name={`jobField__${job.id}__costQuoted`}
@@ -1156,8 +1171,8 @@ export default async function QuotedPage({
                       />
                     </div>
                   </td>
-                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-2 py-1.5 text-center align-middle text-label text-sdc-gray-600 ${zebra}`}>
-                    <div className="flex items-center justify-center gap-0.5">
+                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-1 py-1.5 text-left align-middle text-label text-sdc-gray-600 ${zebra}`}>
+                    <div className="flex items-center gap-0.5">
                       <span className="text-sdc-gray-400">$</span>
                       <MoneyCell
                         name={`jobField__${job.id}__costActualHistorical`}
