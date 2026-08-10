@@ -35,7 +35,6 @@ export type JobHoursDashboard = {
   // The individual jobs this view aggregates (1+). Used to pull parts cost.
   jobRefs: { id: number; jobId: string }[];
   kpis: {
-    activeJobs: number;
     hoursRefreshedThru: string | null;
     latestEtcMonth: string | null;
     // There was a `designToDebugRatio` here — the PBI DAX measure (Section 10
@@ -110,7 +109,7 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
   });
   const jobIds = jobs.map((j) => j.id);
 
-  const [estimated, entries, actualBySection, monthlyBySection, activeJobs, freshness, latestEntry] = await Promise.all([
+  const [estimated, entries, actualBySection, monthlyBySection, freshness, latestEntry] = await Promise.all([
     // Quoted only — actuals come from actual-hours.ts below.
     prisma.estimatedHours.findMany({ where: { jobId: { in: jobIds } }, select: { section: true, quotedHours: true } }),
     prisma.etcEntry.findMany({
@@ -124,7 +123,6 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
     // which must keep using the frozen figure.
     loadActualHoursBySection(jobIds),
     loadMonthlyWorkedBySection(jobIds),
-    prisma.job.count({ where: { status: "Active", ...validJobTypeFilter } }),
     prisma.powerBiFreshness.findUnique({ where: { source: "hours_actual" }, select: { refreshedThrough: true } }).catch(() => null),
     prisma.etcEntry.findFirst({ where: { jobId: { in: jobIds } }, orderBy: { month: "desc" }, select: { month: true } }),
   ]);
@@ -189,7 +187,6 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
     job,
     jobRefs,
     kpis: {
-      activeJobs,
       hoursRefreshedThru: freshness?.refreshedThrough ? freshness.refreshedThrough.toISOString().slice(0, 10) : null,
       latestEtcMonth: latestMonth,
     },

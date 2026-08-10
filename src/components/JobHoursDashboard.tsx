@@ -7,6 +7,7 @@ import { EChart } from "@/components/charts/EChart";
 import { groupedBarOption, SERIES } from "@/components/charts/theme";
 import type { JobHoursDashboard as DashData, HoursType } from "@/lib/job-hours-dashboard";
 import type { JobHoursDetail as JobHoursDetailData } from "@/lib/job-hours-detail";
+import { RESTRICTED_SECTION_CODES } from "@/lib/sections";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 import { PartsCostSummary } from "@/components/PartsCostSummary";
 import type { PartsBudgetProjection } from "@/lib/parts-budget-projection";
@@ -63,6 +64,28 @@ export function JobHoursDashboard({
   const [hoursType, setHoursType] = useState<HoursType>("Quoted");
   const planned = (s: { quoted: number; etc: number }) => (hoursType === "Quoted" ? s.quoted : s.etc);
   const plannedLabel = hoursType === "Quoted" ? "Quoted" : "ETC";
+  // ETC (unlike Quoted) is scoped to ONE month — `s.etc` above is already "effective
+  // New ETC for latestEtcMonth only" (job-hours-dashboard.ts). Comparing that against
+  // the section's lifetime Actual was comparing one month's plan to the whole job's
+  // history; in ETC mode, Actual instead reads the same latestEtcMonth slice out of
+  // `monthlyBySection` — the identical per-month figures the drill-through below
+  // already shows, so the two can't disagree. Quoted has no month of its own, so its
+  // Actual stays the lifetime figure it always was.
+  const actualHours = (s: { code: string; actual: number }) =>
+    hoursType === "Quoted"
+      ? s.actual
+      : data.monthlyBySection[s.code]?.find((m) => m.month === data.kpis.latestEtcMonth)?.worked ?? 0;
+
+  // PM, Manufacturing and both Warranty sections are company-wide "Standard Fees"
+  // pools — planned company-wide rather than quoted per job, and not worked by the
+  // execution team — so this chart excludes all four everywhere below: data, phase
+  // chips, tooltips and drill-through. Same 4 codes the Projects grid already gates
+  // behind its password (see RESTRICTED_SECTION_CODES); reusing that set rather than
+  // a second hand-written list keeps the two from disagreeing later.
+  const executionSections = useMemo(
+    () => data.sections.filter((s) => !RESTRICTED_SECTION_CODES.has(s.code)),
+    [data.sections],
+  );
 
   // ── Every phase the section template defines, DERIVED (§72) ───────────────
   //
@@ -75,12 +98,14 @@ export function JobHoursDashboard({
   // the chart cannot fall behind that list again.
   //
   // Order comes from the payload, which is SECTIONS' own order — the canonical sheet
-  // order the phase-header tiers already rely on, so the hierarchy is unchanged.
+  // order the phase-header tiers already rely on, so the hierarchy is unchanged. Built
+  // off `executionSections`, not `data.sections`, so Warranty — now entirely restricted
+  // — has no chip left to toggle rather than one that does nothing.
   const phases = useMemo(() => {
     const seen: string[] = [];
-    for (const s of data.sections) if (!seen.includes(s.phase)) seen.push(s.phase);
+    for (const s of executionSections) if (!seen.includes(s.phase)) seen.push(s.phase);
     return seen;
-  }, [data.sections]);
+  }, [executionSections]);
 
   // ── Hidden, not active (§72) ───────────────────────────────────────────────
   //
@@ -99,17 +124,33 @@ export function JobHoursDashboard({
   // survives a Quoted/ETC toggle re-deriving `hierRows`.
   const [drillCode, setDrillCode] = useState<string | null>(null);
 
-  // Every section the backend sent, at zero hours or not — the template is shown in
-  // full, which is what keeps a zero-value category visible exactly as Power BI shows
-  // it. PM (10-111) is no longer excluded either: the report has a PM column, and
-  // dropping it here was the other half of the same hardcoding.
+  // Every remaining execution section the backend sent, at zero hours or not — the
+  // template is shown in full, which is what keeps a zero-value category visible
+  // exactly as Power BI shows it.
   const visible = useMemo(
-    () => data.sections.filter((s) => !hiddenPhases.has(s.phase)),
-    [data.sections, hiddenPhases],
+    () => executionSections.filter((s) => !hiddenPhases.has(s.phase)),
+    [executionSections, hiddenPhases],
   );
 
-  const hierRows = visible.map((s) => ({ code: s.code, name: s.name, group: s.group, phase: s.phase, planned: planned(s), actual: s.actual }));
-  const bgChart = data.billingGroups
+  const hierRows = visible.map((s) => ({ code: s.code, name: s.name, group: s.group, phase: s.phase, planned: planned(s), actual: actualHours(s) }));
+  // Same shared `hiddenPhases` state chart 1 filters by, but over `data.sections`
+  // rather than `visible` — chart 1 also drops PM/Mfg/Warranty permanently
+  // (RESTRICTED_SECTION_CODES), and that exclusion was deliberately scoped to
+  // chart 1 only, not "elsewhere" on this page. Resummed client-side from the
+  // per-section `billingGroup` the payload already carries, rather than read
+  // from the server's whole-job `data.billingGroups`, so both charts answer to
+  // the one filter instead of silently disagreeing about what's selected.
+  const bgSections = data.sections.filter((s) => !hiddenPhases.has(s.phase));
+  const bgSums = new Map<string, { quoted: number; etc: number; actual: number }>();
+  for (const s of bgSections) {
+    const cur = bgSums.get(s.billingGroup) ?? { quoted: 0, etc: 0, actual: 0 };
+    cur.quoted += s.quoted;
+    cur.etc += s.etc;
+    cur.actual += actualHours(s);
+    bgSums.set(s.billingGroup, cur);
+  }
+  const bgChart = (["Engineering", "Shop"] as const)
+    .map((g) => ({ group: g, ...(bgSums.get(g) ?? { quoted: 0, etc: 0, actual: 0 }) }))
     .filter((g) => g.quoted || g.etc || g.actual)
     .map((g) => ({ name: g.group, planned: hoursType === "Quoted" ? g.quoted : g.etc, actual: g.actual }));
 
@@ -233,6 +274,15 @@ export function JobHoursDashboard({
                 // chart above it, so it still wants the gap.
                 className="mt-4"
                 initialSection={drillRow.code}
+                // Arriving here from a section bar, "who worked it" is the useful
+                // rollup — Department is one click away in the same tray if wanted.
+                defaultGroupBy={["employee"]}
+                // The section you clicked is already fixed above (initialSection) and
+                // the punches are already scoped to one job; a Department/Employee
+                // filter on top of that narrows a table that's already narrow, and
+                // Employee grouping covers the "who" question the Employee filter
+                // would otherwise answer.
+                hideFilters={["department", "employee"]}
                 // The Actual bar above covers the job's whole life; this table
                 // only holds punches from the window the Paylocity export
                 // reaches back to. On an older job the two legitimately differ,
@@ -312,8 +362,6 @@ function SectionHierarchyChart({
   // narrower column narrows the bars rather than clipping them.
   const colStyle = { gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))` } as const;
 
-  // Hovered section index + cursor position, for the floating tooltip.
-  const [hover, setHover] = useState<{ row: HierRow; x: number; y: number } | null>(null);
   // Entrance animation — bars grow up from 0 on mount / when the data changes,
   // mirroring the ECharts chart beside it. Two rAFs so the 0-height paints first.
   const [grown, setGrown] = useState(false);
@@ -361,7 +409,7 @@ function SectionHierarchyChart({
     // §55: `w-full`, not `min-w-[640px]` — the chart fits its card exactly and
     // never forces the card to scroll horizontally. `min-w-0` lets it shrink
     // inside the flex column above it.
-    <div className="relative w-full min-w-0" onMouseLeave={() => setHover(null)}>
+    <div className="w-full min-w-0">
       <div className="mb-2 flex items-center gap-4 text-xs text-sdc-gray-600">
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIES.planned }} /> {plannedLabel}</span>
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIES.actual }} /> Actual</span>
@@ -377,10 +425,12 @@ function SectionHierarchyChart({
               key={r.code}
               // A real button: the whole column is the drill target, and it's
               // keyboard-reachable. Clicking the open section closes it again.
+              // `aria-label`, not `title` — a native title attribute is itself a
+              // hover tooltip, which this chart no longer shows on any bar.
               role="button"
               tabIndex={0}
               aria-pressed={drillCode === r.code}
-              title={`${r.name} — click for month-by-month detail`}
+              aria-label={`${r.name} — click for month-by-month detail`}
               onClick={() => onDrill(drillCode === r.code ? null : r.code)}
               onKeyDown={(e) => {
                 if (e.key !== "Enter" && e.key !== " ") return;
@@ -389,12 +439,7 @@ function SectionHierarchyChart({
               }}
               className={`flex h-full cursor-pointer flex-col rounded-sm motion-interactive hover:bg-sdc-blue-light/30 ${
                 drillCode === r.code ? "bg-sdc-blue-light/60 ring-1 ring-sdc-blue" : ""
-              } ${hover && hover.row.code !== r.code ? "opacity-40" : "opacity-100"}`}
-              onMouseMove={(e) => {
-                const box = e.currentTarget.parentElement!.getBoundingClientRect();
-                setHover({ row: r, x: e.clientX - box.left, y: e.clientY - box.top });
-              }}
-              onMouseLeave={() => setHover(null)}
+              }`}
             >
               <div className={`h-4 text-center text-note font-bold leading-none ${!has ? "text-transparent" : diff > 0 ? "text-sdc-green-text" : diff < 0 ? "text-red-600" : "text-sdc-gray-400"}`}>
                 {has ? `${diff > 0 ? "+" : ""}${fmt(diff)}` : ""}
@@ -407,23 +452,6 @@ function SectionHierarchyChart({
           );
         })}
       </div>
-      {hover && (() => {
-        const diff = hover.row.actual - hover.row.planned;
-        return (
-          <div
-            className="pointer-events-none absolute z-10 -translate-x-1/2 -translate-y-full rounded-md border border-sdc-border bg-white px-3 py-2 text-xs shadow-lg"
-            style={{ left: hover.x, top: hover.y - 12 }}
-          >
-            <div className="mb-1 font-semibold text-sdc-navy">{hover.row.name}</div>
-            <div className="text-label text-sdc-muted">{hover.row.phase} · {hover.row.group}</div>
-            <div className="mt-1 flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: SERIES.planned }} /><span className="text-sdc-gray-600">{plannedLabel}:</span> <span className="font-medium tabular-nums">{fmt(hover.row.planned)}</span></div>
-            <div className="flex items-center gap-1.5"><span className="inline-block h-2 w-2 rounded-sm" style={{ background: SERIES.actual }} /><span className="text-sdc-gray-600">Actual:</span> <span className="font-medium tabular-nums">{fmt(hover.row.actual)}</span></div>
-            <div className={`mt-0.5 font-semibold tabular-nums ${diff > 0 ? "text-red-600" : diff < 0 ? "text-sdc-green-text" : "text-sdc-gray-400"}`}>
-              Diff: {diff > 0 ? "+" : ""}{fmt(diff)}
-            </div>
-          </div>
-        );
-      })()}
       {/* Tier 1 — section names (variance is shown on top of the bars above) */}
       <div className="grid gap-x-1 border-t pt-1" style={{ ...colStyle, borderTopColor: TIER_DIVIDER }}>
         {rows.map((r) => (
@@ -481,6 +509,10 @@ function SectionDrill({
     const prev = rowsWithRunning[rowsWithRunning.length - 1]?.running ?? 0;
     rowsWithRunning.push({ ...m, running: prev + m.worked });
   }
+  // Newest month first for display — `running` above is still each month's true
+  // cumulative-to-date total, which only makes sense computed oldest-first; only
+  // the row ORDER reverses, so the top row shows the largest running figure.
+  const displayRows = [...rowsWithRunning].reverse();
 
   return (
     <div className="mt-4 rounded-lg border border-sdc-blue-100 bg-sdc-blue-light/30 p-3">
@@ -512,7 +544,7 @@ function SectionDrill({
         </span>
       </div>
 
-      {rowsWithRunning.length === 0 ? (
+      {displayRows.length === 0 ? (
         // Distinct from "0 hours": a section can carry a quote and a historical
         // Excel actual with no month-by-month ETC history behind it at all.
         <p className="text-xs text-sdc-muted">
@@ -526,7 +558,7 @@ function SectionDrill({
             <span className="text-right">Hours</span>
             <span className="text-right">Running</span>
           </div>
-          {rowsWithRunning.map((m) => (
+          {displayRows.map((m) => (
             <div key={m.month} className="grid grid-cols-[5rem_1fr_4rem_4.5rem] items-center gap-2">
               <span className="font-mono text-note text-sdc-navy">{m.month}</span>
               <div className="h-2 w-full overflow-hidden rounded-full bg-white">

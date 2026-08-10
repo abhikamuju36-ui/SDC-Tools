@@ -181,16 +181,19 @@ export default async function JobHoursPage({
 
       {data ? (
         <>
-          {/* Header row (§57): the project-title card and the three summary
+          {/* Header row (§57): the project-title card and the two summary
               cards on ONE line, all the same height. The title card is wider
               (2fr vs 1fr each) because it holds the most text, but the row
               stays balanced. `items-stretch` (grid default) equalises heights;
               the title card centres its two lines vertically so it fills that
               height without the empty space the old p-4 block wasted. The
-              "Eng Design-to-Debug Ratio" card was removed. On narrow screens
-              the title spans the full width and the summary cards wrap beneath.
-              Below `sm` everything stacks. */}
-          <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-[2fr_1fr_1fr_1fr]">
+              "Eng Design-to-Debug Ratio" and "Active Jobs" cards were both
+              removed here (the latter counted active jobs app-wide, not
+              anything scoped to the selected job(s), so it never belonged on
+              this card next to figures that ARE about the selection). On
+              narrow screens the title spans the full width and the summary
+              cards wrap beneath. Below `sm` everything stacks. */}
+          <div className="mb-5 grid grid-cols-2 gap-4 lg:grid-cols-[2fr_1fr_1fr]">
             <div className={`${card("p-3.5")} col-span-2 flex flex-col justify-center lg:col-span-1`}>
               {selectedJobIds.length > 1 ? (
                 // Aggregate mode: the charts/KPIs below sum every selected job,
@@ -222,7 +225,6 @@ export default async function JobHoursPage({
                 </>
               )}
             </div>
-            <IndicatorCard label="Active Jobs" value={String(data.kpis.activeJobs)} />
             <IndicatorCard label="Hours Refreshed Thru" value={data.kpis.hoursRefreshedThru ?? "—"} />
             <IndicatorCard label="Latest ETC Month" value={data.kpis.latestEtcMonth ?? "—"} />
           </div>
