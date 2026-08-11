@@ -1,7 +1,7 @@
 "use server";
 
 import { auth } from "@/lib/auth";
-import { queryHoursGrouped } from "@/lib/hours-explorer";
+import { queryHoursGrouped, queryHoursDrillRows, type HoursDrillRows } from "@/lib/hours-explorer";
 import { HOURS_GROUP_BY_VALUES, type HoursFilters, type HoursGroupBy, type HoursGroupRow } from "@/lib/hours-filters";
 
 // The Hours tab's nested Group By tree fetches every level past the first ON EXPAND
@@ -49,4 +49,15 @@ export async function loadHoursGroupChildren(filters: HoursFilters, groupBy: Hou
   if (!session?.user) throw new Error("Not signed in.");
   if (!(HOURS_GROUP_BY_VALUES as readonly string[]).includes(groupBy)) throw new Error(`Invalid group-by "${groupBy}".`);
   return queryHoursGrouped(sanitize(filters), groupBy);
+}
+
+/** Fetches the raw punch rows behind a leaf group — the tree's terminal level, once
+ *  every configured Group By dimension has already narrowed `filters`. Same
+ *  signed-in guard and the same DoS-hygiene sanitize() as loadHoursGroupChildren;
+ *  there is no extra dimension to validate here since queryHoursDrillRows takes no
+ *  groupBy argument. */
+export async function loadHoursDetailRows(filters: HoursFilters): Promise<HoursDrillRows> {
+  const session = await auth();
+  if (!session?.user) throw new Error("Not signed in.");
+  return queryHoursDrillRows(sanitize(filters));
 }

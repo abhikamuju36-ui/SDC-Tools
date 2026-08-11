@@ -205,6 +205,45 @@ export type HoursExportRows = { rows: HoursRow[]; truncated: boolean };
 // job-hours-detail.ts already uses for a job's punch drill.
 const MAX_EXPORT_ROWS = 50_000;
 
+export type HoursDrillRows = { rows: HoursRow[]; truncated: boolean };
+
+// Terminal level of the Hours tab's Group By tree (HoursGroupedTree) — the raw
+// punch records behind a leaf group (job 1116 -> Service Engineering -> …),
+// fetched whole rather than paginated so expanding a row stays a single round
+// trip with no nested pager UI underneath it. `filters` arrives already
+// narrowed to that exact leaf (narrowFiltersForGroupValue applied once per
+// ancestor level), so this is the SAME buildHoursWhere every other level's
+// aggregate used — the leaf's total and the sum of these rows can never
+// disagree, by construction, not by re-summing anything client-side.
+//
+// A smaller cap than the export's MAX_EXPORT_ROWS: this renders inline under
+// one table row, not into a downloaded file, so 50k here would mean 50k
+// <tr>s in the DOM instead of a spreadsheet someone scrolls outside the
+// browser. `truncated` lets the caller say so plainly rather than pretending
+// the visible rows are the whole story.
+//
+// 5,000, not a smaller "a leaf is usually small" guess: measured live, a
+// single-dimension leaf as coarse as one Department (no further Group By
+// level chosen at all) routinely holds 1,000-2,000 punches on its own — e.g.
+// Service Engineering's 1,903 — so a lower cap would truncate the exact
+// example this feature was built around. Reserved for the genuinely
+// pathological case (an entire broad dimension with no narrowing at all),
+// not the common one.
+const MAX_DRILL_ROWS = 5000;
+
+export async function queryHoursDrillRows(filters: HoursFilters): Promise<HoursDrillRows> {
+  const where = await resolveWhere(filters);
+  const detail = await prisma.jobHoursDetail.findMany({
+    where,
+    select: DETAIL_SELECT,
+    orderBy: [{ workDate: "desc" }, { id: "desc" }],
+    take: MAX_DRILL_ROWS + 1,
+  });
+  const truncated = detail.length > MAX_DRILL_ROWS;
+  const rows = await mapDetailRows(truncated ? detail.slice(0, MAX_DRILL_ROWS) : detail);
+  return { rows, truncated };
+}
+
 export async function queryHoursExportRows(filters: HoursFilters): Promise<HoursExportRows> {
   const where = await resolveWhere(filters);
   const detail = await prisma.jobHoursDetail.findMany({

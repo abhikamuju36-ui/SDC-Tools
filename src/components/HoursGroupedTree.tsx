@@ -3,9 +3,9 @@
 import { useEffect, useRef, useState, useTransition } from "react";
 import { useRealtimeChanges } from "@/components/RealtimeProvider";
 import { sequenced } from "@/lib/request-sequence";
-import { loadHoursGroupChildren } from "@/lib/hours-actions";
+import { loadHoursGroupChildren, loadHoursDetailRows } from "@/lib/hours-actions";
 import { narrowFiltersForGroupValue, type HoursFilters, type HoursGroupBy } from "@/lib/hours-filters";
-import type { HoursGroupRow } from "@/lib/hours-explorer";
+import type { HoursGroupRow, HoursRow, HoursDrillRows } from "@/lib/hours-explorer";
 import { useColumnSort } from "@/components/useColumnSort";
 import { sortRows, type SortColumns } from "@/lib/table-sort";
 import { SortableTh } from "@/components/ui/SortableHeader";
@@ -22,6 +22,20 @@ import { SortableTh } from "@/components/ui/SortableHeader";
 // children — so a parent's total is correct regardless of whether or how much of its
 // subtree has been fetched. Level 0 is computed server-side in page.tsx exactly like
 // the old single-dimension view; every deeper level is fetched lazily, on expand.
+//
+// ── The terminal level: every row is expandable, even the last configured one ──
+//
+// A row past the last chosen Group By dimension (or the ONLY dimension, if just one
+// is chosen — "Service Engineering" with no other grouping) used to render as plain,
+// non-interactive text: there was nowhere left for the tree to go. It now expands to
+// the raw punch records behind it instead (queryHoursDrillRows, via
+// loadHoursDetailRows) — same narrowed-filters chain as every group level above it,
+// so "the detail sums to the parent's total" holds by the SAME construction that
+// already makes a group's total agree with its children's: both are independent
+// server aggregates over the identical `where`, not one re-summing the other.
+// DetailBlock (below) renders these with their own header/sort/footer, since their
+// column shape (Date/Employee/Job/Section/Hours) has nothing in common with a group
+// row's (Group/Punches/Hours) — a plain text label sharing this table's 3 columns.
 //
 // ── The realtime-refresh interaction ─────────────────────────────────────────
 //
@@ -57,8 +71,31 @@ const SORT_COLUMNS: SortColumns<HoursGroupRow, SortKey> = {
   hours: { type: "hours", value: (r) => r.hours },
 };
 
+// The detail block's own sort keys — a SUPERSET of hours-filters.ts's
+// HoursDetailSortKey (Date/Job Id/Job Name/Section/Hours), which deliberately
+// excludes Employee/Department because that type also drives the plain
+// ungrouped table's SERVER `ORDER BY` (hours-explorer.ts's orderByForSort),
+// where employeeId has no Prisma relation to sort a name by. Here the rows
+// are already fetched and already carry the resolved employee/department
+// NAME (HoursRow.employee/.department), so sorting by them is a plain
+// client-side string compare with no such constraint — extended locally
+// rather than widening the shared type (which would force orderByForSort to
+// grow a case it has no correct way to satisfy).
+type DetailSortKey = "date" | "employee" | "department" | "jobId" | "jobName" | "section" | "hours";
+
+const DETAIL_SORT_COLUMNS: SortColumns<HoursRow, DetailSortKey> = {
+  date: { type: "date", value: (r) => r.date },
+  employee: { type: "text", value: (r) => r.employee },
+  department: { type: "text", value: (r) => r.department },
+  jobId: { type: "id", value: (r) => r.jobId },
+  jobName: { type: "text", value: (r) => r.jobName },
+  section: { type: "text", value: (r) => r.section },
+  hours: { type: "hours", value: (r) => r.hours },
+};
+
 const TD = "border-b border-sdc-border-soft px-3 py-1.5 text-sm text-sdc-navy";
 const TD_NUM = "border-b border-sdc-border-soft px-3 py-1.5 text-right font-mono text-sm tabular-nums text-sdc-navy";
+const DETAIL_TH = "border-b border-sdc-border px-3 py-1.5 text-label font-semibold uppercase tracking-[0.08em] text-sdc-muted";
 
 function fmtHours(n: number): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
@@ -81,6 +118,73 @@ function Caret({ open }: { open: boolean }) {
   );
 }
 
+// The tree's terminal level: the raw punch records behind one leaf group, in their
+// own small sortable table (their column shape has nothing in common with a group
+// row's Group/Punches/Hours, so they get their own <thead> rather than trying to
+// line up under it). A real component, not another branch of renderLevel's plain
+// function, specifically so it can hold ITS OWN sort state via useColumnSort — each
+// expanded leaf sorts independently or a sort applied while browsing one group would
+// otherwise have to apply to every other open leaf too.
+//
+// The footer sums exactly the rows THIS component was handed, never re-derives or
+// re-fetches anything — when `truncated` is false (the overwhelmingly common case:
+// a leaf this deep is normally tens to a few hundred punches, not thousands) that sum
+// is mathematically the same figure the parent row above it already shows, which is
+// what makes the "detail total equals the group total" requirement visibly true, not
+// just true by construction. When `truncated` IS true, the footer says so instead of
+// printing a sum that would understate the real total — the parent row's own total
+// (still fully correct; it never depended on this fetch) remains the number to trust.
+function DetailBlock({ depth, drill }: { depth: number; drill: HoursDrillRows }) {
+  const { sort, onSort } = useColumnSort<DetailSortKey>();
+  const sorted = sortRows(drill.rows, sort, DETAIL_SORT_COLUMNS);
+  const shownHours = drill.rows.reduce((s, r) => s + r.hours, 0);
+  const pad = 0.75 + depth * 1.25;
+  return (
+    <div className="styled-scrollbar overflow-x-auto rounded-md border border-sdc-border-soft bg-sdc-gray-50" style={{ marginLeft: `${pad}rem`, marginRight: "0.75rem" }}>
+      <table className="w-full border-collapse">
+        <thead>
+          <tr>
+            <SortableTh label="Date" sortKey="date" type="date" sort={sort} onSort={onSort} className={DETAIL_TH} />
+            <SortableTh label="Employee" sortKey="employee" type="text" sort={sort} onSort={onSort} className={DETAIL_TH} />
+            <SortableTh label="Department" sortKey="department" type="text" sort={sort} onSort={onSort} className={DETAIL_TH} />
+            <SortableTh label="Job Id" sortKey="jobId" type="id" sort={sort} onSort={onSort} className={DETAIL_TH} />
+            <SortableTh label="Job / Machine" sortKey="jobName" type="text" sort={sort} onSort={onSort} className={DETAIL_TH} />
+            <SortableTh label="Function / Section" sortKey="section" type="text" sort={sort} onSort={onSort} className={DETAIL_TH} />
+            <SortableTh label="Hours" sortKey="hours" type="hours" sort={sort} onSort={onSort} className={DETAIL_TH} />
+          </tr>
+        </thead>
+        <tbody>
+          {sorted.map((r) => (
+            <tr key={r.id} className="hover:bg-sdc-gray-50">
+              <td className={TD}>{r.date}</td>
+              <td className={TD}>{r.employee}</td>
+              <td className={TD}>{r.department}</td>
+              <td className={TD}>{r.jobId}</td>
+              <td className={`${TD} max-w-xs truncate`} title={r.jobName}>
+                {r.jobName}
+              </td>
+              <td className={TD}>
+                {r.section} — {r.sectionName}
+              </td>
+              <td className={TD_NUM}>{fmtHours(r.hours)}</td>
+            </tr>
+          ))}
+        </tbody>
+        <tfoot>
+          <tr className="font-semibold">
+            <td colSpan={6} className="border-b border-sdc-border-soft px-3 py-1.5 text-sm text-sdc-muted">
+              {drill.truncated
+                ? `Showing the first ${drill.rows.length.toLocaleString()} punches — narrow the filters or add another Group By level to see the rest.`
+                : `Total (${drill.rows.length.toLocaleString()} punch${drill.rows.length === 1 ? "" : "es"})`}
+            </td>
+            <td className={TD_NUM}>{fmtHours(shownHours)}</td>
+          </tr>
+        </tfoot>
+      </table>
+    </div>
+  );
+}
+
 export function HoursGroupedTree({
   rootRows,
   groupByLevels,
@@ -95,6 +199,12 @@ export function HoursGroupedTree({
   // never needs reverse-parsing out of its own serialized key.
   const [expanded, setExpanded] = useState<Map<string, GroupPath>>(new Map());
   const [children, setChildren] = useState<Map<string, HoursGroupRow[]>>(new Map());
+  // Populated instead of `children` for a node past the last configured Group By
+  // dimension — see the header comment on "the terminal level" above. A node is
+  // deterministically ONE or the other (which map a fetch fills is decided by its
+  // depth, in fetchChildren below), never both, so there is no ambiguity in reading
+  // "is this node cached yet" from either map alone.
+  const [detail, setDetail] = useState<Map<string, HoursDrillRows>>(new Map());
   const [errors, setErrors] = useState<Map<string, string>>(new Map());
   // Its `isPending` is unused — this exists purely so the auto-refetch effect below can
   // hand its fetch off through `startTransition`, which is the sanctioned way to defer
@@ -113,17 +223,31 @@ export function HoursGroupedTree({
     let narrowed = filters;
     for (const step of path) narrowed = narrowFiltersForGroupValue(narrowed, step.groupBy, step.value);
     const nextDim = groupByLevels[path.length];
-    const out = await sequenced(`hours-group:${key}`, key, () => loadHoursGroupChildren(narrowed, nextDim));
-    if (out.ok) {
-      setChildren((prev) => new Map(prev).set(key, out.value));
+    const clearError = () =>
       setErrors((prev) => {
         if (!prev.has(key)) return prev;
         const next = new Map(prev);
         next.delete(key);
         return next;
       });
+    if (nextDim) {
+      const out = await sequenced(`hours-group:${key}`, key, () => loadHoursGroupChildren(narrowed, nextDim));
+      if (out.ok) {
+        setChildren((prev) => new Map(prev).set(key, out.value));
+        clearError();
+      } else if (out.reason === "error") {
+        setErrors((prev) => new Map(prev).set(key, out.error instanceof Error ? out.error.message : "Could not load this group."));
+      }
+      return;
+    }
+    // Terminal level: no dimension left to group by, so this expansion is the raw
+    // punch records instead of another rollup.
+    const out = await sequenced(`hours-detail:${key}`, key, () => loadHoursDetailRows(narrowed));
+    if (out.ok) {
+      setDetail((prev) => new Map(prev).set(key, out.value));
+      clearError();
     } else if (out.reason === "error") {
-      setErrors((prev) => new Map(prev).set(key, out.error instanceof Error ? out.error.message : "Could not load this group."));
+      setErrors((prev) => new Map(prev).set(key, out.error instanceof Error ? out.error.message : "Could not load these punches."));
     }
   }
 
@@ -135,42 +259,49 @@ export function HoursGroupedTree({
       else next.delete(key);
       return next;
     });
-    if (willOpen && !children.has(key)) void fetchChildren(path, key);
+    if (willOpen && !children.has(key) && !detail.has(key)) void fetchChildren(path, key);
   }
 
   // Routine background refresh (LiveRefresh, any colleague's change) invalidates the
-  // fetched-children cache — NOT `expanded` (an open node must stay open) — so stale
-  // numbers under an open node can't linger after the top-level rootRows prop moves on.
+  // fetched-children/detail cache — NOT `expanded` (an open node must stay open) — so
+  // stale numbers under an open node can't linger after the top-level rootRows prop
+  // moves on.
   const changes = useRealtimeChanges();
   const seenChanges = useRef(changes.length);
   useEffect(() => {
     if (changes.length === seenChanges.current) return;
     seenChanges.current = changes.length;
     setChildren(new Map());
+    setDetail(new Map());
     setErrors(new Map());
   }, [changes.length]);
 
   // Refetches whatever's open but missing its cache entry — on a fresh expand AND
-  // after the invalidation above clears it. Depends on `children` as well as
-  // `expanded`: excluding it would mean the effect above clearing the cache never
-  // retriggers a refetch, since clearing `children` alone doesn't touch `expanded`.
+  // after the invalidation above clears it. Depends on `children`/`detail` as well as
+  // `expanded`: excluding them would mean the effect above clearing the caches never
+  // retriggers a refetch, since clearing a cache alone doesn't touch `expanded`.
   // Guarded so this can't loop: each key is excluded from the sweep the instant it's
-  // cached or errored. A key already in flight gets called again on a re-run (there's
-  // no separate loading flag to skip it on) — harmless: sequenced() joins an identical
-  // in-flight request rather than issuing a second one.
+  // cached (in EITHER map — a node only ever populates one, see the `detail` state's
+  // own comment) or errored. A key already in flight gets called again on a re-run
+  // (there's no separate loading flag to skip it on) — harmless: sequenced() joins an
+  // identical in-flight request rather than issuing a second one.
   useEffect(() => {
     for (const [key, path] of expanded) {
-      if (children.has(key) || errors.has(key)) continue;
+      if (children.has(key) || detail.has(key) || errors.has(key)) continue;
       startFetchTransition(() => {
         void fetchChildren(path, key);
       });
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [expanded, children]);
+  }, [expanded, children, detail]);
 
   function renderLevel(rows: HoursGroupRow[], path: GroupPath, depth: number): React.ReactNode[] {
     const levelDim = groupByLevels[depth];
-    const canExpand = depth + 1 < groupByLevels.length;
+    // Whether there's ANOTHER configured Group By dimension below this one. Every
+    // row is expandable regardless — this only decides what expanding it fetches
+    // and renders (one more rollup level vs. the raw punch records), never whether
+    // the caret/button appears at all.
+    const hasNextGroupLevel = depth + 1 < groupByLevels.length;
     const sorted = sortRows(rows, sortState.sort, SORT_COLUMNS);
     return sorted.flatMap((row) => {
       const nodePath = [...path, { groupBy: levelDim, value: row.key }];
@@ -179,25 +310,22 @@ export function HoursGroupedTree({
       const out: React.ReactNode[] = [
         <tr key={key} className="hover:bg-sdc-gray-50">
           <td className={TD} style={{ paddingLeft: `${0.75 + depth * 1.25}rem` }}>
-            {canExpand ? (
-              <button
-                type="button"
-                onClick={() => toggle(nodePath, key)}
-                aria-expanded={isOpen}
-                className="inline-flex items-center gap-1.5 text-left motion-interactive hover:opacity-70"
-              >
-                <Caret open={isOpen} />
-                <span>{row.label}</span>
-              </button>
-            ) : (
-              row.label
-            )}
+            <button
+              type="button"
+              onClick={() => toggle(nodePath, key)}
+              aria-expanded={isOpen}
+              title={hasNextGroupLevel ? undefined : "View the punch records behind this total"}
+              className="inline-flex items-center gap-1.5 text-left motion-interactive hover:opacity-70"
+            >
+              <Caret open={isOpen} />
+              <span>{row.label}</span>
+            </button>
           </td>
           <td className={TD_NUM}>{row.punchCount.toLocaleString()}</td>
           <td className={TD_NUM}>{fmtHours(row.hours)}</td>
         </tr>,
       ];
-      if (canExpand && isOpen) {
+      if (isOpen) {
         if (errors.has(key)) {
           out.push(
             <tr key={`${key}:error`}>
@@ -209,20 +337,44 @@ export function HoursGroupedTree({
               </td>
             </tr>,
           );
-        } else if (!children.has(key)) {
-          // Open, no cached children, no error — the fetch is in flight (or about to
-          // be, via the effect above). See the state note in the component body for
-          // why this is derived rather than a separate `loading` state.
-          out.push(
-            <tr key={`${key}:loading`}>
-              <td colSpan={3} className="px-3 py-1.5 text-xs text-sdc-muted" style={{ paddingLeft: `${0.75 + (depth + 1) * 1.25}rem` }}>
-                Loading…
-              </td>
-            </tr>,
-          );
+        } else if (hasNextGroupLevel) {
+          if (!children.has(key)) {
+            // Open, no cached children, no error — the fetch is in flight (or about
+            // to be, via the effect above). See the state note in the component
+            // body for why this is derived rather than a separate `loading` state.
+            out.push(
+              <tr key={`${key}:loading`}>
+                <td colSpan={3} className="px-3 py-1.5 text-xs text-sdc-muted" style={{ paddingLeft: `${0.75 + (depth + 1) * 1.25}rem` }}>
+                  Loading…
+                </td>
+              </tr>,
+            );
+          } else {
+            const kids = children.get(key);
+            if (kids) out.push(...renderLevel(kids, nodePath, depth + 1));
+          }
         } else {
-          const kids = children.get(key);
-          if (kids) out.push(...renderLevel(kids, nodePath, depth + 1));
+          // Terminal level: the raw punch records, not another rollup.
+          if (!detail.has(key)) {
+            out.push(
+              <tr key={`${key}:loading`}>
+                <td colSpan={3} className="px-3 py-1.5 text-xs text-sdc-muted" style={{ paddingLeft: `${0.75 + (depth + 1) * 1.25}rem` }}>
+                  Loading…
+                </td>
+              </tr>,
+            );
+          } else {
+            const d = detail.get(key);
+            if (d) {
+              out.push(
+                <tr key={`${key}:detail`}>
+                  <td colSpan={3} className="py-1.5">
+                    <DetailBlock depth={depth + 1} drill={d} />
+                  </td>
+                </tr>,
+              );
+            }
+          }
         }
       }
       return out;
