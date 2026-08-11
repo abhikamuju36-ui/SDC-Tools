@@ -69,6 +69,12 @@ export const SYNC_SOURCES = [
   // cumulative running total per job, and it covers Complete jobs too — those are
   // the ones whose parts spend is finished.
   { source: "parts_cost_actual", label: "Parts cost actual (TotalETO)", monthScoped: false },
+  // Lisa's monthly inventory workbook (Job Cost Explorer's %Complete/Sales $
+  // snapshots) — see lib/job-cost-inventory-sync.ts. Not month-scoped: it
+  // covers every month-end sheet the workbook has, not just the latest one,
+  // and upserts are keyed per month so an older snapshot is never touched by
+  // a newer file arriving.
+  { source: "job_cost_inventory", label: "Job Cost inventory (monthly file)", monthScoped: false },
   { source: "standard_pools", label: "Standard Fees pools", monthScoped: true },
   // Same wording as the dashboard's long-standing "Jobs from TotalETO" button,
   // which triggers this exact sync. Two names for one feed is precisely the
@@ -268,6 +274,14 @@ export async function runAllSyncs(
   await step("parts_cost_actual", labelFor("parts_cost_actual"), true, async () => {
     const r = await syncPartsCostActual();
     return `${r.jobsUpdated} jobs updated, ${r.jobsNotFound} TotalETO ids with no app job`;
+  });
+
+  // Job Cost Explorer's monthly inventory snapshots (%Complete/Sales $) — reads
+  // Lisa's workbook directly, same lazy-import reason as the rest of this file
+  // (fs is a Node built-in the Edge-runtime instrumentation.ts import can't load).
+  await step("job_cost_inventory", labelFor("job_cost_inventory"), true, async () => {
+    const { syncJobCostInventorySnapshots } = await import("@/lib/job-cost-inventory-sync");
+    return await syncJobCostInventorySnapshots();
   });
 
   // The Standard Fees pool ledger — the four PM/Warranty/MFG blocks on the ETC
