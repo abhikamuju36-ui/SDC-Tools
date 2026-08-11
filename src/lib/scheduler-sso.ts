@@ -92,3 +92,33 @@ export function verifySchedulerSsoToken(token: string): { email: string; nonce: 
     return null;
   }
 }
+
+// ── The other direction: Scheduler → here ───────────────────────────────────
+//
+// The Scheduler mints the identical wire format (its own copy of `sign()`,
+// same SCHEDULER_SHARED_TOKEN, same "sso:v1" domain prefix) for ITS
+// currently-logged-in user, so `verifySchedulerSsoToken` above already knows
+// how to check one without any changes. What it doesn't do is enforce
+// single-use — that's this, kept separate so the pure verify function stays
+// side-effect-free and testable without a shared mutable Map between test
+// cases.
+//
+// Mirrors the Scheduler's own `_ssoSpent` (routes/auth.js) exactly: in-memory
+// is the right scope on both sides, since these tokens live 60 seconds — a
+// restart losing the set costs nothing worse than allowing a replay of a
+// token that's almost certainly already expired anyway.
+const _spentNonces = new Map<string, number>();
+const NONCE_RETENTION_MS = 5 * 60 * 1000;
+
+// Returns true the first time a nonce is seen (i.e. "ok, proceed"), false on
+// a repeat. Callers must check the token's own expiry themselves — this
+// function only tracks which have already been spent.
+export function consumeSchedulerSsoNonce(nonce: string): boolean {
+  const now = Date.now();
+  if (_spentNonces.has(nonce)) return false;
+  _spentNonces.set(nonce, now + NONCE_RETENTION_MS);
+  if (_spentNonces.size > 500) {
+    for (const [k, until] of _spentNonces) if (until < now) _spentNonces.delete(k);
+  }
+  return true;
+}

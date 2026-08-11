@@ -11,7 +11,7 @@
     "free-port": "node scripts/free-port.mjs 3010",
     "deploy": "next build && node scripts/free-port.mjs 3010 && pm2 restart sdc-etc-planner",
     "lint": "eslint",
-    "test": "tsx --test tests/*.test.ts"
+    "test": "tsx -r ./scripts/shim-server-only.cjs --test tests/*.test.ts"
   },
   "dependencies": {
     "@azure/msal-node": "^5.3.1",

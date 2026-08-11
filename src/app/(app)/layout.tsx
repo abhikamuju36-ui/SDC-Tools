@@ -5,7 +5,7 @@ import { COLLAPSED_COOKIE, WIDTH_COOKIE, parseSidebarPrefs } from "@/lib/sidebar
 import { LiveRefresh } from "@/components/LiveRefresh";
 import { RealtimeProvider } from "@/components/RealtimeProvider";
 import { InteractionMetrics } from "@/components/InteractionMetrics";
-import { getSchedulerBaseUrl } from "@/lib/scheduler-link";
+import { getSchedulerBaseUrl, revokeSchedulerSession } from "@/lib/scheduler-link";
 import { withSchedulerSso } from "@/lib/scheduler-sso";
 
 // NOTE for anyone tempted to cache this layout or lift the auth() call out of it:
@@ -31,6 +31,11 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
 
   async function handleSignOut() {
     "use server";
+    // Invalidate any Scheduler session for the same person too — read
+    // BEFORE signOut() clears this app's own session, since there'd be
+    // nothing left to read afterward. Best-effort; see revokeSchedulerSession
+    // for why a slow/unreachable Scheduler can't hang or block this.
+    await revokeSchedulerSession(session?.user?.email);
     await signOut({ redirectTo: "/login" });
   }
 

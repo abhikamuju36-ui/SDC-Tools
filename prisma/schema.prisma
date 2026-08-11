@@ -21,6 +21,11 @@ model User {
   passwordHash String
   role         Role     @default(MANAGER)
   createdAt    DateTime @default(now())
+  // Bumped to invalidate every previously-issued session for this user —
+  // the server-side half of "sign out", and what a Scheduler-side logout
+  // calls out to over /api/integration/revoke-session. See
+  // lib/token-revocation.ts; never read or written anywhere else.
+  tokenVersion Int      @default(0)
 
   etcEntries EtcEntry[]
   executionRateEdits     ExecutionRate[]

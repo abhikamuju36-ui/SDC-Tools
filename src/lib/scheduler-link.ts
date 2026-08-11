@@ -2,6 +2,7 @@ import "server-only";
 import { fetchSchedulerProjectJobNumbers } from "./scheduler-db";
 import { withSchedulerSso } from "./scheduler-sso";
 import { auth } from "./auth";
+import { withTimeoutOrNull } from "./with-timeout";
 
 // Browser-reachable base URL of the SDC Scheduler app. The link is clicked in
 // the user's browser, so it must use the LAN hostname (users reach ETC at
@@ -39,4 +40,29 @@ export async function getSchedulerLinkContext(): Promise<{
 }> {
   const [jobNumbers, session] = await Promise.all([fetchSchedulerProjectJobNumbers(), auth()]);
   return { baseUrl: getSchedulerBaseUrl(), jobNumbers, ssoEmail: session?.user?.email ?? null };
+}
+
+// Called from this app's own sign-out action (see (app)/layout.tsx) so
+// logging out of Reports also invalidates any Scheduler session for the
+// same person — the mirror of what the Scheduler's own logout does over
+// here (POST /api/integration/revoke-session). Best-effort and time-boxed —
+// short, since the two apps are on the same LAN host: a slow or unreachable
+// Scheduler must never make signing out of THIS app hang or fail, and this
+// app's own session is already gone by the time this runs regardless of
+// whether the Scheduler call succeeds.
+export async function revokeSchedulerSession(email: string | null | undefined): Promise<void> {
+  const token = process.env.SCHEDULER_SHARED_TOKEN;
+  if (!token || !email) return;
+  await withTimeoutOrNull(
+    "Scheduler session revoke",
+    3000,
+    async () => {
+      await fetch(`${getSchedulerBaseUrl()}/api/auth/revoke-session`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ email }),
+      });
+    },
+    (e) => console.error("revokeSchedulerSession failed:", e),
+  );
 }
