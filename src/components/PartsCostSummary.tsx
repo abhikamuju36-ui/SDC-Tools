@@ -2,6 +2,7 @@
 
 import { usd } from "@/components/ui/format";
 import { card } from "@/components/ui/classnames";
+import { placeMarkers } from "@/lib/parts-cost-markers";
 
 // Fixed palette (2026-08-11, by request) — no longer the SDC-blue ramp, but
 // still fixed constants rather than anything data-derived, so the same dollar
@@ -28,25 +29,78 @@ const BAR_PROJECTED = "#FFDE51"; // ETC — forecast
 // the padding at its source, so gap-1.5 is once again the real, and only,
 // gap between the two bars, same as the ETC chart's own bar pairs.
 const BAR_W = "4.5rem";
-const BAR_H = 220; // px
 
-// One segment's colour swatch + label + dollar value — a normal block in
-// normal flex flow, NOT absolutely positioned against the bar. An earlier
-// version placed each marker at its segment's precise pixel midpoint, which
-// looked right until a label wrapped onto two lines (this card's ~250px
-// column has no room for "Committed, not yet invoiced $44,774" on one line)
-// and started overlapping its neighbour — pixel maths has no way to know how
-// tall a wrapped label will actually render. Normal flow can't make that
-// mistake: the browser gives each marker exactly the height its own text
-// needs, so two neighbours are physically incapable of occupying the same
-// space, however much either wraps. Declared at module scope, not inside
-// PartsCostSummary — a component defined during render is re-created (and its
-// state reset) on every render, which react-hooks/static-components rejects.
+// ── Height: measured to share ONE baseline with the ETC chart beside it ──────
+//
+// The two cards are siblings in JobHoursDashboard's `lg:grid-cols-[2fr_1fr]`
+// row, and SectionHierarchyChart (same file as that grid) draws its bars in a
+// grid with a hard `height: 300`. Measured live at 15px root: that grid's
+// bottom sat 74.4px BELOW these bars' bottom — the empty band under this
+// card's bars, reported with the gap circled.
+//
+// 294 is not a guess: both cards start at the same y (one grid row), and
+// everything above the bars in each card is fixed-height — the ETC chart's bar
+// grid starts 72px below its card's top, and this card's bar BOX starts 77.6px
+// below its own (padding + header + py-1 + the value label + its gap). So
+// 372 - 77.6 ≈ 294 puts the two baselines on the same line BY CONSTRUCTION,
+// which is what makes the alignment survive the drill-open state too: opening a
+// section drill switches that grid from `items-stretch` to `items-start`, so
+// this card stops being stretched — a height tuned against the STRETCHED
+// spacer instead would drift the moment that happened.
+//
+// It also absorbs the 72.8px `flex-1` spacer that used to sit between the bars
+// and the summary below, which is where the "excessive whitespace" came from:
+// the card's own height is set by the taller ETC card next to it, and that
+// spacer was soaking up the difference.
+const BAR_H = 294; // px — see above; keep in step with SectionHierarchyChart's own 300
+// The caption band under each bar ("Budget" / "Actual / Projection"), and the
+// `gap-1.5` each bar column puts between its label / box / caption.
+//
+// Both are needed to place the legend, not just the caption: the legend band has
+// to end level with the BAR BOX, but `items-end` aligns it with the bottom of
+// the whole COLUMN — which is the caption's bottom, one column gap further down
+// again. Measured the mistake rather than reasoned about it: with the caption
+// height alone the band came out 5.63px low, exactly `gap-1.5` at this app's
+// 15px root. LEGEND_BOTTOM_OFFSET is that full distance, and every one of these
+// values is referenced by BOTH sides, so a future change to the caption or the
+// column gap moves the legend with it instead of silently desynchronising it.
+const CAPTION_H = "2rem";
+const COL_GAP = "0.375rem"; // Tailwind gap-1.5, as used on each bar column
+const LEGEND_BOTTOM_OFFSET = `calc(${CAPTION_H} + ${COL_GAP})`;
+
+// One segment's colour swatch + label + dollar value, pinned beside the stack
+// segment it describes (see MARKER_SLOT / placeMarkers below).
+//
+// ── Why `whitespace-nowrap` is load-bearing, not cosmetic ────────────────────
+//
+// An earlier version of this card DID position markers at their segment's pixel
+// midpoint, and it was reverted because labels overlapped: back then the labels
+// were long enough to wrap ("Committed, not yet invoiced $44,774" in a ~250px
+// column), and pixel maths cannot know how tall a wrapped label will render, so
+// two neighbours could claim the same space. It was replaced with plain flex
+// flow, which cannot overlap but also cannot point at anything.
+//
+// Positioning is back — the requirement is explicitly that a marker line up
+// with its own segment — and the overlap is designed out on both axes rather
+// than hoped away: `whitespace-nowrap` makes every marker EXACTLY two lines
+// tall (label, then value), so its height is known ahead of layout and
+// MARKER_SLOT can reserve it; and placeMarkers() below enforces that reserved
+// gap even when segments cluster. The horizontal cost is that a label longer
+// than the legend column will overflow it instead of wrapping — visible, but a
+// legible overflow beats two labels on top of each other, and the three current
+// labels ("Invoiced", "Left to be invoiced", "ETC") measure well inside it.
+// Keep labels short; if a much longer one is ever added, widen LEGEND_W rather
+// than dropping the nowrap. The reservation itself (MARKER_SLOT) and the
+// placement maths live in lib/parts-cost-markers.ts, where they are unit-tested.
+//
+// Declared at module scope, not inside PartsCostSummary — a component defined
+// during render is re-created (and its state reset) on every render, which
+// react-hooks/static-components rejects.
 function SegmentMarker({ color, label, value }: { color: string; label: string; value: number }) {
   return (
     <div className="flex items-start gap-1.5">
       <span className="mt-1 inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
-      <span className="text-xs leading-snug text-sdc-gray-600">
+      <span className="whitespace-nowrap text-xs leading-snug text-sdc-gray-600">
         {label}
         <br />
         <span className="font-mono text-xs font-semibold tabular-nums text-sdc-navy">{usd(value)}</span>
@@ -54,6 +108,8 @@ function SegmentMarker({ color, label, value }: { color: string; label: string; 
     </div>
   );
 }
+
+const LEGEND_W = "9.5rem";
 
 // Parts Cost money block for the Job Hour Details page — the app's version of
 // the Power BI report's Parts Cost visual.
@@ -195,10 +251,18 @@ export function PartsCostSummary({
     segments.push({ key: "etc", label: "ETC", value: projIncrement, color: BAR_PROJECTED, heightPct: pct(projIncrement) });
   }
   // Labels read top-to-bottom in the same order the segments stack visually —
-  // the topmost segment ("ETC", when present) listed first — even though the
-  // label column itself is laid out in normal flow rather than pinned to
-  // each segment's exact pixel position (see SegmentMarker).
+  // the topmost segment ("ETC", when present) listed first — and each one is
+  // now pinned to its OWN segment's midpoint rather than sitting in plain flow
+  // (see SegmentMarker's header for the overlap history, and placeMarkers for
+  // how a $0 ETC segment still gets a readable marker).
   const labelOrder = [...segments].reverse();
+  // Same `heightPct` the segments are drawn with, resolved to px against the
+  // same BAR_H — so a marker cannot drift from the segment it names: both come
+  // from one number.
+  const markerTops = placeMarkers(
+    segments.map((s) => (s.heightPct / 100) * BAR_H),
+    BAR_H,
+  );
 
   // ONE meter: where the job is HEADING against what it was sold for.
   //
@@ -224,9 +288,6 @@ export function PartsCostSummary({
           estimate,
           dollars: budgetProjection.total - estimate, // + = over
           pct: (budgetProjection.total - estimate) / estimate,
-          // Fill is the share consumed, capped; the label stays uncapped so an
-          // overrun still reads as one.
-          fill: Math.min(100, (budgetProjection.total / estimate) * 100),
         }
       : null;
 
@@ -295,17 +356,33 @@ export function PartsCostSummary({
         <div className="flex items-end gap-1.5">
           <div className="flex flex-col items-center gap-1.5">
             <span className="font-mono text-sm font-semibold tabular-nums text-sdc-navy">{estimate != null ? usd(estimate) : "—"}</span>
-            <div className="relative overflow-hidden rounded-sm bg-sdc-gray-100" style={{ width: BAR_W, height: BAR_H }}>
+            {/* No background on this positioning box — it is only a percentage
+                reference frame (height: BAR_H), never rendered itself. A
+                bg-sdc-gray-100 "track" here used to fill the FULL BAR_H
+                regardless of value, so a bar under 100% of maxValue showed a
+                gray shortfall above its real fill that read as the bar
+                extending further than its actual number — exactly the
+                artificial padding this must not have. The card's own
+                background shows through above the fill instead. */}
+            <div className="relative overflow-hidden" style={{ width: BAR_W, height: BAR_H }}>
               {estimate != null && (
                 <div className="absolute inset-x-0 bottom-0 rounded-t-sm" style={{ height: `${pct(estimate)}%`, background: BAR_BUDGET }} />
               )}
             </div>
-            <div className="flex h-8 items-start justify-center text-center text-note font-medium leading-tight text-sdc-gray-600">Budget</div>
+            <div className="flex items-start justify-center text-center text-note font-medium leading-tight text-sdc-gray-600" style={{ height: CAPTION_H }}>Budget</div>
           </div>
 
           <div className="flex flex-col items-center gap-1.5">
             <span className="font-mono text-sm font-semibold tabular-nums text-sdc-navy">{usd(projTotal)}</span>
-            <div className="relative overflow-hidden rounded-sm bg-sdc-gray-100" style={{ width: BAR_W, height: BAR_H }}>
+            {/* Same reasoning as Budget's box above: no bg-sdc-gray-100 track.
+                This box's OWN height stays BAR_H only as the percentage
+                reference frame the three segments' heightPct values resolve
+                against — it renders nothing on its own, so the stack's
+                visible height is exactly the sum of Invoiced + Left to be
+                invoiced + ETC (heightPct, computed from pct(), sums linearly
+                to pct(projTotal) — there is no fourth, invisible segment
+                padding it out to the box's full height). */}
+            <div className="relative overflow-hidden" style={{ width: BAR_W, height: BAR_H }}>
               <div className="absolute inset-x-0 bottom-0 flex h-full flex-col-reverse">
                 {segments.map((s, i) => (
                   <div key={s.key} className={`w-full flex-shrink-0 ${i === segments.length - 1 ? "rounded-t-sm" : ""}`} style={{ height: `${s.heightPct}%`, background: s.color }} />
@@ -320,19 +397,29 @@ export function PartsCostSummary({
           </div>
         </div>
 
-        {/* The three segment markers, one per line with real spacing between
-            them — normal flow, not pinned to the bar's pixels (see
-            SegmentMarker for why). Centred against the taller of the two
-            bars' worth of vertical space so it doesn't look stranded when
-            both bars are short. Fixed max-width, NOT `flex-1` (2026-08-11) —
-            a flex-1 legend claims every pixel of space the row's own
-            `justify-center` would otherwise have distributed, which is what
-            made the whole bar group read left-aligned: there was no leftover
-            space left to center it WITH. Bounding this block's width instead
-            gives the row something finite to center as a whole. */}
-        <div className="flex min-w-0 max-w-[9.5rem] flex-col justify-center gap-3" style={{ minHeight: BAR_H * 0.6 }}>
-          {labelOrder.map((s) => (
-            <SegmentMarker key={s.key} color={s.color} label={s.label} value={s.value} />
+        {/* The three segment markers, each pinned to the vertical centre of the
+            stack segment it names (markerTops, from placeMarkers).
+
+            This band is deliberately CONGRUENT with the bar BOX, not with the
+            bar column: `height: BAR_H` matches the box, and
+            LEGEND_BOTTOM_OFFSET cancels everything the column puts BELOW that
+            box (the caption, plus the column's own gap above it) — without it,
+            `items-end` bottom-aligns this band with the column's bottom
+            instead, putting every marker that far too low and quietly breaking
+            the whole point of positioning them. See that constant's comment:
+            the same values drive the captions, so the two cannot drift.
+
+            Fixed width, NOT `flex-1` (2026-08-11) — a flex-1 legend claims
+            every pixel of space the row's own `justify-center` would otherwise
+            have distributed, which is what made the whole bar group read
+            left-aligned: there was no leftover space left to center it WITH.
+            Bounding this block's width instead gives the row something finite
+            to center as a whole. */}
+        <div className="relative shrink-0" style={{ width: LEGEND_W, height: BAR_H, marginBottom: LEGEND_BOTTOM_OFFSET }}>
+          {labelOrder.map((s, i) => (
+            <div key={s.key} className="absolute inset-x-0" style={{ top: markerTops[i], transform: "translateY(-50%)" }}>
+              <SegmentMarker color={s.color} label={s.label} value={s.value} />
+            </div>
           ))}
         </div>
       </div>
@@ -355,7 +442,23 @@ export function PartsCostSummary({
           (Invoiced + Left to be invoiced), so this reconciles with what's on
           screen rather than with the ledger. ETC is deliberately excluded —
           it's a forecast, not spend. */}
-      <p className="mt-2 text-note text-sdc-gray-400">Total Parts Cost Spent: {usd(invoiced + spentIncrement)}</p>
+      {/* The AMOUNT carries the emphasis, not the whole line (2026-08-11f, by
+          request): navy + bold + `text-sm` against the label's muted `text-note`
+          makes the figure the thing the eye lands on, without turning a quiet
+          caption into a second heading competing with "Projection vs Budget"
+          right beneath it. The expression is untouched — still exactly the
+          bar's own bottom two segments. */}
+      {/* `mt-1`, not `mt-2` (2026-08-11f): the taller bars consumed the whole
+          72.8px `flex-1` spacer that used to sit here, which left this card's
+          natural height 3.5px ABOVE the ETC card's — and since the two stretch
+          to whichever is taller, that made BOTH cards grow. Reclaiming 3.75px
+          here puts the ETC card back in charge of the row height (so the card
+          height is preserved exactly, as asked) and tightens the gap between
+          the bars and this summary at the same time. */}
+      <p className="mt-1 text-note text-sdc-gray-400">
+        Total Parts Cost Spent:{" "}
+        <span className="font-mono text-sm font-bold tabular-nums text-sdc-navy">{usd(invoiced + spentIncrement)}</span>
+      </p>
 
       {/* Projection vs Budget — the one figure that says whether this job
           lands over what it was sold for, while there's still time to act.
@@ -400,12 +503,6 @@ export function PartsCostSummary({
                 </>
               )}
             </p>
-          </div>
-          <div className="relative mt-2 h-2 w-full overflow-hidden rounded-full bg-sdc-gray-100">
-            <div
-              className="absolute inset-y-0 left-0 rounded-full"
-              style={{ width: `${variance.fill}%`, background: variance.dollars > 0 ? "#dc2626" : "#408bf7" }}
-            />
           </div>
         </div>
       )}

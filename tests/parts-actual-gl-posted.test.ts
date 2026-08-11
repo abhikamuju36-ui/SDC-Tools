@@ -181,9 +181,13 @@ test("the Parts Cost card's base bar segment comes from `actual`, never `paid` o
   // what the bar's base segment and the legend's "Invoiced" value show.
   // `spentIncrement` is an explicitly labelled, visibly separate "Left to be
   // invoiced" segment, not commitment silently relabelled as spend.
+  // Matches the caption and its expression separately rather than as one exact
+  // string: 2026-08-11f wrapped the AMOUNT in its own <span> to bold it, which a
+  // literal one-line pattern would have failed on for a pure typography change.
+  // What must not drift is the EXPRESSION — that is what this guards.
   assert.match(
     src,
-    /Total Parts Cost Spent: \{usd\(invoiced \+ spentIncrement\)\}/,
+    /Total Parts Cost Spent:[\s\S]{0,240}usd\(invoiced \+ spentIncrement\)/,
     "by-request 2026-08-11c: this caption sums the bar's own two segments (Invoiced + Left to be invoiced), not the GL-posted figure alone",
   );
 });
