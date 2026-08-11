@@ -113,6 +113,13 @@ export function busySlot(minWidthClass: string): string {
 // most of these are <summary> elements, which need both.
 export const TOOLBAR_BTN =
   `list-none cursor-pointer ${BTN_BASE} ${BTN_H_STANDARD} rounded-lg border px-3.5 text-sm font-medium shadow-sm`;
+// Same shape family as TOOLBAR_BTN, at BUTTON_COMPACT's geometry (1.9rem) instead
+// of BTN_H_STANDARD's 2.4rem — for a toolbar that's explicitly asked to run denser
+// than the app's usual row (Job Cost Explorer, 2026-08-10). The color variants
+// below are pure color with no geometry of their own, so they drop onto this or
+// TOOLBAR_BTN unchanged — one pair of tokens, two densities.
+export const TOOLBAR_BTN_COMPACT =
+  `list-none cursor-pointer ${BTN_BASE} ${BTN_H_COMPACT} rounded-md border px-2.5 text-xs font-medium shadow-sm`;
 // Neutral (menus with no on/off state), Active (a filter/toggle that's engaged),
 // Muted (a filter with nothing selected).
 export const TOOLBAR_BTN_NEUTRAL = "border-sdc-border bg-white text-sdc-navy hover:bg-sdc-blue-light";

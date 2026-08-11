@@ -786,3 +786,37 @@ model JobCostHourAllocation {
 
   @@index([jobId])
 }
+
+// ── Job Cost Explorer: monthly inventory snapshots (2026-08-11) ─────────────
+//
+// One row per (job, month-end date), read from Lisa's monthly inventory workbook
+// (Finance - General\*.xlsx — the file itself gets renamed each month, but is
+// really one growing workbook: she adds a new dated sheet, e.g. "SDC inventory
+// 6.30.26", rather than starting a new file). See lib/job-cost-inventory-sync.ts.
+//
+// Replaces the hand-maintained src/data/job-cost/inventory-data.json this app
+// shipped with, which was a single always-latest snapshot someone had to
+// manually regenerate and drop in — and had gone stale (stuck on May 2026) by
+// the time this table was added. Keyed per month rather than overwritten in
+// place so that adding a NEW month's sheet can never touch an already-stored
+// OLDER one — the property that makes "reproduce the July view while working in
+// August" possible at all.
+//
+// jobId is NOT an FK to Job: the source sheet can carry a row for an id the Job
+// table doesn't have (a utility/spare-parts bucket, same as the JSON file it
+// replaces), and an FK would silently drop that row instead of just leaving it
+// unmatched. Accessed by raw SQL, same reason and same constraint as
+// JobCostDefaultRate/JobCostYearRate/JobCostHourAllocation above.
+model JobCostInventorySnapshot {
+  id              Int      @id @default(autoincrement())
+  jobId           String   @db.VarChar(32)
+  asOfDate        DateTime
+  salesPrice      Decimal? @db.Decimal(14, 2)
+  percentComplete Decimal? @db.Decimal(6, 2) // 0-100, matches the app-wide fmtPct convention
+  sourceFile      String   @db.VarChar(255)
+  sourceSheet     String   @db.VarChar(128)
+  syncedAt        DateTime @default(now())
+
+  @@unique([jobId, asOfDate])
+  @@index([asOfDate])
+}

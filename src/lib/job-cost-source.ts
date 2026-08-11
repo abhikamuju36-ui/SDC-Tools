@@ -1,14 +1,13 @@
 import "server-only";
-import fs from "fs/promises";
-import path from "path";
 import { prisma } from "@/lib/prisma";
 import { validJobTypeFilter } from "@/lib/job-filters";
 import { SECTIONS, PARTS_COST_SECTION } from "@/lib/sections";
 import { coveredMonths } from "@/lib/actual-hours";
-import { getPartsCostSpentByJob, getPartsInvoicedByJob } from "@/lib/sync-totaleto";
+import { getPartsCostSpentByJob, getPartsActualByJob } from "@/lib/sync-totaleto";
 import { effectiveNewEtc } from "@/lib/etc";
 import { runDax } from "@/lib/powerbi-client";
 import { withTimeoutOrNull } from "@/lib/with-timeout";
+import { getInventorySnapshotForDate, listInventorySnapshotDates } from "@/lib/job-cost-inventory-snapshot";
 import type { HoursByYear, JobCostRow } from "@/lib/job-cost";
 
 // ── Job Cost Explorer data assembly ─────────────────────────────────────────
@@ -33,8 +32,9 @@ for (const s of SECTIONS) {
       : "other";
 }
 
-const LIFETIME_START = new Date(1990, 0, 1);
-const LIFETIME_END_EXCLUSIVE = new Date(2100, 0, 1);
+// The 1990–2100 "lifetime" window these constants supplied is gone: the Parts
+// Actual column now calls getPartsActualByJob(), which is unwindowed by
+// construction (2026-08-10). Nothing here needs a synthetic date range any more.
 
 // A live TotalETO connection failure surfaced during integration testing
 // (summing 35 years of AP-document history across every job is a heavier
@@ -64,8 +64,18 @@ type JobHoursTotals = {
  * contributes to the flat totals only, never to hoursByYear — matching how
  * the original app's Power BI year breakdown could never have covered
  * pre-tracking history either.
+ *
+ * `throughMonth` (2026-08-11): null reproduces the unbounded query above byte
+ * for byte — Current mode's hours stay exactly as live/unwindowed as they
+ * always were. Set for a historical "As of" snapshot, it bounds BOTH
+ * month-scoped sources (and therefore hoursByYear, which `laborForType` in
+ * job-cost.ts costs per year) at the selected month — a job's July snapshot
+ * must not silently absorb August's hours just because August has since
+ * happened. `historical` (the pre-tracking migration snapshot) is never
+ * filtered: it carries no month and predates every trackable one by
+ * construction, so it belongs in every snapshot including the earliest.
  */
-async function loadJobHoursAndYears(jobPks: number[]): Promise<Map<number, JobHoursTotals>> {
+async function loadJobHoursAndYears(jobPks: number[], throughMonth: string | null): Promise<Map<number, JobHoursTotals>> {
   const out = new Map<number, JobHoursTotals>();
   if (jobPks.length === 0) return out;
 
@@ -77,12 +87,16 @@ async function loadJobHoursAndYears(jobPks: number[]): Promise<Map<number, JobHo
     }),
     prisma.etcEntry.groupBy({
       by: ["jobId", "section", "month"],
-      where: { jobId: { in: jobPks }, section: { not: PARTS_COST_SECTION }, month: { notIn: covered } },
+      where: {
+        jobId: { in: jobPks },
+        section: { not: PARTS_COST_SECTION },
+        month: { notIn: covered, ...(throughMonth ? { lte: throughMonth } : {}) },
+      },
       _sum: { hoursWorked: true },
     }),
     prisma.jobHoursDetail.groupBy({
       by: ["jobId", "section", "month"],
-      where: { jobId: { in: jobPks }, month: { in: covered } },
+      where: { jobId: { in: jobPks }, month: { in: covered, ...(throughMonth ? { lte: throughMonth } : {}) } },
       _sum: { hours: true },
     }),
   ]);
@@ -167,39 +181,63 @@ async function loadLiveEtcReference(jobPks: number[]): Promise<Map<number, LiveE
   return out;
 }
 
-// ── The two hand-maintained snapshot files, relocated from the standalone
-// app's root into this repo. Same lifecycle as before: someone regenerates
-// them from Standard Fees.xlsx / the inventory export and drops the file in —
-// nothing here writes to them.
-const JOB_COST_DATA_DIR = path.join(process.cwd(), "src", "data", "job-cost");
+// ── Submitted ETC snapshot resolution (2026-08-11) ──────────────────────────
+//
+// Replaces the hand-maintained etc-data.json this app shipped with (a single
+// always-latest snapshot someone had to manually regenerate and drop in) with
+// a direct read of this app's OWN submitted/locked ETC months. "Submitted" is
+// not a separate flag to invent — a month is locked exactly when every
+// EtcEntry row in it has needsReview=false (isMonthLocked, lib/etc.ts:622),
+// which is set, together with a frozen `newEtc`, by submitEtcEntriesInTx
+// (lib/monthly-report.ts) at the moment a manager submits the month. Reading
+// `newEtc` on a needsReview=false row is reading exactly that frozen value.
 
-async function readJsonFile<T>(name: string): Promise<T | null> {
-  try {
-    const raw = await fs.readFile(path.join(JOB_COST_DATA_DIR, name), "utf8");
-    return JSON.parse(raw) as T;
-  } catch {
-    return null;
+/**
+ * Locked (submitted) months, newest first. Cheaper than fetching every
+ * EtcEntry row just to run isMonthLocked() per month: a month with zero
+ * pending rows among the months that have ANY rows is locked, full stop.
+ */
+export async function listLockedEtcMonthsDesc(): Promise<string[]> {
+  const [all, pending] = await Promise.all([
+    prisma.etcEntry.groupBy({ by: ["month"] }),
+    prisma.etcEntry.groupBy({ by: ["month"], where: { needsReview: true } }),
+  ]);
+  const pendingMonths = new Set(pending.map((p) => p.month));
+  return all
+    .map((a) => a.month)
+    .filter((m) => !pendingMonths.has(m))
+    .sort((a, b) => b.localeCompare(a));
+}
+
+export type SubmittedEtc = { etcEngHours: number; etcShopHours: number; etcPartsCost: number };
+
+/**
+ * The frozen ETC Eng/Shop/Parts for one SUBMITTED month, bucketed with this
+ * file's own SECTION_BUCKET (the full-job-wide rule Actual/Eng/Shop/Other
+ * Hours already use above) — not the narrower ETC_TRACKED_CODES subset
+ * getExecutionEtcByJob/Standard Fees uses, so a section that shows real
+ * actual hours can never show a mysterious 0 ETC just because a differently-
+ * scoped code list doesn't track it. Callers are expected to have already
+ * resolved `month` via listLockedEtcMonthsDesc — this does not re-check
+ * lock status itself, it just reads whatever's frozen for that exact month.
+ */
+export async function getSubmittedEtcSnapshot(jobPks: number[], month: string): Promise<Map<number, SubmittedEtc>> {
+  const out = new Map<number, SubmittedEtc>();
+  if (jobPks.length === 0) return out;
+
+  const entries = await prisma.etcEntry.findMany({
+    where: { jobId: { in: jobPks }, month, needsReview: false },
+    select: { jobId: true, section: true, newEtc: true, newEtcDraft: true, needsReview: true, priorEtc: true, hoursWorked: true },
+  });
+  for (const e of entries) {
+    let ref = out.get(e.jobId);
+    if (!ref) out.set(e.jobId, (ref = { etcEngHours: 0, etcShopHours: 0, etcPartsCost: 0 }));
+    const value = effectiveNewEtc(e); // needsReview=false here always reduces this to Number(e.newEtc)
+    if (e.section === PARTS_COST_SECTION) ref.etcPartsCost += value;
+    else if (SECTION_BUCKET[e.section] === "eng") ref.etcEngHours += value;
+    else if (SECTION_BUCKET[e.section] === "shop") ref.etcShopHours += value;
   }
-}
-
-type InventoryJob = { jobId: string; salesPrice?: number; percentComplete?: number };
-type InventoryFile = { asOf?: string; jobs?: InventoryJob[] };
-
-type EtcSnapshotJob = { jobId: string; etcEngHours?: number | null; etcShopHours?: number | null; etcPartsCost?: number | null };
-type EtcSnapshotFile = { refreshedThru?: string; jobs?: EtcSnapshotJob[] };
-
-async function loadInventoryOverrides(): Promise<{ map: Map<string, InventoryJob>; asOf: string | null }> {
-  const raw = await readJsonFile<InventoryFile>("inventory-data.json");
-  const map = new Map<string, InventoryJob>();
-  for (const j of raw?.jobs ?? []) map.set(String(j.jobId), j);
-  return { map, asOf: raw?.asOf ?? null };
-}
-
-async function loadEtcSnapshot(): Promise<{ map: Map<string, EtcSnapshotJob>; refreshedThru: string | null }> {
-  const raw = await readJsonFile<EtcSnapshotFile>("etc-data.json");
-  const map = new Map<string, EtcSnapshotJob>();
-  for (const j of raw?.jobs ?? []) map.set(String(j.jobId), j);
-  return { map, refreshedThru: raw?.refreshedThru ?? null };
+  return out;
 }
 
 // The one Power BI query this integration still needs — Sales Price, as a
@@ -225,15 +263,47 @@ async function loadSalesPriceFallback(): Promise<Map<string, number>> {
   return map;
 }
 
+// Last calendar day of a "YYYY-MM" month — same technique workingDaysInMonth
+// (lib/etc.ts) already uses (day 0 of next month = last day of this one) — for
+// turning a locked ETC month into a month-END date, so the As-of picker's
+// option list is one consistent kind of value (a date), not a mix of "YYYY-MM"
+// ETC months and "YYYY-MM-DD" inventory dates.
+function monthEndDate(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  const lastDay = new Date(y, m, 0).getDate();
+  return `${month}-${String(lastDay).padStart(2, "0")}`;
+}
+
+// A job that finishes in August must not have that retroactively zero out a
+// July snapshot's still-live ETC forecast (computeJobCost forces ETC to 0 and
+// %Complete to 100 once status is literally "Complete") — job-cost.ts itself
+// is untouched; this corrects its INPUT instead. completeDate is the one real
+// historical marker this app has for "was it done yet" — a job currently
+// showing Complete that hadn't reached its completeDate as of `asOf` reports
+// as "Active" for that snapshot instead (there is no historical record of
+// Active-vs-HeadStart to reconstruct, and neither affects computeJobCost).
+function historicalStatus(job: { status: string; completeDate: Date | null }, asOf: string): string {
+  const completedByThen = job.completeDate != null && job.completeDate.toISOString().slice(0, 10) <= asOf;
+  if (completedByThen) return "Complete";
+  return job.status === "Complete" ? "Active" : job.status;
+}
+
 export type JobCostData = {
   rows: JobCostRow[];
   inventoryAsOf: string | null;
+  /** The submitted ETC month actually used ("YYYY-MM"), or null if none qualified. */
   etcRefreshedThru: string | null;
   liveEtcByJobId: Map<string, LiveEtcReference>;
   partsCostAvailable: boolean;
+  /** Echoes what was applied — a "YYYY-MM-DD" month-end, or null for Current. */
+  asOf: string | null;
+  inventoryMissing: boolean;
+  etcMissing: boolean;
+  /** Available month-end dates for the As-of picker, descending. */
+  asOfOptions: string[];
 };
 
-export async function loadJobCostRows(): Promise<JobCostData> {
+export async function loadJobCostRows(asOf: string | null = null): Promise<JobCostData> {
   const jobs = await prisma.job.findMany({
     where: validJobTypeFilter,
     select: { id: true, jobId: true, jobName: true, status: true, customer: true, startDate: true, completeDate: true },
@@ -246,12 +316,30 @@ export async function loadJobCostRows(): Promise<JobCostData> {
     console.error("[job-cost-source] Total ETO parts query failed or timed out", error);
   };
 
-  const [hoursByJobPk, partsPurchased, partsInvoiced, inventory, etcSnapshot, salesFallback, liveEtcByJobPk] = await Promise.all([
-    loadJobHoursAndYears(jobPks),
+  // Inventory and ETC each resolve "latest available <= asOf" INDEPENDENTLY —
+  // they depend on two unrelated periodic snapshots (Lisa's workbook vs. this
+  // app's own monthly submission) that can lag each other, so tying one to the
+  // other's availability would make a merely-late file block an otherwise-fine
+  // snapshot. Current (asOf=null) means no ceiling on either search.
+  const [lockedMonths, inventoryDates] = await Promise.all([listLockedEtcMonthsDesc(), listInventorySnapshotDates()]);
+  const etcMonth = lockedMonths.find((m) => m <= (asOf ? asOf.slice(0, 7) : "9999-12")) ?? null;
+  const throughMonth = asOf ? asOf.slice(0, 7) : null;
+  const asOfOptions = [...new Set([...lockedMonths.map(monthEndDate), ...inventoryDates])].sort((a, b) => b.localeCompare(a));
+
+  const [hoursByJobPk, partsPurchased, partsInvoiced, inventory, etcSnapshotByJobPk, salesFallback, liveEtcByJobPk] = await Promise.all([
+    loadJobHoursAndYears(jobPks, throughMonth),
     withTimeoutOrNull("Total ETO parts purchased (Job Cost Explorer)", PARTS_BATCH_BUDGET_MS, () => getPartsCostSpentByJob(), onPartsFail),
-    withTimeoutOrNull("Total ETO parts invoiced (Job Cost Explorer)", PARTS_BATCH_BUDGET_MS, () => getPartsInvoicedByJob(LIFETIME_START, LIFETIME_END_EXCLUSIVE), onPartsFail),
-    loadInventoryOverrides(),
-    loadEtcSnapshot(),
+    // Parts Actual, from the app's one definition of it (2026-08-10). Was
+    // getPartsInvoicedByJob over a 1990–2100 "lifetime" window, which is the same
+    // AP-document sum WITHOUT the GL-posted rule — so this column disagreed with
+    // the Projects grid's Parts Actual by every never-exported invoice a job had.
+    // Same function, same number, everywhere. Not asOf-scoped: the requirement
+    // for this feature names Sales$/%Complete (inventory) and Hours/ETC
+    // (submitted ETC) specifically — Parts Purchased/Invoiced stays this app's
+    // own always-current TotalETO figure either way, exactly as it already does.
+    withTimeoutOrNull("Total ETO parts actual (Job Cost Explorer)", PARTS_BATCH_BUDGET_MS, () => getPartsActualByJob(), onPartsFail),
+    getInventorySnapshotForDate(asOf),
+    etcMonth ? getSubmittedEtcSnapshot(jobPks, etcMonth) : Promise.resolve(new Map<number, SubmittedEtc>()),
     loadSalesPriceFallback(),
     loadLiveEtcReference(jobPks),
   ]);
@@ -262,7 +350,7 @@ export async function loadJobCostRows(): Promise<JobCostData> {
   const rows: JobCostRow[] = jobs.map((j) => {
     const h = hoursByJobPk.get(j.id);
     const inv = inventory.map.get(j.jobId);
-    const etc = etcSnapshot.map.get(j.jobId);
+    const etc = etcSnapshotByJobPk.get(j.id);
     const salesPrice = inv?.salesPrice ?? salesFallback.get(j.jobId) ?? null;
 
     const liveEtc = liveEtcByJobPk.get(j.id);
@@ -271,7 +359,8 @@ export async function loadJobCostRows(): Promise<JobCostData> {
     return {
       jobId: j.jobId,
       jobName: j.jobName,
-      status: j.status,
+      // Current (asOf null) keeps the job's real live status, unchanged.
+      status: asOf ? historicalStatus(j, asOf) : j.status,
       customerName: j.customer ?? null,
       // No source has ever populated this — the original app's own comment
       // notes the Power BI model has no machine-type column on 'Job' either.
@@ -293,5 +382,15 @@ export async function loadJobCostRows(): Promise<JobCostData> {
     };
   });
 
-  return { rows, inventoryAsOf: inventory.asOf, etcRefreshedThru: etcSnapshot.refreshedThru, liveEtcByJobId, partsCostAvailable: !partsFailed };
+  return {
+    rows,
+    inventoryAsOf: inventory.asOfDate,
+    etcRefreshedThru: etcMonth,
+    liveEtcByJobId,
+    partsCostAvailable: !partsFailed,
+    asOf,
+    inventoryMissing: inventory.asOfDate == null,
+    etcMissing: etcMonth == null,
+    asOfOptions,
+  };
 }
