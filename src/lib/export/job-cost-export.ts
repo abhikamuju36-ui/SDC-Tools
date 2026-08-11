@@ -71,7 +71,7 @@ export async function exportJobCostRows(
   const now = new Date();
   const spec: SheetSpec = {
     sheetName: "Job Cost",
-    title: "Job Cost Explorer",
+    title: "Profitability",
     subtitle: [`Exported ${now.toLocaleString()}`],
     columns,
     rows: specRows,
@@ -81,12 +81,12 @@ export async function exportJobCostRows(
 
   await logAudit({
     action: "export.download",
-    entityType: "JobCostExplorer",
-    summary: `Exported Job Cost Explorer as ${format.toUpperCase()} — ${rows.length} row(s)`,
+    entityType: "Profitability",
+    summary: `Exported Profitability as ${format.toUpperCase()} — ${rows.length} row(s)`,
     metadata: { format, rows: rows.length },
   });
 
-  const fileName = exportFileName(["Job_Cost_Explorer", todayStamp(now)], format);
+  const fileName = exportFileName(["Profitability", todayStamp(now)], format);
   if (format === "csv") {
     return { base64: Buffer.from(buildCsv(spec), "utf8").toString("base64"), fileName, mime: "text/csv;charset=utf-8" };
   }

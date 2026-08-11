@@ -178,7 +178,7 @@ const GROUPS: NavGroup[] = [
       },
       {
         href: "/job-cost-explorer",
-        label: "Job Cost Explorer",
+        label: "Profitability",
         isActive: (p) => p === "/job-cost-explorer",
         icon: (
           <Icon>

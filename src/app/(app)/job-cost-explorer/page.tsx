@@ -28,7 +28,7 @@ export default async function JobCostExplorerPage({ searchParams }: { searchPara
   return (
     <div>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3">
-        <PageTitle>Job Cost Explorer</PageTitle>
+        <PageTitle>Profitability</PageTitle>
         <p className="text-note text-sdc-gray-400">
           Per-job profit and margin — hours and parts cost from this app&apos;s own data
           {/* The active As-of date, stated plainly wherever the page's own

@@ -32,7 +32,10 @@ import { DEFAULT_RATES, type CostRates, type HourAllocationEntry, type JobHourAl
 // without a full reload, without this needing its own cell-addressable
 // realtime patching.
 
-const TAB = "Job Cost Explorer";
+// User-facing tab name shown in change notifications (ChangeNotifications.tsx)
+// and the audit log — kept in sync with the Sidebar label and PageTitle even
+// though the underlying route/component are still job-cost-explorer/JobCostExplorer.
+const TAB = "Profitability";
 
 async function actorId(): Promise<number | null> {
   const session = await auth();

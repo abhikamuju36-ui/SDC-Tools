@@ -8,7 +8,7 @@ export default async function JobCostExplorerLayout({ children }: { children: Re
     return (
       <PasswordGate
         action={unlockJobCostExplorer}
-        title="Job Cost Explorer is protected"
+        title="Profitability is protected"
         hint="Enter the password to view this tab."
         wrongPassword={wrongPassword}
       />
