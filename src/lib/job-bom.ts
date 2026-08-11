@@ -1,73 +1,39 @@
 import "server-only";
 import sql from "mssql";
+import {
+  type BomContext,
+  type BomNode,
+  type BomRow,
+  type PoLine,
+  type PullInfo,
+  buildAssembly,
+  buildSpecTree,
+  clean,
+  iso,
+  rollUp,
+  statsForRoots,
+} from "./job-bom-rules";
 
 // Native procurement BOM — ported from the Build Readiness report
 // (Centrailized library/Build_Readiness_Report). Instead of the cost-only
-// `vwEngBOM` explosion this used to run, it now pulls the same engineering
-// product structure the Build Readiness page uses (tblEngProductStructure +
-// tblEngItemMaster) plus purchase-order / receiver data, so every leaf part
+// `vwEngBOM` explosion this used to run, it pulls the same engineering product
+// structure the Build Readiness page uses (tblEngProductStructure +
+// tblEngItemMaster) plus purchase-order / receiver data, so every requirement
 // carries its PO status, supplier, and dates and every assembly carries a
-// readiness rollup — exactly matching the reference app's data + status logic.
+// readiness rollup.
 //
-// Hierarchy: one synthetic section node per SpecID (the report's
-// "sections" 10/30/40/90) → the spec's top node(s) from tblEngTop are exploded
-// into nested assemblies → leaf parts. Status/stats logic mirrors
-// server/lib/bomTree.js verbatim (assemblyIds = every ParentID; a part is
-// `received` when ReceivedQty >= ItemQty, else `ordered` when POQty > 0, else
-// `noPO`; assembly readiness is computed over UNIQUE leaf parts deduped by
-// ChildID). Kept defensive/fail-soft: an unknown job or a query error yields an
+// Hierarchy: one synthetic section node per SpecID (the report's "sections"
+// 10/30/40/90) → the spec's top node(s) from tblEngTop are exploded into nested
+// assemblies → parts.
+//
+// This module is the I/O half. Every rule about WHAT counts as a requirement,
+// what covers it and what it costs lives in `job-bom-rules.ts` — read that file's
+// header first; it explains BOM release status (Assembly Only / Both / Contents
+// Only), why "no PO" is not the same as "missing", and the cost fallback chain.
+// Kept defensive/fail-soft throughout: an unknown job or a query error yields an
 // empty JobBom.
 
-export type BomStats = {
-  total: number;
-  received: number;
-  noPO: number;
-  ordered: number;
-  pct: number;
-};
-
-export type BomPart = {
-  id: number;
-  pn: string;
-  desc: string;
-  manufacturer: string;
-  qty: number;
-  poQty: number;
-  receivedQty: number;
-  unitPrice: number;
-  requiredDate: string | null; // eps.RequiredDate — when the part is needed
-  expectedDate: string | null; // current due date (DateRequired || PurchaseDateRequired)
-  // The two halves of `expectedDate`, carried separately so the parts table can
-  // show a slipped date next to the one originally promised. Total ETO has no
-  // explicit "revised" field: the PO HEADER's PurchaseDateRequired is the date
-  // set when the order was raised, and the LINE's DateRequired is what that line
-  // is currently due. When the line date has moved off the header date, that
-  // movement is the revision.
-  originalDate: string | null; // poh.PurchaseDateRequired — as ordered
-  revisedDate: string | null; // pod.DateRequired, only when it differs
-  poDate: string | null; // poh.PurchaseDate — when the PO was raised
-  receivedDate: string | null; // LastReceivedDate
-  status: "received" | "ordered" | "noPO";
-  hold: boolean; // eps.ItemHold — flagged on hold in Total ETO
-  supplier: string | null;
-  poId: string | null;
-};
-
-export type BomNode = {
-  key: string; // unique instance key (parent path)
-  id: number | string;
-  depth: number; // section = 0, its top-level assemblies = 1, …
-  label: string;
-  pn: string; // part/company number (chip)
-  desc: string; // description (name)
-  isAssembly: boolean;
-  stats: BomStats;
-  children: BomNode[]; // nested sub-assemblies
-  parts: BomPart[]; // direct leaf parts
-  totalCost: number; // Σ unitPrice × qty over descendant leaf parts
-  totalPartQty: number; // Σ qty over descendant leaf parts
-  nestedAssemblies: number; // count of descendant assemblies
-};
+export type { BomStats, BomPart, BomNode, ReleaseStatus, PartSource, CostBasis } from "./job-bom-rules";
 
 // Authoritative per-line PO data (from tblPurchaseOrderDetails + tblReceiverLog)
 // — the supplier's own line counts, independent of the BOM explosion. Used to
@@ -137,6 +103,12 @@ const TOP_SQL = `
 // One project-wide pull (SpecID carried per row) instead of the reference's
 // per-spec round-trip — the PO/received subqueries are keyed by ItemID +
 // ProjectID (not SpecID), so the per-row values are byte-identical.
+//
+// `BOMAssemblyReleaseID` is the release status of this parent→child edge
+// (tsysBOMAssemblyRelease: 1 Contents Only / 2 Assembly Only / 3 Both) and is
+// what decides whether the child is exploded or bought whole. `ItemCost`,
+// `ItemLastCost` and `ItemListCost` feed the cost fallback for requirements
+// that have no PO price of their own — both are applied in job-bom-rules.ts.
 const BOM_SQL = `
   SELECT
     eps.ChildID,
@@ -150,6 +122,10 @@ const BOM_SQL = `
     eps.SpecID,
     eps.RequiredDate,
     eps.ItemHold,
+    eps.BOMAssemblyReleaseID,
+    eps.ItemCost,
+    child.ItemLastCost,
+    child.ItemListCost,
     ISNULL((
       SELECT SUM(pod.PurchaseQty)
       FROM tblPurchaseOrderDetails pod
@@ -179,6 +155,31 @@ const BOM_SQL = `
   JOIN tblEngItemMaster parent ON eps.ParentID = parent.ItemID
   WHERE eps.ProjectID = @job
   ORDER BY eps.SpecID, parent.ItemCompanyID, child.ItemCompanyID`;
+
+// Inventory issued to this job — the reason a legitimately-covered part can have
+// no purchase order at all. Grouped per item rather than added as two more
+// correlated subqueries on BOM_SQL, which already carries four.
+//
+// Only positive PullQty counts: a negative row is stock going BACK on the shelf
+// (a return/credit), and summing it in would net a real issue away to zero.
+// FulfilledStatus <> 0 is the part physically leaving the shelf for the job.
+const PULLS_SQL = `
+  SELECT
+    ipd.ItemID,
+    SUM(ipd.PullQty) AS PullQty,
+    SUM(CASE WHEN ipd.FulfilledStatus <> 0 THEN ipd.PullQty ELSE 0 END) AS FulfilledQty,
+    MAX(ipd.PullPrice) AS PullPrice,
+    MAX(ipd.FulfilledDate) AS FulfilledDate
+  FROM tblInventoryPullDetails ipd
+  WHERE ipd.ProjectID = @job AND ipd.PullQty > 0
+  GROUP BY ipd.ItemID`;
+
+// Items built in-house on an ETO process schedule — the other legitimate reason
+// a requirement never gets a purchase order.
+const PROCESS_SQL = `
+  SELECT DISTINCT psh.ItemID
+  FROM tblProcessScheduleHeader psh
+  WHERE psh.ProjectID = @job AND psh.Active = 1 AND psh.ItemID IS NOT NULL`;
 
 // Full per-line PO query (mirrors Build Readiness getPoDetails) — every real PO
 // line with its own received qty/date, so vendor cards can show authoritative
@@ -218,26 +219,16 @@ const PO_SQL = `
 
 // ---------- Row shapes ----------
 
-type BomRow = {
-  ChildID: number;
-  ChildPN: string | null;
-  ChildDesc: string | null;
-  Manufacturer: string | null;
-  ParentID: number;
-  ParentPN: string | null;
-  ParentDesc: string | null;
-  ItemQty: number | null;
-  SpecID: number;
-  RequiredDate: Date | null;
-  ItemHold: boolean | null;
-  POQty: number | null;
-  ReceivedQty: number | null;
-  UnitPrice: number | null;
-  LastReceivedDate: Date | null;
-};
-
 type TopRow = { SpecID: number; TopItemID: number; TopPN: string | null; TopDesc: string | null };
 type SpecRow = { SpecID: number; SDescription: string | null };
+type PullRow = {
+  ItemID: number;
+  PullQty: number | null;
+  FulfilledQty: number | null;
+  PullPrice: number | null;
+  FulfilledDate: Date | null;
+};
+type ProcessRow = { ItemID: number };
 type PoRow = {
   PurchaseOrderID: string | number | null;
   PurchaseDate: Date | null;
@@ -254,23 +245,7 @@ type PoRow = {
   LastReceivedDate: Date | null;
 };
 
-type PoLine = {
-  poId: string | null;
-  supplier: string | null;
-  dueDate: string | null;
-  orderedDate: string | null;
-  originalDate: string | null;
-  revisedDate: string | null;
-};
-
-// ---------- Helpers ----------
-
-const iso = (d: Date | null | undefined): string | null => {
-  if (!d) return null;
-  const t = new Date(d);
-  return Number.isNaN(t.getTime()) ? null : t.toISOString();
-};
-const clean = (s: string | null | undefined): string => (s ?? "").replace(/\s+/g, " ").trim();
+// ---------- Index builders ----------
 
 // PO index: ItemID → PO lines. Supplier/expected-date for a part come from its
 // first PO line (dueDate = DateRequired || PurchaseDateRequired), matching
@@ -293,6 +268,19 @@ function buildPoIndex(rows: PoRow[]): Map<number, PoLine[]> {
     const arr = idx.get(r.ItemID);
     if (arr) arr.push(line);
     else idx.set(r.ItemID, [line]);
+  }
+  return idx;
+}
+
+function buildPullIndex(rows: PullRow[]): Map<number, PullInfo> {
+  const idx = new Map<number, PullInfo>();
+  for (const r of rows) {
+    idx.set(r.ItemID, {
+      pullQty: Number(r.PullQty) || 0,
+      fulfilledQty: Number(r.FulfilledQty) || 0,
+      pullPrice: Number(r.PullPrice) || 0,
+      fulfilledDate: r.FulfilledDate ?? null,
+    });
   }
   return idx;
 }
@@ -343,161 +331,6 @@ function buildVendors(rows: PoRow[]): Vendor[] {
   }
 }
 
-// Everything for one spec's tree: dedupe edges, find assemblies + roots.
-type SpecTree = {
-  assemblyIds: Set<number>;
-  childrenMap: Map<number, BomRow[]>;
-  deduped: BomRow[];
-};
-
-function buildSpecTree(rows: BomRow[]): SpecTree {
-  const seen = new Set<string>();
-  const deduped = rows.filter((r) => {
-    const k = `${r.ChildID}-${r.ParentID}`;
-    if (seen.has(k)) return false;
-    seen.add(k);
-    return true;
-  });
-  const assemblyIds = new Set<number>(deduped.map((r) => r.ParentID));
-  const childrenMap = new Map<number, BomRow[]>();
-  for (const r of deduped) {
-    const arr = childrenMap.get(r.ParentID);
-    if (arr) arr.push(r);
-    else childrenMap.set(r.ParentID, [r]);
-  }
-  return { assemblyIds, childrenMap, deduped };
-}
-
-// Recursively collect all leaf (non-assembly) rows under a node — reference
-// getLeafParts, including the shared-visited behaviour that prevents cycles.
-function getLeafRows(nodeId: number, t: SpecTree, visited: Set<number>): BomRow[] {
-  if (visited.has(nodeId)) return [];
-  visited.add(nodeId);
-  const out: BomRow[] = [];
-  for (const child of t.childrenMap.get(nodeId) ?? []) {
-    if (t.assemblyIds.has(child.ChildID)) {
-      out.push(...getLeafRows(child.ChildID, t, visited));
-    } else {
-      out.push(child);
-    }
-  }
-  return out;
-}
-
-// Readiness stats over UNIQUE leaf parts (deduped by ChildID) — reference
-// getAssemblyStats verbatim.
-function statsForRoots(rootIds: number[], t: SpecTree): BomStats {
-  const visited = new Set<number>();
-  const leaves: BomRow[] = [];
-  for (const id of rootIds) leaves.push(...getLeafRows(id, t, visited));
-  const byChild = new Map<number, BomRow>();
-  for (const p of leaves) if (!byChild.has(p.ChildID)) byChild.set(p.ChildID, p);
-  const unique = [...byChild.values()];
-  const total = unique.length;
-  const qty = (r: BomRow) => Number(r.ItemQty) || 0;
-  const rec = (r: BomRow) => Number(r.ReceivedQty) || 0;
-  const po = (r: BomRow) => Number(r.POQty) || 0;
-  const received = unique.filter((r) => rec(r) >= qty(r)).length;
-  const noPO = unique.filter((r) => po(r) === 0 && rec(r) < qty(r)).length;
-  const ordered = unique.filter((r) => po(r) > 0 && rec(r) < qty(r)).length;
-  const pct = total ? Math.round((received / total) * 100) : 0;
-  return { total, received, noPO, ordered, pct };
-}
-
-function makePart(r: BomRow, poIndex: Map<number, PoLine[]>): BomPart {
-  const qty = Number(r.ItemQty) || 0;
-  const receivedQty = Number(r.ReceivedQty) || 0;
-  const poQty = Number(r.POQty) || 0;
-  const line = (poIndex.get(r.ChildID) ?? [])[0];
-  return {
-    id: r.ChildID,
-    pn: clean(r.ChildPN) || "—",
-    desc: clean(r.ChildDesc),
-    manufacturer: clean(r.Manufacturer),
-    qty,
-    poQty,
-    receivedQty,
-    unitPrice: Number(r.UnitPrice) || 0,
-    requiredDate: iso(r.RequiredDate),
-    expectedDate: line?.dueDate ?? null,
-    originalDate: line?.originalDate ?? null,
-    revisedDate: line?.revisedDate ?? null,
-    poDate: line?.orderedDate ?? null,
-    receivedDate: iso(r.LastReceivedDate),
-    status: receivedQty >= qty ? "received" : poQty > 0 ? "ordered" : "noPO",
-    hold: !!r.ItemHold,
-    supplier: line?.supplier ?? null,
-    poId: line?.poId ?? null,
-  };
-}
-
-// Build a nested assembly node. `keyPath` keeps each instance unique; the
-// ancestor set guards against structural cycles without collapsing legitimately
-// shared sub-assemblies (they render fully under each parent, as in the ref).
-function buildAssembly(
-  nodeId: number,
-  pn: string,
-  desc: string,
-  keyPath: string,
-  t: SpecTree,
-  poIndex: Map<number, PoLine[]>,
-  ancestors: Set<number>,
-): BomNode {
-  const node: BomNode = {
-    key: keyPath,
-    id: nodeId,
-    depth: 0,
-    label: desc ? (pn ? `${pn} — ${desc}` : desc) : pn,
-    pn: pn || "—",
-    desc,
-    isAssembly: true,
-    stats: statsForRoots([nodeId], t),
-    children: [],
-    parts: [],
-    totalCost: 0,
-    totalPartQty: 0,
-    nestedAssemblies: 0,
-  };
-
-  if (!ancestors.has(nodeId)) {
-    const nextAncestors = new Set(ancestors).add(nodeId);
-    for (const child of t.childrenMap.get(nodeId) ?? []) {
-      if (t.assemblyIds.has(child.ChildID)) {
-        node.children.push(
-          buildAssembly(
-            child.ChildID,
-            clean(child.ChildPN),
-            clean(child.ChildDesc),
-            `${keyPath}/${child.ChildID}`,
-            t,
-            poIndex,
-            nextAncestors,
-          ),
-        );
-      } else {
-        node.parts.push(makePart(child, poIndex));
-      }
-    }
-  }
-
-  let cost = 0;
-  let pq = 0;
-  let nested = 0;
-  for (const p of node.parts) {
-    cost += p.unitPrice * p.qty;
-    pq += p.qty;
-  }
-  for (const c of node.children) {
-    cost += c.totalCost;
-    pq += c.totalPartQty;
-    nested += c.nestedAssemblies + 1;
-  }
-  node.totalCost = cost;
-  node.totalPartQty = pq;
-  node.nestedAssemblies = nested;
-  return node;
-}
-
 // ---------- Entry point ----------
 
 export async function getJobBom(jobId: string): Promise<JobBom> {
@@ -519,18 +352,24 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
   let tops: TopRow[] = [];
   let bomRows: BomRow[] = [];
   let poRows: PoRow[] = [];
+  let pullRows: PullRow[] = [];
+  let processRows: ProcessRow[] = [];
   try {
     pool = await sql.connect(config);
-    const [specR, topR, bomR, poR] = await Promise.all([
+    const [specR, topR, bomR, poR, pullR, procR] = await Promise.all([
       pool.request().input("job", sql.Int, numericJob).query(SPECS_SQL),
       pool.request().input("job", sql.Int, numericJob).query(TOP_SQL),
       pool.request().input("job", sql.Int, numericJob).query(BOM_SQL),
       pool.request().input("job", sql.Int, numericJob).query(PO_SQL),
+      pool.request().input("job", sql.Int, numericJob).query(PULLS_SQL),
+      pool.request().input("job", sql.Int, numericJob).query(PROCESS_SQL),
     ]);
     specs = specR.recordset as SpecRow[];
     tops = topR.recordset as TopRow[];
     bomRows = bomR.recordset as BomRow[];
     poRows = poR.recordset as PoRow[];
+    pullRows = pullR.recordset as PullRow[];
+    processRows = procR.recordset as ProcessRow[];
   } catch {
     return empty;
   } finally {
@@ -539,7 +378,11 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
 
   if (bomRows.length === 0) return empty;
 
-  const poIndex = buildPoIndex(poRows);
+  const ctx: BomContext = {
+    poIndex: buildPoIndex(poRows),
+    pulls: buildPullIndex(pullRows),
+    processItems: new Set(processRows.map((r) => r.ItemID)),
+  };
   const vendors = buildVendors(poRows); // fail-soft: [] on any error
 
   // Group rows + top nodes by SpecID.
@@ -591,7 +434,11 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
       pn: "",
       desc: specTitle.get(specId) ?? "",
       isAssembly: true,
-      stats: statsForRoots(topNodeIds, tree),
+      // A section is a synthetic container, never a purchased thing: it always
+      // explodes into its contents and never carries its own buy line.
+      release: "contentsOnly",
+      self: null,
+      stats: statsForRoots(topNodeIds, tree, ctx),
       children: [],
       parts: [],
       totalCost: 0,
@@ -600,36 +447,15 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
     };
 
     for (const topId of topNodeIds) {
-      const top = buildAssembly(
-        topId,
-        "",
-        "",
-        `S${specId}/${topId}`,
-        tree,
-        poIndex,
-        new Set<number>(),
-      );
+      // The top node is reached from tblEngTop, not from a BOM edge, so there is
+      // no release status for it — and none is needed: a spec top is always
+      // exploded (that is the only reason it exists).
+      const top = buildAssembly(topId, "", "", `S${specId}/${topId}`, tree, ctx, new Set<number>(), null);
       section.children.push(...top.children);
       section.parts.push(...top.parts);
     }
 
-    // Roll the section total from its children + loose parts.
-    let cost = 0;
-    let pq = 0;
-    let nested = 0;
-    for (const p of section.parts) {
-      cost += p.unitPrice * p.qty;
-      pq += p.qty;
-    }
-    for (const c of section.children) {
-      cost += c.totalCost;
-      pq += c.totalPartQty;
-      nested += c.nestedAssemblies + 1;
-    }
-    section.totalCost = cost;
-    section.totalPartQty = pq;
-    section.nestedAssemblies = nested;
-
+    rollUp(section);
     if (section.children.length || section.parts.length) roots.push(section);
   }
 

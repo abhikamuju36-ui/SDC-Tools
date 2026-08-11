@@ -41,16 +41,24 @@ const DAY = 86_400_000;
 // ── Status model ─────────────────────────────────────────────────────────────
 // One derived status per part (mirrors the Scheduler's _procPartStatus). Time-
 // relative keys (overdue/soon) resolve against a `now` passed by the caller.
-type StatusKey = "received" | "hold" | "noPO" | "overdue" | "soon" | "ordered";
+//
+// `stock` and `process` exist because a requirement with no purchase order is
+// not automatically a procurement gap: it can be coming out of inventory or
+// being built in-house on an ETO process schedule. Those used to fall through
+// to "NO PO" (red) or "ON ORDER" (blue, with no PO to point at) — both wrong.
+// `noPO` is now only what job-bom-rules.ts calls genuinely uncovered.
+type StatusKey = "received" | "hold" | "noPO" | "overdue" | "soon" | "ordered" | "stock" | "process";
 type PartStatus = { key: StatusKey; label: string; cls: string; sub: string };
 
 function partStatus(
-  p: { status: BomPart["status"]; hold: boolean; expectedDate: string | null; requiredDate: string | null; poId?: string | null; poNumber?: string | null },
+  p: { status: BomPart["status"]; source?: BomPart["source"]; hold: boolean; expectedDate: string | null; requiredDate: string | null; poId?: string | null; poNumber?: string | null },
   now: number,
 ): PartStatus {
   if (p.status === "received") return { key: "received", label: "RECEIVED", cls: "received", sub: "" };
   if (p.hold) return { key: "hold", label: "ON HOLD", cls: "hold", sub: "in ETO" };
   if (p.status === "noPO") return { key: "noPO", label: "NO PO", cls: "noPO", sub: "" };
+  if (p.source === "stock") return { key: "stock", label: "FROM STOCK", cls: "stock", sub: "inventory pull" };
+  if (p.source === "process") return { key: "process", label: "IN PROCESS", cls: "process", sub: "built in-house" };
   const due = p.expectedDate || p.requiredDate;
   if (due) {
     const t = new Date(due).getTime();
@@ -71,6 +79,9 @@ const STATUS_PILL: Record<StatusKey, string> = {
   overdue: "bg-sdc-red-bg text-sdc-red-text",
   noPO: "border border-sdc-red-border bg-white text-sdc-red-text",
   hold: "bg-sdc-gray-100 text-sdc-gray-600",
+  // Covered, just not by a purchase order — read as progress, not as a gap.
+  stock: "bg-sdc-green-bg/70 text-sdc-green-text",
+  process: "bg-sdc-blue-light text-sdc-blue-dark",
 };
 
 // Light row tint per status — same hues as the status pills, applied to the
@@ -83,7 +94,50 @@ const STATUS_ROW_BG: Record<StatusKey, string> = {
   overdue: "bg-sdc-red-bg/90 hover:bg-sdc-red-bg",
   noPO: "bg-sdc-red-bg/45 hover:bg-sdc-red-bg/80",
   hold: "bg-sdc-gray-100 hover:bg-sdc-gray-100",
+  stock: "bg-sdc-green-bg/50 hover:bg-sdc-green-bg/80",
+  process: "bg-sdc-blue-light/60 hover:bg-sdc-blue-light/90",
 };
+
+// ── Cost basis disclosure ────────────────────────────────────────────────────
+// A price that is NOT this job's own PO price is still the right number to show
+// (a stock pull and an item master's last purchased price are both real money),
+// but it is an estimate of what this job will pay rather than what it agreed to
+// pay — so every non-PO figure says where it came from on hover.
+const COST_BASIS_NOTE: Record<BomPart["costBasis"], string> = {
+  po: "This job's purchase order price",
+  pull: "Inventory pull price — issued from stock, no PO",
+  bom: "Cost entered on the BOM line",
+  lastCost: "Last purchased price (LPP) from the item master — no PO on this job",
+  listCost: "List price from the item master — no PO and no purchase history",
+  none: "No price on the PO, the BOM line or the item master",
+};
+
+// True where the price came from something other than a committed PO line, so
+// the cell can mark itself as an estimate.
+const isEstimatedCost = (b: BomPart["costBasis"]) => b !== "po" && b !== "none";
+
+// ── Release-status badge ─────────────────────────────────────────────────────
+// An assembly can appear in the parts list as one line to buy, with nothing
+// beneath it — that is its BOM release status talking, not missing data. Without
+// this badge a row like 1116-DB-000 (LEFT PICK CONVEYOR, one $1,430 purchase)
+// looks identical to a loose part, and anyone comparing against the tree would
+// reasonably assume its subcomponents had been dropped by mistake.
+function ReleaseBadge({ p }: { p: Pick<BomPart, "isAssembly" | "release"> }) {
+  if (!p.isAssembly) return null;
+  const both = p.release === "bothAssemblyAndContents";
+  return (
+    <span
+      className="rounded bg-sdc-gray-100 px-1 text-micro font-bold tracking-wide text-sdc-gray-600"
+      title={
+        both
+          ? "Released as “Both Assembly and Contents” — this assembly is purchased AND its contents are procured separately"
+          : "Released as “Assembly Only” — purchased whole, so its subcomponents are not separate requirements"
+      }
+    >
+      {both ? "ASSY+" : "ASSY"}
+    </span>
+  );
+}
 
 function StatusPill({ st }: { st: PartStatus }) {
   return (
@@ -583,6 +637,10 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
     };
 
     const walk = (node: BomNode, sectionId: string, sectionLabel: string) => {
+      // A "Both Assembly and Contents" assembly is itself one of the things to
+      // buy (job-bom-rules.ts: BomNode.self). It belongs in the buy-list next to
+      // the loose parts, not only in the tree.
+      if (node.self) enrich(node.self, node.pn, node.desc, sectionId, sectionLabel);
       for (const p of node.parts) enrich(p, node.pn, node.desc, sectionId, sectionLabel);
       for (const c of node.children) walk(c, sectionId, sectionLabel);
     };
@@ -597,13 +655,17 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
     return out;
   }, [bom, lineIndex, activeAttribution]);
 
-  // Top summary line.
+  // Top summary line. `noPO` is a real procurement gap — nothing purchased,
+  // nothing pulled from stock, no process schedule — and is counted separately
+  // from the parts that are covered without a PO, which get their own figure so
+  // the difference is visible rather than hidden inside one number.
   const summary = useMemo(() => {
     const total = parts.length;
     const received = parts.filter((p) => p.st.key === "received").length;
     const noPO = parts.filter((p) => p.st.key === "noPO").length;
+    const covered = parts.filter((p) => p.source === "stock" || p.source === "process").length;
     const pct = total ? Math.round((received / total) * 100) : 0;
-    return { total, received, noPO, pct };
+    return { total, received, noPO, covered, pct };
   }, [parts]);
 
   const assembliesCount = useMemo(
@@ -634,14 +696,23 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
           <ReadinessBar pct={summary.pct} />
         </div>
         <span className="text-sm text-sdc-gray-600">
-          <span className="font-semibold text-sdc-navy tabular-nums">{num(summary.total)}</span> parts
+          <span className="font-semibold text-sdc-navy tabular-nums" title="Unique procurement requirements. An assembly released as “Assembly Only” counts once, as itself — its subcomponents are bought with it and are not counted separately.">{num(summary.total)}</span> parts
           {" · "}
-          <span className={summary.noPO ? "font-semibold text-sdc-red-text tabular-nums" : "tabular-nums"}>
+          <span className={summary.noPO ? "font-semibold text-sdc-red-text tabular-nums" : "tabular-nums"} title="Not covered by anything: no purchase order, no inventory pull and no process schedule.">
             {num(summary.noPO)}
           </span>{" "}
-          no PO
+          uncovered
+          {summary.covered > 0 && (
+            <>
+              {" · "}
+              <span className="font-semibold text-sdc-navy tabular-nums" title="Covered without a purchase order — pulled from inventory or built in-house on an ETO process schedule.">
+                {num(summary.covered)}
+              </span>{" "}
+              stock/in-house
+            </>
+          )}
           {" · "}
-          <span className="font-semibold text-sdc-navy tabular-nums">{usd(bom.grandTotalCost)}</span> materials
+          <span className="font-semibold text-sdc-navy tabular-nums" title="Material cost across every requirement. Priced off this job's PO lines where they exist, otherwise the inventory pull price, the BOM line cost or the item master's last purchased price.">{usd(bom.grandTotalCost)}</span> materials
         </span>
       </div>
 
@@ -756,6 +827,11 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
     const leavesOf = (node: BomNode): BomPart[] => {
       const byId = new Map<number, BomPart>();
       const walk = (n: BomNode) => {
+        // `n.self` is the assembly's OWN buy line, set only for "Both Assembly
+        // and Contents" — a real requirement that lives on the node rather than
+        // in `parts`, so every traversal has to pick it up or it vanishes from
+        // the counts while still being in the cost rollup.
+        if (n.self && !byId.has(n.self.id)) byId.set(n.self.id, n.self);
         for (const p of n.parts) if (!byId.has(p.id)) byId.set(p.id, p);
         for (const c of n.children) walk(c);
       };
@@ -889,6 +965,7 @@ function AssemblyRow({
   const isOpen = !collapsed.has(node.key);
   const { text } = barClasses(node.stats.pct);
   const priced = pricedByKey.get(node.key) ?? { priced: 0, total: node.stats.total };
+  const detailParts = node.self ? [node.self, ...node.parts] : node.parts;
 
   return (
     <div className="border-b border-sdc-border-soft/60">
@@ -907,6 +984,7 @@ function AssemblyRow({
           <span className="shrink-0 truncate font-mono text-note font-bold text-sdc-blue" title={node.pn}>
             {node.pn || "—"}
           </span>
+          {node.self ? <ReleaseBadge p={{ isAssembly: true, release: node.release }} /> : null}
         </div>
         {/* Description */}
         <div className="min-w-0 truncate text-sm font-bold text-sdc-navy" title={node.desc || node.label}>
@@ -934,7 +1012,10 @@ function AssemblyRow({
           {node.children.map((child) => (
             <AssemblyRow key={child.key} node={child} depth={depth + 1} collapsed={collapsed} toggle={toggle} pricedByKey={pricedByKey} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />
           ))}
-          {node.parts.length > 0 && <PartsDetailTable parts={node.parts} depth={depth + 1} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />}
+          {/* `node.self` first: for a "Both Assembly and Contents" release the
+              assembly itself is a purchase, and it reads as the header of the
+              contents bought alongside it. */}
+          {detailParts.length > 0 && <PartsDetailTable parts={detailParts} depth={depth + 1} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} />}
         </div>
       )}
     </div>
@@ -1087,6 +1168,7 @@ function PartsDetailTable({
                       <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
                         <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
                       </svg>
+                      <ReleaseBadge p={p} />
                     </span>
                   </td>
                   <td className="px-2 py-1.5 text-note font-semibold text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
@@ -1106,6 +1188,10 @@ function PartsDetailTable({
                       >
                         {p.poId}
                       </button>
+                    ) : p.source === "stock" ? (
+                      <span className="text-label font-bold text-sdc-green-text" title={`Pulled from inventory (${num(p.pullQty)} issued) — no purchase order needed`}>STOCK</span>
+                    ) : p.source === "process" ? (
+                      <span className="text-label font-bold text-sdc-blue-dark" title="Built in-house on an ETO process schedule — no purchase order needed">PROCESS</span>
                     ) : (
                       <span className="text-label font-bold text-sdc-red-text">NO PO</span>
                     )}
@@ -1121,7 +1207,10 @@ function PartsDetailTable({
                   <td className={`px-2 py-1.5 whitespace-nowrap font-mono text-label ${p.receivedDate ? "font-semibold text-sdc-green-text" : "text-sdc-gray-400"}`}>
                     {p.receivedDate ? fmtDate(p.receivedDate) : "—"}
                   </td>
-                  <td className="px-2 py-1.5 text-right font-mono text-note font-semibold text-sdc-gray-600" title={`Required ${fmtDate(p.requiredDate)} · Expected ${fmtDate(p.expectedDate)}`}>{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
+                  <td className="px-2 py-1.5 text-right font-mono text-note font-semibold text-sdc-gray-600" title={`${COST_BASIS_NOTE[p.costBasis]} · Required ${fmtDate(p.requiredDate)} · Expected ${fmtDate(p.expectedDate)}`}>
+                    {p.unitPrice > 0 ? usd(p.unitPrice) : "—"}
+                    {p.unitPrice > 0 && isEstimatedCost(p.costBasis) ? <span className="ml-0.5 text-sdc-gray-400" aria-hidden>*</span> : null}
+                  </td>
                   <td className="px-2 py-1.5 text-right font-mono text-note font-bold text-sdc-navy">{p.unitPrice > 0 ? usd(p.unitPrice * p.qty) : "—"}</td>
                 </tr>
               );
@@ -1437,7 +1526,9 @@ function PartsListTab({
           { value: "ordered", label: "On order" },
           { value: "soon", label: "Due soon" },
           { value: "overdue", label: "Overdue" },
-          { value: "noPO", label: "No PO" },
+          { value: "stock", label: "From stock" },
+          { value: "process", label: "In process" },
+          { value: "noPO", label: "Uncovered (no PO)" },
           { value: "hold", label: "On hold" },
         ]} />
         <FilterSelect label="Category" value={category} onChange={setCategory} options={[{ value: "all", label: "All categories" }, ...distinct.cats.map((c) => ({ value: c, label: c }))]} />
@@ -1517,7 +1608,12 @@ function PartRowCells({
       case "pn":
         // Blue link-style — the row itself copies the PN + drills, so the link
         // is the affordance (no separate copy glyph).
-        return <span className="block truncate font-mono text-note font-bold text-sdc-blue group-hover:underline" title={p.pn}>{p.pn}</span>;
+        return (
+          <span className="flex items-center gap-1 truncate font-mono text-note font-bold text-sdc-blue group-hover:underline" title={p.pn}>
+            <span className="truncate">{p.pn}</span>
+            <ReleaseBadge p={p} />
+          </span>
+        );
       case "desc":
         return <span className="block truncate text-note font-semibold text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>;
       case "parent":
@@ -1542,6 +1638,10 @@ function PartRowCells({
           >
             {p.poNumber}
           </button>
+        ) : p.source === "stock" ? (
+          <span className="text-label font-semibold text-sdc-green-text" title={`Pulled from inventory (${num(p.pullQty)} issued) — no purchase order needed`}>STOCK</span>
+        ) : p.source === "process" ? (
+          <span className="text-label font-semibold text-sdc-blue-dark" title="Built in-house on an ETO process schedule — no purchase order needed">PROCESS</span>
         ) : (
           <span className="text-label font-semibold text-sdc-red-text">NO PO</span>
         );
@@ -1556,7 +1656,12 @@ function PartRowCells({
       case "due":
         return <DueChip expected={p.expectedDate} received={p.st.key === "received"} now={now} />;
       case "unit":
-        return <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy">{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</span>;
+        return (
+          <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy" title={COST_BASIS_NOTE[p.costBasis]}>
+            {p.unitPrice > 0 ? usd(p.unitPrice) : "—"}
+            {p.unitPrice > 0 && isEstimatedCost(p.costBasis) ? <span className="ml-0.5 text-sdc-gray-400" aria-hidden>*</span> : null}
+          </span>
+        );
       case "total":
         return <span className="whitespace-nowrap font-mono text-note font-semibold tabular-nums text-sdc-navy">{p.totalPrice > 0 ? usd(p.totalPrice) : "—"}</span>;
       case "invoiced":

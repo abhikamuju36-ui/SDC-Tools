@@ -5911,3 +5911,88 @@ resolved by stopping the server, deleting `.next-verify`, and restarting). Did n
 an actual "Refresh Data" run to watch the Sidebar fix live — that pulls from Power BI /
 TotalETO / SharePoint for real, which is a needless real-world cost merely to observe a
 context-visibility fix that's otherwise fully verified.
+
+## 66. Procurement BOM ignored BOM Release Status, and treated "no PO" as "missing" (2026-08-11)
+
+Pat's clarification: the Procurement/Parts readiness on `/job-hours` was answering a
+different question from the SDC Standard Project BOM report ("Structured BOM - Readiness
+Summary") that Purchasing actually reconciles to. Two independent wrong assumptions, both
+in `lib/job-bom.ts`:
+
+**1. Every assembly was exploded to its leaves.** `tblEngProductStructure.BOMAssemblyReleaseID`
+carries a per-edge release status (`tsysBOMAssemblyRelease`: 1 Contents of Assembly Only,
+2 Assembly Only, 3 Both Assembly and Contents) and nothing read it. Job 1116's
+`1116-DB-000` (LEFT PICK CONVEYOR) is Assembly Only — one $1,430 purchase on PO 101563,
+and the reference report prints exactly that one line. The app printed the $1,430 parent
+*and* CONVEYOR FOOT ×4, CONVEYOR DRIVE ASSY, SDC CONVEYOR and two BOWL FEEDER EXIT RAILs
+beneath it: the requirement double-counted, the cost double-counted, and readiness dragged
+down by sub-parts nobody will ever raise a PO for.
+
+**2. "No PO" was read as "missing".** A requirement can legitimately have no purchase
+order because it was pulled from inventory (`tblInventoryPullDetails`), it is built
+in-house on an ETO process schedule (`tblProcessScheduleHeader`), or it sits inside an
+Assembly-Only parent bought whole (rule 1 removes those entirely). Related: a no-PO part
+was priced at $0, though Total ETO carries `ItemLastCost` (LPP), `ItemListCost`,
+`PullPrice` and the BOM line's own `ItemCost`.
+
+### What changed
+
+* **`lib/job-bom-rules.ts` (new)** — the whole rule set, pure and no-I/O, so it is
+  unit-testable without a database (same split as the Undefined-Hours rules module).
+  `job-bom.ts` keeps the SQL and orchestration. Release status applied *before* requirements,
+  missing-PO count, readiness %, procurement totals and material cost are computed:
+  Assembly Only → the parent is one requirement and its subtree is not walked at all;
+  Contents of Assembly Only (**and NULL**, Total ETO's own default and this module's prior
+  behaviour) → explode, parent is not a buy; Both Assembly and Contents → parent is a
+  requirement *and* explodes, its own buy line carried on `BomNode.self`.
+* **Coverage** — `receivedQty` = PO receipts **+** fulfilled inventory pulls; `noPO` now
+  means genuinely uncovered (no PO, no pull, no process schedule). Only positive `PullQty`
+  counts: a negative row is stock going back on the shelf and would net a real issue to zero.
+* **Costing** — one fallback chain, most-committed first: this job's PO price → inventory
+  pull price → BOM line cost → item master last cost (LPP) → list. Every non-PO figure
+  carries a `costBasis` and is marked `*` in the UI with the source on hover, because it is
+  an estimate of what the job will pay rather than what it agreed to pay.
+* **Deliberately NOT a coverage signal: `ItemLastCost`.** A price says a part was bought
+  once somewhere; it says nothing about whether *this* job has it. 61 of job 1116's no-PO
+  parts carry a last cost, including `1116-DAE-001` PIN and `1116-DAE-002` TEACH PIN PLATE —
+  which the reference report shows as 0% red, i.e. genuinely missing. Last cost prices a
+  requirement, it never satisfies one. There is a test pinning this.
+* **UI (`JobProcurement.tsx`)** — new `FROM STOCK` / `IN PROCESS` statuses so covered-
+  without-a-PO parts stop reading as red `NO PO` or as blue `ON ORDER` with no PO to click;
+  the summary line now says "*n* uncovered" plus a separate "*n* stock/in-house" rather than
+  hiding the difference in one "no PO" number; an `ASSY`/`ASSY+` badge on a bought-whole
+  assembly, so a row with no contents reads as its release status talking rather than as
+  dropped data; status filter gains "From stock" / "In process" / "Uncovered (no PO)".
+
+### Job 1116, before → after (`scripts/_probe_before_after.ts`, since removed)
+
+```
+OLD   788 requirements · 638 received · 133 counted missing · 81% ready · $310,334 materials
+NEW   718 requirements · 668 received ·  33 counted missing · 93% ready · $333,780 materials
+```
+
+73 subcomponents dropped out (all inside the 3 Assembly-Only purchases: `1116-BH-000`,
+`1116-DB-000`, `1116-DCB-000`); those 3 assemblies came in as single requirements. 5 BOM
+edges carry Assembly Only, but only 3 become requirements — `1116-DBA-000` and
+`1116-DBB-000` are themselves nested inside `1116-DB-000`, so they are correctly excluded
+too. Release status is **per edge**, so a nested Assembly Only still holds inside a Both.
+
+### Verification
+
+* 18 new behavioural tests in `tests/job-bom-release-status.test.ts` over synthetic rows
+  built from job 1116's real spec-10 shape and real prices. Full suite 1023/1024 — the one
+  failure is `parts-actual-gl-posted.test.ts`, pre-existing uncommitted work from another
+  task (9 failures on HEAD, unrelated to procurement). `tsc` clean; `eslint` clean bar the
+  6 pre-existing `react-hooks/purity` findings already on HEAD in this file.
+* `scripts/verify-procurement-release-status.ts` — re-runnable, reads the **live** Total ETO
+  database and asserts the invariants universally (no Assembly-Only item is ever exploded
+  into a node; nothing covered by inventory/process is reported uncovered; nothing with PO
+  quantity is reported uncovered; every node's cost is finite and non-negative), plus job
+  1116 against the reference report specifically: `1116-DB-000` is exactly one requirement,
+  prices at the report's **$1,430.00**, and none of its five subcomponents appear anywhere.
+  All checks pass on 1116 / 1101 / 1122 / 1079. **Nothing keys off a project number** —
+  there is a test for that too.
+* **Not** verified in a browser: `/job-hours` is behind the app's credential sign-in and
+  this session had no credentials. Everything changed here is server-side data shaping,
+  covered by the live reconciliation above; the UI changes are additive status/badge/tooltip
+  work on already-exercised render paths.
