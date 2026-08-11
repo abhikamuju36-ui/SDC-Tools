@@ -84,6 +84,16 @@ export function purchasedTotal(lines: PartsCostLine[]): number {
   return total;
 }
 
+// Parts ACTUAL — GL-posted spend, the app's one definition of it (see
+// getPartsActualByJob in lib/sync-totaleto.ts). This is the projection's base as
+// of 2026-08-10; it used to be purchasedTotal, which folded every open PO's
+// undelivered balance into a figure the UI presented as money already spent.
+export function actualTotal(lines: PartsCostLine[]): number {
+  let total = 0;
+  for (const l of lines) total += l.actualAmount;
+  return total;
+}
+
 // Invoiced dollars strictly BEFORE the 1st of the current month — the report
 // measure's FilteredInvoiced. Not part of the projection; kept because
 // reconciling this page against the report needs it.
@@ -128,7 +138,16 @@ FILTER(
 // tooltip, because a projection that equals Purchased to the dollar (nothing
 // left to purchase) otherwise looks like a bug.
 export type PartsBudgetProjection = {
-  purchased: number;
+  /** Parts Actual — GL-posted spend. The projection's base (2026-08-10). */
+  actual: number;
+  /**
+   * Committed but not on the ledger: open PO balance plus anything billed on an
+   * invoice that never posts to the GL. Split out from `actual` rather than folded
+   * into it, so the figure the UI labels "actual" is only money the job ledger
+   * would show, while the projection still counts committed spend the way Dan's
+   * definition intends. actual + committedNotPosted is the old `purchased`.
+   */
+  committedNotPosted: number;
   estimateToPurchase: number;
   total: number;
 };
@@ -155,6 +174,18 @@ export async function computePartsBudgetProjection(
   // nothing left to commit. Negative would push the projection below money
   // already spent — the exact defect the report measure has.
   estimateToPurchase = Math.max(0, estimateToPurchase);
-  const purchased = purchasedTotal(lines);
-  return { purchased, estimateToPurchase, total: purchased + estimateToPurchase };
+  // Base = GL-posted actual; the open/unposted commitment rides as its own term
+  // rather than being hidden inside it (2026-08-10). The TOTAL is unchanged —
+  // actual + committedNotPosted is exactly the old purchasedTotal — so the
+  // projection itself, and its comparison against Budget, mean what they always
+  // did. What changed is that the figure presented as ACTUAL no longer includes
+  // money that has not been spent.
+  const actual = actualTotal(lines);
+  const committedNotPosted = Math.max(0, purchasedTotal(lines) - actual);
+  return {
+    actual,
+    committedNotPosted,
+    estimateToPurchase,
+    total: actual + committedNotPosted + estimateToPurchase,
+  };
 }

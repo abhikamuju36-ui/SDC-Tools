@@ -25,6 +25,7 @@ function line(partial: Partial<PartsCostLine>): PartsCostLine {
     unitPrice: 0,
     totalPrice: 0,
     invoicedAmount: 0,
+    actualAmount: 0,
     ...partial,
   };
 }

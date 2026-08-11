@@ -110,16 +110,25 @@ const CELL_PADDING = "[&_td]:py-[0.4rem] [&_.qc]:px-[0.2667rem]";
 const DATA_COL = "calc(max(4.7rem, 72px) + 2 * 0.2667rem)";
 const DATA_COL_STYLE = { width: DATA_COL, minWidth: DATA_COL, maxWidth: DATA_COL } as const;
 
-// The two money columns (Parts Cost Quoted / Parts Cost Actual). Left-aligned
-// (2026-08-10, by request) like the rest of the grid — they used to be
-// right-aligned and centred as a "$ number" unit inside the cell, which meant a
-// SHORT figure ("$0") and a LONG one ("$1,406,923") centred at different
-// offsets and neither edge lined up, reading as inconsistent padding rather
-// than the intended "compare digits at a glance" effect. tabular-nums still
-// keeps the digits themselves in fixed-width columns while editing.
+// The Parts Cost money cell. Left-aligned (2026-08-10, by request) like the
+// rest of the grid — it used to be right-aligned and centred as a "$ number"
+// unit inside the cell, which meant a SHORT figure ("$0") and a LONG one
+// ("$1,406,923") centred at different offsets and neither edge lined up,
+// reading as inconsistent padding rather than the intended "compare digits at
+// a glance" effect. tabular-nums still keeps the digits themselves in
+// fixed-width columns while editing.
+//
+// Fixed at 4.5rem, not `w-full` (2026-08-11) — Quoted and Actual used to be
+// two separate columns, each free to fill its own column's full width; merged
+// into one column, two `w-full` MoneyCells would each demand the ENTIRE cell
+// width and fight over it. 4.5rem comfortably fits a 7-figure quote
+// ("1,300,000") with room to spare. `.hide-actuals .parts-cost-quoted`
+// (globals.css) widens the quoted half back to the cell's full width for the
+// OFF state, when there's only one figure on screen and no sibling to share
+// the cell with.
 const EMPTY_ACTUALS: ReadonlyMap<string, number> = new Map();
 
-const MONEY_INPUT = "w-full min-w-0 border-none bg-transparent text-left tabular-nums outline-none";
+const MONEY_INPUT_PAIRED = "w-[4.5rem] min-w-0 border-none bg-transparent text-left tabular-nums outline-none";
 
 // Group sub-bands: lighter SDC brand tints, each distinct, all drawn from the
 // brand palette (blue/green/yellow tints + light blue), with one bold brand
@@ -787,24 +796,21 @@ export default async function QuotedPage({
                 SHOP
                 <span className="block font-semibold">TOTAL</span>
               </th>
-              {/* "Parts Cost Quoted" / "Parts Cost Actual" on screen (renamed
-                  2026-08-03, by request — they were "Cost Quoted" / "Actual
-                  Cost", which didn't say WHAT cost). The columns are still
-                  Job.costQuoted and Job.costActualHistorical in the schema, in
-                  the TotalETO sync and in the Power BI measures they come from,
-                  so don't rename those chasing this.
-                  Two lines, like SHOP TOTAL just to their left (2026-08-10, by
-                  request): on one line "Parts Cost Quoted" needs more width than
-                  any figure in the column, which held the column open wider than
-                  its own values ever needed. Left-aligned to match the values
-                  below them. */}
-              <th rowSpan={3} className="min-w-[80px] border-l border-sdc-border bg-sdc-green-bg px-1 py-2 text-left align-bottom text-sdc-green-text">
+              {/* ONE "Parts Cost" column (merged 2026-08-11 — used to be
+                  "Parts Cost Quoted" / "Parts Cost Actual" as two separate
+                  columns, renamed from "Cost Quoted" / "Actual Cost" on
+                  2026-08-03). The pair now rides inside this one column the
+                  same way the section-hours columns already do — quoted
+                  first, "/ actual" second, the second half hidden by
+                  `.hide-actuals` — instead of "Actual" being its own
+                  always-there `<th>`/`<td>` pair. See the body cell below and
+                  globals.css's `.parts-cost-quoted`/`.actual-suffix` rules.
+                  The columns are still Job.costQuoted and
+                  Job.costActualHistorical in the schema, in the TotalETO sync
+                  and in the Power BI measures they come from, so don't rename
+                  those chasing this merge either. */}
+              <th rowSpan={3} className="min-w-[170px] border-l border-sdc-border bg-sdc-green-bg px-1 py-2 text-left align-bottom text-sdc-green-text">
                 PARTS COST
-                <span className="block font-semibold">QUOTED</span>
-              </th>
-              <th rowSpan={3} className="min-w-[80px] bg-sdc-green-bg px-1 py-2 text-left align-bottom text-sdc-green-text">
-                PARTS COST
-                <span className="block font-semibold">ACTUAL</span>
               </th>
             </tr>
             <tr className={TABLE_HEADER_ROW}>
@@ -856,8 +862,8 @@ export default async function QuotedPage({
             </WhenEditing>
             {jobs.length === 0 && (
               <tr>
-                {/* 2 always-on (# + Job Id) + visible toggle columns + phase cols + 2 cost cols */}
-                <td colSpan={2 + TOGGLE_COLUMNS.filter((c) => show(c.key)).length + dataColumnCount + 2} className="px-4 py-5 text-center text-sdc-gray-400">
+                {/* 2 always-on (# + Job Id) + visible toggle columns + phase cols + 1 cost col (merged 2026-08-11) */}
+                <td colSpan={2 + TOGGLE_COLUMNS.filter((c) => show(c.key)).length + dataColumnCount + 1} className="px-4 py-5 text-center text-sdc-gray-400">
                   No jobs found.
                 </td>
               </tr>
@@ -875,6 +881,17 @@ export default async function QuotedPage({
               const tone = scheduleTone(job);
               const zebra = isSdc ? "bg-[#caedfb]" : i % 2 === 1 ? "bg-sdc-gray-50/60" : "";
               const zebraSticky = isSdc ? "bg-[#caedfb]" : i % 2 === 1 ? "bg-sdc-gray-50" : "bg-white";
+              // Same over/under rule the section-hour cells use (lib/quoted-tone.ts),
+              // reused rather than a threshold system of Parts Cost's own — "actual has
+              // passed quoted" reads the same red/complete-green/running-yellow whether
+              // the two numbers are hours or dollars. Like those cells (and unlike the
+              // plain identity columns), this REPLACES the row's zebra stripe rather than
+              // combining with it — see the merged Parts Cost <td> below.
+              const partsCostTone = quotedCellTone({
+                quoted: job.costQuoted != null ? Number(job.costQuoted) : 0,
+                actual: job.costActualHistorical != null ? Number(job.costActualHistorical) : 0,
+                jobComplete: job.status === "Complete",
+              });
               // Hover comes from `tbody tr:hover > td` in globals.css, not a row
               // background — see the note on the ETC grid's <tr>. This grid has
               // the same per-cell fills (the SDC-customer blue, the schedule
@@ -1160,27 +1177,48 @@ export default async function QuotedPage({
                       </>
                     );
                   })()}
-                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-1 py-1.5 text-left align-middle text-label font-medium text-sdc-navy ${zebra}`}>
-                    <div className="flex items-center gap-0.5">
-                      <span className="text-sdc-gray-400">$</span>
+                  {/* "Parts Cost Quoted / Parts Cost Actual" — ONE cell, same
+                      pattern as the section-hours cells above: quoted first
+                      (blue, matching the hours input's text-sdc-blue-dark),
+                      "/ actual" second inside `.actual-suffix` (green,
+                      matching the hours span's text-sdc-green-text) —
+                      `.hide-actuals` already hides that half generically
+                      (globals.css) with no new rule needed. The background is
+                      `partsCostTone`, the SAME quotedCellTone() call the
+                      section-hour and ENG/SHOP-total cells use, over the
+                      dollar figures instead of hours — so it REPLACES the
+                      row's zebra stripe rather than combining with it, same
+                      as those cells (an empty tone still lets zebra show
+                      through, since the cell then has no bg class of its
+                      own). What hours DIDN'T need and this does: both halves
+                      are independently-editable MoneyCells (Parts Cost Actual
+                      is a manager-typed figure, not a read-only computed span
+                      like Actual Hours is), each pinned to a modest fixed
+                      width via MONEY_INPUT_PAIRED so the two can sit side by
+                      side without each fighting the other for the row's full
+                      width — widened back to the cell's full width by
+                      `.hide-actuals .parts-cost-quoted` when there's only one
+                      figure to show. */}
+                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-1 py-1.5 text-left align-middle text-label font-medium ${partsCostTone}`}>
+                    <span className="parts-cost-quoted inline-flex items-center gap-0.5 text-sdc-blue-dark">
+                      <span>$</span>
                       <MoneyCell
                         name={`jobField__${job.id}__costQuoted`}
                         defaultValue={job.costQuoted != null ? Number(job.costQuoted).toString() : ""}
                         ariaLabel={`Parts Cost Quoted, ${job.jobName}`}
-                        className={MONEY_INPUT}
+                        className={MONEY_INPUT_PAIRED}
                       />
-                    </div>
-                  </td>
-                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-1 py-1.5 text-left align-middle text-label text-sdc-gray-600 ${zebra}`}>
-                    <div className="flex items-center gap-0.5">
-                      <span className="text-sdc-gray-400">$</span>
+                    </span>
+                    <span className="actual-suffix inline-flex items-center gap-0.5 text-sdc-green-text">
+                      <span className="actual-sep text-sdc-muted">/</span>
+                      <span>$</span>
                       <MoneyCell
                         name={`jobField__${job.id}__costActualHistorical`}
                         defaultValue={job.costActualHistorical != null ? Number(job.costActualHistorical).toString() : ""}
                         ariaLabel={`Parts Cost Actual, ${job.jobName}`}
-                        className={MONEY_INPUT}
+                        className={MONEY_INPUT_PAIRED}
                       />
-                    </div>
+                    </span>
                   </td>
                 </tr>
               );

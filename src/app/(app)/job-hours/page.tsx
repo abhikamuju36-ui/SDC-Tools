@@ -14,6 +14,7 @@ import { getJobHoursDetail, type JobHoursDetail } from "@/lib/job-hours-detail";
 import { withTimeoutOrNull, UPSTREAM_BUDGET_MS } from "@/lib/with-timeout";
 import { JobProcurement } from "@/components/JobProcurement";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { ScrollIntoView } from "@/components/ScrollIntoView";
 
 // No-job-selected placeholder, so the dashboard's prop stays non-nullable and
 // the panel has one shape to render.
@@ -25,9 +26,13 @@ const EMPTY_HOURS_DETAIL: JobHoursDetail = { rows: [], total: 0, sections: [], t
 export default async function JobHoursPage({
   searchParams,
 }: {
-  searchParams: Promise<{ jobs?: string; job?: string }>;
+  // `section` is a deep-link-only param (currently just SDC_Scheduler's
+  // Procurement drawer launcher, see ScrollIntoView below) — it doesn't
+  // change what data loads, only whether the page scrolls itself to the
+  // Procurement block once that data is on screen.
+  searchParams: Promise<{ jobs?: string; job?: string; section?: string }>;
 }) {
-  const { jobs: jobsParam, job: legacyJobParam } = await searchParams;
+  const { jobs: jobsParam, job: legacyJobParam, section } = await searchParams;
   const jobs = await listDashboardJobs();
   const idByJobId = new Map(jobs.map((j) => [j.jobId, j.id]));
 
@@ -115,9 +120,14 @@ export default async function JobHoursPage({
         lines.sort((a, b) => (b.purchaseDate ?? "").localeCompare(a.purchaseDate ?? ""));
         const purchased = lines.reduce((s, l) => s + l.totalPrice, 0);
         const paid = lines.reduce((s, l) => s + l.invoicedAmount, 0);
+        // Parts Actual — GL-posted spend, summed from the per-line field that
+        // carries the app's one definition of it (2026-08-10). Summed here rather
+        // than taken from each job's own `actual` because this page aggregates an
+        // arbitrary job selection, and the line array is what it aggregates.
+        const actual = lines.reduce((s, l) => s + l.actualAmount, 0);
         // Every job failed: show nothing rather than a confident set of $0 bars.
         const totals =
-          failedJobs === data.jobRefs.length ? null : { purchased, paid, leftToPay: purchased - paid, lines };
+          failedJobs === data.jobRefs.length ? null : { purchased, paid, actual, leftToPay: purchased - paid, lines };
 
         // "Part Cost Budget Projection" — purchased + estimate-to-purchase, the
         // latter being the Parts New ETC for the latest ETC month (see
@@ -239,7 +249,7 @@ export default async function JobHoursPage({
               parts
                 ? {
                     purchased: parts.purchased,
-                    paid: parts.paid,
+                    actual: parts.actual,
                     estimated: partsBudget,
                     budgetProjection: partsProjection,
                     jobCount: data.jobRefs.length,
@@ -275,7 +285,12 @@ export default async function JobHoursPage({
               each job has its own BOM and buy-list — so select a single job to see assemblies and the parts list.
             </p>
           ) : (
-          <div className="mt-8">
+          <div className="mt-8" id="procurement">
+            {/* Deep-link landing (SDC_Scheduler's Procurement drawer launcher,
+                `?section=procurement`) — the section already renders inline
+                below regardless, this just brings it on screen instead of
+                leaving the visitor to scroll down and find it themselves. */}
+            {section === "procurement" && <ScrollIntoView id="procurement" />}
             <p className="mb-3 font-heading text-lg font-bold tracking-tight text-sdc-navy">Procurement</p>
             <p className="mb-4 text-sm text-sdc-gray-600">
               Assembly readiness and the full parts buy-list — assemblies, parts, PO status, suppliers and material cost, pulled live from Total ETO.

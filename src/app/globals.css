@@ -466,6 +466,26 @@ table[data-grid="projects"].hide-actuals td.quoted-actual-cell > .actual-suffix 
 .hide-actuals td.quoted-actual-cell > input[type="number"] {
   width: 100% !important;
 }
+/* ── Parts Cost Quoted/Actual — merged into ONE column (2026-08-11) ──────────
+ *
+ * Used to be two separate `<th>`/`<td>` columns, hidden as a pair via
+ * `[data-col="partsCostActual"]` when Actuals was off. Now it is one column
+ * with the pair riding inside it, same as a section-hours cell — so the
+ * generic `.hide-actuals .actual-suffix { display: none; }` rule above
+ * already hides Parts Cost Actual's half too; nothing Parts-Cost-specific was
+ * needed for that part of the switch.
+ *
+ * What a section cell's plain `<input type="number">` never needed: Parts
+ * Cost Actual is an independently-editable MoneyCell, not a read-only actual
+ * span, so BOTH halves are inputs and both need an explicit width once two of
+ * them share a cell (see MONEY_INPUT_PAIRED in quoted/page.tsx). `.hide-actuals`
+ * widens the quoted half back out to the cell's full width, same idea as the
+ * section cells' own `input[type="number"] { width: 100% }` rule above —
+ * `.parts-cost-quoted` is the wrapper span quoted/page.tsx and
+ * NewProjectRows.tsx put around the quoted MoneyCell for exactly this hook. */
+.hide-actuals .parts-cost-quoted input[type="text"] {
+  width: 100% !important;
+}
 
 /* ── Show Actuals ON: quoted / actual, BOTH (§50, by request) ────────────────
  *

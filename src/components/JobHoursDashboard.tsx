@@ -3,8 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { card } from "@/components/ui/classnames";
 import { abbreviateLabel } from "@/lib/abbrev";
-import { EChart } from "@/components/charts/EChart";
-import { groupedBarOption, SERIES } from "@/components/charts/theme";
+import { SERIES } from "@/components/charts/theme";
 import type { JobHoursDashboard as DashData, HoursType } from "@/lib/job-hours-dashboard";
 import type { JobHoursDetail as JobHoursDetailData } from "@/lib/job-hours-detail";
 import { RESTRICTED_SECTION_CODES } from "@/lib/sections";
@@ -19,7 +18,8 @@ import type { PartsBudgetProjection } from "@/lib/parts-budget-projection";
 // back to its original two-column ratio instead of leaving an empty third cell.
 export type JobHoursDashboardParts = {
   purchased: number;
-  paid: number;
+  /** Parts Actual — GL-posted spend, the app's one definition (2026-08-10). */
+  actual: number;
   estimated: number | null;
   budgetProjection: PartsBudgetProjection | null;
   jobCount: number;
@@ -37,6 +37,23 @@ export type JobHoursDashboardParts = {
 // Divider color for the tiered category axis — darker than the default border
 // so the dashed group dividers read clearly.
 const TIER_DIVIDER = "#94a3b8";
+
+// Synthetic final "phase" for the merged Engineering/Shop totals (formerly
+// their own "{plannedLabel} and Actual by Billing Group" card) — not a real
+// SECTIONS phase, so it can share the exact same pill-toggle mechanism
+// (`phases`/`hiddenPhases`/`togglePhase`) as every other phase chip instead of
+// a second on/off model to keep in sync with it.
+const TOTAL_PHASE = "Total";
+
+// Total section's own colors — green, and ONLY for the Total section. Every
+// other bar (Complete Design & Build, Machine Testing, Teardown & Install, any
+// other real section) keeps the chart's original blue/navy SERIES pair from
+// theme.ts; this pair exists so the Total section can stay visually distinct
+// from the rest without recoloring them too.
+const TOTAL_SERIES = {
+  planned: "#74c415", // light green — Engineering/Shop Total, Quoted/ETC basis
+  actual: "#4a7d0d", // dark green — Engineering/Shop Total, Actual
+} as const;
 
 const fmt = (n: number) => Math.round(n).toLocaleString();
 
@@ -104,6 +121,9 @@ export function JobHoursDashboard({
   const phases = useMemo(() => {
     const seen: string[] = [];
     for (const s of executionSections) if (!seen.includes(s.phase)) seen.push(s.phase);
+    // The merged Engineering/Shop totals get the same toggleable pill every
+    // real phase does, appended last so it reads as the chart's final section.
+    seen.push(TOTAL_PHASE);
     return seen;
   }, [executionSections]);
 
@@ -132,14 +152,14 @@ export function JobHoursDashboard({
     [executionSections, hiddenPhases],
   );
 
-  const hierRows = visible.map((s) => ({ code: s.code, name: s.name, group: s.group, phase: s.phase, planned: planned(s), actual: actualHours(s) }));
-  // Same shared `hiddenPhases` state chart 1 filters by, but over `data.sections`
-  // rather than `visible` — chart 1 also drops PM/Mfg/Warranty permanently
-  // (RESTRICTED_SECTION_CODES), and that exclusion was deliberately scoped to
-  // chart 1 only, not "elsewhere" on this page. Resummed client-side from the
-  // per-section `billingGroup` the payload already carries, rather than read
-  // from the server's whole-job `data.billingGroups`, so both charts answer to
-  // the one filter instead of silently disagreeing about what's selected.
+  // Same shared `hiddenPhases` state the rest of the chart filters by, but over
+  // `data.sections` rather than `visible` — the chart also drops PM/Mfg/Warranty
+  // permanently (RESTRICTED_SECTION_CODES), and that exclusion is deliberately
+  // scoped to the real section bars, not the Engineering/Shop totals merged in
+  // below. Resummed client-side from the per-section `billingGroup` the payload
+  // already carries, rather than read from the server's whole-job
+  // `data.billingGroups`, so the totals answer to the one filter instead of
+  // silently disagreeing about what's selected.
   const bgSections = data.sections.filter((s) => !hiddenPhases.has(s.phase));
   const bgSums = new Map<string, { quoted: number; etc: number; actual: number }>();
   for (const s of bgSections) {
@@ -149,10 +169,27 @@ export function JobHoursDashboard({
     cur.actual += actualHours(s);
     bgSums.set(s.billingGroup, cur);
   }
-  const bgChart = (["Engineering", "Shop"] as const)
-    .map((g) => ({ group: g, ...(bgSums.get(g) ?? { quoted: 0, etc: 0, actual: 0 }) }))
-    .filter((g) => g.quoted || g.etc || g.actual)
-    .map((g) => ({ name: g.group, planned: hoursType === "Quoted" ? g.quoted : g.etc, actual: g.actual }));
+  // The former "{plannedLabel} and Actual by Billing Group" card — same sums,
+  // now the chart's own final "Total" section, gated by the "Total" pill above
+  // instead of always shown in a second card.
+  const totalRows: HierRow[] = hiddenPhases.has(TOTAL_PHASE)
+    ? []
+    : (["Engineering", "Shop"] as const)
+        .map((g) => ({ group: g, ...(bgSums.get(g) ?? { quoted: 0, etc: 0, actual: 0 }) }))
+        .filter((g) => g.quoted || g.etc || g.actual)
+        .map((g) => ({
+          code: `total-${g.group}`,
+          name: `${g.group} Total`,
+          group: g.group,
+          phase: TOTAL_PHASE,
+          planned: hoursType === "Quoted" ? g.quoted : g.etc,
+          actual: g.actual,
+          drillable: false,
+        }));
+  const hierRows = [
+    ...visible.map((s) => ({ code: s.code, name: s.name, group: s.group, phase: s.phase, planned: planned(s), actual: actualHours(s) })),
+    ...totalRows,
+  ];
 
   // Resolved against the CURRENT rows, so hiding the drilled section's phase (or
   // it dropping out of the template) closes the panel rather than leaving it
@@ -213,7 +250,7 @@ export function JobHoursDashboard({
         </div>
       </div>
 
-      {visible.length === 0 ? (
+      {hierRows.length === 0 ? (
         <div className={card("p-8")}>
           {/* Two different nothings, said differently: a job with no section template at
               all, versus every phase switched off by the chips above. The old copy
@@ -226,28 +263,29 @@ export function JobHoursDashboard({
         </div>
       ) : (
       <>
-      {/* Charts — all three (Estimate to Complete vs Actual, {plannedLabel} and
-          Actual by Billing Group, Parts Cost) in one row on normal desktop
-          screens, uniform height and aligned top/bottom (§54.3-54.5). Stretch
-          is the DEFAULT — `items-stretch` — so idle, all three cards match the
-          tallest one exactly. The one exception is while chart 1's
-          drill-through is open: that content is "absolutely required" per
-          §54.5, so `items-start` takes over for that state only rather than
-          stretching the other two cards to match a much taller one and
-          reopening the empty-space problem §33 fixed for the KPI summary card
-          (see drill-cap-scroll-ceiling in the memory notes / DEVLOG §33).
+      {/* Charts — Estimate to Complete vs Actual and Parts Cost, in one row on
+          normal desktop screens, uniform height and aligned top/bottom
+          (§54.3-54.5). The former "{plannedLabel} and Actual by Billing Group"
+          card is gone — its Engineering/Shop totals are the chart's own final
+          "Total" section now (see hierRows/totalRows above), toggled by the
+          "Total" pill instead of living in a second card. Stretch is the
+          DEFAULT — `items-stretch` — so idle, both cards match the taller one
+          exactly. The one exception is while the chart's drill-through is
+          open: that content is "absolutely required" per §54.5, so
+          `items-start` takes over for that state only rather than stretching
+          Parts Cost to match a much taller card and reopening the
+          empty-space problem §33 fixed for the KPI summary card (see
+          drill-cap-scroll-ceiling in the memory notes / DEVLOG §33).
 
-          §55: the first card is the WIDEST (2fr against 1fr each), because it
-          holds the most content — the tiered section chart — and had been the
-          one forced to scroll internally at three equal columns. The extra
-          width plus the now-responsive chart (see SectionHierarchyChart) lets
-          it show every section in full with no internal scroll, while the
-          billing-group and Parts Cost cards are comfortable at 1fr. Falls back
-          to the original 2-column ratio when there's no Parts Cost to show,
-          rather than leaving an empty cell. */}
+          §55: the chart card is the WIDER of the two (2fr against 1fr) — it
+          holds the most content, the tiered section chart, and the extra
+          width plus the responsive chart (see SectionHierarchyChart) lets it
+          show every section in full with no internal scroll. Falls back to
+          full width when there's no Parts Cost to show, rather than leaving
+          an empty cell. */}
       <div
         className={`grid grid-cols-1 gap-5 ${drillRow ? "items-start" : "items-stretch"} ${
-          parts ? "lg:grid-cols-[2fr_1fr_1fr]" : "lg:grid-cols-[2fr_1fr]"
+          parts ? "lg:grid-cols-[2fr_1fr]" : ""
         }`}
       >
         <div className={`${card("p-4")} flex h-full min-w-0 flex-col`}>
@@ -301,25 +339,10 @@ export function JobHoursDashboard({
             </>
           )}
         </div>
-        <div className={`${card("p-4")} flex h-full flex-col`}>
-          <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3">
-            <p className="font-heading text-base font-bold tracking-tight text-sdc-navy">{plannedLabel} and Actual by Billing Group</p>
-          </div>
-          <EChart
-            height={400}
-            option={groupedBarOption({
-              categories: bgChart.map((g) => g.name),
-              planned: bgChart.map((g) => g.planned),
-              actual: bgChart.map((g) => g.actual),
-              plannedLabel,
-              diffs: bgChart.map((g) => g.planned - g.actual),
-            })}
-          />
-        </div>
         {parts && (
           <PartsCostSummary
             purchased={parts.purchased}
-            paid={parts.paid}
+            actual={parts.actual}
             estimated={parts.estimated}
             budgetProjection={parts.budgetProjection}
             jobCount={parts.jobCount}
@@ -334,7 +357,17 @@ export function JobHoursDashboard({
 }
 
 
-type HierRow = { code: string; name: string; group: string; phase: string; planned: number; actual: number };
+type HierRow = {
+  code: string;
+  name: string;
+  group: string;
+  phase: string;
+  planned: number;
+  actual: number;
+  /** false for the synthetic Total-section rows — they have no month-by-month
+   *  data behind them to drill into, so the column stays a static bar. */
+  drillable?: boolean;
+};
 
 // Custom grouped-column chart with the Power BI tiered category axis:
 // Section names → Department → Phase, with dashed dividers between groups. Shows
@@ -362,8 +395,8 @@ function SectionHierarchyChart({
   // narrower column narrows the bars rather than clipping them.
   const colStyle = { gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))` } as const;
 
-  // Entrance animation — bars grow up from 0 on mount / when the data changes,
-  // mirroring the ECharts chart beside it. Two rAFs so the 0-height paints first.
+  // Entrance animation — bars grow up from 0 on mount / when the data changes.
+  // Two rAFs so the 0-height paints first.
   const [grown, setGrown] = useState(false);
   useEffect(() => {
     setGrown(false);
@@ -420,6 +453,14 @@ function SectionHierarchyChart({
         {rows.map((r) => {
           const diff = r.planned - r.actual; // Quoted − Actual: + = under Quoted (green), − = over (red)
           const has = r.planned !== 0 || r.actual !== 0;
+          // The synthetic Total-section rows have no month-by-month data behind
+          // them (see HierRow.drillable) — the column stays a static bar rather
+          // than a dead-end click that opens an empty drill panel.
+          const interactive = r.drillable !== false;
+          // Green is reserved for the Total section only (§ color correction) —
+          // every real section keeps the chart's original blue/navy SERIES pair.
+          const isTotal = r.phase === TOTAL_PHASE;
+          const colors = isTotal ? TOTAL_SERIES : SERIES;
           return (
             <div
               key={r.code}
@@ -427,26 +468,30 @@ function SectionHierarchyChart({
               // keyboard-reachable. Clicking the open section closes it again.
               // `aria-label`, not `title` — a native title attribute is itself a
               // hover tooltip, which this chart no longer shows on any bar.
-              role="button"
-              tabIndex={0}
-              aria-pressed={drillCode === r.code}
-              aria-label={`${r.name} — click for month-by-month detail`}
-              onClick={() => onDrill(drillCode === r.code ? null : r.code)}
-              onKeyDown={(e) => {
-                if (e.key !== "Enter" && e.key !== " ") return;
-                e.preventDefault();
-                onDrill(drillCode === r.code ? null : r.code);
-              }}
-              className={`flex h-full cursor-pointer flex-col rounded-sm motion-interactive hover:bg-sdc-blue-light/30 ${
-                drillCode === r.code ? "bg-sdc-blue-light/60 ring-1 ring-sdc-blue" : ""
+              role={interactive ? "button" : undefined}
+              tabIndex={interactive ? 0 : undefined}
+              aria-pressed={interactive ? drillCode === r.code : undefined}
+              aria-label={interactive ? `${r.name} — click for month-by-month detail` : r.name}
+              onClick={interactive ? () => onDrill(drillCode === r.code ? null : r.code) : undefined}
+              onKeyDown={
+                interactive
+                  ? (e) => {
+                      if (e.key !== "Enter" && e.key !== " ") return;
+                      e.preventDefault();
+                      onDrill(drillCode === r.code ? null : r.code);
+                    }
+                  : undefined
+              }
+              className={`flex h-full flex-col rounded-sm motion-interactive ${interactive ? "cursor-pointer hover:bg-sdc-blue-light/30" : ""} ${
+                interactive && drillCode === r.code ? "bg-sdc-blue-light/60 ring-1 ring-sdc-blue" : ""
               }`}
             >
               <div className={`h-4 text-center text-note font-bold leading-none ${!has ? "text-transparent" : diff > 0 ? "text-sdc-green-text" : diff < 0 ? "text-red-600" : "text-sdc-gray-400"}`}>
                 {has ? `${diff > 0 ? "+" : ""}${fmt(diff)}` : ""}
               </div>
               <div className="flex flex-1 items-end justify-center gap-1.5">
-                <Bar value={r.planned} color={SERIES.planned} />
-                <Bar value={r.actual} color={SERIES.actual} />
+                <Bar value={r.planned} color={colors.planned} />
+                <Bar value={r.actual} color={colors.actual} />
               </div>
             </div>
           );

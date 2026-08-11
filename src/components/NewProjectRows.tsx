@@ -160,27 +160,34 @@ export function NewProjectRows({
           >
             <span data-total-quoted>0</span>
           </td>
-          <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-1 py-1.5 text-left align-middle text-label font-medium text-sdc-navy">
-            <div className="flex items-center gap-0.5">
-              <span className="text-sdc-gray-400">$</span>
+          {/* Merged Parts Cost column — same structure as the real rows in
+              quoted/page.tsx: quoted first (blue), "/ actual" second (green)
+              inside `.actual-suffix`, hidden by `.hide-actuals` with no extra
+              markup needed here. Must stay column-count-aligned with those
+              rows, which is why this mirrors them exactly rather than keeping
+              its own two-column shape. No tone/background here (2026-08-11)
+              — a brand-new row has nothing to compare yet (both figures
+              start blank), so it just keeps its own "new row" yellow tint. */}
+          <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-1 py-1.5 text-left align-middle text-label font-medium">
+            <span className="parts-cost-quoted inline-flex items-center gap-0.5 text-sdc-blue-dark">
+              <span>$</span>
               <MoneyCell
                 name={`newRow__${tempId}__costQuoted`}
                 defaultValue=""
                 ariaLabel="New project Parts Cost Quoted"
-                className="w-full min-w-0 border-none bg-transparent text-left tabular-nums outline-none"
+                className="w-[4.5rem] min-w-0 border-none bg-transparent text-left tabular-nums outline-none"
               />
-            </div>
-          </td>
-          <td className="overflow-hidden whitespace-nowrap border-l border-sdc-border bg-sdc-yellow-bg/60 px-1 py-1.5 text-left align-middle text-label text-sdc-gray-600">
-            <div className="flex items-center gap-0.5">
-              <span className="text-sdc-gray-400">$</span>
+            </span>
+            <span className="actual-suffix inline-flex items-center gap-0.5 text-sdc-green-text">
+              <span className="actual-sep text-sdc-muted">/</span>
+              <span>$</span>
               <MoneyCell
                 name={`newRow__${tempId}__costActualHistorical`}
                 defaultValue=""
                 ariaLabel="New project Parts Cost Actual"
-                className="w-full min-w-0 border-none bg-transparent text-left tabular-nums outline-none"
+                className="w-[4.5rem] min-w-0 border-none bg-transparent text-left tabular-nums outline-none"
               />
-            </div>
+            </span>
           </td>
         </tr>
       ))}

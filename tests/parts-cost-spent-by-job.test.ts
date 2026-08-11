@@ -57,9 +57,20 @@ test("getPartsCostSpentByJob's query never filters on Invoiced Date", () => {
   assert.match(fn, /WHERE \[Job ID\] IS NOT NULL/, "the only filter should be excluding rows with no job at all");
 });
 
-test("syncPartsCostActual calls the unwindowed function with no arguments", () => {
-  const fn = functionSpan(SYNC_TOTALETO(), "syncPartsCostActual");
-  assert.match(fn, /getPartsCostSpentByJob\(\)/, "must not pass a 1990-2100 (or any) window — that was never the actual fix for the monthly-basis problem, just a workaround that still had the NULL-exclusion bug");
+// syncPartsCostActual no longer calls getPartsCostSpentByJob at all — as of
+// 2026-08-10 it reads getPartsActualByJob, because [Total Price] is a COMMITMENT
+// figure and the column it fills is labelled ACTUAL (see
+// tests/parts-actual-gl-posted.test.ts for that fix and its guards). The
+// no-window property this test was protecting still matters for the callers that
+// legitimately want the commitment figure, so it moved to those.
+test("getPartsCostSpentByJob's remaining callers pass no date window", () => {
+  const jobCost = code("lib", "job-cost-source.ts");
+  assert.match(jobCost, /getPartsCostSpentByJob\(\)/, "Job Cost Explorer's Parts Purchased column must use the fixed, unwindowed query");
+  assert.doesNotMatch(
+    jobCost,
+    /getPartsCostSpentByJob\(\s*[A-Za-z_]/,
+    "a date-window argument here is exactly what let the old NULL-Invoiced-Date bug in",
+  );
 });
 
 test("job-cost-source.ts calls the unwindowed function with no arguments", () => {

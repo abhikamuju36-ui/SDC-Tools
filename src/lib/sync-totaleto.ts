@@ -182,6 +182,22 @@ export type PartsBookedByJob = {
 const AP_LINE_AMOUNT =
   "(APDD.APDocQty * APDD.APDocUnitPrice * (1 - APDD.APDocItemPctDisc) * APBD.APDocCurrRate)";
 
+// ── The GL-posted rule (2026-08-10) ─────────────────────────────────────────
+//
+// An AP document flagged APDocDoNotExport is never posted to the general ledger,
+// so it never appears on a job ledger — the report the business reconciles a job's
+// actual parts spend against. Counting those lines as spend is root cause #2 of the
+// job-1116 overstatement; see getPartsActualByJob below for the full derivation.
+//
+// Deliberately the FLAG and not the export DATE. `APDocExportDate IS NULL` looks
+// like the same test and is not: measured 2026-08-10 across every job-attributed AP
+// line, 45 lines / $41,352.47 had no export date while NOT being flagged, and all of
+// them were dated within the previous week — genuinely-real invoices merely queued
+// for the next export run. Filtering on the date would silently delete real, current
+// cost every time someone looked before an export ran. The flag, by contrast, spans
+// 2024-11 to 2026-08 (338 documents, 1,614 lines, $621,483.80) and means what it says.
+const GL_POSTED_AP = "ISNULL(APBD.APDocDoNotExport, 0) = 0";
+
 export async function getPartsCostBookedByJob(
   monthStart: Date,
   monthEndExclusive: Date,
@@ -280,11 +296,146 @@ export async function getPartsInvoicedByJob(monthStart: Date, monthEndExclusive:
   }
 }
 
-// Parts Cost cumulative "Parts Cost Actual" per job, straight from TotalETO —
-// SUM(Total Price) across EVERY PO/Extra-Cost line the job has, invoiced or
-// not. Keyed by numeric Job Id string (e.g. "1150"), matching how the rest of
-// the app keys jobs. A longer request timeout than the project sync since
-// this query fans out across the full PO/AP history.
+// ── THE definition of Parts Actual (2026-08-10) ─────────────────────────────
+//
+// Net AP-document amount POSTED TO THE GENERAL LEDGER, per job. This is the one
+// source of truth for "what has this job actually spent on parts", and every view
+// that shows a Parts Actual figure resolves to this function or to the per-line
+// `actualAmount` that carries the same rule (see PARTS_DETAIL_SQL).
+//
+// ── Why this exists: the job-1116 audit ─────────────────────────────────────
+//
+// Reported by Dan: job 1116 showed ~$400K parts actual/projection against a job
+// ledger of ~$340K on a ~$300K budget. Audited 2026-08-10 against Lisa's own
+// "1116 Molex as of 7.31.26" Job Ledger export, whose net is $349,732.10
+// (re-derivable from source at any time — scripts/_analyze_1116_ledger.ts; the
+// figure is deliberately NOT hardcoded in app code).
+//
+// The app said $399,176.51. That number came from getPartsCostSpentByJob below,
+// SUM([Total Price]), and TWO independent causes made it wrong — both of them
+// general, neither specific to 1116:
+//
+//   1. OPEN PO COMMITMENT COUNTED AS ACTUAL.  [Total Price] is
+//      "remaining-uninvoiced-PO-balance + everything-invoiced-to-date", so a job
+//      sitting on open purchase orders reports their whole undelivered value as
+//      money already spent. On 1116 that was $32,986.24 (110 PO lines, the largest
+//      a $19,389.58 robot not yet billed). Across all 100 app jobs with parts
+//      activity: $2,108,517.44. This is the "projection used as actual" failure —
+//      a forecast in a column labelled actual.
+//
+//   2. AP DOCUMENTS THAT NEVER POST TO THE GL COUNTED AS ACTUAL.  See
+//      GL_POSTED_AP above. On 1116: 54 lines / $19,950.40, spanning both part
+//      lines ($10,161.10) and extra costs ($9,789.30). Across the database:
+//      $621,483.80.
+//
+// Removing both lands 1116 at $346,101.12 as of 7/31/26 against the ledger's
+// $349,732.10 — a $3,630.98 (1.0%) residual, of which $1,928.73 is the ledger's
+// own CDJ/GENJ/CRJ journal rows: cash-disbursement, general-journal and
+// cash-receipt postings that exist ONLY in the accounting system's general
+// ledger. TotalETO holds no journal-transaction table at all (checked: zero
+// tables or views carry a journal / debit / credit column), so no AP-based query
+// can reach them, by construction. The remaining ~$1,702 is at that same grain —
+// chiefly a subcontractor invoice the ledger books to 1116 that TotalETO
+// attributes elsewhere. Stated here rather than closed by a fudge factor.
+//
+// ── Causes ruled OUT, with evidence ─────────────────────────────────────────
+//
+//   * Stale cached values — none. Job.costActualHistorical matched the live query
+//     exactly for every job that had one (0 of 234 differed).
+//   * Duplicate PO/part rows — none that are the app's doing. 14 PO lines on 1116
+//     carry more than one AP line, but they are legitimate progressive billing
+//     (a bowl feeder invoiced 0.3 then 0.7; deposit-then-final pairs), and the
+//     job ledger contains them too. Deduping them would have made the app WRONG.
+//   * Joins multiplying rows — measured at zero jobs affected today, though
+//     PART_PURCHASE_SQL does carry the latent hazard (its invoiced subquery groups
+//     by BatchEntryTypeID as well as PurchaseDetailID, so a PO line billed under
+//     two entry types would join twice and count its remaining balance twice).
+//     PARTS_DETAIL_SQL, which feeds the per-line views, groups by
+//     PurchaseDetailID alone and cannot. Guarded by a test rather than "fixed",
+//     since changing a query with no live defect risks more than it gains.
+//   * Wrong attribution field — POD.ProjectID and APDD.ProjectID agree perfectly
+//     on 1116 (0 disagreements in either direction), and no AP line or PO line
+//     fails to attribute to a job.
+//   * Line/document discounts mishandled — no. APDocPctDisc is 0 on all 7,216
+//     documents and APDocItemPctDisc is 0 on all but one line; discounts are
+//     booked as their own negative lines, which SIGN-preserving SUM already nets.
+//
+// ── Deliberately NOT applied to Money Spent Month ───────────────────────────
+//
+// getPartsCostBookedByJob (the ETC grid's monthly figure) keeps its own rule, on
+// purpose. It is reconciled to the business's own TotalETO pivot as it stands
+// (§41), it feeds months that have been submitted and locked, and adding the
+// GL-posted rule would move July 2026 by $13,672.97 on a $491,206.43 month across
+// 21 jobs — a retroactive change to signed-off numbers. That is a business
+// decision about which reference report the monthly measure should follow, not a
+// bug to fix in passing. Flagged, not silently changed.
+// ── Why the zero-fill branches exist ────────────────────────────────────────
+//
+// The result must contain an entry for every job TotalETO tracks ANY parts
+// activity for, including jobs whose GL-posted spend is genuinely $0 — a job
+// sitting on open purchase orders having paid nothing yet. Without that,
+// syncPartsCostActual (which iterates THIS map) never visits such a job, and
+// whatever stale figure it already had survives untouched. Found exactly that way:
+// after the first pass of this fix, 5 of 100 jobs stayed wrong, job 1158 still
+// reporting $99,606.54 of pure open-PO commitment as actual spend because it had
+// no AP rows at all for the GROUP BY to produce.
+//
+// The two zero-fill branches reproduce PART_PURCHASE_SQL's own job set exactly —
+// PO lines attributed through tblSpec/tblProjects, plus the Extra Costs view — so
+// the population this writes is precisely the population the old basis wrote, and
+// no job silently changes hands. Jobs with NO TotalETO parts footprint whatsoever
+// stay absent, which is what protects the 116 pre-TotalETO jobs whose actuals were
+// entered by hand (see syncPartsCostActual).
+export async function getPartsActualByJob(): Promise<Map<string, number>> {
+  const pool = await sql.connect({ ...config, requestTimeout: 180000 });
+  try {
+    const result = await pool.request().query(
+      `SELECT JobId, SUM(Actual) AS Actual FROM (
+         SELECT APDD.ProjectID AS JobId, SUM(${AP_LINE_AMOUNT}) AS Actual
+           FROM tblAPDocumentDetails APDD WITH(NOLOCK)
+                INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID
+          WHERE APDD.ProjectID IS NOT NULL AND ${GL_POSTED_AP}
+          GROUP BY APDD.ProjectID
+         UNION ALL
+         SELECT P.ProjectID AS JobId, 0 AS Actual
+           FROM tblPurchaseOrderHeader POH WITH(NOLOCK)
+                INNER JOIN tblPurchaseOrderDetails POD WITH(NOLOCK) ON POH.PurchaseOrderID = POD.PurchaseOrderID
+                LEFT JOIN tblSpec S WITH(NOLOCK) ON S.SpecID = POD.SpecID AND S.ProjectID = POD.ProjectID
+                LEFT JOIN tblProjects P WITH(NOLOCK) ON S.ProjectID = P.ProjectID
+          WHERE P.ProjectID IS NOT NULL
+          GROUP BY P.ProjectID
+         UNION ALL
+         SELECT EC.ProjectID AS JobId, 0 AS Actual
+           FROM vwCostingExtraCostsDetailed EC WITH(NOLOCK)
+          WHERE EC.ProjectID IS NOT NULL
+          GROUP BY EC.ProjectID
+       ) x
+       GROUP BY JobId`,
+    );
+    const map = new Map<string, number>();
+    for (const r of result.recordset) {
+      const actual = Number(r.Actual);
+      // A null/NaN sum is a data problem, not a zero — skipping keeps the job out
+      // rather than reporting a confident $0 spend (§30.14).
+      if (Number.isFinite(actual)) map.set(String(Number(r.JobId)), actual);
+    }
+    return map;
+  } finally {
+    await pool.close();
+  }
+}
+
+// Parts COMMITMENT (not actual) per job, straight from TotalETO — SUM(Total
+// Price) across EVERY PO/Extra-Cost line the job has, invoiced or not. Keyed by
+// numeric Job Id string (e.g. "1150"), matching how the rest of the app keys
+// jobs. A longer request timeout than the project sync since this query fans out
+// across the full PO/AP history.
+//
+// NOT Parts Actual — see getPartsActualByJob above, which is. This figure
+// includes each open PO's undelivered balance, so it answers "how much has this
+// job committed", which is the right question for procurement/PO tracking and the
+// wrong one for a column labelled actual. It fed Job.costActualHistorical until
+// 2026-08-10; that was root cause #1 of the 1116 overstatement.
 //
 // NOT Money Spent Month — see getPartsCostBookedByJob above for that. `[Total Price]`
 // includes each PO's uninvoiced remaining balance, which is meaningful for the Projects
@@ -375,13 +526,21 @@ export type PartsCostLine = {
   description: string | null;
   quantity: number;
   unitPrice: number;
-  totalPrice: number; // "Purchased"
-  invoicedAmount: number; // "Paid"
+  totalPrice: number; // "Purchased" — committed, incl. this line's open balance
+  invoicedAmount: number; // "Paid" — everything billed against this line
+  // "Actual" — the slice of invoicedAmount that actually posted to the general
+  // ledger, i.e. the part of it a job ledger would show (see GL_POSTED_AP).
+  // Equal to invoicedAmount for the overwhelming majority of lines; lower on any
+  // line billed by a document flagged never-to-export. Summing THIS field is how
+  // every view gets a Parts Actual that agrees with every other view.
+  actualAmount: number;
 };
 
 export type JobPartsCost = {
   purchased: number;
   paid: number;
+  /** Parts Actual — GL-posted spend. THE figure to show as "actual". */
+  actual: number;
   leftToPay: number;
   lines: PartsCostLine[];
 };
@@ -415,13 +574,23 @@ SELECT
   ,(POD.PurchasePrice * POH.PurchaseCurrRate) AS UnitPrice
   ,(${LINE_TOTAL_PRICE}) AS TotalPrice
   ,ISNULL(INV.TotalInvoicedAmount, 0) AS InvoicedAmount
+  ,ISNULL(INV.GlPostedAmount, 0) AS ActualAmount
 FROM tblPurchaseOrderHeader POH WITH(NOLOCK)
   INNER JOIN tblPurchaseOrderDetails POD WITH(NOLOCK) ON POH.PurchaseOrderID = POD.PurchaseOrderID
   LEFT JOIN tblCompany SUP WITH(NOLOCK) ON SUP.CompanyID = POH.PurchaseSupplierID
   LEFT JOIN tblEngItemMaster IM WITH(NOLOCK) ON IM.ItemID = POD.ItemID
   LEFT JOIN tlkpItemMaster_Categories CAT WITH(NOLOCK) ON CAT.ItemCategory = IM.ItemCategory
+  -- GlPostedAmount is a SECOND aggregate alongside TotalInvoicedAmount, not a
+  -- filter on the subquery. InvoicedQty deliberately still counts EVERY billed
+  -- document, GL-posted or not: a part billed on a never-exported invoice has
+  -- still been billed, so narrowing InvoicedQty would inflate the open-balance
+  -- term in LINE_TOTAL_PRICE and overstate the commitment we are trying to stop
+  -- overstating. Only the MONEY splits.
   LEFT JOIN ( SELECT APDD.PurchaseDetailID, max(APDocDate) AS APDocDate, SUM(APDocQty) AS InvoicedQty,
-                SUM(APDocQty * APDocUnitPrice * (1 - APDocItemPctDisc) * APDocCurrRate) AS TotalInvoicedAmount
+                SUM(APDocQty * APDocUnitPrice * (1 - APDocItemPctDisc) * APDocCurrRate) AS TotalInvoicedAmount,
+                SUM(CASE WHEN ${GL_POSTED_AP}
+                         THEN APDocQty * APDocUnitPrice * (1 - APDocItemPctDisc) * APDocCurrRate
+                         ELSE 0 END) AS GlPostedAmount
               FROM tblAPDocumentDetails APDD WITH(NOLOCK)
                 INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID
               WHERE BatchEntryTypeID NOT IN (2, 3) AND APDD.PurchaseDetailID IS NOT NULL
@@ -444,7 +613,14 @@ SELECT
   ,(EC.APDocUnitPrice * EC.APDocCurrRate) AS UnitPrice
   ,EC.decExtraCostingValue AS TotalPrice
   ,EC.decExtraCostingValue AS InvoicedAmount
+  -- Extra Costs (shipping, fees, tariffs) carry the same GL-posted rule. The view
+  -- exposes APDocID but not the flag, so it joins back to the batch document for
+  -- it. On job 1116 this branch alone held $9,789.30 of never-posted cost, so
+  -- applying the rule to the PO branch only would have left a third of the
+  -- problem in place.
+  ,CASE WHEN ISNULL(APBD.APDocDoNotExport, 0) = 0 THEN EC.decExtraCostingValue ELSE 0 END AS ActualAmount
 FROM vwCostingExtraCostsDetailed EC WITH(NOLOCK)
+  LEFT JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = EC.APDocID
 WHERE EC.ProjectID = @job`;
 
 // ── Genuinely month-scoped invoice lines, for the Parts Spent drill (2026-08-07) ──
@@ -489,7 +665,7 @@ WHERE EC.ProjectID = @job`;
 // match, to the cent, every time.
 export async function getJobPartsInvoicedInMonth(jobId: string, monthStart: Date, monthEndExclusive: Date): Promise<JobPartsCost> {
   const numericJob = Number(jobId);
-  if (!Number.isFinite(numericJob)) return { purchased: 0, paid: 0, leftToPay: 0, lines: [] };
+  if (!Number.isFinite(numericJob)) return { purchased: 0, paid: 0, actual: 0, leftToPay: 0, lines: [] };
   const pool = await sql.connect({ ...config, requestTimeout: 120000 });
   try {
     const result = await pool
@@ -510,6 +686,14 @@ export async function getJobPartsInvoicedInMonth(jobId: string, monthStart: Date
           ,APDD.APDocQty AS Qty
           ,COALESCE(POD.PurchasePrice * POH.PurchaseCurrRate, APDD.APDocUnitPrice * APBD.APDocCurrRate) AS UnitPrice
           ,(APDD.APDocQty * APDD.APDocUnitPrice * (1 - APDD.APDocItemPctDisc) * APBD.APDocCurrRate) AS InvoicedAmount
+          -- Same GL-posted split every other parts query carries, so a drill row's
+          -- actual agrees with the total above it. No filter here: this drill is
+          -- reconciled line-for-line against getPartsCostBookedByJob, which counts
+          -- every AP line, so dropping rows would break that agreement. The row
+          -- still reports what DID post, separately.
+          ,CASE WHEN ${GL_POSTED_AP}
+                THEN (APDD.APDocQty * APDD.APDocUnitPrice * (1 - APDD.APDocItemPctDisc) * APBD.APDocCurrRate)
+                ELSE 0 END AS ActualAmount
         FROM tblAPDocumentDetails APDD WITH(NOLOCK)
           INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID
           LEFT JOIN tblPurchaseOrderDetails POD WITH(NOLOCK) ON POD.PurchaseDetailID = APDD.PurchaseDetailID
@@ -540,11 +724,13 @@ export async function getJobPartsInvoicedInMonth(jobId: string, monthStart: Date
       unitPrice: Number(r.UnitPrice) || 0,
       totalPrice: Number(r.InvoicedAmount) || 0,
       invoicedAmount: Number(r.InvoicedAmount) || 0,
+      actualAmount: Number(r.ActualAmount) || 0,
     }));
     const meaningful = lines.filter((l) => l.invoicedAmount !== 0);
     meaningful.sort((a, b) => (b.invoicedDate ?? "").localeCompare(a.invoicedDate ?? ""));
     const paid = meaningful.reduce((s, l) => s + l.invoicedAmount, 0);
-    return { purchased: paid, paid, leftToPay: 0, lines: meaningful };
+    const actual = meaningful.reduce((s, l) => s + l.actualAmount, 0);
+    return { purchased: paid, paid, actual, leftToPay: 0, lines: meaningful };
   } finally {
     await pool.close();
   }
@@ -552,7 +738,7 @@ export async function getJobPartsInvoicedInMonth(jobId: string, monthStart: Date
 
 export async function getJobPartsCost(jobId: string): Promise<JobPartsCost> {
   const numericJob = Number(jobId);
-  if (!Number.isFinite(numericJob)) return { purchased: 0, paid: 0, leftToPay: 0, lines: [] };
+  if (!Number.isFinite(numericJob)) return { purchased: 0, paid: 0, actual: 0, leftToPay: 0, lines: [] };
   const pool = await sql.connect({ ...config, requestTimeout: 120000 });
   try {
     const result = await pool.request().input("job", sql.Int, numericJob).query(PARTS_DETAIL_SQL);
@@ -569,13 +755,15 @@ export async function getJobPartsCost(jobId: string): Promise<JobPartsCost> {
       unitPrice: Number(r.UnitPrice) || 0,
       totalPrice: Number(r.TotalPrice) || 0,
       invoicedAmount: Number(r.InvoicedAmount) || 0,
+      actualAmount: Number(r.ActualAmount) || 0,
     }));
     // Sort newest purchase first; drop fully-zero noise rows.
     const meaningful = lines.filter((l) => l.totalPrice !== 0 || l.invoicedAmount !== 0 || l.quantity !== 0);
     meaningful.sort((a, b) => (b.purchaseDate ?? "").localeCompare(a.purchaseDate ?? ""));
     const purchased = meaningful.reduce((s, l) => s + l.totalPrice, 0);
     const paid = meaningful.reduce((s, l) => s + l.invoicedAmount, 0);
-    return { purchased, paid, leftToPay: purchased - paid, lines: meaningful };
+    const actual = meaningful.reduce((s, l) => s + l.actualAmount, 0);
+    return { purchased, paid, actual, leftToPay: purchased - paid, lines: meaningful };
   } finally {
     await pool.close();
   }
@@ -632,22 +820,32 @@ interface TotalEtoCosting {
 // all (Power BI's model has no equivalent measure; see the note in
 // sync-powerbi.ts).
 //
-// TotalETO over Power BI, deliberately. getPartsCostSpentByJob runs the same
-// query Power BI's own 'Part Purchase' table runs, verified 2026-07-19 to match
-// its [Part Cost Purchased] to the dollar for every real project job — so the two
-// agree, and TotalETO is live where the model waits for a scheduled refresh.
-// NOT the same source as the ETC grid's "Money Spent Month" (§41 moved that to
-// getPartsCostBookedByJob's AP-document basis) — this is deliberately a
-// different, lifetime question, not a monthly one.
+// Source: getPartsActualByJob — GL-posted AP spend, the same definition every
+// other Parts Actual in the app resolves to.
 //
-// Cumulative, not per-month: the column is a running actual, unwindowed — see
-// getPartsCostSpentByJob's own comment for why a date window can't apply here.
+// This read getPartsCostSpentByJob (SUM([Total Price])) until 2026-08-10. That was
+// the bug behind job 1116's ~$400K against a ~$340K job ledger: [Total Price]
+// carries each open PO's undelivered balance, so the column labelled ACTUAL was
+// reporting commitment plus forecast. See getPartsActualByJob for the full audit,
+// both root causes, and the causes ruled out. Measured effect of the switch: 100
+// jobs corrected, $2,686,954.34 of overstatement removed in total.
+//
+// NOT the same source as the ETC grid's "Money Spent Month" (getPartsCostBookedByJob)
+// — that is deliberately a monthly question with its own reconciled rule.
+//
+// Cumulative, not per-month: the column is a running actual, unwindowed.
 //
 // Every job with a real Type, whatever its Status — Complete jobs are precisely
 // the ones whose parts spend is finished and worth reporting, and they were the
 // rows sitting empty.
+//
+// Jobs absent from TotalETO are left ALONE, not zeroed. 116 app jobs predate
+// TotalETO's data (its AP history starts 2024-10-30) and carry a manually-entered
+// historical figure totalling $18.76M; the loop below iterates the source map, so
+// a job TotalETO has never heard of is never written. Reversing that iteration
+// would silently destroy all of it.
 export async function syncPartsCostActual(): Promise<{ jobsUpdated: number; jobsNotFound: number }> {
-  const spentByJobId = await getPartsCostSpentByJob();
+  const spentByJobId = await getPartsActualByJob();
 
   const jobs = await prisma.job.findMany({
     where: { type: { in: [...VALID_JOB_TYPES] } },
