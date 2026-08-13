@@ -92,10 +92,18 @@ export function ExportMenu({
   // Measures the panel AFTER it's rendered (off-screen, `visibility: hidden`)
   // so real width/height are available for edge-flipping — the same
   // hidden-until-measured trick JobCellMenuHost.tsx uses, so the pre-flip
-  // position never flashes. Default: below and left-aligned to the button
-  // (the old `top-full left-0`); flips above if there isn't room below, and
-  // clamps the left edge so the panel never runs off the right of the
-  // viewport regardless of where the button sits.
+  // position never flashes. Flips above if there isn't room below.
+  //
+  // Horizontal anchor is the button's RIGHT edge, not its left (found live,
+  // 2026-08-13): this control sits at the right end of every toolbar that
+  // uses it (Hours, Projects, Monthly ETC), so left-aligning and then
+  // clamping leftward to stay on screen dragged the menu away from Export
+  // and left it looking anchored to whichever control happened to be there
+  // instead (Views, in the report). Right-aligning means the common case —
+  // plenty of room to the left, since Export is the last button — never
+  // needs to shift at all. Falls back to left-aligned only if right-aligning
+  // would run the menu off the LEFT of the viewport (a narrow window, or a
+  // page that ever puts this control somewhere other than the toolbar's end).
   useLayoutEffect(() => {
     if (!open) return;
     const btn = btnWrapRef.current;
@@ -106,7 +114,9 @@ export function ExportMenu({
     const pad = 6;
     const openUp = btnRect.bottom + height + pad > window.innerHeight && btnRect.top - height - pad >= 0;
     const top = openUp ? btnRect.top - height - 4 : btnRect.bottom + 4;
-    const left = Math.min(Math.max(pad, btnRect.left), window.innerWidth - width - pad);
+    let left = btnRect.right - width;
+    if (left < pad) left = btnRect.left;
+    left = Math.min(Math.max(pad, left), window.innerWidth - width - pad);
     setPos({ top, left, openUp });
   }, [open]);
 
