@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { card } from "@/components/ui/classnames";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { SERIES } from "@/components/charts/theme";
@@ -45,17 +45,123 @@ const TIER_DIVIDER = "#94a3b8";
 // a second on/off model to keep in sync with it.
 const TOTAL_PHASE = "Total";
 
-// Total section's own colors — green, and ONLY for the Total section. Every
-// other bar (Complete Design & Build, Machine Testing, Teardown & Install, any
-// other real section) keeps the chart's original blue/navy SERIES pair from
-// theme.ts; this pair exists so the Total section can stay visually distinct
-// from the rest without recoloring them too.
+// Total section's own colors — grey, and ONLY for the Total section (by
+// request, replacing the earlier green). Every other bar (Complete Design &
+// Build, Machine Testing, Teardown & Install, any other real section) keeps
+// the chart's original blue/navy SERIES pair from theme.ts; this pair exists
+// so the Total section can stay visually distinct from the rest without
+// recoloring them too. Both values are literal brand-guide neutrals, not
+// invented greys: `--sdc-border` (the brand's own "Gray" swatch) and
+// `--sdc-gray-600` — same ~15:1 contrast relationship the blue/navy pair
+// gives every other section, so Quoted vs Actual reads just as clearly here.
 const TOTAL_SERIES = {
-  planned: "#74c415", // light green — Engineering/Shop Total, Quoted/ETC basis
-  actual: "#4a7d0d", // dark green — Engineering/Shop Total, Actual
+  planned: "#d9d9d9", // light grey — Engineering/Shop Total, Quoted/ETC basis
+  actual: "#2b2b2b", // dark grey — Engineering/Shop Total, Actual
 } as const;
 
 const fmt = (n: number) => Math.round(n).toLocaleString();
+
+// ── Value-label collision avoidance for SectionHierarchyChart ───────────────
+//
+// Each bar's value label floats directly above that bar's own top edge
+// (Bar, below), at whatever height its OWN value happens to scale to — there
+// is no shared "label row". Two labels only ever collide when their bars
+// land at nearly the same height right next to each other: the Quoted/Actual
+// pair inside one section (tight `gap-1.5`, and a wide number like "1,234"
+// is wider than the ~20px bar it sits over), or two ADJACENT sections whose
+// bars are both near the chart's max — which is exactly what "Total" columns
+// are, since a Total is a sum and so is usually the tallest bar(s) in the
+// chart, sitting right next to each other.
+//
+// This runs as a post-layout DOM pass (measure, don't guess) rather than
+// anything CSS-only, because whether two labels collide depends on live text
+// width and live column width together — both vary with the data and with
+// the card's own responsive width (§55's `minmax(0, 1fr)` columns
+// deliberately shrink instead of forcing a horizontal scrollbar). It walks
+// the labels in left-to-right visual/DOM order and only ever compares
+// immediate neighbors — two non-adjacent labels that don't touch their
+// shared neighbor can't be touching each other either. That's only true
+// within ONE band of labels sharing a consistent left-to-right DOM order, so
+// the bar value labels (`[data-value-label]`) and the diff badges sitting in
+// their own row above them (`[data-diff-label]`) are resolved as two
+// SEPARATE calls, not one merged list — the diff badges for columns N and
+// N+1 are DOM-adjacent only to each other (every column's bars sit between
+// them in the tree), and mixing the two bands would compare a diff badge
+// against a bar label it never actually sits next to.
+//
+// Every pass starts by clearing prior offsets, so a resize or a data change
+// that no longer collides never carries a stale nudge forward. Fixes escalate
+// in the requested order and stop as soon as a pair clears:
+//   1. (default) nothing — most labels never need help.
+//   2. lift the right-hand label straight up, clamped to the chart's own top
+//      edge so it can never poke out of the card.
+//   3. nudge the pair apart horizontally, clamped to the chart's own left/right
+//      edges.
+//   4. shrink both labels one safe type-scale step at a time (never past
+//      `--text-label`/10px — `--text-micro`/9px was tried for these exact
+//      labels and rejected as unreadable, see the Bar comment below).
+// Font-shrink steps as Tailwind classes, not `style.fontSize` — every other
+// size change in this app goes through a class onto the type scale (never a
+// hand-set style; see tests/typography.test.ts's guard against exactly that),
+// and `text-xs` is already the label's own static className, so shrinking is
+// just swapping it for a smaller step's class.
+const FONT_SHRINK_CLASSES = ["text-note", "text-label"];
+
+function resolveLabelOverlaps(container: HTMLElement, selector: string) {
+  const labels = Array.from(container.querySelectorAll<HTMLElement>(selector)).filter((el) => el.textContent);
+  labels.forEach((el) => {
+    el.style.transform = "";
+    if (el.classList.contains("text-note") || el.classList.contains("text-label")) {
+      el.classList.remove(...FONT_SHRINK_CLASSES);
+      el.classList.add("text-xs");
+    }
+  });
+  if (labels.length < 2) return;
+
+  const bounds = container.getBoundingClientRect();
+  const collide = (a: DOMRect, b: DOMRect) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+  let rects = labels.map((el) => el.getBoundingClientRect());
+
+  const LIFT = 13; // px
+  for (let i = 1; i < labels.length; i++) {
+    if (!collide(rects[i - 1], rects[i])) continue;
+    if (rects[i].top - LIFT < bounds.top) continue; // no headroom left — try the next fix instead
+    labels[i].style.transform = `translateY(-${LIFT}px)`;
+    rects[i] = labels[i].getBoundingClientRect();
+  }
+
+  const NUDGE = 5; // px, per side
+  for (let i = 1; i < labels.length; i++) {
+    if (!collide(rects[i - 1], rects[i])) continue;
+    if (rects[i - 1].left - NUDGE >= bounds.left) {
+      labels[i - 1].style.transform = `${labels[i - 1].style.transform} translateX(-${NUDGE}px)`.trim();
+    }
+    if (rects[i].right + NUDGE <= bounds.right) {
+      labels[i].style.transform = `${labels[i].style.transform} translateX(${NUDGE}px)`.trim();
+    }
+    rects[i - 1] = labels[i - 1].getBoundingClientRect();
+    rects[i] = labels[i].getBoundingClientRect();
+  }
+
+  // `text-xs` and the two shrink classes are all single-utility selectors of
+  // equal specificity, so whichever one is LAST in the compiled stylesheet
+  // wins regardless of classList order — always removing the others before
+  // adding the active one keeps exactly one font-size class in play, rather
+  // than leaving the result up to Tailwind's build-time class ordering.
+  for (const step of FONT_SHRINK_CLASSES) {
+    let anyLeft = false;
+    for (let i = 1; i < labels.length; i++) {
+      if (!collide(rects[i - 1], rects[i])) continue;
+      anyLeft = true;
+      labels[i - 1].classList.remove("text-xs", ...FONT_SHRINK_CLASSES);
+      labels[i - 1].classList.add(step);
+      labels[i].classList.remove("text-xs", ...FONT_SHRINK_CLASSES);
+      labels[i].classList.add(step);
+    }
+    if (!anyLeft) break;
+    rects = labels.map((el) => el.getBoundingClientRect());
+  }
+}
 
 // Consecutive runs of a key, with counts — for the tiered dept/phase headers.
 function groupRuns<T>(rows: T[], keyOf: (r: T) => string, labelOf: (r: T) => string) {
@@ -277,15 +383,27 @@ export function JobHoursDashboard({
           empty-space problem §33 fixed for the KPI summary card (see
           drill-cap-scroll-ceiling in the memory notes / DEVLOG §33).
 
-          §55: the chart card is the WIDER of the two (2fr against 1fr) — it
-          holds the most content, the tiered section chart, and the extra
-          width plus the responsive chart (see SectionHierarchyChart) lets it
-          show every section in full with no internal scroll. Falls back to
-          full width when there's no Parts Cost to show, rather than leaving
-          an empty cell. */}
+          §55: the chart card is the WIDER of the two — it holds the most
+          content, the tiered section chart, and the extra width plus the
+          responsive chart (see SectionHierarchyChart) lets it show every
+          section in full with no internal scroll. Falls back to full width
+          when there's no Parts Cost to show, rather than leaving an empty
+          cell.
+
+          §81 (by request): 17fr/3fr, an explicit 85/15, up from §55's 2fr/1fr
+          (67/33) — Parts Cost shrank to fit (see PartsCostSummary's own
+          BAR_W/LEGEND_W comments), so the chart could take the rest. Plain
+          `3fr`, not `minmax(0,3fr)`: a bare `<flex>` track is `minmax(auto,
+          3fr)`, and PartsCostSummary's card deliberately carries no
+          `min-w-0` of its own, so "auto" resolves to the card's real
+          content-based minimum — the row renders at true 85/15 whenever a
+          job's dollar amounts fit that (every job seen so far), and only
+          ever gives the card more than 15% on a job whose own money text
+          needs it, rather than forcing exactly 15% and letting the numbers
+          overlap. See that card's own root-div comment. */}
       <div
-        className={`grid grid-cols-1 gap-5 ${drillRow ? "items-start" : "items-stretch"} ${
-          parts ? "lg:grid-cols-[2fr_1fr]" : ""
+        className={`grid grid-cols-1 gap-3 ${drillRow ? "items-start" : "items-stretch"} ${
+          parts ? "lg:grid-cols-[17fr_3fr]" : ""
         }`}
       >
         <div className={`${card("p-4")} flex h-full min-w-0 flex-col`}>
@@ -369,6 +487,65 @@ type HierRow = {
   drillable?: boolean;
 };
 
+// One Quoted/Actual bar, with its own value label above it. A MODULE-LEVEL
+// component, not defined inline inside SectionHierarchyChart (found live,
+// 2026-08-13): a component declared inside another function's body is a NEW
+// function identity every render, so React treats `<Bar>` as a different
+// component type each time and unmounts+remounts its DOM instead of just
+// re-rendering it. That's invisible for ordinary declarative JSX (React
+// recreates the exact same markup either way) — but resolveLabelOverlaps
+// mutates these spans' `style` directly, OUTSIDE React's render cycle, and a
+// remount silently wipes that out. It reproduced as: the fix visibly running
+// (confirmed by instrumenting the resolve pass itself, which fired and chose
+// to apply a lift) with nothing observable in the DOM moments later — the
+// entrance animation's `grown` state flip (a re-render `resolveLabelOverlaps`
+// has no reason to depend on) was remounting the bar right out from under it.
+function Bar({ value, color, heightPct, grown }: { value: number; color: string; heightPct: number; grown: boolean }) {
+  return (
+    // §55: `flex-1 min-w-0 max-w-5` — the bar fills the space its column gives
+    // it, up to its old 20px width, and shrinks below that on a narrow column
+    // rather than overflowing. `w-5` was a fixed width that forced the 640px
+    // chart floor; the cap keeps wide columns looking exactly as before.
+    <div className="flex h-full min-w-0 max-w-5 flex-1 flex-col items-center justify-end">
+      {/* text-xs/font-bold/sdc-navy (2026-08-12, by request — "much easier to
+          read... especially for smaller bars"), up from text-micro/text-sdc-muted:
+          a 9px unweighted #6e6a6b label on a chart that can hold a 1-hour bar was
+          the exact complaint. sdc-navy, not a new color — the same dark token
+          Parts Cost's own bar labels already use, so both charts land on one
+          shade rather than two independently "dark enough" ones.
+          `data-value-label` is resolveLabelOverlaps' only hook into the DOM —
+          it walks every element with this attribute, in left-to-right order,
+          and nudges apart whichever neighboring pair its own measurements
+          say are actually touching. */}
+      <span data-value-label className="mb-0.5 text-xs font-bold leading-none text-sdc-navy">{value ? fmt(value) : ""}</span>
+      {/* ── scaleY, not height (§36.2, §36.14, §36.15) ──────────────────────────
+          This was `transition-[height] duration-500`, which broke three of §36's
+          rules at once on a chart that can hold twenty bars:
+            * 500ms is well past the ~300ms ceiling for anything an interaction or a
+              data change triggers (§36.2);
+            * `height` is a layout property, so every frame relaid out the whole
+              chart grid — twenty bars × 30 frames of layout (§36.15);
+            * and because each bar grew from 0, the value LABEL above it (a sibling
+              in this flex column) travelled up with it for half a second, so the
+              numbers were unreadable while they moved (§36.14).
+          The bar now takes its final height immediately — which is what fixes the
+          label — and scales up from the baseline on the compositor. Same growing
+          gesture, one property, no layout. */}
+      <div
+        className="w-full origin-bottom rounded-t-sm"
+        style={{
+          height: `${heightPct}%`,
+          background: color,
+          transform: grown ? "scaleY(1)" : "scaleY(0)",
+          transitionProperty: "transform",
+          transitionDuration: "var(--motion-panel)",
+          transitionTimingFunction: "var(--ease-out)",
+        }}
+      />
+    </div>
+  );
+}
+
 // Custom grouped-column chart with the Power BI tiered category axis:
 // Section names → Department → Phase, with dashed dividers between groups. Shows
 // every template section, even at zero. Grid columns = sections so the tiers
@@ -384,8 +561,33 @@ function SectionHierarchyChart({
   onDrill: (code: string | null) => void;
   drillCode: string | null;
 }) {
-  const BAR_H = 300;
+  // 420, up from 300 (2026-08-12, by request — "bars look too short"). Raising
+  // this constant IS the fix: `scalePct` below already resolves the tallest
+  // bar to exactly 100% of BAR_H with no headroom above it (no
+  // `max: dataMax * 1.X`, no fixed-height gray track — both were tried
+  // elsewhere in this app and reverted, see PartsCostSummary's BAR_H comment),
+  // so more pixels here is more pixels under every bar, in exact proportion,
+  // with nothing else to change. Kept in step with PartsCostSummary's own
+  // BAR_H — see that constant's comment for the baseline-alignment math this
+  // owes it.
+  const BAR_H = 420;
   const max = Math.max(1, ...rows.flatMap((r) => [r.planned, r.actual]));
+  // Square-root, not linear (by request) — a plain `value / max` puts every bar
+  // on one straight line from (0,0) to (max, 100%), and this chart's own max is
+  // a Total row (a sum of everything above it), so an individual section sits
+  // nowhere near that ceiling: at a real range like max≈232, a 1-3 hour section
+  // rendered under 4px tall — no taller than its own border radius, i.e.
+  // unreadable even though the number above it is correct. Square-root keeps
+  // everything about a linear scale that matters for reading this chart —
+  // zero still maps to zero (no fixed-minimum floor faking a bar for an empty
+  // section), order never inverts, and a bigger value always draws taller —
+  // while giving the low end of the range far more of BAR_H than the top end
+  // needs: that same 1-hour section now clears ~15px, and the largest value in
+  // the chart still resolves to exactly 100%. The trade is that a section
+  // twice the size of another no longer draws exactly twice as tall — a
+  // deliberate choice for legibility across this wide a range, not an
+  // accident of the formula.
+  const scalePct = (value: number) => (max <= 0 ? 0 : (Math.sqrt(Math.max(0, value)) / Math.sqrt(max)) * 100);
   const deptRuns = groupRuns(rows, (r) => `${r.phase}|${r.group}`, (r) => r.group);
   const phaseRuns = groupRuns(rows, (r) => r.phase, (r) => r.phase);
   // §55: `minmax(0, 1fr)`, not `minmax(60px, 1fr)`, so the columns SHRINK to
@@ -404,39 +606,58 @@ function SectionHierarchyChart({
     return () => cancelAnimationFrame(id);
   }, [rows]);
 
-  const Bar = ({ value, color }: { value: number; color: string }) => (
-    // §55: `flex-1 min-w-0 max-w-5` — the bar fills the space its column gives
-    // it, up to its old 20px width, and shrinks below that on a narrow column
-    // rather than overflowing. `w-5` was a fixed width that forced the 640px
-    // chart floor; the cap keeps wide columns looking exactly as before.
-    <div className="flex h-full min-w-0 max-w-5 flex-1 flex-col items-center justify-end">
-      <span className="mb-0.5 text-micro leading-none text-sdc-muted">{value ? fmt(value) : ""}</span>
-      {/* ── scaleY, not height (§36.2, §36.14, §36.15) ──────────────────────────
-          This was `transition-[height] duration-500`, which broke three of §36's
-          rules at once on a chart that can hold twenty bars:
-            * 500ms is well past the ~300ms ceiling for anything an interaction or a
-              data change triggers (§36.2);
-            * `height` is a layout property, so every frame relaid out the whole
-              chart grid — twenty bars × 30 frames of layout (§36.15);
-            * and because each bar grew from 0, the value LABEL above it (a sibling
-              in this flex column) travelled up with it for half a second, so the
-              numbers were unreadable while they moved (§36.14).
-          The bar now takes its final height immediately — which is what fixes the
-          label — and scales up from the baseline on the compositor. Same growing
-          gesture, one property, no layout. */}
-      <div
-        className="w-full origin-bottom rounded-t-sm"
-        style={{
-          height: `${(value / max) * 100}%`,
-          background: color,
-          transform: grown ? "scaleY(1)" : "scaleY(0)",
-          transitionProperty: "transform",
-          transitionDuration: "var(--motion-panel)",
-          transitionTimingFunction: "var(--ease-out)",
-        }}
-      />
-    </div>
-  );
+  // Re-run the value-label collision pass whenever the data changes or the
+  // card is resized — the two things that change which labels, if any,
+  // collide. `useLayoutEffect`, not `useEffect`: it must apply before the
+  // browser paints, or a colliding pair would flash unreadable for one frame
+  // before jumping apart. Bar heights themselves are already final at the
+  // first layout (the animation above only scales them visually via
+  // `transform`, see the Bar comment below), so this doesn't need to wait for
+  // that transition to finish.
+  //
+  // It DOES need to wait for `document.fonts.ready`, found live: the first
+  // layout pass measures these bold digits in whatever fallback font is
+  // active before Montserrat finishes loading, which is narrower — so a pair
+  // that only just barely fits shows no collision yet, decides it needs no
+  // help, and then the real font swaps in wider and the two labels end up
+  // overlapping with nothing ever re-checking them (a font swap resizes no
+  // element's box, so the `ResizeObserver` below never fires for it either).
+  //
+  // It ALSO needs one delayed re-check after mount specifically (found live,
+  // 2026-08-13): on a hard navigation to this page, the very first pass
+  // consistently measures these labels as clear of each other, and nothing
+  // afterward disagrees — no resize, no font swap — yet the same labels DO
+  // measure as colliding moments later and stay that way. A later
+  // client-side data change (switching the Quoted/ETC toggle, which is the
+  // same code path) always resolves correctly on the first try, so this is
+  // specific to whatever finishes settling right after this component's
+  // first paint on a cold load (most likely this card's row in the page
+  // still gaining or losing height as sibling cards above it — Parts Cost,
+  // the KPI tiles — finish their own first paint). One extra pass a moment
+  // later is cheap insurance against that gap; the direct call above still
+  // keeps the common case (and every resize/font-load/data-change after it)
+  // correct with no visible delay.
+  const barsRef = useRef<HTMLDivElement>(null);
+  useLayoutEffect(() => {
+    const el = barsRef.current;
+    if (!el) return;
+    let cancelled = false;
+    const resolveAll = () => {
+      if (cancelled) return;
+      resolveLabelOverlaps(el, "[data-value-label]");
+      resolveLabelOverlaps(el, "[data-diff-label]");
+    };
+    resolveAll();
+    document.fonts.ready.then(resolveAll);
+    const settleTimer = setTimeout(resolveAll, 300);
+    const observer = new ResizeObserver(resolveAll);
+    observer.observe(el);
+    return () => {
+      cancelled = true;
+      clearTimeout(settleTimer);
+      observer.disconnect();
+    };
+  }, [rows]);
 
   return (
     // §55: `w-full`, not `min-w-[640px]` — the chart fits its card exactly and
@@ -448,8 +669,11 @@ function SectionHierarchyChart({
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIES.actual }} /> Actual</span>
       </div>
       {/* Bars — with the Quoted−Actual variance called out on top of each group
-          (green when Actual is under Quoted, red when over). */}
-      <div className="grid items-end gap-x-1" style={{ ...colStyle, height: BAR_H }}>
+          (green when Actual is under Quoted, red when over). `barsRef` is the
+          collision pass's measurement frame — its own edges are the "don't
+          overflow the chart" boundary a lifted or nudged label is clamped
+          against. */}
+      <div ref={barsRef} className="grid items-end gap-x-1" style={{ ...colStyle, height: BAR_H }}>
         {rows.map((r) => {
           const diff = r.planned - r.actual; // Quoted − Actual: + = under Quoted (green), − = over (red)
           const has = r.planned !== 0 || r.actual !== 0;
@@ -457,8 +681,8 @@ function SectionHierarchyChart({
           // them (see HierRow.drillable) — the column stays a static bar rather
           // than a dead-end click that opens an empty drill panel.
           const interactive = r.drillable !== false;
-          // Green is reserved for the Total section only (§ color correction) —
-          // every real section keeps the chart's original blue/navy SERIES pair.
+          // Grey is reserved for the Total section only — every real section
+          // keeps the chart's original blue/navy SERIES pair.
           const isTotal = r.phase === TOTAL_PHASE;
           const colors = isTotal ? TOTAL_SERIES : SERIES;
           return (
@@ -486,12 +710,20 @@ function SectionHierarchyChart({
                 interactive && drillCode === r.code ? "bg-sdc-blue-light/60 ring-1 ring-sdc-blue" : ""
               }`}
             >
-              <div className={`h-4 text-center text-note font-bold leading-none ${!has ? "text-transparent" : diff > 0 ? "text-sdc-green-text" : diff < 0 ? "text-red-600" : "text-sdc-gray-400"}`}>
+              {/* `data-diff-label`, resolved separately from the value labels
+                  below — every column's own diff badge sits directly beside
+                  its neighbors' in this row, but a bar's value label sits
+                  between them in the DOM, so the two bands need their own
+                  passes (see resolveLabelOverlaps' header comment). */}
+              <div
+                data-diff-label
+                className={`h-4 text-center text-note font-bold leading-none ${!has ? "text-transparent" : diff > 0 ? "text-sdc-green-text" : diff < 0 ? "text-red-600" : "text-sdc-gray-400"}`}
+              >
                 {has ? `${diff > 0 ? "+" : ""}${fmt(diff)}` : ""}
               </div>
               <div className="flex flex-1 items-end justify-center gap-1.5">
-                <Bar value={r.planned} color={colors.planned} />
-                <Bar value={r.actual} color={colors.actual} />
+                <Bar value={r.planned} color={colors.planned} heightPct={scalePct(r.planned)} grown={grown} />
+                <Bar value={r.actual} color={colors.actual} heightPct={scalePct(r.actual)} grown={grown} />
               </div>
             </div>
           );
