@@ -112,6 +112,14 @@ export type HoursSearchParams = {
   departments?: string;
   from?: string;
   to?: string;
+  // Not read by parseHoursFilters below (they don't affect WHICH rows match, only
+  // how they're grouped/ordered) — carried on this type so the export route can
+  // parse them off the SAME query string via parseHoursGroupByList/parseHoursSort
+  // instead of the export reconstructing its own copy of "what does the page's URL
+  // mean" and risking it drifting from what the table actually shows.
+  groupBy?: string;
+  sort?: string;
+  dir?: string;
 };
 
 function splitParam(v: string | undefined): string[] | undefined {

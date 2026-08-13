@@ -244,12 +244,16 @@ export async function queryHoursDrillRows(filters: HoursFilters): Promise<HoursD
   return { rows, truncated };
 }
 
-export async function queryHoursExportRows(filters: HoursFilters): Promise<HoursExportRows> {
+// `sort` defaults to the same workDate-desc order every other caller here uses
+// when the table itself has no sort active — but when it does, the export's
+// row order needs to match what's on screen, not silently fall back to date
+// order underneath a sort the user actually chose.
+export async function queryHoursExportRows(filters: HoursFilters, sort?: SortState<HoursDetailSortKey>): Promise<HoursExportRows> {
   const where = await resolveWhere(filters);
   const detail = await prisma.jobHoursDetail.findMany({
     where,
     select: DETAIL_SELECT,
-    orderBy: [{ workDate: "desc" }, { id: "desc" }],
+    orderBy: orderByForSort(sort ?? null),
     take: MAX_EXPORT_ROWS + 1,
   });
   const truncated = detail.length > MAX_EXPORT_ROWS;

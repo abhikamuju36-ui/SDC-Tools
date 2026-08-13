@@ -1,26 +1,83 @@
-import { queryHoursExportRows } from "@/lib/hours-explorer";
-import { parseHoursFilters, describeHoursFilters, type HoursSearchParams } from "@/lib/hours-filters";
+import { queryHoursExportRows, queryHoursGrouped, queryHoursSummary } from "@/lib/hours-explorer";
+import {
+  parseHoursFilters,
+  parseHoursGroupByList,
+  parseHoursSort,
+  describeHoursFilters,
+  HOURS_GROUP_BY_LABEL,
+  type HoursSearchParams,
+} from "@/lib/hours-filters";
 import type { CellValue, SheetColumn, SheetSpec } from "@/lib/export/sheet";
 
 // ── The Hours tab, as a spreadsheet ─────────────────────────────────────────
 //
 // Same pipeline Projects/Monthly ETC already use (SheetSpec -> buildCsv/buildXlsx), and
-// the SAME filter parsing (hours-filters.ts's parseHoursFilters) and the SAME query
+// the SAME filter/sort/group-by parsing (hours-filters.ts) and the SAME queries
 // (hours-explorer.ts) the page's table uses — so the file matches the table the manager
 // was looking at, the guarantee lib/projects-query.ts gives the Projects export.
+//
+// Two shapes, chosen by whether the table is currently grouped (found live, 2026-08-13:
+// the export used to ALWAYS build the ungrouped detail sheet regardless of what was on
+// screen — a manager looking at a grouped table got the full punch-level detail instead):
+//
+//   grouped   — one row per ROOT-level group value (job, employee, section, department,
+//               date, or month — whichever is first in `groupBy`), with its own Hours sum
+//               and Punches count. Deliberately root-level only, not a recursive expansion
+//               of every level the manager happened to click open: which tree nodes are
+//               expanded is pure client React state (HoursGroupedTree.tsx), never in the
+//               URL, so it isn't something a server-side export can see or reproduce —
+//               the root grouping is the one grouped view that's always fully determined
+//               by the URL alone, and the one whose row count and totals the table's own
+//               footer already shows without the manager expanding anything.
+//   ungrouped — the detail sheet: one row per punch, in the table's own current sort.
+//
+// Both totals rows read from queryHoursSummary's DB-side aggregate over the FULL filtered
+// set, not a reduce over the (possibly-capped) exported rows — so "exported total = Total
+// Hours KPI" holds exactly even in the one edge case (an unfiltered export past
+// MAX_EXPORT_ROWS) where summing the file's own rows would come up short.
 
 export type HoursExportResult = { spec: SheetSpec; rowCount: number };
 
 export async function buildHoursExport(params: HoursSearchParams, now: Date): Promise<HoursExportResult> {
   const filters = parseHoursFilters(params);
-  const { rows, truncated } = await queryHoursExportRows(filters);
+  const groupByLevels = parseHoursGroupByList(params.groupBy);
+  const summary = await queryHoursSummary(filters);
+
+  const subtitleBase = [`Filters: ${describeHoursFilters(filters)}`];
+
+  if (groupByLevels.length > 0) {
+    const groupBy = groupByLevels[0];
+    const groups = await queryHoursGrouped(filters, groupBy);
+
+    const columns: SheetColumn[] = [
+      { header: HOURS_GROUP_BY_LABEL[groupBy], type: "text", width: 30 },
+      { header: "Hours", type: "hours" },
+      { header: "Punches", type: "number", width: 10 },
+    ];
+    const body: CellValue[][] = groups.map((g) => [g.label, g.hours, g.punchCount]);
+    const totals: CellValue[] = [`TOTAL (${groups.length} ${HOURS_GROUP_BY_LABEL[groupBy].toLowerCase()}${groups.length === 1 ? "" : "s"})`, summary.totalHours, null];
+
+    const subtitle = [
+      ...subtitleBase,
+      `Grouped by ${HOURS_GROUP_BY_LABEL[groupBy].toLowerCase()}`,
+      `Exported ${now.toISOString().slice(0, 16).replace("T", " ")} — ${groups.length} group${groups.length === 1 ? "" : "s"}`,
+    ];
+
+    return {
+      rowCount: groups.length,
+      spec: { sheetName: "Hours", title: "Hours (grouped)", subtitle, columns, rows: body, totals, freezeColumns: 1 },
+    };
+  }
+
+  const sort = parseHoursSort(params.sort, params.dir);
+  const { rows, truncated } = await queryHoursExportRows(filters, sort);
 
   const columns: SheetColumn[] = [
     { header: "Date", type: "date" },
     { header: "Employee", type: "text", width: 22 },
     { header: "Department", type: "text", width: 20 },
     { header: "Job Id", type: "text", width: 10 },
-    { header: "Job Name", type: "text", width: 30 },
+    { header: "Job / Machine", type: "text", width: 30 },
     { header: "Function / Section", type: "text", width: 22 },
     { header: "Hours", type: "hours" },
   ];
@@ -35,25 +92,13 @@ export async function buildHoursExport(params: HoursSearchParams, now: Date): Pr
     r.hours,
   ]);
 
-  const totalHours = rows.reduce((s, r) => s + r.hours, 0);
-  const totals: CellValue[] = columns.map((_, i) => (i === 0 ? `TOTAL (${rows.length} punches)` : i === 6 ? totalHours : null));
+  const totals: CellValue[] = columns.map((_, i) => (i === 0 ? `TOTAL (${rows.length} punches)` : i === 6 ? summary.totalHours : null));
 
-  const subtitle = [
-    `Filters: ${describeHoursFilters(filters)}`,
-    `Exported ${now.toISOString().slice(0, 16).replace("T", " ")} — ${rows.length} punch${rows.length === 1 ? "" : "es"}`,
-  ];
+  const subtitle = [...subtitleBase, `Exported ${now.toISOString().slice(0, 16).replace("T", " ")} — ${rows.length} punch${rows.length === 1 ? "" : "es"}`];
   if (truncated) subtitle.push(`Truncated to the first ${rows.length.toLocaleString()} rows — narrow the filters for a complete export.`);
 
   return {
     rowCount: rows.length,
-    spec: {
-      sheetName: "Hours",
-      title: "Hours",
-      subtitle,
-      columns,
-      rows: body,
-      totals,
-      freezeColumns: 1,
-    },
+    spec: { sheetName: "Hours", title: "Hours", subtitle, columns, rows: body, totals, freezeColumns: 1 },
   };
 }

@@ -7,6 +7,7 @@ import { buildXlsx } from "@/lib/export/xlsx";
 import { exportFileName, todayStamp, type SheetSpec } from "@/lib/export/sheet";
 import { buildProjectsExport } from "@/lib/export/projects-export";
 import { buildEtcExport } from "@/lib/export/etc-export";
+import { buildHoursExport } from "@/lib/export/hours-export";
 import { buildStandardExportSheets } from "@/lib/export/standard-export";
 import { isStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
 
@@ -68,7 +69,7 @@ import { isStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
 
 export const dynamic = "force-dynamic";
 
-const REPORTS = new Set(["projects", "etc"]);
+const REPORTS = new Set(["projects", "etc", "hours"]);
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ report: string }> }) {
   const session = await auth();
@@ -102,11 +103,30 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ report: str
             },
             now,
           )
-        : await buildEtcExport(
-            searchParams.get("month") ?? "",
-            searchParams.get("billables") ?? undefined,
-            now,
-          );
+        : report === "hours"
+          ? // The page's OWN query string, verbatim — same guarantee as Projects
+            // above: the filter/sort/group-by rules live in hours-filters.ts,
+            // which the page uses too, so there is no second copy of "what does
+            // this URL mean" to drift from it.
+            await buildHoursExport(
+              {
+                jobs: searchParams.get("jobs") ?? undefined,
+                employees: searchParams.get("employees") ?? undefined,
+                sections: searchParams.get("sections") ?? undefined,
+                departments: searchParams.get("departments") ?? undefined,
+                from: searchParams.get("from") ?? undefined,
+                to: searchParams.get("to") ?? undefined,
+                groupBy: searchParams.get("groupBy") ?? undefined,
+                sort: searchParams.get("sort") ?? undefined,
+                dir: searchParams.get("dir") ?? undefined,
+              },
+              now,
+            )
+          : await buildEtcExport(
+              searchParams.get("month") ?? "",
+              searchParams.get("billables") ?? undefined,
+              now,
+            );
 
     // The protected sheets ride along in the same file, and only for a request that
     // proves it is unlocked. buildEtcExport has already rejected an invalid month by
@@ -120,8 +140,12 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ report: str
 
     const fileName =
       report === "projects"
-        ? exportFileName(["Projects", (built as { filterLabel: string }).filterLabel, todayStamp(now)], format)
-        : exportFileName(["Monthly_ETC", (built as { monthLabel: string }).monthLabel.replace(" ", "_"), todayStamp(now)], format);
+        ? exportFileName(["Projects", (built as unknown as { filterLabel: string }).filterLabel, todayStamp(now)], format)
+        : report === "hours"
+          ? exportFileName(["Hours", todayStamp(now)], format)
+          : exportFileName(["Monthly_ETC", (built as unknown as { monthLabel: string }).monthLabel.replace(" ", "_"), todayStamp(now)], format);
+
+    const reportLabel = report === "projects" ? "Projects" : report === "hours" ? "Hours" : "Monthly ETC";
 
     // The audit record §24.11 asks for: who, what, which format, which filters, when,
     // how many rows, which app version. Awaited rather than fired-and-forgotten — an
@@ -130,11 +154,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ report: str
     // one that did not.
     await logAudit({
       action: "export.download",
-      entityType: report === "projects" ? "Job" : "EtcMonth",
+      entityType: report === "projects" ? "Job" : report === "hours" ? "JobHoursDetail" : "EtcMonth",
       entityId: report === "etc" ? (searchParams.get("month") ?? "") : undefined,
-      summary:
-        `Exported ${report === "projects" ? "Projects" : "Monthly ETC"} as ${format.toUpperCase()} — ${built.rowCount} row(s)` +
-        (includedStandards ? " (including Standards)" : ""),
+      summary: `Exported ${reportLabel} as ${format.toUpperCase()} — ${built.rowCount} row(s)` + (includedStandards ? " (including Standards)" : ""),
       metadata: {
         report,
         format,
