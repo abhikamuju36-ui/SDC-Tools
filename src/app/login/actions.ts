@@ -3,6 +3,7 @@
 import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { logAuditFor } from "@/lib/audit";
+import { isCompanyEmail } from "@/lib/company-email";
 
 export type RegisterResult = { ok: true } | { ok: false; error: string };
 
@@ -20,6 +21,13 @@ export async function registerUser(input: {
   if (!name) return { ok: false, error: "Please enter your name." };
   if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
     return { ok: false, error: "Please enter a valid email address." };
+  }
+  // Shared-account project (§Aug 2026): self-registration is company-only on
+  // both this app and the Scheduler, so the two apps' account bases can only
+  // ever grow in step — see company-email.ts, also used by the Scheduler-SSO
+  // auto-provisioning path in auth.ts.
+  if (!isCompanyEmail(email)) {
+    return { ok: false, error: "Sign-up is limited to @sdcautomation.com email addresses." };
   }
   if (password.length < 1) {
     return { ok: false, error: "Please enter a password." };

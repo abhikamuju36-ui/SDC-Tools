@@ -1,10 +1,13 @@
 import NextAuth from "next-auth";
 import Credentials from "next-auth/providers/credentials";
 import bcrypt from "bcryptjs";
+import { randomBytes } from "node:crypto";
 import { prisma } from "@/lib/prisma";
 import { logAuditFor } from "@/lib/audit";
 import { verifySchedulerSsoToken, consumeSchedulerSsoNonce } from "@/lib/scheduler-sso";
 import { currentTokenVersion } from "@/lib/token-revocation";
+import { isCompanyEmail } from "@/lib/company-email";
+import { nameFromEmail } from "@/lib/name-from-email";
 
 // Email/password authentication. Accounts are created via the sign-up form
 // (see src/app/login/actions.ts) or the seed script; passwords are stored as
@@ -32,6 +35,11 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         const valid = await bcrypt.compare(password, user.passwordHash);
         if (!valid) return null;
 
+        // Deactivated accounts fail sign-in here, not just the ongoing-session
+        // recheck in the jwt callback below — currentTokenVersion returns null
+        // for either "no such user" or "inactive" (see token-revocation.ts).
+        if ((await currentTokenVersion(user.id)) === null) return null;
+
         return { id: String(user.id), email: user.email, name: user.name, role: user.role };
       },
     }),
@@ -43,11 +51,13 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     // reachable. Consumed by src/app/api/auth/sso/route.ts, never by the
     // login form — there is no UI for this provider.
     //
-    // Same rule the Scheduler's own /api/auth/sso already follows: an
-    // assertion says who someone is, not that they may use this app —
-    // no upsert, no auto-provisioned account. An email with no Reports
-    // user falls through to `null`, which NextAuth treats exactly like a
-    // wrong password (rejected sign-in), never a broken link.
+    // An assertion says who someone is, not automatically that they may use
+    // this app — EXCEPT for a company email, where the whole point of the
+    // shared-account project is that having an account on one side is
+    // enough to get a working (if low-privilege) account on the other,
+    // without a second sign-up. A non-company email with no existing
+    // Reports user still falls through to `null` — auto-provisioning stays
+    // scoped to people this app would let self-register anyway.
     Credentials({
       id: "scheduler-sso",
       credentials: {
@@ -63,10 +73,31 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // already-expired token can't burn a legitimate nonce slot.
         if (!consumeSchedulerSsoNonce(verified.nonce)) return null;
 
-        const user = await prisma.user.findUnique({ where: { email: verified.email } });
-        if (!user) return null;
+        const existing = await prisma.user.findUnique({ where: { email: verified.email } });
+        if (existing) {
+          if ((await currentTokenVersion(existing.id)) === null) return null; // deactivated
+          return { id: String(existing.id), email: existing.email, name: existing.name, role: existing.role };
+        }
 
-        return { id: String(user.id), email: user.email, name: user.name, role: user.role };
+        if (!isCompanyEmail(verified.email)) return null;
+
+        // First time this person has ever reached Reports via the Scheduler
+        // hand-off — create their account. The password is never used: this
+        // app never learns it, and nothing here ever checks it again, since
+        // sign-in for this row will only ever arrive through this same SSO
+        // path (or a password they set later some other way). Random and
+        // discarded immediately, not derived from anything.
+        const unusableHash = await bcrypt.hash(randomBytes(32).toString("hex"), 10);
+        const created = await prisma.user.create({
+          data: { email: verified.email, name: nameFromEmail(verified.email), passwordHash: unusableHash },
+        });
+        await logAuditFor(created.id, created.email, {
+          action: "user.autoProvisioned",
+          entityType: "User",
+          entityId: created.id,
+          summary: `${created.email} auto-provisioned via Scheduler SSO`,
+        });
+        return { id: String(created.id), email: created.email, name: created.name, role: created.role };
       },
     }),
   ],

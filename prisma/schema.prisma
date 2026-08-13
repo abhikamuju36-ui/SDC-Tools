@@ -26,6 +26,12 @@ model User {
   // calls out to over /api/integration/revoke-session. See
   // lib/token-revocation.ts; never read or written anywhere else.
   tokenVersion Int      @default(0)
+  // A disable flag, added for the shared-account project with Scheduler —
+  // this app had none before (Scheduler's users.active is the older one).
+  // Checked alongside tokenVersion in auth.ts's jwt callback; each app's
+  // active flag is its own — deactivating someone here does not touch
+  // their Scheduler account, and vice versa.
+  active       Boolean  @default(true)
 
   etcEntries EtcEntry[]
   executionRateEdits     ExecutionRate[]
