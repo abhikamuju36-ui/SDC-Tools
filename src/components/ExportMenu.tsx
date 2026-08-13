@@ -1,10 +1,11 @@
 "use client";
 
-import { useEffect, useLayoutEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { useSearchParams } from "next/navigation";
 import { useToast } from "@/components/ui/Toast";
 import { flushEtcAutosave, isEtcDirty } from "@/lib/etc-dirty-tracker";
+import { useAnchoredPosition } from "@/lib/use-anchored-position";
 
 // ── Export ▾ (§24.1) ─────────────────────────────────────────────────────────
 //
@@ -44,29 +45,38 @@ export function ExportMenu({
   // export action is disabled — not the page (§24.9).
   const [busy, setBusy] = useState<"xlsx" | "csv" | null>(null);
   const searchParams = useSearchParams();
-  const btnWrapRef = useRef<HTMLDivElement>(null);
+  const btnRef = useRef<HTMLButtonElement>(null);
   const menuRef = useRef<HTMLDivElement>(null);
   const { toast } = useToast();
 
-  // ── Portal + viewport-aware positioning (found live) ─────────────────────
+  // ── Portal + anchored positioning (found live) ────────────────────────────
   //
-  // The panel used to be `absolute left-0 top-full` inside this same wrapper —
-  // fine on its own, but this control sits in toolbars that themselves live
-  // inside a horizontally- or vertically-scrolling container (the Hours tab's
-  // table wrapper is one), and an `absolute` element is still clipped by any
-  // ancestor between it and its containing block that sets `overflow` to
-  // anything but `visible`. A portal into `document.body`, positioned with
-  // `fixed` coordinates computed from the button's own rect, escapes every
-  // ancestor's overflow/clipping entirely — same fix JobCellMenuHost.tsx
-  // already uses for its own right-click menu, reused here rather than
-  // inventing a second version of the same trick.
-  const [pos, setPos] = useState<{ top: number; left: number; openUp: boolean } | null>(null);
+  // The panel used to be `absolute left-0 top-full` inside a wrapper around the
+  // button — fine on its own, but this control sits in toolbars that themselves live
+  // inside a horizontally- or vertically-scrolling container (the Hours tab's table
+  // wrapper is one), and an `absolute` element is still clipped by any ancestor
+  // between it and its containing block that sets `overflow` to anything but
+  // `visible`. A portal into `document.body`, positioned with `fixed` coordinates
+  // computed from the BUTTON's own rect (§25.1: not a wrapper div around it, which
+  // is one more layer that could ever legitimately differ in size from the button
+  // itself), escapes every ancestor's overflow/clipping entirely — same fix
+  // JobCellMenuHost.tsx already uses for its own right-click menu, generalized into
+  // use-anchored-position.ts's `side`/`align` hook so any future portaled menu that
+  // needs "open under THIS element, right edges flush" doesn't reinvent it.
+  //
+  // side="bottom" + align="end": opens directly below the button, right edges
+  // flush. This control sits at the right end of every toolbar that uses it (Hours,
+  // Projects, Monthly ETC) — align="end" means the common case (room to the left,
+  // since Export is the last button) never needs to shift at all, and the panel
+  // reads as belonging to Export specifically rather than to whichever control
+  // happened to be nearby (Views, in the report that prompted this fix, §25).
+  const pos = useAnchoredPosition(btnRef, menuRef, open, { side: "bottom", align: "end", sideOffset: 4 });
 
   useEffect(() => {
     if (!open) return;
     function onDown(e: MouseEvent) {
       const target = e.target as Node;
-      if (btnWrapRef.current?.contains(target)) return;
+      if (btnRef.current?.contains(target)) return;
       if (menuRef.current?.contains(target)) return;
       setOpen(false);
     }
@@ -87,37 +97,6 @@ export function ExportMenu({
       window.removeEventListener("scroll", close, true);
       window.removeEventListener("resize", close);
     };
-  }, [open]);
-
-  // Measures the panel AFTER it's rendered (off-screen, `visibility: hidden`)
-  // so real width/height are available for edge-flipping — the same
-  // hidden-until-measured trick JobCellMenuHost.tsx uses, so the pre-flip
-  // position never flashes. Flips above if there isn't room below.
-  //
-  // Horizontal anchor is the button's RIGHT edge, not its left (found live,
-  // 2026-08-13): this control sits at the right end of every toolbar that
-  // uses it (Hours, Projects, Monthly ETC), so left-aligning and then
-  // clamping leftward to stay on screen dragged the menu away from Export
-  // and left it looking anchored to whichever control happened to be there
-  // instead (Views, in the report). Right-aligning means the common case —
-  // plenty of room to the left, since Export is the last button — never
-  // needs to shift at all. Falls back to left-aligned only if right-aligning
-  // would run the menu off the LEFT of the viewport (a narrow window, or a
-  // page that ever puts this control somewhere other than the toolbar's end).
-  useLayoutEffect(() => {
-    if (!open) return;
-    const btn = btnWrapRef.current;
-    const menu = menuRef.current;
-    if (!btn || !menu) return;
-    const btnRect = btn.getBoundingClientRect();
-    const { width, height } = menu.getBoundingClientRect();
-    const pad = 6;
-    const openUp = btnRect.bottom + height + pad > window.innerHeight && btnRect.top - height - pad >= 0;
-    const top = openUp ? btnRect.top - height - 4 : btnRect.bottom + 4;
-    let left = btnRect.right - width;
-    if (left < pad) left = btnRect.left;
-    left = Math.min(Math.max(pad, left), window.innerWidth - width - pad);
-    setPos({ top, left, openUp });
   }, [open]);
 
   async function run(format: "xlsx" | "csv") {
@@ -161,15 +140,13 @@ export function ExportMenu({
   }
 
   return (
-    <div ref={btnWrapRef}>
+    <>
       <button
+        ref={btnRef}
         type="button"
         className={className}
         disabled={busy !== null}
-        onClick={() => {
-          setPos(null); // clears any stale position from the last time this opened
-          setOpen((v) => !v);
-        }}
+        onClick={() => setOpen((v) => !v)}
         title="Download this table as it is currently filtered"
       >
         {/* Reserved slot: "Export" and "Preparing…" are different widths, and this button
@@ -221,6 +198,6 @@ export function ExportMenu({
           </div>,
           document.body,
         )}
-    </div>
+    </>
   );
 }
