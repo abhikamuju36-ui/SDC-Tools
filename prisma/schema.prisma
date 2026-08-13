@@ -92,11 +92,21 @@ model Employee {
   billingGroup String? // e.g. Engineering / Shop
   // Team grouping, matching the SDC Scheduler app's team_members.discipline
   // categories: "Project Management" | "Mechanical Engineers" | "Controls
-  // Engineers" | "Builders" | "Electricians". The Scheduler is the source of
-  // truth; the Employees page "Sync grouping from Scheduler" button mirrors it
-  // here by name match (see sync-scheduler-team.ts). Editable here as a manual
-  // override / for people not on the Scheduler roster.
+  // Engineers" | "Builders" | "Electricians". Historical/free-text — kept for
+  // the Paylocity-facing label, but no longer the authoritative grouping;
+  // see `team` below. Editable here as a manual override / for people not on
+  // the Scheduler roster.
   discipline   String?
+  // The ONE authoritative grouping for the 7 delivery teams, shared with SDC
+  // Scheduler (2026-08-13). One of Scheduler's own discipline codes — pm,
+  // mech, controls, build, wire, mfgops, service — never a new vocabulary;
+  // see lib/employee-teams.ts's schedulerCode field and lib/disciplines.ts's
+  // DISCIPLINE_LABEL for the code<->label mapping both apps already shared.
+  // Written directly by Scheduler (its board is now the shared table's other
+  // writer, via a dedicated MySQL user — see SDC_Scheduler/routes/team.js) or
+  // manually here as an override. Null only for people not yet linked to a
+  // Scheduler row and not one of the 7 teams (back-office departments).
+  team         String?
   active       Boolean  @default(true)
   // Reporting line, sourced from the Paylocity employee export (Supervisor [Id]),
   // matched by Emp Id == paylocityId — a stable key, so no name matching. A

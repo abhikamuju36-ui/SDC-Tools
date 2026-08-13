@@ -80,7 +80,6 @@ export const SYNC_SOURCES = [
   // which triggers this exact sync. Two names for one feed is precisely the
   // confusion this list exists to prevent.
   { source: "totaleto_jobs", label: "Jobs from TotalETO", monthScoped: false },
-  { source: "scheduler_team", label: "Employee grouping (Scheduler)", monthScoped: false },
 ] as const;
 
 function labelFor(source: string): string {
@@ -125,7 +124,6 @@ export async function runAllSyncs(
   const { computeCategoryPoolsLocally } = await import("@/lib/standard-pool-local");
   const { poolRefreshBlockedBy } = await import("@/lib/standard-pool-eligibility");
   const { syncFromTotalEto, syncPartsCostActual } = await import("@/lib/sync-totaleto");
-  const { syncSchedulerTeam } = await import("@/lib/sync-scheduler-team");
   const { newImportContext, beginPaylocityImport, recordUndefinedHours, completePaylocityImport } = await import("@/lib/paylocity-import");
   const { prisma } = await import("@/lib/prisma");
   const { isMonthLocked } = await import("@/lib/etc");
@@ -335,14 +333,12 @@ export async function runAllSyncs(
     return `${r.jobsUpdated} jobs updated, ${r.skippedNoType} skipped (not app-tracked)`;
   });
 
-  // The Scheduler roster's discipline grouping. Fail-soft by design: it RETURNS
-  // an unreachable-database result instead of throwing, so that case is recorded
-  // as a failure here explicitly rather than passing for success.
-  await step("scheduler_team", labelFor("scheduler_team"), true, async () => {
-    const r = await syncSchedulerTeam();
-    if (!r.ok) throw new Error(r.reason ?? "Scheduler sync reported failure.");
-    return `${r.updated.length} re-grouped, ${r.unchanged} unchanged, ${r.unmatchedEtc.length} unmatched`;
-  });
+  // The Scheduler roster's discipline grouping used to be pulled here every
+  // hour by name match — retired 2026-08-13. Employee.team is now written
+  // directly by Scheduler via a dedicated MySQL connection, matched by a
+  // stable employee_id instead of a name; there's nothing left for a
+  // scheduled step to pull. See scripts/reconcile-employee-groups.ts to
+  // check the two apps still agree.
 
   // ── Close the Paylocity import record (§42.20) ────────────────────────────
   //

@@ -41,6 +41,13 @@ export type EmployeeTeam = {
   // they'd all pile into a single "No department" card; their discipline still
   // says which team they were on.
   disciplines: string[];
+  // The SDC Scheduler's own discipline code for this same team (2026-08-13) —
+  // `pm | mech | controls | build | wire | mfgops | service`. This is the
+  // vocabulary `Employee.team` is stored in, since Scheduler already owned it
+  // first (see lib/disciplines.ts's DISCIPLINE_LABEL, which both apps already
+  // shared) — nothing new invented, just the one place `teamFor()` reads to
+  // resolve a stored code back to this team's card.
+  schedulerCode: string;
   theme: CardTheme;
 };
 
@@ -57,9 +64,10 @@ export const EMPLOYEE_TEAMS: EmployeeTeam[] = [
     name: "Project Management",
     departments: ["Project Management", "Project Execution / Project Management"],
     disciplines: ["Project Management"],
+    schedulerCode: "pm",
     theme: { band: "bg-sdc-blue", ...ON_DARK }, // Primary Blue
   },
-  { code: "ME", name: "Mechanical Engineering", departments: ["Mechanical Engineering"], disciplines: ["Mechanical Engineers"], theme: { band: "bg-sdc-navy", ...ON_DARK } }, // Dark Navy
+  { code: "ME", name: "Mechanical Engineering", departments: ["Mechanical Engineering"], disciplines: ["Mechanical Engineers"], schedulerCode: "mech", theme: { band: "bg-sdc-navy", ...ON_DARK } }, // Dark Navy
   {
     code: "CE",
     name: "Controls Engineering",
@@ -67,6 +75,7 @@ export const EMPLOYEE_TEAMS: EmployeeTeam[] = [
     // work lives today.
     departments: ["Controls Engineering", "Electrical Engineering"],
     disciplines: ["Controls Engineers"],
+    schedulerCode: "controls",
     theme: { band: "bg-sdc-blue-100", ...ON_LIGHT }, // Light Blue
   },
   {
@@ -74,32 +83,45 @@ export const EMPLOYEE_TEAMS: EmployeeTeam[] = [
     name: "Mechanical Build",
     departments: ["Mechanical Build / Manufacturing", "Mechanical Build"],
     disciplines: ["Builders"],
+    schedulerCode: "build",
     theme: { band: "bg-sdc-yellow", ...ON_LIGHT }, // Yellow
   },
-  { code: "Wire", name: "Electrical Build", departments: ["Electrical Build", "Machine Wiring"], disciplines: ["Electricians"], theme: { band: "bg-sdc-green", ...ON_LIGHT } }, // Green
+  { code: "Wire", name: "Electrical Build", departments: ["Electrical Build", "Machine Wiring"], disciplines: ["Electricians"], schedulerCode: "wire", theme: { band: "bg-sdc-green", ...ON_LIGHT } }, // Green
   {
     code: "MFG",
     name: "Manufacturing Operations",
     departments: ["Manufacturing Operations", "Manufacturing"],
     disciplines: ["Manufacturing Operations"],
+    schedulerCode: "mfgops",
     theme: { band: "bg-sdc-lime", ...ON_LIGHT }, // Lime Green
   },
-  { code: "Service", name: "Service Engineering", departments: ["Service Engineering", "Service"], disciplines: ["Service Engineering"], theme: { band: "bg-sdc-border", ...ON_LIGHT } }, // Gray
+  { code: "Service", name: "Service Engineering", departments: ["Service Engineering", "Service"], disciplines: ["Service Engineering"], schedulerCode: "service", theme: { band: "bg-sdc-border", ...ON_LIGHT } }, // Gray
 ];
 
 // Built once from the table above rather than hand-maintained alongside it.
 const TEAM_BY_DEPARTMENT = new Map<string, EmployeeTeam>();
 const TEAM_BY_DISCIPLINE = new Map<string, EmployeeTeam>();
+const TEAM_BY_CODE = new Map<string, EmployeeTeam>();
 for (const team of EMPLOYEE_TEAMS) {
   for (const d of team.departments) TEAM_BY_DEPARTMENT.set(d.toLowerCase(), team);
   for (const d of team.disciplines) TEAM_BY_DISCIPLINE.set(d.toLowerCase(), team);
+  TEAM_BY_CODE.set(team.schedulerCode, team);
 }
 
 // Which team someone belongs to, or null for "not a delivery team" — the caller
 // then falls back to grouping them under their own department name.
-// Department wins over discipline: it's the Paylocity record of where someone
-// actually sits, while discipline mirrors the Scheduler and can lag a move.
-export function teamFor(employee: { department?: string | null; discipline?: string | null }): EmployeeTeam | null {
+//
+// `team` (2026-08-13) is the shared, authoritative grouping now written
+// directly by SDC Scheduler — see the field's own comment in schema.prisma.
+// It wins outright: unlike department/discipline below, it's kept in lockstep
+// with Scheduler's board by construction, so there's no "which one is
+// fresher" question left to ask. The department/discipline fallback stays for
+// anyone not yet linked to a Scheduler row (a brand-new hire, say) — same
+// department-wins-over-discipline order as before for that case, since
+// department is still the Paylocity record of where someone actually sits.
+export function teamFor(employee: { team?: string | null; department?: string | null; discipline?: string | null }): EmployeeTeam | null {
+  const code = employee.team?.trim().toLowerCase();
+  if (code) return TEAM_BY_CODE.get(code) ?? null;
   const dept = employee.department?.trim().toLowerCase();
   if (dept) return TEAM_BY_DEPARTMENT.get(dept) ?? null;
   const discipline = employee.discipline?.trim().toLowerCase();

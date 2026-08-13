@@ -1,18 +1,26 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { logAudit } from "@/lib/audit";
 import { DISCIPLINE_LABEL } from "@/lib/disciplines";
 import { fetchSchedulerTeam } from "@/lib/scheduler-db";
 
-// Mirrors the SDC Scheduler's team grouping (team_members.discipline) into each
-// ETC employee's `discipline`, making the Scheduler the single source of truth
-// for grouping — while ETC keeps its own rows (paylocityId + historical hours).
+// Read-only reconciliation against the SDC Scheduler's team board.
 //
-// The two apps share no stable key, so we match on the name, normalized to
-// absorb spacing/case differences (e.g. "Xiaoli Liu" == "Xiao Li Liu"). What
-// normalization can't safely bridge — nicknames like "Mike"/"Michael" or
-// "Josh"/"Joshua" — is NOT guessed; those names are returned in the unmatched
-// lists so a human can rename them to line up (after which the sync is exact).
+// The hourly name-matched PULL this file used to do (syncSchedulerTeam(),
+// mirroring team_members.discipline into Employee.discipline) is retired as
+// of 2026-08-13 — Employee.team is now the shared, authoritative grouping,
+// written directly by Scheduler via a dedicated MySQL connection (see
+// SDC_Scheduler/routes/team.js), matched by team_members.employee_id rather
+// than by name. scripts/reconcile-employee-groups.ts is the ID-based
+// successor to reconcileSchedulerRoster() below; that function stays for the
+// Employees page's "Reconcile" button, which still compares by name — it's
+// read-only and non-blocking, so leaving it as a second, slightly different
+// comparison is low-risk, but the ID-based script is the one to trust.
+//
+// The two apps share no stable key for THIS name-based comparison, so it
+// matches on the name, normalized to absorb spacing/case differences (e.g.
+// "Xiaoli Liu" == "Xiao Li Liu"). What normalization can't safely bridge —
+// nicknames like "Mike"/"Michael" or "Josh"/"Joshua" — is NOT guessed; those
+// names are returned in the unmatched lists so a human can rename them.
 
 // The Scheduler stores discipline as short codes; ETC groups by the full labels.
 // The code → label map lives in lib/disciplines.ts, shared with the Employees
@@ -48,19 +56,6 @@ function normalizeName(name: string): string {
   if (parts.length > 0) parts[0] = NICKNAMES[parts[0]] ?? parts[0];
   return parts.join("");
 }
-
-export type TeamSyncResult = {
-  ok: boolean;
-  reason?: string;
-  updated: { name: string; from: string | null; to: string }[];
-  unchanged: number;
-  // Active ETC employees with no confident Scheduler match (need renaming or
-  // simply aren't on the Scheduler roster).
-  unmatchedEtc: string[];
-  // Active Scheduler members with no confident ETC match (name drift, or they
-  // don't log hours in ETC yet).
-  unmatchedScheduler: string[];
-};
 
 // Read-only reconciliation of ETC's FULL roster (active + inactive) against the
 // Scheduler's team list, on two dimensions: active status and team (grouping).
@@ -148,86 +143,3 @@ export async function reconcileSchedulerRoster(): Promise<RosterReconciliation> 
   };
 }
 
-export async function syncSchedulerTeam(): Promise<TeamSyncResult> {
-  let team;
-  try {
-    team = await fetchSchedulerTeam();
-  } catch (e) {
-    return {
-      ok: false,
-      reason: e instanceof Error ? e.message : "Could not reach the Scheduler database.",
-      updated: [],
-      unchanged: 0,
-      unmatchedEtc: [],
-      unmatchedScheduler: [],
-    };
-  }
-
-  // Scheduler side, keyed by normalized name. A collision (two people
-  // normalizing to the same key) is unlikely but we keep the first and treat
-  // the rest as unmatched rather than picking arbitrarily.
-  const schedulerByKey = new Map<string, (typeof team)[number]>();
-  const schedulerCollisions = new Set<string>();
-  for (const m of team) {
-    const key = normalizeName(m.name);
-    if (schedulerByKey.has(key)) schedulerCollisions.add(key);
-    else schedulerByKey.set(key, m);
-  }
-
-  const employees = await prisma.employee.findMany({ where: { active: true } });
-
-  // ETC-side collisions: if two active ETC employees normalize to the same key
-  // (e.g. a duplicate "ME Outsourced"), we can't safely attribute a grouping to
-  // either, so both are skipped and reported rather than mis-assigned.
-  const etcKeyCounts = new Map<string, number>();
-  for (const emp of employees) {
-    const k = normalizeName(emp.name);
-    etcKeyCounts.set(k, (etcKeyCounts.get(k) ?? 0) + 1);
-  }
-
-  const updated: TeamSyncResult["updated"] = [];
-  const unmatchedEtc: string[] = [];
-  const matchedSchedulerKeys = new Set<string>();
-  let unchanged = 0;
-
-  for (const emp of employees) {
-    const key = normalizeName(emp.name);
-    const match = schedulerByKey.get(key);
-    if (!match || schedulerCollisions.has(key) || (etcKeyCounts.get(key) ?? 0) > 1) {
-      unmatchedEtc.push(emp.name);
-      continue;
-    }
-    matchedSchedulerKeys.add(key);
-    const targetDiscipline = toEtcDiscipline(match.discipline);
-    if (emp.discipline === targetDiscipline) {
-      unchanged++;
-      continue;
-    }
-    await prisma.employee.update({
-      where: { id: emp.id },
-      data: { discipline: targetDiscipline },
-    });
-    updated.push({ name: emp.name, from: emp.discipline, to: targetDiscipline });
-  }
-
-  const unmatchedScheduler = team
-    .filter((m) => !matchedSchedulerKeys.has(normalizeName(m.name)))
-    .map((m) => m.name);
-
-  // Only audited when it actually changed something. This runs unattended every
-  // 6 hours now (auto-sync.ts), and a run that re-grouped nobody is not an event
-  // — logging it would add ~4 rows a day of "nothing happened" and bury the real
-  // entries a reader comes to the audit log for. A no-op run is still visible as
-  // a freshness stamp, which is the right place for "when did this last work".
-  if (updated.length > 0) {
-    await logAudit({
-      action: "employee.syncSchedulerTeam",
-      entityType: "Employee",
-      entityId: 0,
-      summary: `Synced team grouping from Scheduler: ${updated.length} updated, ${unchanged} already matched, ${unmatchedEtc.length} ETC unmatched, ${unmatchedScheduler.length} Scheduler unmatched`,
-      metadata: { updated, unmatchedEtc, unmatchedScheduler },
-    });
-  }
-
-  return { ok: true, updated, unchanged, unmatchedEtc, unmatchedScheduler };
-}

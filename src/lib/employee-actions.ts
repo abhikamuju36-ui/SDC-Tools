@@ -4,7 +4,7 @@ import { prisma } from "@/lib/prisma";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
 import { recordChanges, classifyChange } from "@/lib/change-log";
-import { syncSchedulerTeam, reconcileSchedulerRoster, type TeamSyncResult, type RosterReconciliation } from "@/lib/sync-scheduler-team";
+import { reconcileSchedulerRoster, type RosterReconciliation } from "@/lib/sync-scheduler-team";
 import { parseSupervisorExport, applySupervisorImport, type SupervisorImportResult } from "@/lib/import-employee-supervisors";
 
 // Employees are NEVER hard-deleted — departed people keep their historical
@@ -119,18 +119,11 @@ function employeeFieldText(value: unknown): string | null {
 }
 
 // Read-only: reports how ETC's full roster (active + inactive) reconciles with
-// the Scheduler's team list. No writes.
+// the Scheduler's team list. No writes. Name-matched, unlike the ID-matched
+// scripts/reconcile-employee-groups.ts — see sync-scheduler-team.ts's header
+// comment for why this stays as a second, non-authoritative comparison.
 export async function reconcileSchedulerRosterAction(): Promise<RosterReconciliation> {
   return reconcileSchedulerRoster();
-}
-
-// Pulls the team grouping from the SDC Scheduler (its team_members table is the
-// source of truth for discipline) and mirrors it onto ETC employees by name.
-// Returns a full report so the UI can show what changed and what couldn't match.
-export async function syncSchedulerTeamAction(): Promise<TeamSyncResult> {
-  const result = await syncSchedulerTeam();
-  if (result.ok) revalidatePath("/employees");
-  return result;
 }
 
 // Imports reporting lines from an uploaded Paylocity employee export (the

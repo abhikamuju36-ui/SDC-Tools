@@ -29,6 +29,9 @@ export type EmployeeRow = {
   discipline: string; // label or DASH
   supervisor: string; // supervisor name or DASH
   department: string;
+  // The shared team code (pm/mech/controls/build/wire/mfgops/service), now
+  // the authoritative grouping — see teamFor() in employee-teams.ts.
+  team: string | null;
   active: boolean;
   billingGroup: string;
   paylocityId: string;

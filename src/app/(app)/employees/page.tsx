@@ -1,11 +1,11 @@
 import { prisma } from "@/lib/prisma";
 import { PageTitle } from "@/components/ui/Typography";
-import { SyncSchedulerTeamButton } from "@/components/SyncSchedulerTeamButton";
 import { ImportSupervisorsButton } from "@/components/ImportSupervisorsButton";
 import { ReconcileRosterButton } from "@/components/ReconcileRosterButton";
 import { EmployeesGrid } from "@/components/EmployeesGrid";
 import { DISCIPLINE_LABELS } from "@/lib/disciplines";
 import type { EmployeeRow } from "@/components/EmployeesTable";
+import { fetchEmployeeTeams } from "@/lib/employee-team-field";
 
 // Team groupings, matching the SDC Scheduler app's team_members.discipline
 // categories. Now a sortable AG Grid column (Community can't do row grouping).
@@ -23,6 +23,7 @@ export default async function EmployeesPage() {
   const employees = await prisma.employee.findMany({
     orderBy: [{ discipline: "asc" }, { name: "asc" }],
   });
+  const teamById = await fetchEmployeeTeams();
 
   // id → name across the WHOLE roster, so a supervisor who has since been
   // deactivated still resolves to a name instead of showing as a dash.
@@ -34,6 +35,7 @@ export default async function EmployeesPage() {
     discipline: DISCIPLINES.includes(e.discipline ?? "") ? (e.discipline as string) : DASH,
     supervisor: e.supervisorId != null ? (nameById.get(e.supervisorId) ?? DASH) : DASH,
     department: e.department ?? "",
+    team: teamById.get(e.id) ?? null,
     active: e.active,
     billingGroup: e.billingGroup ?? "",
     paylocityId: e.paylocityId ?? "",
@@ -45,13 +47,12 @@ export default async function EmployeesPage() {
         <div>
           <PageTitle className="mb-1">Employees</PageTitle>
           <p className="text-sm text-sdc-gray-600">
-            Replaces the Project Planner workbook&apos;s Employees tab. One card per team, in the order the work moves through them. Deactivated employees keep all historical hours. The roster is read-only here — it&apos;s maintained through the sync and import buttons.
+            Replaces the Project Planner workbook&apos;s Employees tab. One card per team, in the order the work moves through them. Deactivated employees keep all historical hours. Team grouping is shared live with SDC Scheduler&apos;s board — the roster here is read-only, maintained through the import button and Scheduler&apos;s own board.
           </p>
         </div>
         <div className="flex items-center gap-2">
           <ReconcileRosterButton />
           <ImportSupervisorsButton />
-          <SyncSchedulerTeamButton />
         </div>
       </div>
 
