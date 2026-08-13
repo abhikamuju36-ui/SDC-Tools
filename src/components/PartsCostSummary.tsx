@@ -2,7 +2,6 @@
 
 import { usd } from "@/components/ui/format";
 import { card } from "@/components/ui/classnames";
-import { placeMarkers } from "@/lib/parts-cost-markers";
 
 // Fixed palette (2026-08-11, by request) — no longer the SDC-blue ramp, but
 // still fixed constants rather than anything data-derived, so the same dollar
@@ -17,18 +16,30 @@ const BAR_PROJECTED = "#FFDE51"; // ETC — forecast
 // Height taller than before (2026-08-10, by request) so the second bar's
 // three segments have room to read as distinct shapes rather than thin stripes.
 //
-// Width (2026-08-11d) is NOT `max-w-5`/1.25rem any more — that matched the
-// ETC chart's own bar cap, but that chart's bars sit under a TINY value label
-// (2-3 digit hours, `text-micro`), while these sit under a 6-8 digit dollar
-// figure at a much bigger font (`text-sm font-semibold`, measured ~58-72px
-// wide). At the old 1.25rem/18.75px, each bar was centered inside a column
-// the LABEL had forced much wider than the bar itself, and that leftover
-// padding — not the intentional `gap-1.5` — was almost the entire ~45px gap
-// between the two bars. Widening the bar to fill that same column (measured:
-// the label needs roughly 58-80px depending on the dollar amount) removes
-// the padding at its source, so gap-1.5 is once again the real, and only,
-// gap between the two bars, same as the ETC chart's own bar pairs.
-const BAR_W = "4.5rem";
+// ── Width: a deliberate match to the ETC chart's own bar, not a column fit
+// (2026-08-12, by request — "the two charts' bars should be the same width")
+// ─────────────────────────────────────────────────────────────────────────
+//
+// Every earlier version of this constant (4.5rem, then 4rem via §81, then
+// 5rem last pass) answered a DIFFERENT question — "how wide does the bar
+// need to be to fill its own column, so the label/caption above it don't
+// leave dead padding beside a too-narrow bar" — and kept growing because the
+// label kept growing. That question is retired now: the bar's width is no
+// longer derived from anything in THIS card. It is a literal copy of
+// SectionHierarchyChart's own bar cap (JobHoursDashboard.tsx's `Bar`
+// component, `max-w-5` = 1.25rem), so a Budget bar and an ETC-chart section
+// bar read as the same physical width side by side, which is the whole ask.
+//
+// That means the bar is now narrower than its own label/caption most of the
+// time (a 10-character dollar figure at text-xs/font-bold is ~65-70px, and
+// "Projection" alone is ~57px — both well past 18.75px) — this is EXPECTED
+// and no longer a bug the way it was when this constant used to chase the
+// label. The column each bar sits in is a `flex-col items-center` (below),
+// so it simply centers the narrow bar under whichever of {label, caption} is
+// wider, the same way SectionHierarchyChart's own narrow bars sit centered
+// under their own (comparatively wide) value labels — nothing here is doing
+// anything that chart doesn't already do with an even bigger size gap.
+const BAR_W = "1.25rem";
 
 // ── Height: measured to share ONE baseline with the ETC chart beside it ──────
 //
@@ -52,64 +63,69 @@ const BAR_W = "4.5rem";
 // and the summary below, which is where the "excessive whitespace" came from:
 // the card's own height is set by the taller ETC card next to it, and that
 // spacer was soaking up the difference.
-const BAR_H = 294; // px — see above; keep in step with SectionHierarchyChart's own 300
-// The caption band under each bar ("Budget" / "Actual / Projection"), and the
-// `gap-1.5` each bar column puts between its label / box / caption.
+// 414, up from 294 (2026-08-12, by request — "bars look too short") — the
+// same +120 SectionHierarchyChart's own BAR_H just took, not a number picked
+// independently. The offsets above each bar (72px there, 77.6px here, from
+// the derivation above) don't move when BAR_H does, so adding the identical
+// delta to both keeps 372 - 77.6 ≈ 294 true at the next size up too:
+// 492 - 77.6 ≈ 414. Whatever the two cards' baselines actually measure as
+// today, this preserves that relationship rather than re-deriving it, since
+// re-deriving it is a live-measurement exercise this task didn't ask for.
+const BAR_H = 414; // px — see above; keep in step with SectionHierarchyChart's own 420
+// The caption band under each bar ("Budget" / "Actual / Projection").
 //
-// Both are needed to place the legend, not just the caption: the legend band has
-// to end level with the BAR BOX, but `items-end` aligns it with the bottom of
-// the whole COLUMN — which is the caption's bottom, one column gap further down
-// again. Measured the mistake rather than reasoned about it: with the caption
-// height alone the band came out 5.63px low, exactly `gap-1.5` at this app's
-// 15px root. LEGEND_BOTTOM_OFFSET is that full distance, and every one of these
-// values is referenced by BOTH sides, so a future change to the caption or the
-// column gap moves the legend with it instead of silently desynchronising it.
+// Used to be shared with a second constant (LEGEND_BOTTOM_OFFSET) that placed
+// the legend band to end level with the bar box, back when the legend was an
+// absolutely-positioned column stretched to BAR_H — removed 2026-08-12c along
+// with that whole positioning scheme (see the legend's own comment below);
+// CAPTION_H itself stays, since the two caption boxes still need it.
 const CAPTION_H = "2rem";
-const COL_GAP = "0.375rem"; // Tailwind gap-1.5, as used on each bar column
-const LEGEND_BOTTOM_OFFSET = `calc(${CAPTION_H} + ${COL_GAP})`;
 
-// One segment's colour swatch + label + dollar value, pinned beside the stack
-// segment it describes (see MARKER_SLOT / placeMarkers below).
+// One segment's colour swatch + label + dollar value, as one row in a
+// compact vertical list.
 //
-// ── Why `whitespace-nowrap` is load-bearing, not cosmetic ────────────────────
+// ── History: pinned → horizontal group → vertical list (2026-08-12c/d) ─────
 //
-// An earlier version of this card DID position markers at their segment's pixel
-// midpoint, and it was reverted because labels overlapped: back then the labels
-// were long enough to wrap ("Committed, not yet invoiced $44,774" in a ~250px
-// column), and pixel maths cannot know how tall a wrapped label will render, so
-// two neighbours could claim the same space. It was replaced with plain flex
-// flow, which cannot overlap but also cannot point at anything.
+// The original design pinned each marker to its own segment's exact pixel
+// midpoint (placeMarkers/MARKER_SLOT, removed — see git history if that math
+// is ever needed again), on the theory that a marker should visually point
+// at the thing it names. That held up fine until this card's bars ALSO grew
+// (2026-08-12a/b, matching the ETC chart's height and bar width): three
+// markers spread across a 414px bar, each anchored to a segment that can be
+// a sliver or the whole bar, read as "stacked awkwardly, spread out
+// vertically" — correct positioning, on a bar tall enough that "precisely
+// where the segment sits" and "reads as one tidy group" stopped being the
+// same thing.
 //
-// Positioning is back — the requirement is explicitly that a marker line up
-// with its own segment — and the overlap is designed out on both axes rather
-// than hoped away: `whitespace-nowrap` makes every marker EXACTLY two lines
-// tall (label, then value), so its height is known ahead of layout and
-// MARKER_SLOT can reserve it; and placeMarkers() below enforces that reserved
-// gap even when segments cluster. The horizontal cost is that a label longer
-// than the legend column will overflow it instead of wrapping — visible, but a
-// legible overflow beats two labels on top of each other, and the three current
-// labels ("Invoiced", "Left to be invoiced", "ETC") measure well inside it.
-// Keep labels short; if a much longer one is ever added, widen LEGEND_W rather
-// than dropping the nowrap. The reservation itself (MARKER_SLOT) and the
-// placement maths live in lib/parts-cost-markers.ts, where they are unit-tested.
+// The first fix (2026-08-12c) replaced pinning with a horizontal flex-wrap
+// group, capped at a fixed max-width so it would wrap to a second line
+// instead of spreading. That made the CARD's own minimum width follow the
+// wrap width instead of the bars beside it — "unbalanced and stretched",
+// reported directly — because a flex-wrap child's contribution to an outer
+// flex row's sizing is its unwrapped, one-line max-content width, not
+// whatever width it actually wraps to at render time; the cap controlled the
+// wrap, not the space this block asked its parent for.
 //
-// Declared at module scope, not inside PartsCostSummary — a component defined
-// during render is re-created (and its state reset) on every render, which
-// react-hooks/static-components rejects.
+// 2026-08-12d drops the cap and the wrap along with it: a plain vertical
+// list (`flex-col`), one row per segment, sized to its own longest row —
+// nothing here can be wider than "Left to be invoiced $41,418", which is
+// narrower than the card already needs for its OWN captions ("Actual /
+// Projection"), so this block was never actually the thing forcing the card
+// wide; it only looked that way while wrapping was in the mix.
 function SegmentMarker({ color, label, value }: { color: string; label: string; value: number }) {
   return (
-    <div className="flex items-start gap-1.5">
-      <span className="mt-1 inline-block h-2 w-2 shrink-0 rounded-full" style={{ background: color }} />
-      <span className="whitespace-nowrap text-xs leading-snug text-sdc-gray-600">
-        {label}
-        <br />
-        <span className="font-mono text-xs font-semibold tabular-nums text-sdc-navy">{usd(value)}</span>
-      </span>
+    <div className="flex items-center gap-1 whitespace-nowrap">
+      <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+      <span className="font-sans text-micro text-sdc-gray-600">{label}</span>
+      {/* text-xs/font-bold/sdc-navy (2026-08-12b) — the same value-label
+          treatment as the bars above; unchanged by this pass. The category
+          name just before it stays smaller and un-bolded, on purpose — the
+          same "modest label beside a bold figure" pairing the "Budget" /
+          "Actual / Projection" captions under the bars already use. */}
+      <span className="font-mono text-xs font-bold tabular-nums text-sdc-navy">{usd(value)}</span>
     </div>
   );
 }
-
-const LEGEND_W = "9.5rem";
 
 // Parts Cost money block for the Job Hour Details page — the app's version of
 // the Power BI report's Parts Cost visual.
@@ -250,19 +266,13 @@ export function PartsCostSummary({
   if (hasProjection) {
     segments.push({ key: "etc", label: "ETC", value: projIncrement, color: BAR_PROJECTED, heightPct: pct(projIncrement) });
   }
-  // Labels read top-to-bottom in the same order the segments stack visually —
-  // the topmost segment ("ETC", when present) listed first — and each one is
-  // now pinned to its OWN segment's midpoint rather than sitting in plain flow
-  // (see SegmentMarker's header for the overlap history, and placeMarkers for
-  // how a $0 ETC segment still gets a readable marker).
+  // Chips read in the same top-to-bottom order the segments stack visually —
+  // the topmost segment ("ETC", when present) listed first — even though
+  // nothing about the compact layout below is positioned per-segment any
+  // more (2026-08-12c). Keeping this order is still worth doing: it's the
+  // one remaining thread connecting "which chip is this" back to "where in
+  // the bar does that dollar figure live".
   const labelOrder = [...segments].reverse();
-  // Same `heightPct` the segments are drawn with, resolved to px against the
-  // same BAR_H — so a marker cannot drift from the segment it names: both come
-  // from one number.
-  const markerTops = placeMarkers(
-    segments.map((s) => (s.heightPct / 100) * BAR_H),
-    BAR_H,
-  );
 
   // ONE meter: where the job is HEADING against what it was sold for.
   //
@@ -294,10 +304,23 @@ export function PartsCostSummary({
   return (
     // The four KPI cards that used to sit beside this chart are gone by
     // request — every figure they showed is already labelled below.
-    // Horizontal padding tightened from the shared p-4 to px-3 (§79): on this card's narrow
-    // 1fr grid column (~250px), p-4's 16px each side was costing ~12.5% of the card's width
-    // on EVERY row. Vertical padding (py-4) is untouched.
-    <div className={`${card("px-3 py-4")} flex h-full flex-col`}>
+    // Horizontal padding tightened from the shared p-4 to px-3 (§79), then to
+    // px-2 (§81, alongside the row's 85/15 split): on this card's ~15%-of-row
+    // column, every rem of horizontal padding is a bigger share of the card
+    // than it was at 33% or even 20%. Vertical padding (py-4) is untouched.
+    //
+    // Deliberately NOT `min-w-0` (§81): that would let the 3fr grid track in
+    // JobHoursDashboard shrink this card to EXACTLY 15%, no matter what —
+    // and on a job with 8-figure dollar amounts, 15% is narrower than the
+    // (unbreakable) money text needs, which without this is a card that
+    // shrinks until its own numbers overlap. Leaving the browser's ordinary
+    // "a grid item never shrinks below its own content's minimum" behaviour
+    // in place instead means the row renders at a true 85/15 whenever the
+    // figures fit that (every job seen so far), and gives this card only the
+    // few extra pixels its own numbers actually need on the rare job that
+    // doesn't — the same "legible over exact" trade this file's own history
+    // keeps making, just enforced one level up instead of inside the card.
+    <div className={`${card("px-2 py-4")} flex h-full flex-col`}>
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-x-3">
         <p className="font-heading text-base font-bold tracking-tight text-sdc-navy">Parts Cost</p>
         <p className="text-note text-sdc-gray-400">
@@ -323,10 +346,11 @@ export function PartsCostSummary({
           height is the sum of the three, which is Projection's own share of
           the shared scale. No border on the fills, no reference lines, no
           brackets — the colour step is the only thing separating one segment
-          from the next. The three segment labels sit in a normal-flow column
-          to the right, ordered to match the bar's top-to-bottom stacking, so
-          no label can ever overlap another regardless of how much any one of
-          them wraps.
+          from the next. The three segment rows sit in a compact vertical
+          list beside the bars (2026-08-12d), ordered to match the bar's
+          top-to-bottom stacking, so no row can ever overlap another and
+          nothing here can be wider than its own longest row — see that
+          list's own comment below.
 
           Both captions are pinned to a fixed `h-8` box (2026-08-11b) — NOT
           left to size to their own text — because a flex column's width is
@@ -345,17 +369,71 @@ export function PartsCostSummary({
           depending on the amount), so even with the caption fixed the column
           stayed exactly that much wider than the bar, and the leftover
           padding on each side of a too-narrow bar was almost the entire
-          visible gap. See BAR_W's own comment above — the bar itself is now
-          widened to fill that same column, which is what actually makes
-          `gap-1.5` the real gap between the two bars instead of a small
-          fraction of it. Verified against a real DOM measurement (a static
-          reproduction of this exact markup), not by eye: gap dropped from
-          ~44.6px to exactly 5.625px (`gap-1.5` at this app's 15px root) once
-          the bar matched its column's width. */}
-      <div className="flex items-end justify-center gap-4 py-1">
+          visible gap. Widening the bar to fill that column (2026-08-11d
+          through 2026-08-12a) made `gap-1.5` the real, whole gap between the
+          two bars — measured at the time: dropped from ~44.6px to exactly
+          5.625px once the bar matched its column's width.
+
+          2026-08-12b supersedes that specific fix, by request: the bar is
+          now a fixed 1.25rem — matching the ETC chart's own bar width rather
+          than filling this column — so the dead padding beside a narrower
+          bar is BACK, deliberately. The apparent gap between the two bars
+          reads close to that original ~44.6px again, not 5.625px; this is
+          the direct, accepted cost of "same bar width as the other chart"
+          rather than a regression of the §81/2026-08-11d fix. Both bars
+          still center correctly under their own label/caption (`items-center`
+          on each column, untouched) and stay the SAME width as each other,
+          which is what "balanced" asks for — it just no longer also means
+          "touching". */}
+      {/* `items-center`, not `items-end` (2026-08-12c) — the legend group is
+          no longer stretched to BAR_H (see its own comment), so it's a much
+          shorter block than the bar pair beside it; centering the two
+          against each other is what makes a short legend and a tall bar
+          pair read as one balanced row instead of the legend looking glued
+          to the bottom. This only affects how these TWO top-level children
+          align against each other — the bar pair's OWN internal alignment
+          (Budget vs Actual/Projection, `items-end` on the nested row below)
+          is untouched. */}
+      <div className="flex items-center justify-center gap-1 py-1">
+        {/* Bar pair: compact and content-sized, NOT `flex-1` — an intervening
+            pass (§81) made this row and both columns `flex-1` so the pair
+            would "grow to use whatever width the card has left", which
+            pushed Budget and Actual/Projection apart instead: each column
+            grew past its own bar's `maxWidth: BAR_W`, and the leftover width
+            became padding around an already-centered bar — the exact kind of
+            artificial gap this card's whole history has been about removing.
+            Reverted here: dropping `flex-1` (still WITHOUT `min-w-0`, so the
+            automatic per-column minimum below still stops the two dollar
+            labels from ever colliding) lets the pair size itself to its
+            content, so the outer row's `justify-center` centers a genuinely
+            compact group, and `gap-1.5` — the same pair spacing the Estimate
+            to Complete vs Actual chart uses between its own Quoted/Actual
+            bars (SectionHierarchyChart's `Bar` pair) — is once again the
+            real, whole gap between the two bars instead of being swallowed
+            by column growth.
+
+            `min-w-0` was tried (separately) and reverted: it let the columns
+            shrink past their labels, and the two dollar figures overlapped by
+            ~23px at a 1440px viewport (measured) — the labels are unbreakable
+            single tokens ("$367,170"), so a column narrower than its label
+            can only end in overlap, never a wrap. Each bar box is now a FIXED
+            `width: BAR_W` (2026-08-12b), not `w-full` of its column — see
+            BAR_W's own comment for why the bar deliberately no longer tracks
+            the column at all. A long dollar label (a big job's "$1,525,498")
+            still can't overlap its neighbour, for the same reason as before:
+            it's the column's own content-based minimum doing that, same as
+            it always has, independent of whatever the bar itself is doing. */}
         <div className="flex items-end gap-1.5">
           <div className="flex flex-col items-center gap-1.5">
-            <span className="font-mono text-sm font-semibold tabular-nums text-sdc-navy">{estimate != null ? usd(estimate) : "—"}</span>
+            {/* text-xs/font-bold (2026-08-12, by request — consistency with the
+                ETC chart's own bar labels, bumped the same amount in the same
+                pass), up from text-micro/font-semibold. Already text-sdc-navy —
+                this app's darkest text token, nothing to darken further here.
+                Widening this DOES cost BAR_W headroom (see that constant's own
+                comment on why 4rem clears an 11-digit dollar figure at
+                text-micro specifically) — verified live rather than assumed:
+                still clears at this card's real current dollar figures. */}
+            <span className="font-mono text-xs font-bold tabular-nums text-sdc-navy">{estimate != null ? usd(estimate) : "—"}</span>
             {/* No background on this positioning box — it is only a percentage
                 reference frame (height: BAR_H), never rendered itself. A
                 bg-sdc-gray-100 "track" here used to fill the FULL BAR_H
@@ -364,7 +442,7 @@ export function PartsCostSummary({
                 extending further than its actual number — exactly the
                 artificial padding this must not have. The card's own
                 background shows through above the fill instead. */}
-            <div className="relative overflow-hidden" style={{ width: BAR_W, height: BAR_H }}>
+            <div className="relative shrink-0 overflow-hidden" style={{ width: BAR_W, height: BAR_H }}>
               {estimate != null && (
                 <div className="absolute inset-x-0 bottom-0 rounded-t-sm" style={{ height: `${pct(estimate)}%`, background: BAR_BUDGET }} />
               )}
@@ -373,7 +451,8 @@ export function PartsCostSummary({
           </div>
 
           <div className="flex flex-col items-center gap-1.5">
-            <span className="font-mono text-sm font-semibold tabular-nums text-sdc-navy">{usd(projTotal)}</span>
+            {/* Same bump as Budget's label just above — see its comment. */}
+            <span className="font-mono text-xs font-bold tabular-nums text-sdc-navy">{usd(projTotal)}</span>
             {/* Same reasoning as Budget's box above: no bg-sdc-gray-100 track.
                 This box's OWN height stays BAR_H only as the percentage
                 reference frame the three segments' heightPct values resolve
@@ -382,7 +461,7 @@ export function PartsCostSummary({
                 invoiced + ETC (heightPct, computed from pct(), sums linearly
                 to pct(projTotal) — there is no fourth, invisible segment
                 padding it out to the box's full height). */}
-            <div className="relative overflow-hidden" style={{ width: BAR_W, height: BAR_H }}>
+            <div className="relative shrink-0 overflow-hidden" style={{ width: BAR_W, height: BAR_H }}>
               <div className="absolute inset-x-0 bottom-0 flex h-full flex-col-reverse">
                 {segments.map((s, i) => (
                   <div key={s.key} className={`w-full flex-shrink-0 ${i === segments.length - 1 ? "rounded-t-sm" : ""}`} style={{ height: `${s.heightPct}%`, background: s.color }} />
@@ -397,29 +476,22 @@ export function PartsCostSummary({
           </div>
         </div>
 
-        {/* The three segment markers, each pinned to the vertical centre of the
-            stack segment it names (markerTops, from placeMarkers).
-
-            This band is deliberately CONGRUENT with the bar BOX, not with the
-            bar column: `height: BAR_H` matches the box, and
-            LEGEND_BOTTOM_OFFSET cancels everything the column puts BELOW that
-            box (the caption, plus the column's own gap above it) — without it,
-            `items-end` bottom-aligns this band with the column's bottom
-            instead, putting every marker that far too low and quietly breaking
-            the whole point of positioning them. See that constant's comment:
-            the same values drive the captions, so the two cannot drift.
-
-            Fixed width, NOT `flex-1` (2026-08-11) — a flex-1 legend claims
-            every pixel of space the row's own `justify-center` would otherwise
-            have distributed, which is what made the whole bar group read
-            left-aligned: there was no leftover space left to center it WITH.
-            Bounding this block's width instead gives the row something finite
-            to center as a whole. */}
-        <div className="relative shrink-0" style={{ width: LEGEND_W, height: BAR_H, marginBottom: LEGEND_BOTTOM_OFFSET }}>
-          {labelOrder.map((s, i) => (
-            <div key={s.key} className="absolute inset-x-0" style={{ top: markerTops[i], transform: "translateY(-50%)" }}>
-              <SegmentMarker color={s.color} label={s.label} value={s.value} />
-            </div>
+        {/* The three segment rows, as one compact vertical list
+            (2026-08-12d, by request — the horizontal flex-wrap version just
+            before this "caused the layout to become unbalanced and
+            stretched"). No absolute positioning, no `placeMarkers` collision
+            math (both removed with the pinned-to-segment version this
+            replaced), and — this time — no wrap cap either: `flex-col` never
+            asks its parent for more than its own widest ROW, so it can't
+            drag the card wider the way the flex-wrap attempt did (see
+            SegmentMarker's own header for exactly how that happened).
+            `shrink-0` still matters here for the same reason it does
+            everywhere else in this card: a block that gets squeezed below
+            its own content's width can only end in overlap, and this one's
+            content is unbreakable dollar figures. */}
+        <div className="flex shrink-0 flex-col gap-1">
+          {labelOrder.map((s) => (
+            <SegmentMarker key={s.key} color={s.color} label={s.label} value={s.value} />
           ))}
         </div>
       </div>

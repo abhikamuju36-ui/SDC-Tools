@@ -1,7 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
-import type { BomNode, BomPart, JobBom, PoLineGroup, Vendor } from "@/lib/job-bom";
+import type { BomNode, BomPart, JobBom, PoLineDetail, PoLineGroup, Vendor } from "@/lib/job-bom";
+import { isUncoveredPart } from "@/lib/job-bom-rules";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
 import { usd } from "@/components/ui/format";
 import { useToast } from "@/components/ui/Toast";
@@ -9,6 +10,9 @@ import { DragScroll } from "@/components/DragScroll";
 import { normPn, attributeInvoicedWindow, type WindowAttribution } from "@/lib/parts-cost-window-attribution";
 import { loadPartsListInvoicedInWindow } from "@/lib/hours-detail-actions";
 import { sequenced } from "@/lib/request-sequence";
+import { useColumnSort } from "@/components/useColumnSort";
+import { SortableTh, SortableColumnHeader } from "@/components/ui/SortableHeader";
+import { sortRows, type SortColumns } from "@/lib/table-sort";
 
 // A minimal shape shared by BOM leaf parts (Assemblies detail table) and the
 // flattened Parts List rows — enough to drill + copy.
@@ -321,6 +325,13 @@ function sectionLabelFor(section: BomNode): string {
   const specId = typeof section.id === "string" ? Number(section.id.replace(/\D/g, "")) : Number(section.id);
   const title = SECTION_LABEL_OVERRIDE[specId] ?? section.desc ?? "";
   return `Section ${specId}${title ? ` — ${title}` : ""}`;
+}
+
+// The Parts List "Parent Assembly" cell's own text, shared with its sort
+// accessor below (PARTS_LIST_COLUMNS) so the two can never disagree about
+// what a parentless part reads as.
+function parentLineFor(p: FlatPart): string {
+  return p.parentPN ? `${p.parentPN}${p.parentDesc ? ` — ${p.parentDesc}` : ""}` : "Loose parts";
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -662,7 +673,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   const summary = useMemo(() => {
     const total = parts.length;
     const received = parts.filter((p) => p.st.key === "received").length;
-    const noPO = parts.filter((p) => p.st.key === "noPO").length;
+    const noPO = parts.filter(isUncoveredPart).length;
     const covered = parts.filter((p) => p.source === "stock" || p.source === "process").length;
     const pct = total ? Math.round((received / total) * 100) : 0;
     return { total, received, noPO, covered, pct };
@@ -1105,6 +1116,35 @@ function LoosePartsRow({
   );
 }
 
+// Sort keys for the Assemblies tree's nested parts table — module scope, like
+// every other X_COLUMNS map in this app, since every accessor closes over
+// nothing but the row itself (see table-sort.ts / HoursDetailPanel's own
+// LINE_COLUMNS for the established convention this mirrors).
+type PartsDetailSortKey = "qty" | "pn" | "desc" | "mfr" | "supplier" | "po" | "poDate" | "origDue" | "revised" | "received" | "costPer" | "totalCost";
+
+const PARTS_DETAIL_COLUMNS: SortColumns<BomPart, PartsDetailSortKey> = {
+  qty: { type: "number", value: (p) => p.qty },
+  pn: { type: "id", value: (p) => p.pn },
+  desc: { type: "text", value: (p) => p.desc || null },
+  // Sorts on exactly what the cell displays, same convention as every
+  // "status"-typed column in this app (DataQualityExplorer, etc.).
+  mfr: { type: "text", value: (p) => (p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || null) },
+  supplier: { type: "text", value: (p) => p.supplier },
+  // `poId` is null for STOCK/PROCESS/NO-PO rows alike — nulls already sort
+  // last in both directions (compareByType), which reads correctly here:
+  // rows with no PO number drop to the end instead of clustering at
+  // whichever end happened to match a coincidental string/number compare.
+  po: { type: "id", value: (p) => p.poId },
+  poDate: { type: "date", value: (p) => p.poDate },
+  origDue: { type: "date", value: (p) => p.originalDate },
+  revised: { type: "date", value: (p) => p.revisedDate },
+  received: { type: "date", value: (p) => p.receivedDate },
+  costPer: { type: "currency", value: (p) => p.unitPrice },
+  // The cell shows unitPrice × qty (line total), not unitPrice alone — sort
+  // on that same product rather than on unit price a second time.
+  totalCost: { type: "currency", value: (p) => p.unitPrice * p.qty },
+};
+
 function PartsDetailTable({
   parts,
   depth,
@@ -1118,6 +1158,8 @@ function PartsDetailTable({
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
   now: number;
 }) {
+  const sort = useColumnSort<PartsDetailSortKey>();
+  const sortedParts = sortRows(parts, sort.sort, PARTS_DETAIL_COLUMNS);
   return (
     <div className="border-l-2 border-sdc-blue bg-sdc-gray-50/60" style={{ marginLeft: `${8 + depth * 18}px` }}>
       <div className="overflow-x-auto styled-scrollbar">
@@ -1137,22 +1179,22 @@ function PartsDetailTable({
         <table className="w-full min-w-[1320px] border-collapse text-left">
           <thead>
             <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wide text-white [&>th]:px-2 [&>th]:py-1 [&>th]:font-bold">
-              <th className="w-10 text-right">Qty</th>
-              <th>Part #</th>
-              <th>Description</th>
-              <th>Manufacturer</th>
-              <th>Supplier</th>
-              <th>PO #</th>
-              <th title="When the purchase order was raised">PO date</th>
-              <th title="Delivery date required when the PO was raised">Orig. due</th>
-              <th title="Current required date, shown only where it has moved off the original">Revised</th>
-              <th title="Date the part was last received">Received</th>
-              <th className="text-right">Cost per</th>
-              <th className="text-right">Total cost</th>
+              <SortableTh label="Qty" sortKey="qty" type="number" sort={sort.sort} onSort={sort.onSort} className="w-10" />
+              <SortableTh label="Part #" sortKey="pn" type="id" sort={sort.sort} onSort={sort.onSort} />
+              <SortableTh label="Description" sortKey="desc" type="text" sort={sort.sort} onSort={sort.onSort} />
+              <SortableTh label="Manufacturer" sortKey="mfr" type="text" sort={sort.sort} onSort={sort.onSort} />
+              <SortableTh label="Supplier" sortKey="supplier" type="text" sort={sort.sort} onSort={sort.onSort} />
+              <SortableTh label="PO #" sortKey="po" type="id" sort={sort.sort} onSort={sort.onSort} />
+              <SortableTh label="PO date" sortKey="poDate" type="date" sort={sort.sort} onSort={sort.onSort} title="When the purchase order was raised" />
+              <SortableTh label="Orig. due" sortKey="origDue" type="date" sort={sort.sort} onSort={sort.onSort} title="Delivery date required when the PO was raised" />
+              <SortableTh label="Revised" sortKey="revised" type="date" sort={sort.sort} onSort={sort.onSort} title="Current required date, shown only where it has moved off the original" />
+              <SortableTh label="Received" sortKey="received" type="date" sort={sort.sort} onSort={sort.onSort} title="Date the part was last received" />
+              <SortableTh label="Cost per" sortKey="costPer" type="currency" sort={sort.sort} onSort={sort.onSort} />
+              <SortableTh label="Total cost" sortKey="totalCost" type="currency" sort={sort.sort} onSort={sort.onSort} />
             </tr>
           </thead>
           <tbody>
-            {parts.map((p, i) => {
+            {sortedParts.map((p, i) => {
               const st = partStatus(p, now);
               return (
                 <tr
@@ -1344,6 +1386,60 @@ const DEFAULT_COL_WIDTH: Record<ColKey, number> = {
 };
 const MIN_COL_WIDTH = 48;
 
+// One accessor per ColKey, covering every column the visibility menu can show
+// — `SortColumns<FlatPart, ColKey>` (a `Record`, not a `Partial`) means TypeScript
+// itself catches a column added to ALL_COLS with no matching sort entry.
+//
+// A function of `now`, not a bare module-level constant like PARTS_DETAIL_COLUMNS
+// above — only the "due" column needs it (a countdown against the current time,
+// same as DueChip), but that one dependency means the whole map has to be built
+// per-render rather than once at module scope. Mirrors HoursDetailPanel's own
+// rollupSortColumns(groupBy): a plain function, called through a `useMemo` at the
+// call site rather than recomputed on every render.
+function partsListSortColumns(now: number): SortColumns<FlatPart, ColKey> {
+  return {
+    qty: { type: "number", value: (p) => p.qty },
+    pn: { type: "id", value: (p) => p.pn },
+    desc: { type: "text", value: (p) => p.desc || null },
+    parent: { type: "text", value: (p) => parentLineFor(p) },
+    category: { type: "text", value: (p) => p.category },
+    // Sorts on exactly what the cell displays (In-house (SDC), not the raw
+    // manufacturer code) — same convention as every "status"-typed column.
+    mfr: { type: "text", value: (p) => (p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || null) },
+    supplier: { type: "text", value: (p) => p.supplier },
+    // Null for STOCK/PROCESS/NO-PO rows alike (no PO number exists) — nulls
+    // already sort last in both directions, which is the right place for
+    // "there is no PO" regardless of why.
+    po: { type: "id", value: (p) => p.poNumber },
+    purchased: { type: "date", value: (p) => p.purchasedDate },
+    invoiceddate: { type: "date", value: (p) => p.invoicedDate },
+    exp: { type: "date", value: (p) => p.expectedDate },
+    // LeadChip's own underlying number (days from purchased to expected),
+    // with the same "negative reads as no data" rule it renders with: a
+    // negative lead time is display "—", so it sorts where "—" sorts.
+    lead: {
+      type: "number",
+      value: (p) => {
+        const d = daysBetween(p.purchasedDate, p.expectedDate);
+        return d != null && d >= 0 ? d : null;
+      },
+    },
+    // DueChip's own underlying number (days from now to expected) — null once
+    // received, matching its "RCVD" display rather than a stale countdown.
+    due: {
+      type: "number",
+      value: (p) => (p.st.key === "received" || !p.expectedDate ? null : (new Date(p.expectedDate).getTime() - now) / DAY),
+    },
+    unit: { type: "currency", value: (p) => p.unitPrice },
+    total: { type: "currency", value: (p) => p.totalPrice },
+    invoiced: { type: "currency", value: (p) => p.invoicedAmount },
+    pctinv: { type: "number", value: (p) => p.pctInvoiced },
+    jobcost: { type: "currency", value: (p) => p.jobCostExclSdc },
+    leftspend: { type: "currency", value: (p) => p.leftToSpend },
+    status: { type: "status", value: (p) => p.st.label },
+  };
+}
+
 function PartsListTab({
   parts,
   state,
@@ -1421,7 +1517,10 @@ function PartsListTab({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return parts.filter((p) => {
-      if (status !== "all" && p.st.key !== status) return false;
+      if (status !== "all") {
+        const matches = status === "noPO" ? isUncoveredPart(p) : p.st.key === status;
+        if (!matches) return false;
+      }
       if (category !== "all" && p.category !== category) return false;
       if (manufacturer !== "all" && p.manufacturer !== manufacturer) return false;
       if (supplier !== "all" && p.supplier !== supplier) return false;
@@ -1600,7 +1699,7 @@ function PartRowCells({
   now: number;
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
 }) {
-  const parentLine = p.parentPN ? `${p.parentPN}${p.parentDesc ? ` — ${p.parentDesc}` : ""}` : "Loose parts";
+  const parentLine = parentLineFor(p);
   const cell = (key: ColKey) => {
     switch (key) {
       case "qty":
@@ -1720,6 +1819,14 @@ function PartsTableView({
   const widthOf = (key: ColKey) => colWidths[key] ?? DEFAULT_COL_WIDTH[key];
   const totalWidth = cols.reduce((s, c) => s + widthOf(c.key), 0);
 
+  // Sort is independent of, and applied after, the filtering `PartsListTab`
+  // already did to `parts` before handing them down — same "third, separate
+  // concern" as every other table in this app (table-sort.ts). The column set
+  // itself is a function of `now` (see partsListSortColumns's own comment).
+  const sort = useColumnSort<ColKey>();
+  const sortColumns = useMemo(() => partsListSortColumns(now), [now]);
+  const sortedParts = sortRows(parts, sort.sort, sortColumns);
+
   // Drag-to-resize: listeners are added on mousedown and torn down on mouseup;
   // stopPropagation keeps a drag from also triggering the row click.
   const startResize = (key: ColKey, e: React.MouseEvent) => {
@@ -1787,7 +1894,19 @@ function PartsTableView({
             <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
               {cols.map((c) => (
                 <th key={c.key} title={c.title} className={`relative border-r border-white/15 px-2 py-1.5 font-bold ${c.align === "right" ? "text-right" : ""}`}>
-                  <span className="block truncate">{c.label}</span>
+                  {/* SortableColumnHeader, not SortableTh — this `<th>` already
+                      carries its own title/border/resize-handle chrome, so the
+                      shared component's non-`<th>` variant (built for exactly
+                      this case, see its own doc comment) is embedded inside it
+                      rather than replacing it wholesale. */}
+                  <SortableColumnHeader
+                    label={<span className="block truncate">{c.label}</span>}
+                    sortKey={c.key}
+                    type={sortColumns[c.key].type}
+                    align={c.align === "right" ? "right" : "left"}
+                    sort={sort.sort}
+                    onSort={sort.onSort}
+                  />
                   <span
                     onMouseDown={(e) => startResize(c.key, e)}
                     role="separator"
@@ -1800,7 +1919,7 @@ function PartsTableView({
             </tr>
           </thead>
           <tbody>
-            {parts.map((p, i) => {
+            {sortedParts.map((p, i) => {
               // Row tint by status (STATUS_ROW_BG) so each row reads by its
               // status at a glance. Precedence: drill-flash (inline style, set
               // imperatively) > the status tint's hover > the status tint.
@@ -2101,6 +2220,35 @@ function PartsCardView({
 
 // ── PO detail — right-side sliding panel ─────────────────────────────────────
 
+// One sort-key set, two column maps: the panel's line-items table has two
+// possible row shapes (an authoritative PO's own lines, or the BOM-part
+// fallback when no PO match exists — see the render below), and only one of
+// the two is ever mounted at a time. Same six logical columns either way, so
+// one shared key type lets a single `useColumnSort` and header row serve both.
+type PoLineSortKey = "part" | "qty" | "ordered" | "expected" | "received" | "price";
+
+const PO_LINE_COLUMNS: SortColumns<PoLineDetail, PoLineSortKey> = {
+  part: { type: "id", value: (l) => l.partNumber },
+  qty: { type: "number", value: (l) => l.qty },
+  ordered: { type: "date", value: (l) => l.orderedDate },
+  expected: { type: "date", value: (l) => l.expectedDate },
+  // The cell shows "Exp <date>" instead of a received date until received —
+  // but the RECEIVED column's own underlying value is the received date, full
+  // stop; an unreceived line simply doesn't have one yet (null, sorts last),
+  // same reasoning as PartsDetailTable's own `received` column.
+  received: { type: "date", value: (l) => l.receivedDate },
+  price: { type: "currency", value: (l) => l.price },
+};
+
+const PO_FALLBACK_COLUMNS: SortColumns<FlatPart, PoLineSortKey> = {
+  part: { type: "id", value: (p) => p.pn },
+  qty: { type: "number", value: (p) => p.qty },
+  ordered: { type: "date", value: (p) => p.purchasedDate },
+  expected: { type: "date", value: (p) => p.expectedDate },
+  received: { type: "date", value: (p) => p.receivedDate },
+  price: { type: "currency", value: (p) => p.unitPrice },
+};
+
 function PoPanel({
   supplier,
   po,
@@ -2121,6 +2269,7 @@ function PoPanel({
     for (const p of po.parts) m.set(normPn(p.pn), p);
     return m;
   }, [po]);
+  const lineSort = useColumnSort<PoLineSortKey>();
   // Mount closed, then flip to open on the next frame so the slide-in plays.
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -2232,17 +2381,17 @@ function PoPanel({
           <table className="w-full border-collapse text-left">
             <thead className="sticky top-0 z-[1]">
               <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
-                <th className="px-3 py-2 font-bold">Part</th>
-                <th className="px-2 py-2 text-right font-bold">Qty</th>
-                <th className="px-2 py-2 font-bold">Ordered</th>
-                <th className="px-2 py-2 font-bold">Expected</th>
-                <th className="px-2 py-2 font-bold">Received</th>
-                <th className="px-3 py-2 text-right font-bold">Price</th>
+                <SortableTh label="Part" sortKey="part" type="id" sort={lineSort.sort} onSort={lineSort.onSort} className="px-3 py-2" />
+                <SortableTh label="Qty" sortKey="qty" type="number" sort={lineSort.sort} onSort={lineSort.onSort} className="px-2 py-2" />
+                <SortableTh label="Ordered" sortKey="ordered" type="date" sort={lineSort.sort} onSort={lineSort.onSort} className="px-2 py-2" />
+                <SortableTh label="Expected" sortKey="expected" type="date" sort={lineSort.sort} onSort={lineSort.onSort} className="px-2 py-2" />
+                <SortableTh label="Received" sortKey="received" type="date" sort={lineSort.sort} onSort={lineSort.onSort} className="px-2 py-2" />
+                <SortableTh label="Price" sortKey="price" type="currency" sort={lineSort.sort} onSort={lineSort.onSort} className="px-3 py-2" />
               </tr>
             </thead>
             <tbody>
               {authoritative
-                ? authoritative.lines.map((l, i) => {
+                ? sortRows(authoritative.lines, lineSort.sort, PO_LINE_COLUMNS).map((l, i) => {
                     const isRcvd = l.status === "received" || !!l.receivedDate;
                     const expT = l.expectedDate ? new Date(l.expectedDate).getTime() : NaN;
                     const isPast = !isRcvd && Number.isFinite(expT) && expT < stats.nowMs;
@@ -2273,7 +2422,7 @@ function PoPanel({
                       </tr>
                     );
                   })
-                : po.parts.map((p, i) => {
+                : sortRows(po.parts, lineSort.sort, PO_FALLBACK_COLUMNS).map((p, i) => {
                     const isRcvd = p.status === "received" || !!p.receivedDate;
                     const isPast = stats.isPastDue(p);
                     const rowTint = isRcvd ? "bg-sdc-green-bg/50" : isPast ? "bg-sdc-red-bg/50" : "bg-sdc-yellow-bg/40";
@@ -2395,6 +2544,91 @@ function reqMs(p: FlatPart): number {
   return p.requiredDate ? new Date(p.requiredDate).getTime() : NaN;
 }
 
+// ── The three risk cards' shared header shell ───────────────────────────────
+//
+// One string, used by all three, because "keep the three headers aligned on the
+// same horizontal level" is a promise that three separately-maintained class
+// lists cannot keep — they were already drifting (Upcoming carried `gap-3`
+// where the other two had `gap-2`, for no reason anyone recorded).
+//
+// TWO layouts, switched on the CARD's own width — `@container` per card, the
+// same tool and reasoning as EtcMonthKpiCards. It has to be the card and not
+// the viewport: at one fixed viewport these cards are two different widths
+// depending on whether the sidebar is collapsed, so an `xl:` breakpoint would
+// be right only half the time.
+//
+//   >= 470px of card — the tidy one, and the case that matters. `flex-col`,
+//     two DECIDED lines, 64px. Line 1 is title | Parts, Suppliers, Nearest,
+//     See all; line 2 is the week picker alone. Nothing wraps, so the height
+//     is arithmetic rather than a measurement:
+//         28.5 (a Stat) + 3.75 (gap-1) + 20.25 (a button) + 11.25 (py-1.5) = 64
+//     A Stat is a `text-micro` label over a `text-xs` value; the odd numbers
+//     are because this app's root font is 15px, not 16.
+//
+//   below that — ONE free-flowing wrap row, which is what this header used to
+//     be and is genuinely better when space is short. The row and group divs go
+//     `display: contents`, so title, each Stat, See all and the picker become
+//     direct flex items again and pack themselves. Forcing the two-line
+//     structure down here cost 152px on content free flow fits in 118:
+//     grouping items into rows means a row breaks when ANY member does not
+//     fit, and half-empty lines add up fast.
+//
+// The heights below the switch are measured worst cases, not estimates, and
+// the thing that drives them is the week picker: a button carrying a count is
+// 43px against 21px bare, so eight of them go from 194px to 370px (426px at two
+// digits) purely on DATA. Measured with every week counted:
+//     card 415 -> 116     card 357 -> 118     card 317 -> 139
+// hence 124px from 355 up, and 152px below it. An early pass set this from a
+// job whose weeks were all empty and would have overflowed the moment any
+// count appeared — worth remembering that a quiet job is not the worst case.
+//
+// Thresholds are in PIXELS on purpose. `@[26rem]` reads as 416 but resolves
+// against that same 15px root to 390, which silently put an earlier switch
+// BELOW the width the tidy layout needs — the header went short while its
+// content still wanted another line and the card's `overflow-hidden` ate the
+// difference.
+//
+// 152px is a floor, not a guarantee. Under roughly a 220px card — a ~500px
+// window with the sidebar still expanded — the picker needs a third line and
+// overflows even that. Deliberately not chasing it with a fourth tier: this is
+// a sidebar-plus-dense-table desktop report, that width is already unusable for
+// the grids above it, and the previous fixed 125px clipped the same content
+// harder at the same size.
+const PANEL_HEADER =
+  "flex h-[152px] flex-wrap content-center items-center gap-x-3 gap-y-1 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-1.5 " +
+  "@[355px]:h-[124px] @[470px]:h-[64px] @[470px]:flex-col @[470px]:flex-nowrap @[470px]:items-stretch @[470px]:justify-center @[470px]:gap-x-2";
+
+// One line inside a header — title on the left, everything else hard right.
+//
+// `contents` below the switch: this element stops generating a box at all, so
+// its children join the header's own wrap row instead of being trapped in a
+// sub-row that can only break as a unit. Above the switch it becomes a real
+// flex row again and `justify-between` does the title-left/rest-right split.
+const PANEL_HEADER_ROW =
+  "contents @[470px]:flex @[470px]:w-full @[470px]:flex-wrap @[470px]:items-center @[470px]:justify-between @[470px]:gap-x-2 @[470px]:gap-y-1";
+
+// A run of Stats (plus See all) inside a line. Same trick and the same reason:
+// grouped, the whole run drops to the next line the moment one member does not
+// fit; ungrouped, the Stats fill the line and only the overflow moves down.
+const PANEL_HEADER_GROUP =
+  "contents @[470px]:flex @[470px]:flex-wrap @[470px]:items-center @[470px]:gap-x-4 @[470px]:gap-y-1";
+
+// The "See all" side panel's own table (below) shows a different column SET
+// per risk card (PO # only for Upcoming; Supplier/Exp dropped for No-PO) — one
+// map covering every possible column, same as the Parts List's own
+// per-visibility-menu columns, so the header row just decides which entries
+// of it to render as SortableTh.
+type RiskSortKey = "po" | "part" | "desc" | "supplier" | "req" | "exp";
+
+const RISK_TABLE_COLUMNS: SortColumns<FlatPart, RiskSortKey> = {
+  po: { type: "id", value: (p) => p.poNumber },
+  part: { type: "id", value: (p) => p.pn },
+  desc: { type: "text", value: (p) => p.desc || null },
+  supplier: { type: "text", value: (p) => p.supplier },
+  req: { type: "date", value: (p) => p.requiredDate },
+  exp: { type: "date", value: (p) => p.expectedDate },
+};
+
 function RiskCards({
   parts,
   onPartClick,
@@ -2409,19 +2643,32 @@ function RiskCards({
   setUpcomingWeek: (n: number) => void;
 }) {
   const [seeAll, setSeeAll] = useState<null | "delivery" | "nopo" | "upcoming">(null);
+  // One sort state for all three "See all" modes (they share a row shape and
+  // a table), reset on every open — Supplier/PO # exist in some modes and not
+  // others, and a sort left over from a differently-shaped table would apply
+  // invisibly, with no header arrow on screen to explain the new order.
+  const seeAllSort = useColumnSort<RiskSortKey>();
+  const openSeeAll = (mode: "delivery" | "nopo" | "upcoming") => {
+    seeAllSort.setSort(null);
+    setSeeAll(mode);
+  };
 
   const risk = useMemo(() => {
     const today = startOfTodayMs(now);
 
     // Delivery Slip — upcoming/overdue deliveries: has a PO, not received, due
-    // within today ±7 days.
-    const slipStart = today - 7 * DAY;
-    const slipEnd = today + 8 * DAY;
+    // date <= today + 7 days (by request). No lower bound — an item due a
+    // month ago hasn't stopped needing attention just because it aged out of
+    // a 7-day-late window; it used to (a `today - 7*DAY` floor dropped
+    // anything overdue by more than a week), which is exactly backwards for a
+    // card whose whole point is surfacing what's late. Sorted ascending by
+    // due date (unchanged), so the oldest overdue item leads.
+    const slipEnd = today + 8 * DAY; // exclusive: "+7 days" is the last included calendar day
     const delivery = parts
       .filter((p) => {
         if (!p.poNumber || p.st.key === "received") return false;
         const t = dueMs(p);
-        return Number.isFinite(t) && t >= slipStart && t < slipEnd;
+        return Number.isFinite(t) && t < slipEnd;
       })
       .sort((a, b) => dueMs(a) - dueMs(b));
     const lateParts = delivery.filter((p) => Number.isFinite(dueMs(p)) && dueMs(p) < today);
@@ -2433,16 +2680,14 @@ function RiskCards({
       return !acc || p.requiredDate < acc ? p.requiredDate : acc;
     }, null);
 
-    // No PO — dedupe by part number, exclude on-hold + received.
-    const seenPn = new Set<string>();
-    const noPo = parts.filter((p) => {
-      if (p.poNumber) return false;
-      if (p.st.key === "received" || p.hold) return false;
-      const key = normPn(p.pn);
-      if (seenPn.has(key)) return false;
-      seenPn.add(key);
-      return true;
-    });
+    // No PO — the same isUncoveredPart eligibility the Parts List filter and
+    // the readiness summary use (no PO, no stock pull, no process schedule,
+    // BOM release status already applied, not on hold). `parts` is already
+    // deduped by item id (job-bom-rules.ts's own unique-requirement counting),
+    // so this card's total can never disagree with either of those again —
+    // it used to check `!p.poNumber` directly, which counted stock/process-
+    // covered parts as missing and re-deduped by part number on top.
+    const noPo = parts.filter(isUncoveredPart);
     const weekEnd = today + 7 * DAY;
     let noPoThisWeek = 0;
     let noPoOldest: string | null = null;
@@ -2485,24 +2730,92 @@ function RiskCards({
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="grid grid-cols-1 gap-3 lg:grid-cols-2">
+      {/* Delivery Slip · No Purchase Order · Upcoming Deliveries — one row on
+          desktop (by request). All three used to be a 2-up grid plus a
+          full-width third card below it; folded into a single 3-column grid
+          instead, so they read as one matched set rather than 2-then-1.
+          `sm:grid-cols-2 xl:grid-cols-3`: stacked on mobile, a 2-up
+          intermediate on tablet, three-across from 1280px — "normal desktop
+          width" for this app's sidebar-plus-content layout (verified live;
+          `lg` at 1024px left too little room per card once the sidebar's
+          width comes out of it, and Upcoming Deliveries' own row grid started
+          clipping its rightmost date column).
+
+          ── Sizing: header and list are EACH a fixed height, not stretch-to-
+          tallest-sibling ─────────────────────────────────────────────────
+
+          Two earlier passes let CSS Grid's `items-stretch` size the row from
+          whichever card's own header+content was naturally tallest, with the
+          list body `flex-1` (grow-to-fill) under a `max-h-*` ceiling — first
+          150px, then 300px once a busy job (42 Delivery Slip parts) still
+          showed a gap beneath the list. Both were the same mistake at a
+          different size: a `flex-1` body's real height is "whatever the row
+          stretched to, minus this card's own header" — which is a DIFFERENT
+          number on every card whenever headers differ (Upcoming's own
+          8-button week picker wraps 2-3 lines depending on width; the other
+          two are one line), so no single fixed row height could ever put the
+          SAME row count in all three at once — only ever "however many rows
+          happen to fit this card's own leftover space today."
+
+          Fixing BOTH the header and the list to their own constant heights
+          removes the ambiguity instead of chasing it: every card's header is
+          exactly `PANEL_HEADER`'s own height, and every list body is exactly `h-[284px]` —
+          10 rows at a SlipRow/UpcomingRow's own measured 28.42px (10 × 28.42
+          = 284.2, floored rather than rounded up so the 10th row is never
+          cut a hair short AND the 11th never peeks through). A shorter
+          header (Delivery Slip, No Purchase Order) centers its one-line
+          content in the extra space via the `items-center` it already had;
+          nothing about the row's own height depends on any card's row count
+          any more, which is what makes "exactly 10 rows, no more, regardless
+          of how many exist" possible everywhere at once. `auto-rows`/
+          `h-full` stretch is gone — 68 + 284 = 352px is every card's own
+          natural height now, identically, so there's nothing left to
+          stretch.
+
+          `h-[68px]` (2026-08-12, second pass — "use as little vertical header
+          space as possible") replaces a measured-worst-case 125px, and the
+          51px came from removing the CAUSE rather than trimming padding
+          again. 125px was Upcoming's 8-button week picker WRAPPING: one
+          `flex-wrap` row held the title, eight buttons, three Stats and See
+          all, so its line count was whatever the card's width happened to
+          produce — two lines at 1440px, three at the 1280-1300px pinch — and
+          every card had to reserve the worst case even though only one of
+          them ever hit it.
+
+          Deciding the line count instead of discovering it makes the height
+          a constant rather than a measurement: Upcoming states two lines
+          (title + Parts/Suppliers, then picker + Nearest + See all), the
+          other two state one, and `justify-center` centers whatever is
+          there. Nothing wraps at any width, so nothing has to be re-measured
+          when the picker gains a week or a Stat's digits grow — which is the
+          real reason this is worth doing, beyond the 51px.
+
+          68px is two 26px Stat lines (`text-micro` label over `text-xs`
+          value) plus the `gap-1` between them and `py-1.5` top and bottom.
+          The Stat is the tallest thing in either line, so the number follows
+          from the content rather than being reserved for it. Verified live at
+          1280 / 1440 / 1920 and at the sm/md 2-up tier: all three headers
+          report the same height, and no header's content exceeds it. */}
+      <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
         {/* Delivery Slip */}
-        <div className="overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
-            <span className="inline-flex items-center gap-2 text-note font-bold uppercase tracking-wider text-sdc-yellow-text">
-              <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-yellow-bg text-xs font-bold text-sdc-yellow-text">!</span>
-              Delivery Slip
-            </span>
-            <div className="flex items-center gap-4">
-              <Stat label="Parts" value={num(risk.delivery.length)} />
-              <Stat label="Avg Late" value={`+${risk.deliveryAvgLate}d`} tone={risk.deliveryAvgLate > 0 ? "danger" : undefined} />
-              <Stat label="Oldest Req" value={fmtDate(risk.deliveryOldest)} />
-              <SeeAllBtn onClick={() => setSeeAll("delivery")} disabled={risk.delivery.length === 0} />
+        <div className="@container flex flex-col overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
+          <div className={PANEL_HEADER}>
+            <div className={PANEL_HEADER_ROW}>
+              <span className="inline-flex items-center gap-2 text-note font-bold uppercase tracking-wider text-sdc-yellow-text">
+                <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-yellow-bg text-xs font-bold text-sdc-yellow-text">!</span>
+                Delivery Slip
+              </span>
+              <div className={PANEL_HEADER_GROUP}>
+                <Stat label="Parts" value={num(risk.delivery.length)} />
+                <Stat label="Avg Late" value={`+${risk.deliveryAvgLate}d`} tone={risk.deliveryAvgLate > 0 ? "danger" : undefined} />
+                <Stat label="Oldest Req" value={fmtDate(risk.deliveryOldest)} />
+                <SeeAllBtn onClick={() => openSeeAll("delivery")} disabled={risk.delivery.length === 0} />
+              </div>
             </div>
           </div>
-          <div className="max-h-40 overflow-y-auto styled-scrollbar">
+          <div className="h-[284px] overflow-y-auto styled-scrollbar">
             {risk.delivery.length === 0 ? (
-              <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No deliveries due this week.</p>
+              <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No deliveries due or overdue.</p>
             ) : (
               risk.delivery.map((p, i) => <SlipRow key={`${p.id}-${i}`} p={p} now={now} onClick={() => drillRow(p)} />)
             )}
@@ -2510,20 +2823,22 @@ function RiskCards({
         </div>
 
         {/* No Purchase Order */}
-        <div className="overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
-          <div className="flex flex-wrap items-center justify-between gap-2 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
-            <span className="inline-flex items-center gap-2 text-note font-bold uppercase tracking-wider text-sdc-red-text">
-              <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-red-bg text-sm font-bold text-sdc-red-text">×</span>
-              No Purchase Order
-            </span>
-            <div className="flex items-center gap-4">
-              <Stat label="Parts" value={num(risk.noPo.length)} tone={risk.noPo.length ? "danger" : undefined} />
-              <Stat label="This Week" value={num(risk.noPoThisWeek)} />
-              <Stat label="Oldest Req" value={fmtDate(risk.noPoOldest)} />
-              <SeeAllBtn onClick={() => setSeeAll("nopo")} disabled={risk.noPo.length === 0} />
+        <div className="@container flex flex-col overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
+          <div className={PANEL_HEADER}>
+            <div className={PANEL_HEADER_ROW}>
+              <span className="inline-flex items-center gap-2 text-note font-bold uppercase tracking-wider text-sdc-red-text">
+                <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-red-bg text-sm font-bold text-sdc-red-text">×</span>
+                No Purchase Order
+              </span>
+              <div className={PANEL_HEADER_GROUP}>
+                <Stat label="Parts" value={num(risk.noPo.length)} tone={risk.noPo.length ? "danger" : undefined} />
+                <Stat label="This Week" value={num(risk.noPoThisWeek)} />
+                <Stat label="Oldest Req" value={fmtDate(risk.noPoOldest)} />
+                <SeeAllBtn onClick={() => openSeeAll("nopo")} disabled={risk.noPo.length === 0} />
+              </div>
             </div>
           </div>
-          <div className="max-h-40 overflow-y-auto styled-scrollbar">
+          <div className="h-[284px] overflow-y-auto styled-scrollbar">
             {risk.noPo.length === 0 ? (
               <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">All parts have purchase orders.</p>
             ) : (
@@ -2532,54 +2847,84 @@ function RiskCards({
                   key={`${p.id}-${i}`}
                   onClick={() => drillRow(p)}
                   title="Copy part # · locate row"
-                  className="grid cursor-pointer grid-cols-[100px_1fr_auto] items-center gap-3 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+                  className="grid cursor-pointer grid-cols-[minmax(0,100px)_1fr_minmax(0,58px)] items-center gap-3 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
                 >
                   <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
                   <span className="truncate text-note text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
-                  <span className="whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
+                  <span className="truncate font-mono text-label text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
                 </div>
               ))
             )}
           </div>
         </div>
-      </div>
 
-      {/* Upcoming Deliveries */}
-      <div className="overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
-        <div className="flex flex-wrap items-center justify-between gap-3 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
-          <span className="inline-flex items-center gap-2 text-note font-bold uppercase tracking-wider text-sdc-blue-dark">
-            <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-blue-light text-note font-bold text-sdc-blue-dark">→</span>
-            Upcoming Deliveries
-          </span>
-          <div className="flex flex-wrap items-center gap-1">
-            {risk.weekData.map((w) => (
-              <button
-                key={w.week}
-                type="button"
-                onClick={() => setUpcomingWeek(w.week)}
-                className={`rounded px-2 py-0.5 text-note font-semibold motion-interactive ${
-                  w.week === (selectedWeek?.week ?? 1) ? "bg-sdc-blue text-white" : w.count > 0 ? "bg-sdc-blue-light text-sdc-blue-dark hover:bg-sdc-blue-100" : "text-sdc-gray-400 hover:bg-sdc-gray-100"
-                }`}
-              >
-                {w.week}W{w.count > 0 ? <span className="ml-0.5 opacity-80">({w.count})</span> : null}
-              </button>
-            ))}
-            <span className="mx-1 h-4 w-px bg-sdc-border" aria-hidden />
-            <Stat label="Parts" value={num(selectedParts.length)} />
-            <span className="w-3" />
-            <Stat label="Suppliers" value={num(upSuppliers)} />
-            <span className="w-3" />
-            <Stat label="Nearest" value={upNearest ? fmtDate(new Date(upNearest).toISOString()) : "—"} />
-            <span className="w-2" />
-            <SeeAllBtn onClick={() => setSeeAll("upcoming")} disabled={risk.upcoming.length === 0} />
+        {/* Upcoming Deliveries — `sm:col-span-2 xl:col-span-1`: at the sm/md
+            2-up tier this is the odd one out (3 cards in 2 columns), and
+            without a span it drops into column 1 of its own new row, leaving
+            column 2 sitting empty beside it. Spanning both columns there
+            uses that row fully instead; back to spanning one column once
+            xl's 3-up applies, or it would just as awkwardly overshoot into a
+            second row on its own. */}
+        <div className="@container flex flex-col overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm sm:col-span-2 xl:col-span-1">
+          <div className={PANEL_HEADER}>
+            {/* Line 1 — the same shape the other two cards' single line has:
+                title left, then Stats, then See all hard right — the same shape
+                the other two cards' single line already had.
+
+                All three Stats sit here, which is the honest grouping: Parts,
+                Suppliers AND Nearest are every one of them derived from
+                `selectedParts`, so they all change together when the week
+                changes. An earlier pass kept Nearest down with the picker on
+                the theory that it was the week-dependent one; it is not the
+                only week-dependent one, and splitting it off both misdescribed
+                it and made line 2 the widest thing in the header. See all comes
+                up here too so all three cards put it in the same place.
+
+                Leaving line 2 to the picker alone is also what lets the tidy
+                layout start at a 470px card instead of 530 — see PANEL_HEADER. */}
+            <div className={PANEL_HEADER_ROW}>
+              <span className="inline-flex items-center gap-2 text-note font-bold uppercase tracking-wider text-sdc-blue-dark">
+                <span className="inline-flex h-[18px] w-[18px] items-center justify-center rounded bg-sdc-blue-light text-note font-bold text-sdc-blue-dark">→</span>
+                Upcoming Deliveries
+              </span>
+              <div className={PANEL_HEADER_GROUP}>
+                <Stat label="Parts" value={num(selectedParts.length)} />
+                <Stat label="Suppliers" value={num(upSuppliers)} />
+                <Stat label="Nearest" value={upNearest ? fmtDate(new Date(upNearest).toISOString()) : "—"} />
+                <SeeAllBtn onClick={() => openSeeAll("upcoming")} disabled={risk.upcoming.length === 0} />
+              </div>
+            </div>
+            {/* Line 2 — the week picker, and nothing else.
+                `min-w-0 flex-wrap`: the buttons are the one thing in this
+                header that can afford to reflow, so they are the one thing
+                allowed to. Both halves are load-bearing and each was wrong on
+                its own in an earlier pass — `min-w-0` alone let the strip
+                compress below its content and the card's `overflow-hidden`
+                clipped weeks 6-8 off with no sign they existed; `flex-wrap`
+                alone did nothing, because a strip that never has to shrink
+                never has to wrap. */}
+            <div className="flex min-w-0 flex-wrap items-center gap-0.5">
+              {risk.weekData.map((w) => (
+                <button
+                  key={w.week}
+                  type="button"
+                  onClick={() => setUpcomingWeek(w.week)}
+                  className={`rounded px-1 py-0.5 text-note font-semibold motion-interactive ${
+                    w.week === (selectedWeek?.week ?? 1) ? "bg-sdc-blue text-white" : w.count > 0 ? "bg-sdc-blue-light text-sdc-blue-dark hover:bg-sdc-blue-100" : "text-sdc-gray-400 hover:bg-sdc-gray-100"
+                  }`}
+                >
+                  {w.week}W{w.count > 0 ? <span className="ml-0.5 opacity-80">({w.count})</span> : null}
+                </button>
+              ))}
+            </div>
           </div>
-        </div>
-        <div className="max-h-44 overflow-y-auto styled-scrollbar">
-          {selectedParts.length === 0 ? (
-            <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No parts with an expected date in week {selectedWeek?.week ?? 1}.</p>
-          ) : (
-            selectedParts.map((p, i) => <UpcomingRow key={`${p.id}-${i}`} p={p} onClick={() => drillRow(p)} />)
-          )}
+          <div className="h-[284px] overflow-y-auto styled-scrollbar">
+            {selectedParts.length === 0 ? (
+              <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No parts with an expected date in week {selectedWeek?.week ?? 1}.</p>
+            ) : (
+              selectedParts.map((p, i) => <UpcomingRow key={`${p.id}-${i}`} p={p} onClick={() => drillRow(p)} />)
+            )}
+          </div>
         </div>
       </div>
 
@@ -2588,7 +2933,7 @@ function RiskCards({
           title={seeAll === "delivery" ? "Delivery Slip" : seeAll === "nopo" ? "Parts without Purchase Order" : "Upcoming Deliveries"}
           subtitle={
             seeAll === "delivery"
-              ? `${risk.delivery.length} parts due this week`
+              ? `${risk.delivery.length} parts due or overdue`
               : seeAll === "nopo"
                 ? `${risk.noPo.length} parts need a PO`
                 : `${risk.upcoming.length} parts due in the next 8 weeks`
@@ -2598,16 +2943,16 @@ function RiskCards({
           <table className="w-full border-collapse text-left">
             <thead className="sticky top-0 z-[1]">
               <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
-                {seeAll === "upcoming" && <th className="px-3 py-2 font-bold">PO #</th>}
-                <th className="px-3 py-2 font-bold">Part #</th>
-                <th className="px-2 py-2 font-bold">Desc</th>
-                {seeAll !== "nopo" && <th className="px-2 py-2 font-bold">Supplier</th>}
-                <th className="px-2 py-2 font-bold">Req</th>
-                {seeAll !== "nopo" && <th className="px-2 py-2 font-bold">Exp</th>}
+                {seeAll === "upcoming" && <SortableTh label="PO #" sortKey="po" type="id" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-3 py-2" />}
+                <SortableTh label="Part #" sortKey="part" type="id" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-3 py-2" />
+                <SortableTh label="Desc" sortKey="desc" type="text" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-2 py-2" />
+                {seeAll !== "nopo" && <SortableTh label="Supplier" sortKey="supplier" type="text" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-2 py-2" />}
+                <SortableTh label="Req" sortKey="req" type="date" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-2 py-2" />
+                {seeAll !== "nopo" && <SortableTh label="Exp" sortKey="exp" type="date" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-2 py-2" />}
               </tr>
             </thead>
             <tbody>
-              {(seeAll === "delivery" ? risk.delivery : seeAll === "nopo" ? risk.noPo : risk.upcoming).map((p, i) => (
+              {sortRows(seeAll === "delivery" ? risk.delivery : seeAll === "nopo" ? risk.noPo : risk.upcoming, seeAllSort.sort, RISK_TABLE_COLUMNS).map((p, i) => (
                 <tr
                   key={`${p.id}-${i}`}
                   onClick={() => { onPartClick(p); setSeeAll(null); }}
@@ -2647,33 +2992,53 @@ function SlipRow({ p, now, onClick }: { p: FlatPart; now: number; onClick: () =>
   const expT = p.expectedDate ? new Date(p.expectedDate).getTime() : NaN;
   const expLate = Number.isFinite(expT) && expT < startOfTodayMs(now);
   return (
+    // Supplier dropped from this compact row (still in "See all"), and the
+    // description column carries an explicit `minmax(50px,1fr)` floor — not
+    // just `1fr` — both by measurement, not guesswork. This card is now a
+    // third of the Procurement risk-card row (~300px, down from ~50% before
+    // the 3-up layout), and a bare `1fr` next to several `minmax(0,Npx)`
+    // siblings resolved to a measured 0px at that width: with no minimum of
+    // its own, the description lost every round of space-distribution to the
+    // fixed columns and the part description rendered as nothing at all,
+    // which is worse than truncating it. `minmax(0,Npx)` on the remaining
+    // fixed columns still lets THEM compress instead of overflowing (a wide
+    // screen renders every column at its old, un-squeezed size), but now
+    // description is guaranteed at least 50px — a few legible characters —
+    // before anything else gets to grow further.
     <div
       onClick={onClick}
       title="Copy part # · locate row"
-      className="grid cursor-pointer grid-cols-[88px_1fr_100px_58px_58px] items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+      className="grid cursor-pointer grid-cols-[minmax(0,88px)_minmax(50px,1fr)_minmax(0,58px)_minmax(0,58px)] items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
     >
       <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
       <span className="truncate text-note text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
-      <span className="truncate text-label text-sdc-gray-600" title={p.supplier ?? ""}>{p.supplier || "—"}</span>
-      <span className="whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
-      <span className={`whitespace-nowrap font-mono text-label ${expLate ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(p.expectedDate)}</span>
+      <span className="truncate font-mono text-label text-sdc-gray-600" title={fmtDate(p.requiredDate)}>{fmtDate(p.requiredDate)}</span>
+      <span className={`truncate font-mono text-label ${expLate ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`} title={fmtDate(p.expectedDate)}>{fmtDate(p.expectedDate)}</span>
     </div>
   );
 }
 
 function UpcomingRow({ p, onClick }: { p: FlatPart; onClick: () => void }) {
   return (
+    // PO # and Supplier dropped from this compact row (both still in "See
+    // all", which already shows PO # only for this list). Same reasoning as
+    // SlipRow just above: this card is now a third of the Procurement
+    // risk-card row (~300px), and measuring live rather than guessing —
+    // `minmax(0,Npx)` on every fixed column stops a squeezed column from
+    // overflowing, but a bare `1fr` description next to that many fixed
+    // siblings still measured out to 0px, losing the one field that says
+    // WHAT part this row is about. `minmax(50px,1fr)` guarantees it a floor
+    // before anything else grows further; PN and both dates keep their own
+    // `minmax(0,Npx)` ceilings so a wide screen renders unchanged.
     <div
       onClick={onClick}
       title="Copy part # · locate row"
-      className="grid cursor-pointer grid-cols-[58px_88px_1fr_100px_58px_58px] items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+      className="grid cursor-pointer grid-cols-[minmax(0,88px)_minmax(50px,1fr)_minmax(0,58px)_minmax(0,58px)] items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
     >
-      <span className="truncate font-mono text-label text-sdc-gray-600" title={p.poNumber ?? ""}>{p.poNumber || "—"}</span>
       <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
       <span className="truncate text-note text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
-      <span className="truncate text-label text-sdc-gray-600" title={p.supplier ?? ""}>{p.supplier || "—"}</span>
-      <span className="whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.expectedDate)}</span>
-      <span className="whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
+      <span className="truncate font-mono text-label text-sdc-gray-600" title={fmtDate(p.expectedDate)}>{fmtDate(p.expectedDate)}</span>
+      <span className="truncate font-mono text-label text-sdc-gray-600" title={fmtDate(p.requiredDate)}>{fmtDate(p.requiredDate)}</span>
     </div>
   );
 }

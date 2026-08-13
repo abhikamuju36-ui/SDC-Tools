@@ -20,13 +20,22 @@ export default async function JobCostExplorerPage({ searchParams }: { searchPara
   const asOf = asOfParam && asOfParam !== "current" ? asOfParam : null;
 
   const [
-    { rows, inventoryAsOf, etcRefreshedThru, liveEtcByJobId, partsCostAvailable, asOf: appliedAsOf, inventoryMissing, etcMissing, asOfOptions },
+    { rows, inventoryAsOf, etcRefreshedThru, partsCostAvailable, asOf: appliedAsOf, inventoryMissing, etcMissing, asOfOptions },
     { defaults, overrides },
     allocations,
   ] = await Promise.all([loadJobCostRows(asOf), loadCostRates(), loadHourAllocations()]);
 
   return (
-    <div>
+    // `w-full p-8` — the same outer-wrapper padding etc/page.tsx and the other
+    // Reports tabs already carry (2026-08-12: this page never had it, which is
+    // why its table sat flush against the sidebar). AppShell's <main> is a
+    // flex-1 sibling of the sidebar with no padding of its own by design (see
+    // AppShell.tsx) — every page is expected to supply its own breathing room,
+    // and this one simply hadn't. Sticky/frozen columns are unaffected: their
+    // `left-*` offsets resolve against the table's own scroll container
+    // (GRID_SCROLLER, inside JobCostExplorer.tsx), not the viewport or this
+    // div, so padding out here only moves that whole box rightward as a unit.
+    <div className="w-full p-8">
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3">
         <PageTitle>Profitability</PageTitle>
         <p className="text-note text-sdc-gray-400">
@@ -50,7 +59,6 @@ export default async function JobCostExplorerPage({ searchParams }: { searchPara
           defaultRates={defaults}
           yearRateOverrides={overrides}
           hourAllocations={Object.fromEntries(allocations)}
-          liveEtcByJobId={Object.fromEntries(liveEtcByJobId)}
           inventoryAsOf={inventoryAsOf}
           etcRefreshedThru={etcRefreshedThru}
           partsCostAvailable={partsCostAvailable}

@@ -12,7 +12,6 @@ import {
   type JobHourAllocation,
   type YearRateOverrides,
 } from "@/lib/job-cost";
-import type { LiveEtcReference } from "@/lib/job-cost-source";
 import { saveDefaultRate, saveYearRateOverride, clearAllYearRateOverrides, saveJobHourAllocation, clearJobHourAllocation } from "@/lib/job-cost-actions";
 import { exportJobCostRows } from "@/lib/export/job-cost-export";
 import {
@@ -28,7 +27,7 @@ import {
 import { usd } from "@/components/ui/format";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
-import { MenuStatus, MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
+import { MenuStatus, MenuGroup, MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
 import { SortableTh } from "@/components/ui/SortableHeader";
 import type { SortState } from "@/lib/table-sort";
 import { JobCostRateMatrixModal } from "@/components/JobCostRateMatrixModal";
@@ -185,7 +184,6 @@ export function JobCostExplorer({
   defaultRates,
   yearRateOverrides,
   hourAllocations,
-  liveEtcByJobId,
   inventoryAsOf,
   etcRefreshedThru,
   partsCostAvailable,
@@ -198,7 +196,6 @@ export function JobCostExplorer({
   defaultRates: CostRates;
   yearRateOverrides: YearRateOverrides;
   hourAllocations: Record<string, JobHourAllocation>;
-  liveEtcByJobId: Record<string, LiveEtcReference>;
   inventoryAsOf: string | null;
   /** The submitted ETC month actually used ("YYYY-MM"), or null if none qualified. */
   etcRefreshedThru: string | null;
@@ -259,16 +256,17 @@ export function JobCostExplorer({
   }
 
   const [search, setSearch] = useState("");
-  // Empty means "All statuses" — not "nothing matches". A Set, not an array, so
-  // toggling one status is an O(1) add/delete rather than a filter-and-rebuild
-  // on every click.
+  // Empty means "All statuses"/"All customers"/"All years" — not "nothing
+  // matches". Sets, not arrays or a single string, so all three filters are
+  // the same shape (2026-08-12, by request — "the same consistent multi-select
+  // UX") and toggling one value is an O(1) add/delete rather than a
+  // filter-and-rebuild on every click, on every one of them.
   const [statusFilter, setStatusFilter] = useState<Set<string>>(new Set());
-  const [yearFilter, setYearFilter] = useState("all");
-  const [customerFilter, setCustomerFilter] = useState("");
+  const [yearFilter, setYearFilter] = useState<Set<string>>(new Set());
+  const [customerFilter, setCustomerFilter] = useState<Set<string>>(new Set());
   const [hideUtility, setHideUtility] = useState(true);
   const [sortKey, setSortKey] = useState<SortKey>("jobId");
   const [sortDir, setSortDir] = useState<1 | -1>(1);
-  const [showLiveEtc, setShowLiveEtc] = useState(false);
 
   const [hiddenCols, setHiddenCols] = useState<Set<ColKey>>(new Set());
   useEffect(() => {
@@ -313,10 +311,10 @@ export function JobCostExplorer({
   const [rateMatrixOpen, setRateMatrixOpen] = useState(false);
   const [allocationJobId, setAllocationJobId] = useState<string | null>(null);
 
-  // Columns dropdown — a <details> (same mechanism as the Status/Group-By
-  // menus above), not the useState toggle this replaced. A native <details>
-  // gives "click the button again to close" for free; this effect adds the
-  // other two closes the spec calls for that <details> doesn't do on its own.
+  // Columns dropdown — a <details> (same mechanism the Filters menu below
+  // uses), not the useState toggle this replaced. A native <details> gives
+  // "click the button again to close" for free; this effect adds the other
+  // two closes the spec calls for that <details> doesn't do on its own.
   const colPickerRef = useRef<HTMLDetailsElement>(null);
   useEffect(() => {
     function onClick(e: MouseEvent) {
@@ -324,6 +322,55 @@ export function JobCostExplorer({
     }
     function onKey(e: KeyboardEvent) {
       if (e.key === "Escape" && colPickerRef.current?.open) colPickerRef.current.open = false;
+    }
+    document.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  // Filters dropdown — Status, Customer, Completion Year, consolidated into
+  // one button (2026-08-12, by request — the toolbar had six separate
+  // filter-shaped controls before As-of/Hide-utility even start). Same
+  // click-outside/Escape mechanism as Columns above, and for the same reason
+  // it matters MORE here than there: this panel holds three independent
+  // multi-selects, and closing on the first checkbox ticked (any one of
+  // Status/Customer/Year) would make "set all 3 without leaving the
+  // dropdown" — the one thing this redesign exists to do — impossible. Only
+  // a click truly outside the panel closes it; every click inside, including
+  // every checkbox in all three groups, does not.
+  const filtersRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (filtersRef.current?.open && !filtersRef.current.contains(e.target as Node)) filtersRef.current.open = false;
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && filtersRef.current?.open) filtersRef.current.open = false;
+    }
+    document.addEventListener("click", onClick);
+    document.addEventListener("keydown", onKey);
+    return () => {
+      document.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, []);
+
+  // Export dropdown — CSV/Excel, one button (2026-08-12, by request,
+  // replacing two separate buttons). Unlike Columns/Filters above, picking an
+  // option here is a complete action, not one tick among several — so each
+  // option's own onClick closes the menu itself (see the JSX below) instead
+  // of leaving it open the way a multi-select would. This effect still
+  // covers the case that action-close doesn't: a click that lands OUTSIDE
+  // the menu without picking anything.
+  const exportRef = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    function onClick(e: MouseEvent) {
+      if (exportRef.current?.open && !exportRef.current.contains(e.target as Node)) exportRef.current.open = false;
+    }
+    function onKey(e: KeyboardEvent) {
+      if (e.key === "Escape" && exportRef.current?.open) exportRef.current.open = false;
     }
     document.addEventListener("click", onClick);
     document.addEventListener("keydown", onKey);
@@ -363,13 +410,29 @@ export function JobCostExplorer({
     [computed],
   );
 
+  // "Narrowing" means the same thing for each of the three it always did
+  // (Status: some but not all statuses picked; Customer/Year: anything but
+  // the "All" option) — this just adds the three booleans together into the
+  // one badge count the consolidated Filters button needs, rather than each
+  // filter reporting its own count independently the way it did as three
+  // separate buttons.
+  const statusNarrowing = statusFilter.size > 0 && statusFilter.size < allStatuses.length;
+  const customerNarrowing = customerFilter.size > 0 && customerFilter.size < customers.length;
+  const yearNarrowing = yearFilter.size > 0 && yearFilter.size < years.length;
+  const activeFilterCount = (statusNarrowing ? 1 : 0) + (customerNarrowing ? 1 : 0) + (yearNarrowing ? 1 : 0);
+  function clearAllFilters() {
+    setStatusFilter(new Set());
+    setCustomerFilter(new Set());
+    setYearFilter(new Set());
+  }
+
   const visibleRows = useMemo(() => {
     const terms = search.toLowerCase().split(/[,\s]+/).map((s) => s.trim()).filter(Boolean);
     let out = computed
       .filter((r) => !(hideUtility && isUtilityJob(r.jobId)))
       .filter((r) => statusFilter.size === 0 || statusFilter.has(r.status))
-      .filter((r) => yearFilter === "all" || (r.completeDate && r.completeDate.slice(0, 4) === yearFilter))
-      .filter((r) => !customerFilter || r.customerName === customerFilter)
+      .filter((r) => yearFilter.size === 0 || (r.completeDate != null && yearFilter.has(r.completeDate.slice(0, 4))))
+      .filter((r) => customerFilter.size === 0 || (r.customerName != null && customerFilter.has(r.customerName)))
       .filter((r) => !terms.length || terms.some((t) => `${r.jobId} ${r.jobName} ${r.customerName ?? ""} ${r.status}`.toLowerCase().includes(t)));
     out = [...out].sort((a, b) => {
       const av = a[sortKey as keyof JobCostComputed];
@@ -498,6 +561,53 @@ export function JobCostExplorer({
     return out;
   }, [headerSlots]);
 
+  // ── Column grid lines (2026-08-12, by request — "easier to distinguish
+  // columns and column groups") ────────────────────────────────────────────
+  //
+  // Two tokens only, both already in this app's palette rather than a third
+  // shade invented for this: sdc-border (#d9d9d9), already used for the
+  // frozen-pane edge and the header's own border-b-2, becomes the STRONGER
+  // group-boundary line; sdc-border-soft (#ececec), already this file's
+  // "quiet row separator" on every body <td>, becomes the ordinary
+  // between-column line. Reusing both is what keeps this "clean and
+  // minimal" rather than noisy — nothing on the table gets a new color.
+  const COL_BORDER_SOFT = "border-r border-sdc-border-soft";
+  const COL_BORDER_STRONG = "border-r border-sdc-border";
+
+  // Which column is the LAST one in its group, in the order the table
+  // actually renders — derived from headerSlots (which already resolves
+  // hiddenCols) rather than a hand-listed set of keys, so hiding a column via
+  // the Columns picker can never leave a boundary line floating over a gap
+  // where that column used to be, or silently drop the boundary because the
+  // column that used to carry it disappeared. jobId/jobName never appear
+  // here: they're both "identity", same as customerName/status, so the ONLY
+  // real group boundary inside that band sits at whichever of those four is
+  // rendered last (always "status", since it's never hidden) — Job Name's
+  // own border-r is a SEPARATE, pre-existing concern (the frozen-pane edge)
+  // and stays exactly as it already was, untouched by this.
+  const groupBoundaryKeys = useMemo(() => {
+    const out = new Set<string>();
+    for (let idx = 0; idx < headerSlots.length - 1; idx++) {
+      if (headerSlots[idx].group !== headerSlots[idx + 1].group) out.add(headerSlots[idx].key);
+    }
+    return out;
+  }, [headerSlots]);
+  // The table's own last visible column gets no border-r of its own — the
+  // GRID_SCROLLER wrapper already draws that outer right edge, so one more
+  // line right beside it would double it rather than add information.
+  const lastColKey = headerSlots[headerSlots.length - 1]?.key;
+
+  // One column's own vertical separator, called with the SAME key at every
+  // tier this table has — the column-header row, every body row, and the
+  // totals row (the band row above them draws its own boundary via colSpan
+  // instead, so it never calls this) — so the line can never drift out of
+  // alignment between tiers the way three independently hand-written copies
+  // could.
+  function vBorder(key: string): string {
+    if (key === lastColKey) return "";
+    return groupBoundaryKeys.has(key) ? COL_BORDER_STRONG : COL_BORDER_SOFT;
+  }
+
   const visibleColCount = COLS.filter((c) => !hiddenCols.has(c.key)).length;
   const hiddenCount = COLS.length - visibleColCount;
 
@@ -561,76 +671,110 @@ export function JobCostExplorer({
           </select>
         </div>
 
-        {/* Status — one multi-select dropdown, replacing four separate
-            buttons (2026-08-11). "Narrowing" (the tint + count badge) means
-            SOME but not ALL statuses are picked — a literal empty Set and a
-            Set containing every real status both filter identically (every
-            row passes) and both read as the neutral, un-narrowed state. */}
+        {/* Filters — Status, Customer, Completion Year, one button
+            (2026-08-11, replacing three separate controls; upgraded to a
+            matching multi-select on all three 2026-08-12, by request — "the
+            same consistent multi-select UX"). Each keeps the SAME filter
+            chain shape (visibleRows below): an empty Set means "no
+            narrowing", exactly like Status already worked, which is why
+            Customer and Completion Year could become Sets without changing
+            what "combines with Status" means — every one of these three
+            filters was already ANDed together; only what was inside each
+            slot changed, from one string to a Set of them. */}
         <div className="flex items-center gap-1 border-l border-sdc-border-soft pl-1.5">
-          <details className="group relative inline-block">
-            <summary
-              className={`${TOOLBAR_BTN_COMPACT} ${
-                statusFilter.size > 0 && statusFilter.size < allStatuses.length ? TOOLBAR_BTN_ACTIVE : TOOLBAR_BTN_NEUTRAL
-              }`}
-            >
-              Status
-              {statusFilter.size > 0 && statusFilter.size < allStatuses.length ? ` (${statusFilter.size})` : ""}
+          <details ref={filtersRef} className="group relative inline-block">
+            <summary className={`${TOOLBAR_BTN_COMPACT} ${activeFilterCount > 0 ? TOOLBAR_BTN_ACTIVE : TOOLBAR_BTN_NEUTRAL}`}>
+              {activeFilterCount > 0 ? `Filters (${activeFilterCount})` : "Filters"}
               <MenuStatus pending={false} />
             </summary>
-            <div className="motion-menu-panel absolute left-0 top-full z-30 mt-1 w-40 rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
-              <MenuBulkActions onAll={() => setStatusFilter(new Set(allStatuses))} onNone={() => setStatusFilter(new Set())} />
-              <div className="max-h-56 overflow-y-auto styled-scrollbar">
-                {allStatuses.map((s) => (
-                  <MenuCheckbox
-                    key={s}
-                    label={s}
-                    checked={statusFilter.size === 0 || statusFilter.has(s)}
-                    onChange={() =>
-                      setStatusFilter((prev) => {
-                        // Unchecking one box while every status is implicitly
-                        // selected (the empty-Set "All" state) must read as
-                        // "every status EXCEPT this one" — seed the full set
-                        // first, so a single uncheck doesn't look like it
-                        // selected two unrelated statuses out of nowhere.
-                        const next = prev.size === 0 ? new Set(allStatuses) : new Set(prev);
-                        if (next.has(s)) next.delete(s);
-                        else next.add(s);
-                        return next;
-                      })
-                    }
-                  />
-                ))}
+            <div className="motion-menu-panel absolute left-0 top-full z-30 mt-1 w-64 rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
+              <div className="mb-1.5 flex items-center justify-between gap-2 border-b border-sdc-border-soft pb-1.5">
+                <p className="text-xs font-semibold text-sdc-navy">Filters</p>
+                <button
+                  type="button"
+                  className={BUTTON_MENU_LINK}
+                  onClick={clearAllFilters}
+                  disabled={activeFilterCount === 0}
+                >
+                  Clear all
+                </button>
               </div>
+              <MenuGroup label={statusNarrowing ? `Status (${statusFilter.size})` : "Status"}>
+                <MenuBulkActions onAll={() => setStatusFilter(new Set(allStatuses))} onNone={() => setStatusFilter(new Set())} />
+                <div className="max-h-40 overflow-y-auto styled-scrollbar">
+                  {allStatuses.map((s) => (
+                    <MenuCheckbox
+                      key={s}
+                      label={s}
+                      checked={statusFilter.size === 0 || statusFilter.has(s)}
+                      onChange={() =>
+                        setStatusFilter((prev) => {
+                          // Unchecking one box while every status is implicitly
+                          // selected (the empty-Set "All" state) must read as
+                          // "every status EXCEPT this one" — seed the full set
+                          // first, so a single uncheck doesn't look like it
+                          // selected two unrelated statuses out of nowhere.
+                          const next = prev.size === 0 ? new Set(allStatuses) : new Set(prev);
+                          if (next.has(s)) next.delete(s);
+                          else next.add(s);
+                          return next;
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+              </MenuGroup>
+              <MenuGroup label={customerNarrowing ? `Customer (${customerFilter.size})` : "Customer"}>
+                <MenuBulkActions onAll={() => setCustomerFilter(new Set(customers))} onNone={() => setCustomerFilter(new Set())} />
+                <div className="max-h-40 overflow-y-auto styled-scrollbar">
+                  {customers.map((c) => (
+                    <MenuCheckbox
+                      key={c}
+                      label={c}
+                      checked={customerFilter.size === 0 || customerFilter.has(c)}
+                      onChange={() =>
+                        setCustomerFilter((prev) => {
+                          // Same "seed the full set on first uncheck" rule as
+                          // Status — an empty Set is implicitly every customer,
+                          // so unchecking one from THAT state has to become
+                          // "every customer except this one", not a set of one.
+                          const next = prev.size === 0 ? new Set(customers) : new Set(prev);
+                          if (next.has(c)) next.delete(c);
+                          else next.add(c);
+                          return next;
+                        })
+                      }
+                    />
+                  ))}
+                </div>
+              </MenuGroup>
+              {years.length > 0 && (
+                <MenuGroup label={yearNarrowing ? `Completion Year (${yearFilter.size})` : "Completion Year"}>
+                  <MenuBulkActions onAll={() => setYearFilter(new Set(years))} onNone={() => setYearFilter(new Set())} />
+                  <div className="max-h-40 overflow-y-auto styled-scrollbar">
+                    {years.map((y) => (
+                      <MenuCheckbox
+                        key={y}
+                        label={y}
+                        checked={yearFilter.size === 0 || yearFilter.has(y)}
+                        onChange={() =>
+                          setYearFilter((prev) => {
+                            const next = prev.size === 0 ? new Set(years) : new Set(prev);
+                            if (next.has(y)) next.delete(y);
+                            else next.add(y);
+                            return next;
+                          })
+                        }
+                      />
+                    ))}
+                  </div>
+                </MenuGroup>
+              )}
             </div>
           </details>
         </div>
 
-        <div className="flex items-center gap-1 border-l border-sdc-border-soft pl-1.5">
-          <select
-            className={`${COMPACT_SELECT} ${customerFilter ? "border-sdc-blue bg-sdc-blue-light/30" : ""}`}
-            value={customerFilter}
-            onChange={(e) => setCustomerFilter(e.target.value)}
-          >
-            <option value="">All customers</option>
-            {customers.map((c) => (
-              <option key={c} value={c}>{c}</option>
-            ))}
-          </select>
-          {years.length > 0 && (
-            <select
-              className={`${COMPACT_SELECT} ${yearFilter !== "all" ? "border-sdc-blue bg-sdc-blue-light/30" : ""}`}
-              value={yearFilter}
-              onChange={(e) => setYearFilter(e.target.value)}
-            >
-              <option value="all">All completion years</option>
-              {years.map((y) => (
-                <option key={y} value={y}>{y}</option>
-              ))}
-            </select>
-          )}
-        </div>
-
-        <div className="flex items-center gap-1 border-l border-sdc-border-soft pl-1.5">
+        <div className="flex items-center border-l border-sdc-border-soft pl-1.5">
           <button
             type="button"
             aria-pressed={hideUtility}
@@ -638,15 +782,6 @@ export function JobCostExplorer({
             onClick={() => setHideUtility((v) => !v)}
           >
             Hide utility jobs
-          </button>
-          <button
-            type="button"
-            aria-pressed={showLiveEtc}
-            title="Show this app's live ETC total alongside the Standard Fees snapshot"
-            className={`${TOOLBAR_BTN_COMPACT} ${showLiveEtc ? TOOLBAR_BTN_ACTIVE : TOOLBAR_BTN_NEUTRAL}`}
-            onClick={() => setShowLiveEtc((v) => !v)}
-          >
-            Show live ETC
           </button>
         </div>
 
@@ -712,12 +847,43 @@ export function JobCostExplorer({
               </div>
             </div>
           </details>
-          <button className={BUTTON_COMPACT} disabled={exporting !== null} onClick={() => handleExport("csv")}>
-            <span className={busySlot("min-w-[4.75rem]")}>{exporting === "csv" ? "Preparing…" : "Export CSV"}</span>
-          </button>
-          <button className={BUTTON_COMPACT} disabled={exporting !== null} onClick={() => handleExport("xlsx")}>
-            <span className={busySlot("min-w-[4.75rem]")}>{exporting === "xlsx" ? "Preparing…" : "Export Excel"}</span>
-          </button>
+          {/* Export — one dropdown, replacing separate CSV/Excel buttons
+              (2026-08-12, by request). Same shell as Columns; the CSV/Excel
+              choice moves from "which of two buttons" to "which of two menu
+              rows", and handleExport itself is untouched — each row calls the
+              exact same function with the exact same format argument the old
+              buttons did, so the export behavior (file contents, filename,
+              toast, error handling) carries over unchanged. */}
+          <details ref={exportRef} className="group relative inline-block">
+            <summary className={`list-none cursor-pointer ${BUTTON_COMPACT}`}>
+              <span className={busySlot("min-w-[4.5rem]")}>{exporting ? "Preparing…" : "Export"}</span>
+              <MenuStatus pending={false} />
+            </summary>
+            <div className="motion-menu-panel absolute right-0 top-full z-30 mt-1 w-36 rounded-lg border border-sdc-border bg-white p-1 shadow-lg">
+              <button
+                type="button"
+                disabled={exporting !== null}
+                className="w-full rounded px-1.5 py-1.5 text-left text-xs text-sdc-navy hover:bg-sdc-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => {
+                  if (exportRef.current) exportRef.current.open = false;
+                  handleExport("csv");
+                }}
+              >
+                Export CSV
+              </button>
+              <button
+                type="button"
+                disabled={exporting !== null}
+                className="w-full rounded px-1.5 py-1.5 text-left text-xs text-sdc-navy hover:bg-sdc-gray-100 disabled:cursor-not-allowed disabled:opacity-50"
+                onClick={() => {
+                  if (exportRef.current) exportRef.current.open = false;
+                  handleExport("xlsx");
+                }}
+              >
+                Export Excel
+              </button>
+            </div>
+          </details>
           <button className={BUTTON_COMPACT} onClick={() => setRateMatrixOpen(true)}>Rate Matrix</button>
         </div>
       </div>
@@ -766,15 +932,20 @@ export function JobCostExplorer({
            behavior as the FLOOR on a normal screen, while capping at 40 rows'
            worth on any screen tall enough to otherwise show more. */
         <div className={`${GRID_SCROLLER} rounded-xl max-h-[min(87.5rem,calc(var(--app-vh)_-_11rem))]`}>
-          {/* No TABLE_GRID here, by design: that token draws a full vertical+
-              horizontal gridline on every cell, which is the right call for
-              the Projects/Monthly ETC grids (people EDIT cells there, and a
-              spreadsheet look sets that expectation) but is exactly the
-              "visual noise" reported against this READ-ONLY, report-style
-              table. Horizontal hairlines only (border-sdc-border-soft, the
-              app's already-established "quiet row separator" token — see
-              hours/page.tsx, DataQualityDrill), no vertical lines at all
-              except the one real boundary: the frozen-pane edge. */}
+          {/* Still not TABLE_GRID (2026-08-12): that token draws a uniform
+              #808080 line around every cell, which is the right call for the
+              Projects/Monthly ETC grids (people EDIT cells there, and a
+              spreadsheet look sets that expectation) but would be exactly
+              the "visual noise" this READ-ONLY, report-style table was
+              built to avoid. Grid lines here are two-tier instead — ordinary
+              columns get sdc-border-soft (this app's own "quiet row
+              separator" — see hours/page.tsx, DataQualityDrill), and the six
+              real sections (Job/Hours/Labor $/ETC/Parts/Sales-Margin) get
+              the slightly darker sdc-border at their own boundary only. See
+              vBorder/groupBoundaryKeys above: one lookup, called with the
+              same key at the header, body, and totals row, so the boundary
+              set can't drift between tiers the way three hand-written
+              copies could. */}
           <table className="w-full border-separate border-spacing-0 text-sm [&_td]:tabular-nums [&_td]:font-semibold">
             <thead className="sticky top-0 z-20 bg-white">
               <tr>
@@ -787,13 +958,26 @@ export function JobCostExplorer({
                   // between them, so leaving the second one's label blank
                   // reads as one continuous strip instead of a repeated word.
                   const repeatsPrev = i > 0 && bandCells[i - 1].group === b.group;
+                  // Every band gets the strong group-boundary line at its OWN
+                  // right edge, except the last one — colSpan already makes a
+                  // band's right edge line up exactly with the last column of
+                  // that group below it, so this is the one place the whole
+                  // Job/Hours/Labor $/ETC/Parts/Sales-Margin boundary set can
+                  // be drawn without repeating per-column logic. The frozen
+                  // identity band's own right edge (Job Id/Job Name vs.
+                  // everything scrolling) already carried this border before
+                  // this change; it's unconditional now so the SECOND
+                  // identity band (Customer/Status) — the actual Job→Hours
+                  // boundary — gets it too, instead of being the one band
+                  // with no line under it.
+                  const isLastBand = i === bandCells.length - 1;
                   return (
                     <th
                       key={i}
                       colSpan={b.span}
                       className={`px-2 py-0.5 text-center text-label font-semibold uppercase tracking-wider ${meta.band} ${meta.text} ${
-                        b.frozen ? "frozen-col frozen-col-last sticky left-0 z-10 border-r border-sdc-border" : ""
-                      }`}
+                        b.frozen ? "frozen-col frozen-col-last sticky left-0 z-10" : ""
+                      } ${isLastBand ? "" : "border-r border-sdc-border"}`}
                     >
                       {repeatsPrev ? "" : meta.label}
                     </th>
@@ -808,7 +992,7 @@ export function JobCostExplorer({
                   align="left"
                   sort={sortState}
                   onSort={toggleSort}
-                  className={`frozen-col sticky left-0 z-10 bg-sdc-gray-100 px-2 py-1 align-bottom ${JOB_ID_COL_W}`}
+                  className={`frozen-col sticky left-0 z-10 bg-sdc-gray-100 px-2 py-1 align-bottom ${JOB_ID_COL_W} ${COL_BORDER_SOFT}`}
                 />
                 <SortableTh
                   label="Job Name"
@@ -827,7 +1011,7 @@ export function JobCostExplorer({
                     align="left"
                     sort={sortState}
                     onSort={toggleSort}
-                    className="min-w-[9rem] px-2 py-1 align-bottom"
+                    className={`min-w-[9rem] px-2 py-1 align-bottom ${vBorder("customerName")}`}
                   />
                 )}
                 <SortableTh
@@ -837,7 +1021,7 @@ export function JobCostExplorer({
                   align="left"
                   sort={sortState}
                   onSort={toggleSort}
-                  className="min-w-[6.5rem] px-2 py-1 align-bottom"
+                  className={`min-w-[6.5rem] px-2 py-1 align-bottom ${vBorder("status")}`}
                 />
                 {COLS.filter((c) => c.key !== "customerName" && !hiddenCols.has(c.key)).map((c) => (
                   <SortableTh
@@ -848,7 +1032,7 @@ export function JobCostExplorer({
                     align="right"
                     sort={sortState}
                     onSort={toggleSort}
-                    className={`px-2 py-1 align-bottom leading-tight ${c.widthClass}`}
+                    className={`px-2 py-1 align-bottom leading-tight ${c.widthClass} ${vBorder(c.key)}`}
                   />
                 ))}
               </tr>
@@ -856,7 +1040,6 @@ export function JobCostExplorer({
             <tbody>
               {visibleRows.map((r, i) => {
                 const alloc = allocations[r.jobId];
-                const live = liveEtcByJobId[r.jobId];
                 // Translucent for normal cells — it composites with the row's
                 // OWN hover tint underneath (see TABLE_ROW_HOVER on the <tr>);
                 // opaque for the two frozen cells, which must stay solid on
@@ -866,7 +1049,7 @@ export function JobCostExplorer({
                 const zebraFrozen = i % 2 === 1 ? "bg-sdc-gray-50" : "bg-white";
                 return (
                   <tr key={r.jobId} className="group motion-interactive hover:bg-sdc-blue-light/40">
-                    <td className={`frozen-col sticky left-0 z-10 px-2 py-1.5 text-left align-middle ${JOB_ID_COL_W} ${zebraFrozen} group-hover:bg-sdc-blue-light`}>
+                    <td className={`frozen-col sticky left-0 z-10 border-b border-sdc-border-soft px-2 py-1.5 text-left align-middle ${JOB_ID_COL_W} ${COL_BORDER_SOFT} ${zebraFrozen} group-hover:bg-sdc-blue-light`}>
                       <button
                         className="font-mono text-sdc-blue-dark underline decoration-dotted"
                         title="Set a manual hour allocation for this job"
@@ -879,55 +1062,49 @@ export function JobCostExplorer({
                       )}
                     </td>
                     <td
-                      className={`frozen-col frozen-col-last sticky ${JOB_NAME_LEFT} z-10 truncate border-r border-sdc-border px-2 py-1.5 text-left align-middle ${JOB_NAME_COL_W} ${zebraFrozen} group-hover:bg-sdc-blue-light`}
+                      className={`frozen-col frozen-col-last sticky ${JOB_NAME_LEFT} z-10 truncate border-b border-r border-b-sdc-border-soft border-r-sdc-border px-2 py-1.5 text-left align-middle ${JOB_NAME_COL_W} ${zebraFrozen} group-hover:bg-sdc-blue-light`}
                     >
                       <Link href={`/job-hours?jobs=${r.jobId}`} className="hover:underline" title={r.jobName || "Open in Job Hour Details"}>
                         {r.jobName || "—"}
                       </Link>
                     </td>
                     {!hiddenCols.has("customerName") && (
-                      <td className={`px-2 py-1.5 text-left align-middle border-b border-sdc-border-soft ${zebra}`}>{r.customerName || "—"}</td>
+                      <td className={`px-2 py-1.5 text-left align-middle border-b border-sdc-border-soft ${vBorder("customerName")} ${zebra}`}>{r.customerName || "—"}</td>
                     )}
-                    <td className={`px-2 py-1.5 text-left align-middle border-b border-sdc-border-soft ${zebra}`}>
+                    <td className={`px-2 py-1.5 text-left align-middle border-b border-sdc-border-soft ${vBorder("status")} ${zebra}`}>
                       <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-label font-semibold ${statusTone(r.status)}`}>{r.status}</span>
                     </td>
-                    {!hiddenCols.has("actualHours") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{fmtNum(r.actualHours)}</td>}
-                    {!hiddenCols.has("engineeringHours") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{fmtNum(r.engineeringHours)}</td>}
-                    {!hiddenCols.has("shopHours") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{fmtNum(r.shopHours)}</td>}
-                    {!hiddenCols.has("otherHours") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{r.otherHours ? fmtNum(r.otherHours) : "—"}</td>}
-                    {!hiddenCols.has("pmCost") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{fmtMoney(r.pmCost)}</td>}
-                    {!hiddenCols.has("mfgCost") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{fmtMoney(r.mfgCost)}</td>}
-                    {!hiddenCols.has("laborCost") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{fmtMoney(r.laborCost)}</td>}
+                    {!hiddenCols.has("actualHours") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("actualHours")} ${zebra}`}>{fmtNum(r.actualHours)}</td>}
+                    {!hiddenCols.has("engineeringHours") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("engineeringHours")} ${zebra}`}>{fmtNum(r.engineeringHours)}</td>}
+                    {!hiddenCols.has("shopHours") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("shopHours")} ${zebra}`}>{fmtNum(r.shopHours)}</td>}
+                    {!hiddenCols.has("otherHours") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("otherHours")} ${zebra}`}>{r.otherHours ? fmtNum(r.otherHours) : "—"}</td>}
+                    {!hiddenCols.has("pmCost") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("pmCost")} ${zebra}`}>{fmtMoney(r.pmCost)}</td>}
+                    {!hiddenCols.has("mfgCost") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("mfgCost")} ${zebra}`}>{fmtMoney(r.mfgCost)}</td>}
+                    {!hiddenCols.has("laborCost") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("laborCost")} ${zebra}`}>{fmtMoney(r.laborCost)}</td>}
                     {!hiddenCols.has("etcEngHours") && (
-                      <td
-                        className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}
-                        title={showLiveEtc && live ? `Live: ${fmtNum(live.engHours)} (as of ${live.month})` : undefined}
-                      >
+                      <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("etcEngHours")} ${zebra}`}>
                         {r.etcEngHours == null ? "—" : fmtNum(r.etcEngHours)}
-                        {showLiveEtc && live && <span className="ml-1 text-note text-sdc-blue">({fmtNum(live.engHours)})</span>}
                       </td>
                     )}
                     {!hiddenCols.has("etcShopHours") && (
-                      <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>
+                      <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("etcShopHours")} ${zebra}`}>
                         {r.etcShopHours == null ? "—" : fmtNum(r.etcShopHours)}
-                        {showLiveEtc && live && <span className="ml-1 text-note text-sdc-blue">({fmtNum(live.shopHours)})</span>}
                       </td>
                     )}
                     {!hiddenCols.has("etcPartsCost") && (
-                      <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>
+                      <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("etcPartsCost")} ${zebra}`}>
                         {r.etcPartsCost == null ? "—" : fmtMoney(r.etcPartsCost)}
-                        {showLiveEtc && live && <span className="ml-1 text-note text-sdc-blue">({fmtMoney(live.partsCost)})</span>}
                       </td>
                     )}
-                    {!hiddenCols.has("partCost") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{fmtMoney(r.partCost)}</td>}
-                    {!hiddenCols.has("partInvoiced") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{fmtMoney(r.partInvoiced)}</td>}
-                    {!hiddenCols.has("percentComplete") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{fmtPct(r.percentComplete)}</td>}
-                    {!hiddenCols.has("salesPrice") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{fmtMoney(r.salesPrice)}</td>}
-                    {!hiddenCols.has("startDate") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{r.startDate ? r.startDate.slice(0, 4) : "—"}</td>}
-                    {!hiddenCols.has("completeDate") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${zebra}`}>{r.completeDate ? r.completeDate.slice(0, 4) : "—"}</td>}
+                    {!hiddenCols.has("partCost") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("partCost")} ${zebra}`}>{fmtMoney(r.partCost)}</td>}
+                    {!hiddenCols.has("partInvoiced") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("partInvoiced")} ${zebra}`}>{fmtMoney(r.partInvoiced)}</td>}
+                    {!hiddenCols.has("percentComplete") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("percentComplete")} ${zebra}`}>{fmtPct(r.percentComplete)}</td>}
+                    {!hiddenCols.has("salesPrice") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("salesPrice")} ${zebra}`}>{fmtMoney(r.salesPrice)}</td>}
+                    {!hiddenCols.has("startDate") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("startDate")} ${zebra}`}>{r.startDate ? r.startDate.slice(0, 4) : "—"}</td>}
+                    {!hiddenCols.has("completeDate") && <td className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("completeDate")} ${zebra}`}>{r.completeDate ? r.completeDate.slice(0, 4) : "—"}</td>}
                     {!hiddenCols.has("profit") && (
                       <td
-                        className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${
+                        className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("profit")} ${
                           r.profit == null ? zebra : r.profit >= 0 ? "bg-sdc-green-bg/50 text-sdc-green-text" : "bg-sdc-red-bg/50 text-sdc-red-text"
                         }`}
                       >
@@ -936,7 +1113,7 @@ export function JobCostExplorer({
                     )}
                     {!hiddenCols.has("margin") && (
                       <td
-                        className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${
+                        className={`px-2 py-1.5 text-right align-middle border-b border-sdc-border-soft ${vBorder("margin")} ${
                           r.margin == null ? zebra : r.margin >= 0 ? "bg-sdc-green-bg/50 text-sdc-green-text" : "bg-sdc-red-bg/50 text-sdc-red-text"
                         }`}
                       >
@@ -955,31 +1132,31 @@ export function JobCostExplorer({
                   view against the scroll container the same way the header
                   already stays pinned against its top. */}
               <tr className="sticky bottom-0 border-t-2 border-sdc-blue bg-sdc-blue-light font-semibold text-sdc-navy">
-                <td className="frozen-col sticky left-0 z-10 bg-sdc-blue-light px-2 py-1.5 text-left" colSpan={2}>
+                <td className="frozen-col sticky left-0 z-10 border-r border-sdc-border bg-sdc-blue-light px-2 py-1.5 text-left" colSpan={2}>
                   {visibleRows.length} jobs
                 </td>
-                {!hiddenCols.has("customerName") && <td className="px-2 py-1.5" />}
-                <td className="px-2 py-1.5" />
-                {!hiddenCols.has("actualHours") && <td className="px-2 py-1.5 text-right">{fmtNum(totals.actualHours)}</td>}
-                {!hiddenCols.has("engineeringHours") && <td className="px-2 py-1.5 text-right">{fmtNum(totals.engineeringHours)}</td>}
-                {!hiddenCols.has("shopHours") && <td className="px-2 py-1.5 text-right">{fmtNum(totals.shopHours)}</td>}
-                {!hiddenCols.has("otherHours") && <td className="px-2 py-1.5 text-right">{fmtNum(totals.otherHours)}</td>}
-                {!hiddenCols.has("pmCost") && <td className="px-2 py-1.5 text-right">{fmtMoney(totals.pmCost)}</td>}
-                {!hiddenCols.has("mfgCost") && <td className="px-2 py-1.5 text-right">{fmtMoney(totals.mfgCost)}</td>}
-                {!hiddenCols.has("laborCost") && <td className="px-2 py-1.5 text-right">{fmtMoney(totals.laborCost)}</td>}
-                {!hiddenCols.has("etcEngHours") && <td className="px-2 py-1.5 text-right">{fmtNum(totals.etcEngHours)}</td>}
-                {!hiddenCols.has("etcShopHours") && <td className="px-2 py-1.5 text-right">{fmtNum(totals.etcShopHours)}</td>}
-                {!hiddenCols.has("etcPartsCost") && <td className="px-2 py-1.5 text-right">{fmtMoney(totals.etcPartsCost)}</td>}
-                {!hiddenCols.has("partCost") && <td className="px-2 py-1.5 text-right">{fmtMoney(totals.partCost)}</td>}
-                {!hiddenCols.has("partInvoiced") && <td className="px-2 py-1.5 text-right">{fmtMoney(totals.partInvoiced)}</td>}
-                {!hiddenCols.has("percentComplete") && <td className="px-2 py-1.5" />}
-                {!hiddenCols.has("salesPrice") && <td className="px-2 py-1.5 text-right">{fmtMoney(totals.salesPrice)}</td>}
-                {!hiddenCols.has("startDate") && <td className="px-2 py-1.5" />}
-                {!hiddenCols.has("completeDate") && <td className="px-2 py-1.5" />}
+                {!hiddenCols.has("customerName") && <td className={`px-2 py-1.5 ${vBorder("customerName")}`} />}
+                <td className={`px-2 py-1.5 ${vBorder("status")}`} />
+                {!hiddenCols.has("actualHours") && <td className={`px-2 py-1.5 text-right ${vBorder("actualHours")}`}>{fmtNum(totals.actualHours)}</td>}
+                {!hiddenCols.has("engineeringHours") && <td className={`px-2 py-1.5 text-right ${vBorder("engineeringHours")}`}>{fmtNum(totals.engineeringHours)}</td>}
+                {!hiddenCols.has("shopHours") && <td className={`px-2 py-1.5 text-right ${vBorder("shopHours")}`}>{fmtNum(totals.shopHours)}</td>}
+                {!hiddenCols.has("otherHours") && <td className={`px-2 py-1.5 text-right ${vBorder("otherHours")}`}>{fmtNum(totals.otherHours)}</td>}
+                {!hiddenCols.has("pmCost") && <td className={`px-2 py-1.5 text-right ${vBorder("pmCost")}`}>{fmtMoney(totals.pmCost)}</td>}
+                {!hiddenCols.has("mfgCost") && <td className={`px-2 py-1.5 text-right ${vBorder("mfgCost")}`}>{fmtMoney(totals.mfgCost)}</td>}
+                {!hiddenCols.has("laborCost") && <td className={`px-2 py-1.5 text-right ${vBorder("laborCost")}`}>{fmtMoney(totals.laborCost)}</td>}
+                {!hiddenCols.has("etcEngHours") && <td className={`px-2 py-1.5 text-right ${vBorder("etcEngHours")}`}>{fmtNum(totals.etcEngHours)}</td>}
+                {!hiddenCols.has("etcShopHours") && <td className={`px-2 py-1.5 text-right ${vBorder("etcShopHours")}`}>{fmtNum(totals.etcShopHours)}</td>}
+                {!hiddenCols.has("etcPartsCost") && <td className={`px-2 py-1.5 text-right ${vBorder("etcPartsCost")}`}>{fmtMoney(totals.etcPartsCost)}</td>}
+                {!hiddenCols.has("partCost") && <td className={`px-2 py-1.5 text-right ${vBorder("partCost")}`}>{fmtMoney(totals.partCost)}</td>}
+                {!hiddenCols.has("partInvoiced") && <td className={`px-2 py-1.5 text-right ${vBorder("partInvoiced")}`}>{fmtMoney(totals.partInvoiced)}</td>}
+                {!hiddenCols.has("percentComplete") && <td className={`px-2 py-1.5 ${vBorder("percentComplete")}`} />}
+                {!hiddenCols.has("salesPrice") && <td className={`px-2 py-1.5 text-right ${vBorder("salesPrice")}`}>{fmtMoney(totals.salesPrice)}</td>}
+                {!hiddenCols.has("startDate") && <td className={`px-2 py-1.5 ${vBorder("startDate")}`} />}
+                {!hiddenCols.has("completeDate") && <td className={`px-2 py-1.5 ${vBorder("completeDate")}`} />}
                 {!hiddenCols.has("profit") && (
-                  <td className={`px-2 py-1.5 text-right ${totals.profit != null && totals.profit >= 0 ? "text-sdc-green-text" : "text-sdc-red-text"}`}>{fmtMoney(totals.profit)}</td>
+                  <td className={`px-2 py-1.5 text-right ${vBorder("profit")} ${totals.profit != null && totals.profit >= 0 ? "text-sdc-green-text" : "text-sdc-red-text"}`}>{fmtMoney(totals.profit)}</td>
                 )}
-                {!hiddenCols.has("margin") && <td className="px-2 py-1.5" />}
+                {!hiddenCols.has("margin") && <td className={`px-2 py-1.5 ${vBorder("margin")}`} />}
               </tr>
             </tfoot>
           </table>

@@ -27,11 +27,44 @@ const NUMBER_FORMAT: Record<ColumnType, string | undefined> = {
   date: "yyyy-mm-dd",
 };
 
-export async function buildXlsx(spec: SheetSpec): Promise<Buffer> {
+// One spec, or several sheets in one workbook.
+//
+// The array form exists for the Monthly ETC export's password-protected Standard Sheet /
+// Standard Fees sheets: they belong in the SAME file the manager already downloaded, not
+// in a second one they have to keep alongside it. A lone spec still renders exactly the
+// workbook it always did — one worksheet, same name, same frozen pane — which is what
+// keeps the unprotected export unchanged when Standards are locked.
+export async function buildXlsx(input: SheetSpec | SheetSpec[]): Promise<Buffer> {
+  const specs = Array.isArray(input) ? input : [input];
+  if (specs.length === 0) throw new Error("An export needs at least one sheet.");
+
   const wb = new ExcelJS.Workbook();
   wb.creator = "SDC Projects Reports";
   wb.created = new Date();
-  const ws = wb.addWorksheet(safeSheetName(spec.sheetName), {
+
+  // Excel refuses two worksheets with the same name, and safeSheetName's 31-character
+  // clamp can collide two names that differed only past the cut. Resolving up front beats
+  // an exceljs throw halfway through writing a file the user is already downloading.
+  const used = new Set<string>();
+  for (const spec of specs) writeSheet(wb, spec, uniqueSheetName(spec.sheetName, used));
+
+  const out = await wb.xlsx.writeBuffer();
+  return Buffer.from(out);
+}
+
+function uniqueSheetName(name: string, used: Set<string>): string {
+  const base = safeSheetName(name);
+  let candidate = base;
+  for (let n = 2; used.has(candidate); n++) {
+    const suffix = ` (${n})`;
+    candidate = `${base.slice(0, 31 - suffix.length)}${suffix}`;
+  }
+  used.add(candidate);
+  return candidate;
+}
+
+function writeSheet(wb: ExcelJS.Workbook, spec: SheetSpec, sheetName: string): void {
+  const ws = wb.addWorksheet(sheetName, {
     views: [
       {
         // Freeze the header block AND the identifying columns, so scrolling right on a
@@ -122,9 +155,6 @@ export async function buildXlsx(spec: SheetSpec): Promise<Buffer> {
       to: { row: headerNumber + spec.rows.length, column: spec.columns.length },
     };
   }
-
-  const out = await wb.xlsx.writeBuffer();
-  return Buffer.from(out);
 }
 
 // Title + subtitles + blank + (group row) + header row.

@@ -16,6 +16,13 @@ import { appVersionLabel } from "@/lib/app-version";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isEtcDirty } from "@/lib/etc-dirty-tracker";
 import { noteEtcClick } from "@/lib/standards-reveal";
+import {
+  noteOtherNavClick,
+  noteProjectsClick,
+  readProfitabilityRevealed,
+  serverProfitabilityRevealed,
+  subscribeProfitabilityReveal,
+} from "@/lib/profitability-reveal";
 import { RefreshDataButton } from "@/components/RefreshDataButton";
 import { AppZoom } from "@/components/AppZoom";
 import {
@@ -101,6 +108,11 @@ function NavPendingHint() {
   );
 }
 
+// Hidden by default (§84) — see lib/profitability-reveal.ts. Named here so the
+// item's own `href` below and the reveal-gated filter that hides it can never
+// name two different routes by accident.
+const PROFITABILITY_HREF = "/job-cost-explorer";
+
 const GROUPS: NavGroup[] = [
   {
     label: "Overview",
@@ -177,9 +189,9 @@ const GROUPS: NavGroup[] = [
         ),
       },
       {
-        href: "/job-cost-explorer",
+        href: PROFITABILITY_HREF,
         label: "Profitability",
-        isActive: (p) => p === "/job-cost-explorer",
+        isActive: (p) => p === PROFITABILITY_HREF,
         icon: (
           <Icon>
             <circle cx="8" cy="8" r="6.25" />
@@ -248,12 +260,23 @@ export default function Sidebar({
   // not a role hierarchy.
   const baseGroups = [...GROUPS, ADMIN_GROUP];
 
+  // Profitability stays out of the array entirely until revealed (§84) — not
+  // rendered-then-hidden with CSS, so it never exists in the DOM (or the reorder
+  // machinery below) for a normal visitor to find by inspecting the page. The
+  // server snapshot is always `false`, so SSR and the pre-gesture client render
+  // agree and nothing flashes into view on load; a real reveal only ever happens
+  // after hydration, from noteProjectsClick below.
+  const profitabilityRevealed = useSyncExternalStore(subscribeProfitabilityReveal, readProfitabilityRevealed, serverProfitabilityRevealed);
+  const visibleGroups = profitabilityRevealed
+    ? baseGroups
+    : baseGroups.map((g) => ({ ...g, items: g.items.filter((i) => i.href !== PROFITABILITY_HREF) }));
+
   // User-chosen link order (localStorage, per browser). useSyncExternalStore
   // rather than reading storage in render — that would hydrate differently from
   // the server — and rather than setState-in-effect, which flickers the default
   // order for a frame and is a lint error in this repo.
   const navOrder = useSyncExternalStore(subscribeNavOrder, readNavOrder, () => NO_NAV_ORDER);
-  const allGroups = baseGroups.map((g) => ({ ...g, items: applyNavOrder(g.label, g.items, navOrder) }));
+  const allGroups = visibleGroups.map((g) => ({ ...g, items: applyNavOrder(g.label, g.items, navOrder) }));
   const hasCustomOrder = Object.keys(navOrder).length > 0;
 
   // The drag SOURCE lives in a ref, not state: dragover/drop can fire in the same
@@ -341,6 +364,13 @@ export default function Sidebar({
       return;
     }
     if (href === "/etc") handleEtcClick(e);
+    // The Profitability reveal gesture (§84) — three consecutive clicks on
+    // Projects. Never suppresses navigation (contrast handleEtcClick above): every
+    // one of the three clicks, and every click that doesn't complete the gesture,
+    // must still go to Projects exactly like clicking it normally would. Any OTHER
+    // nav item breaks the streak, so "consecutive" means what it says.
+    if (href === "/quoted") noteProjectsClick();
+    else noteOtherNavClick();
   }
 
   // Global Back — returns to the exact previous view (its URL preserves the

@@ -106,3 +106,24 @@ test("getJobPartsInvoicedInMonth does not require a PurchaseDetailID — non-PO 
   );
   assert.match(fnBody, /LEFT JOIN tblPurchaseOrderDetails/, "the PO tables must be LEFT JOINed, not INNER — a non-PO line has no matching row there");
 });
+
+// §82: getJobPartsInvoicedInMonth used to hand-type its own copy of the AP-line-amount
+// expression, twice over (once for InvoicedAmount, once inside the ActualAmount CASE) —
+// a THIRD and FOURTH copy of the exact formula getPartsCostBookedByJob (Money Spent
+// Month), getPartsInvoicedByJob and getPartsActualByJob already shared as one
+// AP_LINE_AMOUNT constant. Both copies happened to still agree with the shared one, kept
+// in sync by hand — which is exactly how a Money-Spent-Month-vs-Parts-Spent-drill
+// mismatch would (re)appear the moment someone edited the constant and not these two
+// inline copies, or vice versa. This guards against that regressing rather than against
+// today's numbers being wrong, since (per this repo's convention) a live-DB check
+// belongs in scripts/verify-parts-invoiced-reconciliation.ts, not here.
+test("getJobPartsInvoicedInMonth computes its dollar amount from the one shared AP_LINE_AMOUNT constant", () => {
+  const fnBody = functionBody(SYNC_TOTALETO(), "getJobPartsInvoicedInMonth");
+  assert.match(fnBody, /const amt = AP_LINE_AMOUNT;/, "must alias the shared constant, the same pattern getPartsCostBookedByJob/getPartsInvoicedByJob use");
+  assert.match(fnBody, /AS InvoicedAmount/, "sanity check: still produces the InvoicedAmount column");
+  assert.doesNotMatch(
+    fnBody,
+    /APDD\.APDocQty \* APDD\.APDocUnitPrice \* \(1 - APDD\.APDocItemPctDisc\) \* APBD\.APDocCurrRate/,
+    "must not re-inline the formula — reference ${amt} so a future change to AP_LINE_AMOUNT reaches this query too",
+  );
+});

@@ -4,9 +4,11 @@ import { logAudit } from "@/lib/audit";
 import { APP_VERSION } from "@/lib/app-version";
 import { buildCsv } from "@/lib/export/csv";
 import { buildXlsx } from "@/lib/export/xlsx";
-import { exportFileName, todayStamp } from "@/lib/export/sheet";
+import { exportFileName, todayStamp, type SheetSpec } from "@/lib/export/sheet";
 import { buildProjectsExport } from "@/lib/export/projects-export";
 import { buildEtcExport } from "@/lib/export/etc-export";
+import { buildStandardExportSheets } from "@/lib/export/standard-export";
+import { isStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
 
 // ── The export endpoint (§24) ────────────────────────────────────────────────
 //
@@ -32,6 +34,37 @@ import { buildEtcExport } from "@/lib/export/etc-export";
 //
 // The one thing the browser IS trusted with is the FILTER, and that is safe by design:
 // a filter can only ever narrow what a signed-in user could already fetch by clicking.
+//
+// ── The Standards exception ──────────────────────────────────────────────────
+//
+// The sentence above stops being true for the Standard Sheet and Standard Fees figures:
+// those are NOT data every signed-in user can already see. They sit behind the Standard
+// Sheet password, so the export has to make the same decision the page makes, and make it
+// the same way.
+//
+// The authority is `isStandardSheetUnlocked()` — the httpOnly, HMAC-signed cookie set by
+// verifyStandardSheetPassword, the identical check etc/page.tsx uses to decide whether to
+// render the figures at all and that every Standard Sheet mutation asserts. Being a
+// same-origin fetch, the browser attaches that cookie to this request on its own.
+//
+// Three things this deliberately does NOT do:
+//   * It does not accept an "include standards" parameter. A caller-supplied flag would
+//     make the client the authority on its own permissions, which is the whole bug class
+//     this is avoiding — and it would put the fact in the URL and therefore in the audit
+//     record's `filters`. The cookie is the only input.
+//   * It does not consult whether the Standard UI is currently VISIBLE. Visibility is the
+//     §76 `hidden` display toggle in lib/standards-reveal.ts, a client-side module store
+//     that explicitly is not a security boundary — a user can be unlocked with the
+//     columns hidden, and hiding them must not silently change what a deliberate export
+//     contains.
+//   * It never touches the password itself. The phrase is compared only inside
+//     standard-sheet-gate.ts; it is not a parameter, is not logged, and is not written
+//     into the workbook. What lands in the audit record is one boolean — whether the
+//     protected sheets were included — which is exactly what an egress record needs and
+//     nothing more.
+//
+// A locked (or signed-in-but-never-unlocked) caller hitting this URL directly gets the
+// ordinary Monthly ETC export, ending at Parts Cost, byte for byte as before.
 
 export const dynamic = "force-dynamic";
 
@@ -75,6 +108,16 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ report: str
             now,
           );
 
+    // The protected sheets ride along in the same file, and only for a request that
+    // proves it is unlocked. buildEtcExport has already rejected an invalid month by
+    // this point, so the same string is safe to reuse.
+    const sheets: SheetSpec[] = [built.spec];
+    let includedStandards = false;
+    if (report === "etc" && (await isStandardSheetUnlocked())) {
+      sheets.push(...(await buildStandardExportSheets(searchParams.get("month") ?? "", now)));
+      includedStandards = true;
+    }
+
     const fileName =
       report === "projects"
         ? exportFileName(["Projects", (built as { filterLabel: string }).filterLabel, todayStamp(now)], format)
@@ -82,24 +125,31 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ report: str
 
     // The audit record §24.11 asks for: who, what, which format, which filters, when,
     // how many rows, which app version. Awaited rather than fired-and-forgotten — an
-    // export is a data egress and the record is the point.
+    // export is a data egress and the record is the point. `standards` is part of that:
+    // an export carrying confidential figures has to be distinguishable afterward from
+    // one that did not.
     await logAudit({
       action: "export.download",
       entityType: report === "projects" ? "Job" : "EtcMonth",
       entityId: report === "etc" ? (searchParams.get("month") ?? "") : undefined,
-      summary: `Exported ${report === "projects" ? "Projects" : "Monthly ETC"} as ${format.toUpperCase()} — ${built.rowCount} row(s)`,
+      summary:
+        `Exported ${report === "projects" ? "Projects" : "Monthly ETC"} as ${format.toUpperCase()} — ${built.rowCount} row(s)` +
+        (includedStandards ? " (including Standards)" : ""),
       metadata: {
         report,
         format,
         rows: built.rowCount,
         appVersion: APP_VERSION,
+        // Whether the protected sheets went out. A boolean — never the password, and
+        // never anything the caller could have set.
+        standards: includedStandards,
         // The query string as given, so "which view was this" is answerable exactly.
         filters: Object.fromEntries(searchParams.entries()),
       },
     });
 
     if (format === "csv") {
-      return new Response(buildCsv(built.spec), {
+      return new Response(buildCsv(sheets), {
         headers: {
           "Content-Type": "text/csv; charset=utf-8",
           "Content-Disposition": `attachment; filename="${fileName}"`,
@@ -108,7 +158,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ report: str
       });
     }
 
-    const buffer = await buildXlsx(built.spec);
+    const buffer = await buildXlsx(sheets);
     // Uint8Array, not the Node Buffer: a Response body wants a web-stream-compatible
     // value, and handing it a Buffer works by accident of Buffer being a Uint8Array —
     // being explicit keeps it working if that ever stops being true.

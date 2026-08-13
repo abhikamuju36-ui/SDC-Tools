@@ -141,46 +141,6 @@ async function loadJobHoursAndYears(jobPks: number[], throughMonth: string | nul
   return out;
 }
 
-export type LiveEtcReference = { engHours: number; shopHours: number; partsCost: number; month: string };
-
-/**
- * A REFERENCE figure only — never fed into the cost/profit calc (that stays
- * on the static snapshot, per the integration decision to reconcile before
- * replacing). Per job, this app's own live ETC total (effectiveNewEtc summed
- * by billing group + the Parts Cost section) for the latest month that job
- * has any EtcEntry rows in — so it's always "current", not tied to whichever
- * month happens to be open right now.
- */
-async function loadLiveEtcReference(jobPks: number[]): Promise<Map<number, LiveEtcReference>> {
-  const out = new Map<number, LiveEtcReference>();
-  if (jobPks.length === 0) return out;
-
-  const latest = await prisma.etcEntry.groupBy({
-    by: ["jobId"],
-    where: { jobId: { in: jobPks } },
-    _max: { month: true },
-  });
-  const pairs = latest
-    .filter((r): r is { jobId: number; _max: { month: string } } => r._max.month != null)
-    .map((r) => ({ jobId: r.jobId, month: r._max.month }));
-  if (pairs.length === 0) return out;
-
-  const entries = await prisma.etcEntry.findMany({
-    where: { OR: pairs.map((p) => ({ jobId: p.jobId, month: p.month })) },
-    select: { jobId: true, section: true, month: true, needsReview: true, newEtc: true, newEtcDraft: true, priorEtc: true, hoursWorked: true },
-  });
-
-  for (const e of entries) {
-    let ref = out.get(e.jobId);
-    if (!ref) out.set(e.jobId, (ref = { engHours: 0, shopHours: 0, partsCost: 0, month: e.month }));
-    const value = effectiveNewEtc(e);
-    if (e.section === PARTS_COST_SECTION) ref.partsCost += value;
-    else if (SECTION_BUCKET[e.section] === "eng") ref.engHours += value;
-    else if (SECTION_BUCKET[e.section] === "shop") ref.shopHours += value;
-  }
-  return out;
-}
-
 // ── Submitted ETC snapshot resolution (2026-08-11) ──────────────────────────
 //
 // Replaces the hand-maintained etc-data.json this app shipped with (a single
@@ -293,7 +253,6 @@ export type JobCostData = {
   inventoryAsOf: string | null;
   /** The submitted ETC month actually used ("YYYY-MM"), or null if none qualified. */
   etcRefreshedThru: string | null;
-  liveEtcByJobId: Map<string, LiveEtcReference>;
   partsCostAvailable: boolean;
   /** Echoes what was applied — a "YYYY-MM-DD" month-end, or null for Current. */
   asOf: string | null;
@@ -326,7 +285,7 @@ export async function loadJobCostRows(asOf: string | null = null): Promise<JobCo
   const throughMonth = asOf ? asOf.slice(0, 7) : null;
   const asOfOptions = [...new Set([...lockedMonths.map(monthEndDate), ...inventoryDates])].sort((a, b) => b.localeCompare(a));
 
-  const [hoursByJobPk, partsPurchased, partsInvoiced, inventory, etcSnapshotByJobPk, salesFallback, liveEtcByJobPk] = await Promise.all([
+  const [hoursByJobPk, partsPurchased, partsInvoiced, inventory, etcSnapshotByJobPk, salesFallback] = await Promise.all([
     loadJobHoursAndYears(jobPks, throughMonth),
     withTimeoutOrNull("Total ETO parts purchased (Job Cost Explorer)", PARTS_BATCH_BUDGET_MS, () => getPartsCostSpentByJob(), onPartsFail),
     // Parts Actual, from the app's one definition of it (2026-08-10). Was
@@ -341,20 +300,15 @@ export async function loadJobCostRows(asOf: string | null = null): Promise<JobCo
     getInventorySnapshotForDate(asOf),
     etcMonth ? getSubmittedEtcSnapshot(jobPks, etcMonth) : Promise.resolve(new Map<number, SubmittedEtc>()),
     loadSalesPriceFallback(),
-    loadLiveEtcReference(jobPks),
   ]);
   const partsPurchasedMap = partsPurchased ?? new Map<string, number>();
   const partsInvoicedMap = partsInvoiced ?? new Map<string, number>();
 
-  const liveEtcByJobId = new Map<string, LiveEtcReference>();
   const rows: JobCostRow[] = jobs.map((j) => {
     const h = hoursByJobPk.get(j.id);
     const inv = inventory.map.get(j.jobId);
     const etc = etcSnapshotByJobPk.get(j.id);
     const salesPrice = inv?.salesPrice ?? salesFallback.get(j.jobId) ?? null;
-
-    const liveEtc = liveEtcByJobPk.get(j.id);
-    if (liveEtc) liveEtcByJobId.set(j.jobId, liveEtc);
 
     return {
       jobId: j.jobId,
@@ -386,7 +340,6 @@ export async function loadJobCostRows(asOf: string | null = null): Promise<JobCo
     rows,
     inventoryAsOf: inventory.asOfDate,
     etcRefreshedThru: etcMonth,
-    liveEtcByJobId,
     partsCostAvailable: !partsFailed,
     asOf,
     inventoryMissing: inventory.asOfDate == null,

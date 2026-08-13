@@ -284,6 +284,20 @@ export function statusFor(r: BomRow, ctx: BomContext): "received" | "ordered" | 
   return sourceFor(r, ctx) === "none" ? "noPO" : "ordered";
 }
 
+// The one true "needs a PO" eligibility rule. Genuinely uncovered — per
+// statusFor, so BOM release status, inventory pulls and process schedules are
+// already applied — AND not paused on hold (a held part gets its own bucket
+// in the UI; chasing a PO for something paused isn't useful).
+//
+// Every view that counts or lists "No PO" parts — the risk card, the Parts
+// List "Uncovered (no PO)" filter, the readiness summary, "See all" — must
+// call this rather than re-deriving coverage from a raw field like an empty
+// PO number, which misses stock/process coverage and BOM release status
+// entirely (see this file's header) and is exactly the bug this fixes.
+export function isUncoveredPart(p: Pick<BomPart, "status" | "hold">): boolean {
+  return p.status === "noPO" && !p.hold;
+}
+
 // Unit price, most-committed source first: what this job actually agreed to pay,
 // then what it actually paid to pull from stock, then the BOM line's own figure,
 // then the item master's last purchased price (LPP), then list.

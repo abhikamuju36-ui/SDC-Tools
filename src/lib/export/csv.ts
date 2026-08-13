@@ -42,9 +42,8 @@ export function csvRow(values: CellValue[]): string {
   return values.map(csvCell).join(",");
 }
 
-// The whole file. `﻿` first, CRLF between rows — what Excel expects from a CSV it
-// did not write itself.
-export function buildCsv(spec: SheetSpec): string {
+// One section: title, subtitles, blank, header, rows, totals.
+function sectionLines(spec: SheetSpec): string[] {
   const lines: string[] = [];
   // Context above the table: which report, which period, when it was taken. A CSV that
   // says only "1,234" tells a reader nothing three weeks later.
@@ -54,5 +53,26 @@ export function buildCsv(spec: SheetSpec): string {
   lines.push(csvRow(spec.columns.map((c) => (c.group ? `${c.group} - ${c.header}` : c.header))));
   for (const row of spec.rows) lines.push(csvRow(row));
   if (spec.totals) lines.push(csvRow(spec.totals));
+  return lines;
+}
+
+// The whole file. `﻿` first, CRLF between rows — what Excel expects from a CSV it
+// did not write itself.
+//
+// Several specs become several SECTIONS stacked in the one file, separated by two blank
+// lines, because a CSV has no concept of a worksheet: where the XLSX export puts the
+// password-protected Standard Sheet and Standard Fees on their own tabs, the CSV can only
+// append them below. Each section still leads with its own title row, so "which table am
+// I looking at" is answerable without counting columns. A single spec is unchanged, byte
+// for byte, from what this always produced.
+export function buildCsv(input: SheetSpec | SheetSpec[]): string {
+  const specs = Array.isArray(input) ? input : [input];
+  if (specs.length === 0) throw new Error("An export needs at least one section.");
+
+  const lines: string[] = [];
+  specs.forEach((spec, i) => {
+    if (i > 0) lines.push("", "");
+    lines.push(...sectionLines(spec));
+  });
   return `﻿${lines.join("\r\n")}\r\n`;
 }

@@ -259,6 +259,48 @@ export async function getPartsCostBookedByJob(
   }
 }
 
+// ── Row-count baseline, for detecting a join fan-out (§82) ──────────────────
+//
+// A one-to-many join anywhere in getJobPartsInvoicedInMonth's LEFT JOIN chain
+// (to tblPurchaseOrderDetails / tblEngItemMaster / tlkpItemMaster_Categories,
+// added there for supplier/part/category enrichment that this query has no
+// reason to carry) would duplicate a single real AP-document-detail row into
+// several output rows — each still carrying the row's full amount, so the
+// duplicated rows would inflate that function's own total by exactly the
+// duplicated amount. This query is the join-free baseline to catch that: the
+// SAME WHERE clause as getPartsCostBookedByJob, with nothing else joined in,
+// so its per-job COUNT is what a correct getJobPartsInvoicedInMonth must
+// return exactly as many lines as (see verify-parts-invoiced-reconciliation.ts).
+//
+// Not itself proof of no fan-out — two real, distinct AP documents CAN
+// legitimately share the same part/qty/price/date (found live: job 1142,
+// 2026-08-01, two separate invoices each for 64 × KQ2L04-M5A @ $1.30 — two
+// different APDocID/APDocDetailID rows, not one row counted twice) — a count
+// match only rules out the join MULTIPLYING rows, which is the specific
+// failure mode this exists to catch.
+export async function getApLineCountByJob(monthStart: Date, monthEndExclusive: Date): Promise<Map<string, number>> {
+  const pool = await sql.connect({ ...config, requestTimeout: 120000 });
+  try {
+    const result = await pool
+      .request()
+      .input("start", sql.DateTime, monthStart)
+      .input("end", sql.DateTime, monthEndExclusive)
+      .query(`
+        SELECT APDD.ProjectID AS JobId, COUNT(*) AS Lines
+          FROM tblAPDocumentDetails APDD WITH(NOLOCK)
+               INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID
+         WHERE APBD.APDocDate >= @start AND APBD.APDocDate < @end
+           AND APDD.ProjectID IS NOT NULL
+         GROUP BY APDD.ProjectID
+      `);
+    const counts = new Map<string, number>();
+    for (const r of result.recordset) counts.set(String(Number(r.JobId)), Number(r.Lines) || 0);
+    return counts;
+  } finally {
+    await pool.close();
+  }
+}
+
 // Net AP-document amount per job over an arbitrary window, as a SINGLE query —
 // for Job Cost Explorer's lifetime "Parts Invoiced" column (§ integration with
 // the standalone Job Cost Explorer app). Deliberately NOT a call to
@@ -668,6 +710,18 @@ export async function getJobPartsInvoicedInMonth(jobId: string, monthStart: Date
   if (!Number.isFinite(numericJob)) return { purchased: 0, paid: 0, actual: 0, leftToPay: 0, lines: [] };
   const pool = await sql.connect({ ...config, requestTimeout: 120000 });
   try {
+    // §82: was two hand-typed copies of the AP-line-amount expression (one for
+    // InvoicedAmount, one inside the ActualAmount CASE) instead of this shared
+    // AP_LINE_AMOUNT constant — the same formula getPartsCostBookedByJob (the
+    // Money Spent Month source) and every other AP-document query in this file
+    // already reference. They happened to still agree, because both copies were
+    // kept in careful lockstep by hand, but "kept in sync by hand" is exactly how
+    // this kind of figure drifts the moment someone edits one copy and not the
+    // other three. This is the one canonical AP-line-amount definition now, used
+    // everywhere: Money Spent Month, this function (the Monthly ETC Parts Spent
+    // drill AND the Parts List "Invoiced" window — see loadJobPartsLines /
+    // loadPartsListInvoicedInWindow in hours-detail-actions.ts), and Parts Actual.
+    const amt = AP_LINE_AMOUNT;
     const result = await pool
       .request()
       .input("job", sql.Int, numericJob)
@@ -685,14 +739,14 @@ export async function getJobPartsInvoicedInMonth(jobId: string, monthStart: Date
           ,COALESCE(NULLIF(POD.PurchaseSupplierDescription,''), IM.ItemDescription, NULLIF(APDD.APDocItemDesc,'')) AS Description
           ,APDD.APDocQty AS Qty
           ,COALESCE(POD.PurchasePrice * POH.PurchaseCurrRate, APDD.APDocUnitPrice * APBD.APDocCurrRate) AS UnitPrice
-          ,(APDD.APDocQty * APDD.APDocUnitPrice * (1 - APDD.APDocItemPctDisc) * APBD.APDocCurrRate) AS InvoicedAmount
+          ,(${amt}) AS InvoicedAmount
           -- Same GL-posted split every other parts query carries, so a drill row's
           -- actual agrees with the total above it. No filter here: this drill is
           -- reconciled line-for-line against getPartsCostBookedByJob, which counts
           -- every AP line, so dropping rows would break that agreement. The row
           -- still reports what DID post, separately.
           ,CASE WHEN ${GL_POSTED_AP}
-                THEN (APDD.APDocQty * APDD.APDocUnitPrice * (1 - APDD.APDocItemPctDisc) * APBD.APDocCurrRate)
+                THEN (${amt})
                 ELSE 0 END AS ActualAmount
         FROM tblAPDocumentDetails APDD WITH(NOLOCK)
           INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID

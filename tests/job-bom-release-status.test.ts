@@ -9,6 +9,8 @@ import {
   explodes,
   getRequirementRows,
   isRequirement,
+  isUncoveredPart,
+  makePart,
   releaseOf,
   sourceFor,
   statsForRoots,
@@ -302,6 +304,62 @@ test("an inventory-pulled part with no PO is priced, not free", () => {
   const node = buildAssembly(id("A"), "A", "A", "k", t, ctx, new Set(), null);
   assert.equal(node.totalCost, 100, "2 × the $50 inventory pull price");
   assert.equal(node.parts[0].costBasis, "pull");
+});
+
+// ── isUncoveredPart: the one "needs a PO" rule, reused by every Procurement view ──
+//
+// The "No Purchase Order" risk card in JobProcurement.tsx used to re-derive
+// coverage from a raw `!poNumber` check, which counts stock/process-covered
+// parts as missing (they legitimately have no PO) and inflated its count well
+// past the Parts List's own "Uncovered (no PO)" filter, which already used
+// statusFor's "noPO". These tests pin down the rule both now call, so a
+// future card can't quietly re-diverge from it the same way.
+
+test("isUncoveredPart: genuinely uncovered and not on hold is true", () => {
+  const r = row("A", "B");
+  const part = makePart(r, buildSpecTree([r]), emptyCtx());
+  assert.equal(part.status, "noPO");
+  assert.equal(isUncoveredPart(part), true);
+});
+
+test("isUncoveredPart: covered by a committed stock pull is false, even with no PO", () => {
+  const r = row("A", "PULLING", { ItemQty: 3 });
+  const ctx = emptyCtx();
+  ctx.pulls.set(r.ChildID, pull({ pullQty: 3, fulfilledQty: 0 }));
+  const part = makePart(r, buildSpecTree([r]), ctx);
+  assert.equal(part.status, "ordered", "committed to stock, not received yet");
+  assert.equal(isUncoveredPart(part), false);
+});
+
+test("isUncoveredPart: built in-house on a process schedule is false", () => {
+  const r = row("A", "MADE");
+  const ctx = emptyCtx();
+  ctx.processItems.add(r.ChildID);
+  const part = makePart(r, buildSpecTree([r]), ctx);
+  assert.equal(isUncoveredPart(part), false);
+});
+
+test("isUncoveredPart: fully received is false", () => {
+  const r = row("A", "B", { POQty: 1, ReceivedQty: 1, UnitPrice: 10 });
+  const part = makePart(r, buildSpecTree([r]), emptyCtx());
+  assert.equal(part.status, "received");
+  assert.equal(isUncoveredPart(part), false);
+});
+
+test("isUncoveredPart: genuinely uncovered but on hold is false — hold gets its own bucket", () => {
+  const r = row("A", "B", { ItemHold: true });
+  const part = makePart(r, buildSpecTree([r]), emptyCtx());
+  assert.equal(part.status, "noPO");
+  assert.equal(part.hold, true);
+  assert.equal(isUncoveredPart(part), false);
+});
+
+test("isUncoveredPart: last cost alone still does not cover a part", () => {
+  // Mirrors "last cost alone never satisfies a requirement" above — a price on
+  // the item master must not make isUncoveredPart say a part is covered.
+  const r = row("A", "PRICED-BUT-ABSENT", { ItemLastCost: 260 });
+  const part = makePart(r, buildSpecTree([r]), emptyCtx());
+  assert.equal(isUncoveredPart(part), true);
 });
 
 // ── Universality ─────────────────────────────────────────────────────────────

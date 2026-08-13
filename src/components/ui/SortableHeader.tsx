@@ -31,6 +31,9 @@ type SortCellProps<K extends string> = {
   onSort?: (key: K) => void;
   /** Defaults from `type` (numeric types right-align) — override only to disagree with that. */
   align?: "left" | "right";
+  /** Native hover tooltip on the header cell itself — same spot a plain `<th title=…>`
+   *  would carry it, for a column whose label alone doesn't explain what it means. */
+  title?: string;
 };
 
 function ariaSortValue<K extends string>(sort: SortState<K> | null | undefined, key: K): "ascending" | "descending" | "none" {
@@ -80,11 +83,12 @@ function SortControl<K extends string>({ label, sortKey, sort, onSort, align }: 
 export function SortableTh<K extends string>({
   className,
   align: alignProp,
+  title,
   ...props
 }: SortCellProps<K> & { className?: string }) {
   const align = alignProp ?? defaultAlign(props.type);
   return (
-    <th aria-sort={ariaSortValue(props.sort, props.sortKey)} className={`${align === "right" ? "text-right" : "text-left"} ${className ?? ""}`}>
+    <th title={title} aria-sort={ariaSortValue(props.sort, props.sortKey)} className={`${align === "right" ? "text-right" : "text-left"} ${className ?? ""}`}>
       <SortControl {...props} align={align} />
     </th>
   );
