@@ -66,3 +66,53 @@ export async function revokeSchedulerSession(email: string | null | undefined): 
     (e) => console.error("revokeSchedulerSession failed:", e),
   );
 }
+
+// Called from login/actions.ts's changePassword()/registerUser() so a LINKED person's
+// two accounts keep working from the same credential — the mirror of what the
+// Scheduler's own password change/admin reset does to this app (POST
+// /api/integration/sync-password). Only the bcrypt HASH ever travels, never the
+// plaintext — see that route's own header for why that's not "copying a password."
+// Best-effort and time-boxed, same reasoning as revokeSchedulerSession above: this
+// app's own password change already succeeded by the time this runs, and a slow or
+// unreachable Scheduler must never make it look like the change failed. The Scheduler
+// silently no-ops if this email isn't a linked account over there.
+export async function syncPasswordHashToScheduler(email: string, passwordHash: string): Promise<void> {
+  const token = process.env.SCHEDULER_SHARED_TOKEN;
+  if (!token) return;
+  await withTimeoutOrNull(
+    "Scheduler password sync",
+    3000,
+    async () => {
+      await fetch(`${getSchedulerBaseUrl()}/api/auth/sync-password`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+        body: JSON.stringify({ email, passwordHash }),
+      });
+    },
+    (e) => console.error("syncPasswordHashToScheduler failed:", e),
+  );
+}
+
+// The pull half, used only at auto-provision time (auth.ts's scheduler-sso provider):
+// a brand-new Reports account for a Scheduler-only person seeds its OWN hash from
+// Scheduler's current one, so the same password works immediately on both sides
+// instead of a throwaway one only the SSO hand-off can ever use. Returns null on
+// anything short of a clean 200 (not configured, unreachable, no such Scheduler
+// account, malformed response) — callers fall back to generating their own hash.
+export async function fetchSchedulerPasswordHash(email: string): Promise<string | null> {
+  const token = process.env.SCHEDULER_SHARED_TOKEN;
+  if (!token) return null;
+  return withTimeoutOrNull(
+    "Scheduler password-hash fetch",
+    3000,
+    async () => {
+      const res = await fetch(`${getSchedulerBaseUrl()}/api/auth/password-hash?email=${encodeURIComponent(email)}`, {
+        headers: { Authorization: `Bearer ${token}` },
+      });
+      if (!res.ok) return null;
+      const body = (await res.json()) as { passwordHash?: string };
+      return body.passwordHash ?? null;
+    },
+    (e) => console.error("fetchSchedulerPasswordHash failed:", e),
+  );
+}

@@ -8,6 +8,7 @@ import { verifySchedulerSsoToken, consumeSchedulerSsoNonce } from "@/lib/schedul
 import { currentTokenVersion } from "@/lib/token-revocation";
 import { isCompanyEmail } from "@/lib/company-email";
 import { nameFromEmail } from "@/lib/name-from-email";
+import { fetchSchedulerPasswordHash } from "@/lib/scheduler-link";
 
 // Email/password authentication. Accounts are created via the sign-up form
 // (see src/app/login/actions.ts) or the seed script; passwords are stored as
@@ -82,14 +83,18 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         if (!isCompanyEmail(verified.email)) return null;
 
         // First time this person has ever reached Reports via the Scheduler
-        // hand-off — create their account. The password is never used: this
-        // app never learns it, and nothing here ever checks it again, since
-        // sign-in for this row will only ever arrive through this same SSO
-        // path (or a password they set later some other way). Random and
-        // discarded immediately, not derived from anything.
-        const unusableHash = await bcrypt.hash(randomBytes(32).toString("hex"), 10);
+        // hand-off — create their account, seeded with their CURRENT Scheduler
+        // password hash so the same password works directly on this app's own
+        // login form immediately (shared-account project — see
+        // scheduler-link.ts's fetchSchedulerPasswordHash for why sharing a
+        // one-way hash isn't "copying a password"). Falls back to a random,
+        // unusable hash only if that fetch fails (Scheduler unreachable, or
+        // somehow no local account despite the token) — sign-in for this row
+        // then only ever arrives through this same SSO path until a password
+        // is set some other way.
+        const passwordHash = (await fetchSchedulerPasswordHash(verified.email)) ?? (await bcrypt.hash(randomBytes(32).toString("hex"), 10));
         const created = await prisma.user.create({
-          data: { email: verified.email, name: nameFromEmail(verified.email), passwordHash: unusableHash },
+          data: { email: verified.email, name: nameFromEmail(verified.email), passwordHash },
         });
         await logAuditFor(created.id, created.email, {
           action: "user.autoProvisioned",

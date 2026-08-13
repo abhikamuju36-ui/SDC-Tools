@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { prisma } from "@/lib/prisma";
 import { logAuditFor } from "@/lib/audit";
 import { isCompanyEmail } from "@/lib/company-email";
+import { syncPasswordHashToScheduler } from "@/lib/scheduler-link";
 
 export type RegisterResult = { ok: true } | { ok: false; error: string };
 
@@ -50,6 +51,13 @@ export async function registerUser(input: {
     summary: `${user.email} created an account`,
   });
 
+  // Best-effort, and almost always a no-op today: the Scheduler only applies this if
+  // IT already has a row linked to a Reports account, which can't be true yet for an
+  // account that didn't exist until this call — kept here anyway so every place a
+  // password gets set pushes, rather than relying on someone to remember which ones
+  // matter (shared-account project, see scheduler-link.ts's own header).
+  await syncPasswordHashToScheduler(email, passwordHash);
+
   return { ok: true };
 }
 
@@ -84,6 +92,10 @@ export async function changePassword(input: {
     entityId: user.id,
     summary: `${user.email} changed their password`,
   });
+
+  // Keeps a linked Scheduler account working from the SAME password — see
+  // scheduler-link.ts's own header for why only the hash travels, never the password.
+  await syncPasswordHashToScheduler(email, passwordHash);
 
   return { ok: true };
 }
