@@ -2,6 +2,7 @@
 
 import { usd } from "@/components/ui/format";
 import { card } from "@/components/ui/classnames";
+import { reconcilePartsCostRounding, type PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
 
 // Fixed palette (2026-08-11, by request) — no longer the SDC-blue ramp, but
 // still fixed constants rather than anything data-derived, so the same dollar
@@ -63,15 +64,22 @@ const BAR_W = "1.25rem";
 // and the summary below, which is where the "excessive whitespace" came from:
 // the card's own height is set by the taller ETC card next to it, and that
 // spacer was soaking up the difference.
-// 414, up from 294 (2026-08-12, by request — "bars look too short") — the
-// same +120 SectionHierarchyChart's own BAR_H just took, not a number picked
-// independently. The offsets above each bar (72px there, 77.6px here, from
-// the derivation above) don't move when BAR_H does, so adding the identical
-// delta to both keeps 372 - 77.6 ≈ 294 true at the next size up too:
-// 492 - 77.6 ≈ 414. Whatever the two cards' baselines actually measure as
-// today, this preserves that relationship rather than re-deriving it, since
-// re-deriving it is a live-measurement exercise this task didn't ask for.
-const BAR_H = 414; // px — see above; keep in step with SectionHierarchyChart's own 420
+// 540, up from 414 (2026-08-14, by request — "increase vertical height ~30%")
+// — the same +126 SectionHierarchyChart's own BAR_H just took (420→546), not
+// a number picked independently.
+//
+// The "77.6px" derivation above is stale as of the value-label fix later in
+// this file (2026-08-14, same day): that offset counted "the value label +
+// its gap" as flow height sitting BEFORE the bar box, which was true only
+// because the label used to live outside it. It now lives INSIDE the same
+// BAR_H frame (packed against the bottom with the fill, so it tracks the
+// fill's actual top instead of floating at the frame's top) — the frame
+// itself starts higher up than 77.6px did, by roughly that label's own
+// line-height plus its gap. BAR_H is unchanged and still kept in step with
+// SectionHierarchyChart's own 546 (both took the identical +126 this pass),
+// but re-deriving an exact new offset/baseline match is a live-measurement
+// exercise neither this pass nor the one before it was asked to do.
+const BAR_H = 540; // px — see above; keep in step with SectionHierarchyChart's own 546
 // The caption band under each bar ("Budget" / "Actual / Projection").
 //
 // Used to be shared with a second constant (LEGEND_BOTTOM_OFFSET) that placed
@@ -171,54 +179,29 @@ function SegmentMarker({ color, label, value }: { color: string; label: string; 
 // JobPartsCost, since the parts `lines` array is already serialized once for
 // Procurement and there's no reason to ship it twice.
 export function PartsCostSummary({
-  purchased,
-  actual,
-  estimated,
-  budgetProjection,
+  financials,
   jobCount = 1,
-  failedJobs = 0,
 }: {
-  purchased: number;
-  // Parts ACTUAL — GL-posted spend, the app's one definition of it (see
-  // getPartsActualByJob in lib/sync-totaleto.ts). This card's first segment and
-  // its "Total Parts Cost Spent" caption used to read `paid` and `purchased`
-  // respectively; both overstated what the job had actually spent, which is what
-  // put job 1116 at ~$400K against a ~$340K job ledger (2026-08-10).
-  //
-  // `paid` used to be a prop here and is deliberately gone: it counts invoices
-  // flagged never to post to the general ledger, so it is neither the actual
-  // (that's `actual`) nor the commitment (that's `purchased`) and the card showed
-  // it as both at different times. Nothing on screen needs a third figure between
-  // the two.
-  actual: number;
+  // The one Parts Cost reconciliation (src/lib/parts-cost-financials.ts,
+  // audit "Audit Parts Cost Projection Formula Across All Projects",
+  // 2026-08-15) — replaces the four separate props this card used to take
+  // (`purchased`, `actual`, `estimated`, `budgetProjection`), each previously
+  // re-derived by the page rather than read from one shared function. Same
+  // underlying numbers, same formula; this just means every consumer of this
+  // card reads them from the same place instead of risking a second
+  // re-derivation drifting from the first.
+  financials: PartsCostFinancials;
   // How many jobs these totals cover. The money figures aggregate correctly
   // across a multi-job selection (unlike the BOM below them), so the card
   // follows the slicer — it just has to say how many jobs it's adding up.
   jobCount?: number;
-  // Jobs whose TotalETO parts pull failed. Their lines are missing from the
-  // totals, so the card says so instead of presenting a short figure as if it
-  // were the whole picture — a silently-dropped job reads as "nothing bought".
-  failedJobs?: number;
-  // The Parts Cost Quoted figure from the Projects tab (Job.costQuoted), summed across
-  // the selected jobs — per Dan, "Estimated" here is ALWAYS the quoted cost, i.e. the
-  // Budget this chart's first bar draws. Null when no selected job has a quote on
-  // file, in which case the Budget bar is drawn empty rather than at $0 (an absent
-  // estimate must not read as a $0 target).
-  estimated: number | null;
-  // "Part Cost Budget Projection": purchased + estimate-to-purchase, the latter
-  // being the app's Parts New ETC (= the month's opening estimate to complete
-  // less what was spent this month). Computed in lib/parts-budget-projection.ts
-  // — see there for the definition and for why Power BI's estimate-to-complete
-  // measure can't be the estimate half. Null when there's no ETC month; the
-  // second bar's top segment is then omitted rather than drawn with half the
-  // formula missing.
-  budgetProjection: { actual: number; committedNotPosted: number; estimateToPurchase: number; total: number } | null;
 }) {
+  const failedJobs = financials.failedJobs;
   // Treat a ZERO quote as "nothing on file", not as a $0 target — an absent
-  // estimate must not read as $0 estimated.
-  const estimate = estimated != null && estimated > 0 ? estimated : null;
-  const projection = budgetProjection?.total ?? null;
-  const hasProjection = projection != null;
+  // estimate must not read as $0 estimated. (getPartsCostFinancials already
+  // applies this: budget is null unless quoted > 0.)
+  const estimate = financials.budget;
+  const hasProjection = financials.etc != null;
 
   // ── The Actual/Projection bar's three segments (2026-08-10) ───────────────
   //
@@ -226,20 +209,36 @@ export function PartsCostSummary({
   // stops the bar double-counting: Actual is already inside committed spend, and
   // committed spend is already inside Projection, so each segment above the first
   // is only the PART of the next figure that isn't already accounted for by the
-  // segment below it. The three summed equal projTotal exactly — the Math.max
-  // guards are the same defensive floor this component has always had, in case an
-  // upstream oddity ever inverted actual ≤ purchased ≤ projection.
+  // segment below it. The three summed equal projTotal exactly.
   //
   // The BASE segment is Parts Actual — GL-posted spend — not `paid` (2026-08-10).
   // `paid` counts invoices flagged never to post to the general ledger, so it read
   // high against the job ledger people check this card against. The bar's total
   // height is unchanged: what moved out of segment 1 moved into segment 2, which
   // is where committed-but-not-on-the-ledger money belongs.
-  const invoiced = Math.max(0, actual); // base segment — "Invoiced"
-  const spent = Math.max(invoiced, purchased); // everything committed
-  const projTotal = hasProjection ? Math.max(spent, projection!) : spent; // bar 2's own total height
-  const spentIncrement = Math.max(0, spent - invoiced); // "Left to be invoiced"
-  const projIncrement = Math.max(0, projTotal - spent); // "ETC"
+  const invoiced = financials.invoiced; // base segment — "Invoiced"
+  const spent = financials.totalSpent; // everything committed (invoiced + left to invoice)
+  const projTotal = financials.projection; // bar 2's own total height
+  const spentIncrement = financials.leftToInvoice; // "Left to be invoiced"
+  const projIncrement = financials.etc ?? 0; // "ETC"
+
+  // ── Rounding that can't visibly contradict itself (audit finding) ─────────
+  //
+  // Rounding Invoiced/Left to Invoice/ETC to whole dollars independently, then
+  // summing those three DISPLAYED numbers, doesn't always equal the displayed
+  // Projection total rounded on its own — e.g. 23207.616 + 101371.554 +
+  // 189298.04 = 313877.21 exactly, but round()+round()+round() of the three
+  // parts = 313878, one dollar more than round(313877.21) = 313877. Nothing
+  // in the underlying math is wrong; the fix is to round for DISPLAY only,
+  // hierarchically: reconcile Invoiced+Left-to-invoice against their own
+  // (separately rounded) "Total Parts Cost Spent" first, then let ETC absorb
+  // whatever's left to reach the (separately rounded) Projection total. That
+  // guarantees both displayed subtotals — Total Parts Cost Spent, and
+  // Projection — always equal the sum of the segment figures shown beside them.
+  const [invoicedDisplay, leftToInvoiceDisplay] = reconcilePartsCostRounding([invoiced, spentIncrement]);
+  const totalSpentDisplay = invoicedDisplay + leftToInvoiceDisplay;
+  const projTotalDisplay = Math.round(projTotal);
+  const etcDisplay = hasProjection ? Math.max(0, projTotalDisplay - totalSpentDisplay) : 0;
 
   // ── ONE shared scale for both bars (2026-08-10c, by request) ──────────────
   //
@@ -252,6 +251,9 @@ export function PartsCostSummary({
   // bar look identical regardless of its actual size.
   const maxValue = Math.max(1, estimate ?? 0, projTotal);
   const pct = (v: number) => Math.min(100, (v / maxValue) * 100);
+  // A percentage-of-scale as an actual PIXEL height against BAR_H — see the
+  // value-label fix below for why this replaced the old `${pct}%` heights.
+  const barPx = (percent: number) => (BAR_H * percent) / 100;
 
   // Segments bottom-to-top, each sized against the SAME shared scale as
   // Budget — Bar 2's own rendered height is the sum of these three, which
@@ -259,12 +261,16 @@ export function PartsCostSummary({
   // still holds. Always both actuals; the projection segment only exists (and
   // is only labelled) when there IS a projection to show — you can't state a
   // share of a figure that was never computed.
+  // `value` here is the RECONCILED whole-dollar figure (see above) — what's
+  // displayed beside the bar — while `heightPct` still scales off the raw,
+  // full-precision figure, since the bar's geometry has no rounding-sum
+  // problem to begin with (only the printed dollar labels do).
   const segments: { key: string; label: string; value: number; color: string; heightPct: number }[] = [
-    { key: "invoiced", label: "Invoiced", value: invoiced, color: BAR_INVOICED, heightPct: pct(invoiced) },
-    { key: "left-to-invoice", label: "Left to be invoiced", value: spentIncrement, color: BAR_SPENT, heightPct: pct(spentIncrement) },
+    { key: "invoiced", label: "Invoiced", value: invoicedDisplay, color: BAR_INVOICED, heightPct: pct(invoiced) },
+    { key: "left-to-invoice", label: "Left to be invoiced", value: leftToInvoiceDisplay, color: BAR_SPENT, heightPct: pct(spentIncrement) },
   ];
   if (hasProjection) {
-    segments.push({ key: "etc", label: "ETC", value: projIncrement, color: BAR_PROJECTED, heightPct: pct(projIncrement) });
+    segments.push({ key: "etc", label: "ETC", value: etcDisplay, color: BAR_PROJECTED, heightPct: pct(projIncrement) });
   }
   // Chips read in the same top-to-bottom order the segments stack visually —
   // the topmost segment ("ETC", when present) listed first — even though
@@ -289,15 +295,14 @@ export function PartsCostSummary({
   // right — $0 against an $8,600 quote IS 100% under — but "100.0% under" in
   // green announces a triumph on a job where the buying simply hasn't started,
   // and that's the reading someone acts on. An absence of data isn't a saving.
-  const noPartsActivity = purchased === 0 && (projection ?? 0) === 0;
+  const noPartsActivity = spent === 0 && projTotal === 0;
 
   const variance =
-    estimate != null && budgetProjection != null && !noPartsActivity
+    estimate != null && financials.variance != null && !noPartsActivity
       ? {
-          projection: budgetProjection.total,
           estimate,
-          dollars: budgetProjection.total - estimate, // + = over
-          pct: (budgetProjection.total - estimate) / estimate,
+          dollars: financials.variance, // + = over
+          pct: financials.variancePct! / 100,
         }
       : null;
 
@@ -425,46 +430,61 @@ export function PartsCostSummary({
             it always has, independent of whatever the bar itself is doing. */}
         <div className="flex items-end gap-1.5">
           <div className="flex flex-col items-center gap-1.5">
-            {/* text-xs/font-bold (2026-08-12, by request — consistency with the
-                ETC chart's own bar labels, bumped the same amount in the same
-                pass), up from text-micro/font-semibold. Already text-sdc-navy —
-                this app's darkest text token, nothing to darken further here.
-                Widening this DOES cost BAR_W headroom (see that constant's own
-                comment on why 4rem clears an 11-digit dollar figure at
-                text-micro specifically) — verified live rather than assumed:
-                still clears at this card's real current dollar figures. */}
-            <span className="font-mono text-xs font-bold tabular-nums text-sdc-navy">{estimate != null ? usd(estimate) : "—"}</span>
-            {/* No background on this positioning box — it is only a percentage
-                reference frame (height: BAR_H), never rendered itself. A
-                bg-sdc-gray-100 "track" here used to fill the FULL BAR_H
-                regardless of value, so a bar under 100% of maxValue showed a
-                gray shortfall above its real fill that read as the bar
-                extending further than its actual number — exactly the
-                artificial padding this must not have. The card's own
-                background shows through above the fill instead. */}
-            <div className="relative shrink-0 overflow-hidden" style={{ width: BAR_W, height: BAR_H }}>
-              {estimate != null && (
-                <div className="absolute inset-x-0 bottom-0 rounded-t-sm" style={{ height: `${pct(estimate)}%`, background: BAR_BUDGET }} />
-              )}
+            {/* ── Value label anchored to the bar's own top, not the frame's
+                (2026-08-14, by request — "not properly anchored... floating
+                too far left/right") ────────────────────────────────────────
+                The label used to sit in normal flow ABOVE this fixed BAR_H
+                frame, so it always hovered at the frame's top regardless of
+                how tall the actual fill was — correct only when the fill
+                happened to reach 100%, adrift by however much it didn't the
+                rest of the time. SectionHierarchyChart's own `Bar` (the
+                Hours chart this is meant to match) never has this problem
+                because label and bar are packed together, bottom-aligned,
+                inside their OWN full-height frame — the same fix applied
+                here: this div IS the BAR_H reference frame (width/height set
+                below), `justify-end` packs [label, fill] to its bottom edge,
+                so the label sits exactly one gap above wherever the fill's
+                top actually is, centered on it by the same `items-center`
+                that already centered the frame under its caption.
+                text-xs/font-bold/text-sdc-navy unchanged from before
+                (2026-08-12, consistency with the ETC chart's own bar
+                labels); leading-none + mb-0.5 added to match that chart's
+                label-to-bar gap exactly (SectionHierarchyChart's `Bar`). */}
+            <div className="flex flex-col items-center justify-end" style={{ width: BAR_W, height: BAR_H }}>
+              <span className="mb-0.5 whitespace-nowrap font-mono text-xs font-bold leading-none tabular-nums text-sdc-navy">
+                {estimate != null ? usd(estimate) : "—"}
+              </span>
+              {/* No background — a bg-sdc-gray-100 "track" here used to fill
+                  the full frame regardless of value, so a bar under 100% of
+                  maxValue showed a gray shortfall above its real fill that
+                  read as the bar extending further than its actual number.
+                  The card's own background shows through above the fill
+                  instead. Height is now a PIXEL value (barPx), not a
+                  percentage: as a plain flow child (no longer absolutely
+                  positioned against a same-height parent) a `%` height here
+                  would only resolve at all because the parent's height is
+                  itself a definite pixel value — barPx says so directly and
+                  keeps the segments below on the identical footing. */}
+              {estimate != null && <div className="w-full rounded-t-sm" style={{ height: barPx(pct(estimate)), background: BAR_BUDGET }} />}
             </div>
             <div className="flex items-start justify-center text-center text-note font-medium leading-tight text-sdc-gray-600" style={{ height: CAPTION_H }}>Budget</div>
           </div>
 
           <div className="flex flex-col items-center gap-1.5">
-            {/* Same bump as Budget's label just above — see its comment. */}
-            <span className="font-mono text-xs font-bold tabular-nums text-sdc-navy">{usd(projTotal)}</span>
-            {/* Same reasoning as Budget's box above: no bg-sdc-gray-100 track.
-                This box's OWN height stays BAR_H only as the percentage
-                reference frame the three segments' heightPct values resolve
-                against — it renders nothing on its own, so the stack's
-                visible height is exactly the sum of Invoiced + Left to be
-                invoiced + ETC (heightPct, computed from pct(), sums linearly
-                to pct(projTotal) — there is no fourth, invisible segment
-                padding it out to the box's full height). */}
-            <div className="relative shrink-0 overflow-hidden" style={{ width: BAR_W, height: BAR_H }}>
-              <div className="absolute inset-x-0 bottom-0 flex h-full flex-col-reverse">
+            {/* Same fix as Budget's frame just above — see its comment. */}
+            <div className="flex flex-col items-center justify-end" style={{ width: BAR_W, height: BAR_H }}>
+              <span className="mb-0.5 whitespace-nowrap font-mono text-xs font-bold leading-none tabular-nums text-sdc-navy">{usd(projTotalDisplay)}</span>
+              {/* The three segments stack bottom-to-top inside their own
+                  sub-column (flex-col-reverse: first array item —
+                  "Invoiced" — ends up at the bottom, matching before).
+                  Each gets a PIXEL height (barPx), so the stack's rendered
+                  height is exactly the sum of Invoiced + Left to be invoiced
+                  + ETC with no percentage-of-an-auto-height-parent ambiguity
+                  — it sums to barPx(pct(projTotal)) exactly, still no
+                  fourth invisible segment padding it out further. */}
+              <div className="flex w-full flex-col-reverse">
                 {segments.map((s, i) => (
-                  <div key={s.key} className={`w-full flex-shrink-0 ${i === segments.length - 1 ? "rounded-t-sm" : ""}`} style={{ height: `${s.heightPct}%`, background: s.color }} />
+                  <div key={s.key} className={`w-full flex-shrink-0 ${i === segments.length - 1 ? "rounded-t-sm" : ""}`} style={{ height: barPx(s.heightPct), background: s.color }} />
                 ))}
               </div>
             </div>
@@ -529,7 +549,7 @@ export function PartsCostSummary({
           the bars and this summary at the same time. */}
       <p className="mt-1 text-note text-sdc-gray-400">
         Total Parts Cost Spent:{" "}
-        <span className="font-mono text-sm font-bold tabular-nums text-sdc-navy">{usd(invoiced + spentIncrement)}</span>
+        <span className="font-mono text-sm font-bold tabular-nums text-sdc-navy">{usd(totalSpentDisplay)}</span>
       </p>
 
       {/* Projection vs Budget — the one figure that says whether this job

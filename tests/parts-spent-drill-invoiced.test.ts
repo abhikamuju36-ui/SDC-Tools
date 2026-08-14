@@ -43,9 +43,10 @@ function functionBody(source: string, name: string): string {
 const SYNC_TOTALETO = () => code("lib", "sync-totaleto.ts");
 
 test("getJobPartsCost itself is never filtered or windowed — other pages still need every line", () => {
-  // job-hours/page.tsx (Job Hour Details / Procurement) calls getJobPartsCost directly,
-  // not the drill's action, and it must keep seeing ordered-but-unbilled parts across
-  // the job's whole history — exactly what a procurement reader opens the page to find.
+  // job-hours/page.tsx (Job Hour Details / Procurement) reaches this via
+  // getPartsCostFinancials (lib/parts-cost-financials.ts), not the drill's
+  // action, and it must keep seeing ordered-but-unbilled parts across the
+  // job's whole history — exactly what a procurement reader opens the page to find.
   const fnBody = functionBody(SYNC_TOTALETO(), "getJobPartsCost");
   assert.doesNotMatch(fnBody, /invoicedAmount > 0/, "getJobPartsCost must return every line, invoiced or not");
   assert.doesNotMatch(fnBody, /@start|@end/, "getJobPartsCost must stay unwindowed — Job Hour Details needs the whole history");

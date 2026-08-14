@@ -397,8 +397,12 @@ export async function syncPartsCost(month: string): Promise<{ rowsUpserted: numb
   // (getPartsCostPurchasedByJob), which was internally consistent but $30,117 away from
   // the business's own report for July 2026, and off by multiples on individual jobs.
   //
-  // getPartsCostSpentByJob is still used, but only by the Projects grid's cumulative
-  // Parts Cost Actual column, which is a lifetime measure and a different question.
+  // getPartsCostSpentByJob is still used, but only by Profitability's "Parts
+  // Purchased" column (src/lib/job-cost-source.ts), which is a lifetime
+  // committed-spend measure and a different question. (Corrected 2026-08-15,
+  // audit finding: this comment previously said "the Projects grid's
+  // cumulative Parts Cost Actual column" — stale since 2026-08-10, when
+  // syncPartsCostActual switched that column to getPartsActualByJob instead.)
   const booked = await getPartsCostBookedByJob(monthStart, monthEndExclusive);
   const spentByJobId = booked.net;
   // An AP line with no ProjectID belongs to nobody and would silently vanish. Surfaced in

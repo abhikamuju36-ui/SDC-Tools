@@ -1,12 +1,10 @@
-import { prisma } from "@/lib/prisma";
 import { PageTitle } from "@/components/ui/Typography";
 import { card } from "@/components/ui/classnames";
 import { JobHoursDashboard } from "@/components/JobHoursDashboard";
 import { IndicatorCard } from "@/components/charts/IndicatorCard";
 import { JobSelect } from "@/components/JobSelect";
 import { listDashboardJobs, getJobHoursDashboard, defaultDashboardJobId } from "@/lib/job-hours-dashboard";
-import { getJobPartsCost, type JobPartsCost } from "@/lib/sync-totaleto";
-import { computePartsBudgetProjection, type PartsBudgetProjection } from "@/lib/parts-budget-projection";
+import { getPartsCostFinancials, type PartsCostFinancials } from "@/lib/parts-cost-financials";
 import { SchedulerJobLink } from "@/components/SchedulerJobLink";
 import { getSchedulerLinkContext } from "@/lib/scheduler-link";
 import { getJobBom, type JobBom } from "@/lib/job-bom";
@@ -101,59 +99,23 @@ export default async function JobHoursPage({
   // unavailable", a null `bom` renders the procurement EmptyState — so timing out
   // lands in paths the page already had, rather than needing new UI. See
   // lib/with-timeout.ts for why the abandoned query is not (and cannot be) cancelled.
-  const partsPromise: Promise<{
-    parts: JobPartsCost | null;
-    projection: PartsBudgetProjection | null;
-    budget: number | null;
-    failedJobs: number;
-  }> = data && !partsCapped
-    ? (async () => {
-        const perJob = await Promise.all(
-          data.jobRefs.map((r) =>
-            withTimeoutOrNull(`TotalETO parts (job ${r.jobId})`, UPSTREAM_BUDGET_MS, () => getJobPartsCost(r.jobId), (e) =>
-              console.error(`getJobPartsCost failed for job ${r.jobId}:`, e),
-            ),
-          ),
-        );
-        const failedJobs = perJob.filter((v) => v == null).length;
-        const lines = perJob.flatMap((v) => v?.lines ?? []);
-        lines.sort((a, b) => (b.purchaseDate ?? "").localeCompare(a.purchaseDate ?? ""));
-        const purchased = lines.reduce((s, l) => s + l.totalPrice, 0);
-        const paid = lines.reduce((s, l) => s + l.invoicedAmount, 0);
-        // Parts Actual — GL-posted spend, summed from the per-line field that
-        // carries the app's one definition of it (2026-08-10). Summed here rather
-        // than taken from each job's own `actual` because this page aggregates an
-        // arbitrary job selection, and the line array is what it aggregates.
-        const actual = lines.reduce((s, l) => s + l.actualAmount, 0);
-        // Every job failed: show nothing rather than a confident set of $0 bars.
-        const totals =
-          failedJobs === data.jobRefs.length ? null : { purchased, paid, actual, leftToPay: purchased - paid, lines };
-
-        // "Part Cost Budget Projection" — purchased + estimate-to-purchase, the
-        // latter being the Parts New ETC for the latest ETC month (see
-        // parts-budget-projection.ts for why that field IS Dan's estimate to
-        // purchase). Best-effort; a failure drops the marker.
-        //
-        // "Part Cost Budget" — the report's [Part Cost Quoted] measure is
-        // SUM('Cost Estimated'[Cost Quoted]), and that same upstream table populates
-        // Job.costQuoted here (syncQuotedFromPowerBi reads EVALUATE 'Cost Estimated'),
-        // so summing it across the selected jobs is the same number. Both are app-database
-        // reads, so they need no budget of their own — and they can run together.
-        const [projection, budgetRows] = await Promise.all([
-          computePartsBudgetProjection(data.jobRefs.map((r) => r.id), lines, data.kpis.latestEtcMonth).catch(() => null),
-          prisma.job
-            .findMany({ where: { id: { in: data.jobRefs.map((r) => r.id) } }, select: { costQuoted: true } })
-            .catch(() => [] as { costQuoted: unknown }[]),
-        ]);
-        const quoted = budgetRows.reduce((s, j) => s + Number(j.costQuoted ?? 0), 0);
-        return {
-          parts: totals,
-          projection,
-          budget: quoted > 0 ? quoted : null, // no quote on file → hide the budget bar
-          failedJobs,
-        };
-      })()
-    : Promise.resolve({ parts: null, projection: null, budget: null, failedJobs: 0 });
+  // One centralized reconciliation (src/lib/parts-cost-financials.ts, audit
+  // "Audit Parts Cost Projection Formula Across All Projects", 2026-08-15) —
+  // this used to be an inline IIFE re-deriving the same Invoiced/Left-to-
+  // invoice/ETC/Projection math this page's own copy could drift from every
+  // other consumer's. `financials.lines` carries the same per-line rows
+  // Procurement needs below, so this is still exactly one TotalETO fetch per
+  // job, not two. Passing no `asOfDate` resolves to the same "latest EtcEntry
+  // month for these jobs" query job-hours-dashboard.ts's own `latestEtcMonth`
+  // already runs (identical where/orderBy/select), so this reproduces
+  // `data.kpis.latestEtcMonth` exactly.
+  const partsPromise: Promise<PartsCostFinancials> =
+    data && !partsCapped
+      ? getPartsCostFinancials(data.jobRefs.map((r) => r.id))
+      : Promise.resolve({
+          budget: null, invoiced: 0, leftToInvoice: 0, etc: null, totalSpent: 0,
+          projection: 0, variance: null, variancePct: null, failedJobs: 0, lineCount: 0, lines: [],
+        });
 
   // Job Cost — the BOM cost hierarchy (formerly its own page) now lives below
   // Parts Cost here. It's a per-single-job view, so only load it when exactly
@@ -165,11 +127,11 @@ export default async function JobHoursPage({
         )
       : Promise.resolve(null);
 
-  const [partsResult, bom] = await Promise.all([partsPromise, bomPromise]);
-  const parts = partsResult.parts;
-  const partsProjection = partsResult.projection;
-  const partsBudget = partsResult.budget;
-  const partsFailedJobs = partsResult.failedJobs;
+  const [financials, bom] = await Promise.all([partsPromise, bomPromise]);
+  // Every job failed: show nothing rather than a confident set of $0 bars —
+  // same rule the old inline computation used (`failedJobs === jobRefs.length`).
+  const partsUnavailable = !!data && financials.failedJobs === data.jobRefs.length && data.jobRefs.length > 0;
+  const parts = partsUnavailable ? null : financials;
   // Distinguishes "we asked and could not get it" from "there is nothing to ask for",
   // which is what decides between the warning EmptyState and the plain one below.
   const bomFailed = !!(data && singleJobId) && bom == null;
@@ -245,18 +207,7 @@ export default async function JobHoursPage({
           <JobHoursDashboard
             data={data}
             hoursDetail={hoursDetail}
-            parts={
-              parts
-                ? {
-                    purchased: parts.purchased,
-                    actual: parts.actual,
-                    estimated: partsBudget,
-                    budgetProjection: partsProjection,
-                    jobCount: data.jobRefs.length,
-                    failedJobs: partsFailedJobs,
-                  }
-                : null
-            }
+            parts={parts ? { financials: parts, jobCount: data.jobRefs.length } : null}
           />
 
           {partsCapped && (

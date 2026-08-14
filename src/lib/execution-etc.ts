@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { suggestNewEtc, round2 } from "@/lib/etc";
+import { effectiveNewEtc, round2 } from "@/lib/etc";
 import { ETC_SECTIONS, ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
 
 const SECTION_BILLING_GROUP = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]));
@@ -42,11 +42,12 @@ export async function getExecutionEtcByJob(jobIds: number[], month: string): Pro
     // draft if any, else the live suggestion. Stored newEtc on an
     // unsubmitted entry is just the seed-time value, so using it made the
     // Standard Sheet disagree with the grid until the month was submitted.
-    const value = !e.needsReview
-      ? Number(e.newEtc)
-      : e.newEtcDraft != null
-        ? Number(e.newEtcDraft)
-        : suggestNewEtc(Number(e.priorEtc), Number(e.hoursWorked));
+    // Calls the shared `effectiveNewEtc` (2026-08-15, audit finding) — this
+    // used to hand-copy that exact branching inline, a second copy of the
+    // same rule that could silently drift from the original the moment one
+    // was edited and not the other (found while auditing the Parts Cost
+    // projection formula; identical behavior before and after this change).
+    const value = effectiveNewEtc(e);
     if (e.section === PARTS_COST_SECTION) {
       totals.parts += value;
     } else if (SECTION_BILLING_GROUP.get(e.section) === "Engineering") {

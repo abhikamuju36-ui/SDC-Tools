@@ -9,7 +9,7 @@ import type { JobHoursDetail as JobHoursDetailData } from "@/lib/job-hours-detai
 import { RESTRICTED_SECTION_CODES } from "@/lib/sections";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 import { PartsCostSummary } from "@/components/PartsCostSummary";
-import type { PartsBudgetProjection } from "@/lib/parts-budget-projection";
+import type { PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
 
 // The Parts Cost bullet bar (§52) joins the two hours charts in one row, so
 // its inputs travel as one prop rather than a second top-level component the
@@ -17,13 +17,8 @@ import type { PartsBudgetProjection } from "@/lib/parts-budget-projection";
 // (Total ETO unreachable, or the selection is capped) — the row then falls
 // back to its original two-column ratio instead of leaving an empty third cell.
 export type JobHoursDashboardParts = {
-  purchased: number;
-  /** Parts Actual — GL-posted spend, the app's one definition (2026-08-10). */
-  actual: number;
-  estimated: number | null;
-  budgetProjection: PartsBudgetProjection | null;
+  financials: PartsCostFinancials;
   jobCount: number;
-  failedJobs: number;
 };
 
 // Web recreation of the Power BI "Job Detail" dashboard (hours half). The Hours
@@ -459,12 +454,8 @@ export function JobHoursDashboard({
         </div>
         {parts && (
           <PartsCostSummary
-            purchased={parts.purchased}
-            actual={parts.actual}
-            estimated={parts.estimated}
-            budgetProjection={parts.budgetProjection}
+            financials={parts.financials}
             jobCount={parts.jobCount}
-            failedJobs={parts.failedJobs}
           />
         )}
       </div>
@@ -561,16 +552,17 @@ function SectionHierarchyChart({
   onDrill: (code: string | null) => void;
   drillCode: string | null;
 }) {
-  // 420, up from 300 (2026-08-12, by request — "bars look too short"). Raising
-  // this constant IS the fix: `scalePct` below already resolves the tallest
-  // bar to exactly 100% of BAR_H with no headroom above it (no
+  // 546, up from 420 (2026-08-14, by request — plot area ~30% taller so bars
+  // are easier to compare). Same mechanism as the 300→420 pass before it:
+  // raising this constant IS the fix, since `scalePct` below already resolves
+  // the tallest bar to exactly 100% of BAR_H with no headroom above it (no
   // `max: dataMax * 1.X`, no fixed-height gray track — both were tried
   // elsewhere in this app and reverted, see PartsCostSummary's BAR_H comment),
   // so more pixels here is more pixels under every bar, in exact proportion,
   // with nothing else to change. Kept in step with PartsCostSummary's own
   // BAR_H — see that constant's comment for the baseline-alignment math this
-  // owes it.
-  const BAR_H = 420;
+  // owes it (same +126 delta applied there).
+  const BAR_H = 546;
   const max = Math.max(1, ...rows.flatMap((r) => [r.planned, r.actual]));
   // Square-root, not linear (by request) — a plain `value / max` puts every bar
   // on one straight line from (0,0) to (max, 100%), and this chart's own max is

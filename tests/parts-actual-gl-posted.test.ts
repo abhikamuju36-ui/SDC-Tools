@@ -167,36 +167,65 @@ test("Job Cost Explorer's actual column uses the shared definition", () => {
   );
 });
 
-test("the Parts Cost card's base bar segment comes from `actual`, never `paid` or `purchased`", () => {
+test("the Parts Cost card's base bar segment comes from `financials.invoiced`, never `paid` or `purchased`", () => {
+  // 2026-08-15 (audit "Audit Parts Cost Projection Formula Across All
+  // Projects"): PartsCostSummary stopped taking `purchased`/`actual` as
+  // separate props and now reads them off one shared `PartsCostFinancials`
+  // object (src/lib/parts-cost-financials.ts) — so this guard now pins that
+  // `invoiced` traces to `financials.invoiced`, one hop from the same
+  // GL-posted-only source (`actualTotal`, see the test below) it always did.
   const src = code("src", "components", "PartsCostSummary.tsx");
-  assert.match(src, /const invoiced = Math\.max\(0, actual\)/, "the base segment is Parts Actual, not `paid`");
+  assert.match(src, /const invoiced = financials\.invoiced/, "the base segment is Parts Actual, not `paid` or `purchased`");
   // "Total Parts Cost Spent" was GL-posted-only (`invoiced`) from 2026-08-10
   // through 2026-08-11a — the original assertion here pinned that value. A
   // later, deliberate, by-request redesign (2026-08-11c, see that caption's
   // own comment in PartsCostSummary.tsx) intentionally moved it to
-  // `invoiced + spentIncrement` so the caption reconciles with the two bar
+  // Invoiced + Left-to-invoice so the caption reconciles with the two bar
   // segments actually on screen instead of with the external ledger. That is
-  // NOT a resurgence of the original bug: `invoiced` itself — the figure every
-  // OTHER test in this file guards — is untouched, still GL-posted, and still
-  // what the bar's base segment and the legend's "Invoiced" value show.
-  // `spentIncrement` is an explicitly labelled, visibly separate "Left to be
-  // invoiced" segment, not commitment silently relabelled as spend.
-  // Matches the caption and its expression separately rather than as one exact
-  // string: 2026-08-11f wrapped the AMOUNT in its own <span> to bold it, which a
-  // literal one-line pattern would have failed on for a pure typography change.
-  // What must not drift is the EXPRESSION — that is what this guards.
+  // NOT a resurgence of the original bug: `financials.invoiced` itself — the
+  // figure every OTHER test in this file guards — is untouched, still
+  // GL-posted, and still what the bar's base segment and the legend's
+  // "Invoiced" value show. `leftToInvoice` is an explicitly labelled, visibly
+  // separate "Left to be invoiced" segment, not commitment silently relabelled
+  // as spend.
+  //
+  // 2026-08-15: the caption now reads a pre-reconciled `totalSpentDisplay`
+  // (largest-remainder rounding of [invoiced, leftToInvoice], see
+  // reconcilePartsCostRounding) rather than the raw `invoiced + spentIncrement`
+  // sum directly — a fix for a real, if usually sub-dollar, display artifact
+  // where three independently-rounded segments didn't always sum to a
+  // separately-rounded total. `totalSpentDisplay` is BY CONSTRUCTION
+  // `invoicedDisplay + leftToInvoiceDisplay`, so this still guards the same
+  // invariant: the caption is the bar's own two segments, not the GL-posted
+  // figure alone.
   assert.match(
     src,
-    /Total Parts Cost Spent:[\s\S]{0,240}usd\(invoiced \+ spentIncrement\)/,
-    "by-request 2026-08-11c: this caption sums the bar's own two segments (Invoiced + Left to be invoiced), not the GL-posted figure alone",
+    /const totalSpentDisplay = invoicedDisplay \+ leftToInvoiceDisplay/,
+    "totalSpentDisplay must be defined as the sum of the two displayed segments, not re-derived from a different source",
+  );
+  assert.match(
+    src,
+    /Total Parts Cost Spent:[\s\S]{0,240}usd\(totalSpentDisplay\)/,
+    "this caption must render the reconciled sum of the bar's own two segments (Invoiced + Left to be invoiced), not the GL-posted figure alone",
   );
 });
 
-test("the aggregate Parts Actual on Job Hour Details sums the per-line field", () => {
-  const page = code("src", "app", "(app)", "job-hours", "page.tsx");
+test("the aggregate Parts Actual sums the per-line field, via the one shared function", () => {
+  // 2026-08-15: the per-job-selection aggregation this test used to pin
+  // inline on job-hours/page.tsx moved into the shared
+  // getPartsCostFinancials (src/lib/parts-cost-financials.ts), which is now
+  // every page's one source for this number rather than each page
+  // re-deriving it.
+  const financials = code("src", "lib", "parts-cost-financials.ts");
   assert.match(
-    page,
-    /lines\.reduce\(\(s, l\) => s \+ l\.actualAmount, 0\)/,
-    "this page aggregates an arbitrary job selection, so its actual must be summed from the same per-line field every other view uses",
+    financials,
+    /const invoiced = actualTotal\(lines\)/,
+    "getPartsCostFinancials must source Invoiced from the shared actualTotal helper, not re-sum the lines itself",
+  );
+  const projection = code("src", "lib", "parts-budget-projection.ts");
+  assert.match(
+    projection,
+    /function actualTotal\(lines: PartsCostLine\[\]\)[\s\S]{0,80}total \+= l\.actualAmount/,
+    "actualTotal must be summed from the same per-line field every other view uses",
   );
 });
