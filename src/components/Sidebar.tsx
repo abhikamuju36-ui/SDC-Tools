@@ -210,6 +210,17 @@ const GROUPS: NavGroup[] = [
           </Icon>
         ),
       },
+      {
+        href: "/build-readiness",
+        label: "Build Readiness",
+        isActive: (p) => p === "/build-readiness",
+        icon: (
+          <Icon>
+            <path d="M8 1.5 L14 4.5 V11.5 L8 14.5 L2 11.5 V4.5 Z" strokeLinejoin="round" />
+            <path d="M2 4.5 L8 7.5 L14 4.5 M8 7.5 V14.5" strokeLinecap="round" strokeLinejoin="round" />
+          </Icon>
+        ),
+      },
     ],
   },
 ];

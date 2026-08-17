@@ -597,6 +597,15 @@ model CategoryPool {
 // stored as JSON in `config`. Only SHARED (published, team-wide) and the single
 // team DEFAULT live in the DB; each user's private "My views" stay in their
 // browser's localStorage. `scope`+`name` is unique so a publish upserts by name.
+//
+// Left untouched by Build Readiness (2026-08-16) on purpose: widening this
+// model's unique constraint to add a page discriminator would require
+// regenerating the Prisma client for every EXISTING typed call site
+// (saved-views-actions.ts's `where: { scope_name: {...} } }`) to keep
+// compiling against the new compound key — and `prisma generate` cannot be
+// safely run here right now (see BuildReadinessSavedView below). Build
+// Readiness gets its own dedicated saved-views table instead, so Projects'
+// mechanism is never put at risk.
 model SavedView {
   id        Int      @id @default(autoincrement())
   name      String // "__default__" for the single team default row
@@ -840,4 +849,87 @@ model JobCostInventorySnapshot {
 
   @@unique([jobId, asOfDate])
   @@index([asOfDate])
+}
+
+// ── Build Readiness dashboard (2026-08-16) ───────────────────────────────────
+//
+// One row per active billable job, upserted the instant lib/build-readiness-sync.ts's
+// live pass over that job's getJobBom() (job-bom.ts) finishes classifying it. This is
+// NOT a second readiness formula — every scalar here and every entry in `detailJson`
+// comes straight out of job-bom-rules.ts's existing exports (isUncoveredPart, statusFor,
+// sourceFor, unitPriceFor, releaseOf, statsForRoots) plus the one new function that file
+// gained for this feature (buildableQtyFor). A job whose readiness % disagrees with what
+// Job Hour Details -> Procurement shows for the same job is a bug in the sync, never a
+// second definition to reconcile.
+//
+// All three Build Readiness tables below are accessed by RAW SQL, not the generated
+// client (`prisma.$queryRaw`/`$executeRaw`), same as JobCostInventorySnapshot/
+// MonthlyReportSubmission above — `prisma generate` cannot safely run while a server
+// process holds node_modules/.prisma open, which this box cannot rule out right now (a
+// PM2 daemon is running here). Raw SQL means these tables work the moment their
+// migration is applied, with no deploy-window `generate` step required.
+model BuildReadinessJobSnapshot {
+  id                  Int       @id @default(autoincrement())
+  jobId               String    @unique @db.VarChar(32)
+  jobName             String    @db.VarChar(255)
+  customer            String?   @db.VarChar(255)
+  status              String    @default("ok") @db.VarChar(16) // "ok" | "failed" | "empty" (no released BOM at all)
+  overallReadinessPct Int       @default(0)
+  assembliesTotal     Int       @default(0)
+  assembliesReady     Int       @default(0) // buildableQty >= required, right now
+  assembliesPartial   Int       @default(0) // some coverage, not fully buildable
+  assembliesBlocked   Int       @default(0) // zero buildable
+  partsUncovered      Int       @default(0) // isUncoveredPart
+  partsOnOrder        Int       @default(0)
+  partsPastDue        Int       @default(0)
+  partsDueSoon7d      Int       @default(0)
+  materialValueTotal  Decimal   @default(0) @db.Decimal(14, 2)
+  materialValueAtRisk Decimal   @default(0) @db.Decimal(14, 2) // uncovered + past-due parts' unitPrice*qty
+  nextUnlockDate      DateTime? // earliest expected delivery that raises some assembly's buildable qty
+  // Full per-assembly + per-vendor breakdown for the drill-down and the
+  // cross-job aggregations (blockers/supplier risk/upcoming unlocks/forecast) —
+  // see BuildReadinessJobDetail in build-readiness-sync.ts for the JSON shape.
+  // LongText, not Text: a large job's assemblies+blockers+vendors+upcoming
+  // JSON can exceed TEXT's 64KB limit outright (found live — 20 of 50 active
+  // jobs failed to upsert with MySQL error 1406 "Data too long for column"
+  // before this fix), silently dropping that job's snapshot every refresh.
+  detailJson          String    @db.LongText
+  computedAt          DateTime  @default(now())
+
+  @@index([overallReadinessPct])
+  @@index([customer])
+}
+
+// Singleton (id=1) tracking the in-flight/last cross-job Build Readiness pass —
+// what the dashboard polls for live progress. Same raw-SQL-access constraint
+// as BuildReadinessJobSnapshot above.
+model BuildReadinessRefreshMeta {
+  id              Int       @id @default(1)
+  status          String    @default("idle") @db.VarChar(16) // "idle" | "running" | "ok" | "partial"
+  startedAt       DateTime?
+  completedAt     DateTime?
+  jobsTotal       Int       @default(0)
+  jobsDone        Int       @default(0)
+  jobsFailed      Int       @default(0)
+  triggeredByName String?   @db.VarChar(191)
+  durationMs      Int?
+  updatedAt       DateTime  @updatedAt
+}
+
+// Build Readiness's own saved-views table — deliberately separate from
+// SavedView (see that model's own comment for why). Same three-tier shape
+// (shared/default server rows; "My views" stay in localStorage), same
+// `scope`+`name` uniqueness, just scoped to this one page so it can never
+// collide with Projects' views. Raw-SQL accessed, same reason as the two
+// models above.
+model BuildReadinessSavedView {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(191) // "__default__" for the single team default row
+  scope     String   @db.VarChar(16) // "shared" | "default"
+  owner     String?  @db.VarChar(191)
+  config    String   @db.Text // JSON: BuildReadinessViewConfig
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, name])
 }

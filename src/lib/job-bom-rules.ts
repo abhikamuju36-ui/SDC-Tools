@@ -464,6 +464,73 @@ export function buildAssembly(
 // [nodeId] — which walks its contents only. For "Both Assembly and Contents"
 // that would drop the assembly itself out of its own readiness figure, so fold
 // it back in.
+// ── Buildable quantity by limiting component (Build Readiness dashboard) ────
+//
+// "Given the quantities currently AVAILABLE (in-hand: PO receipts + fulfilled
+// inventory pulls — the same `receivedQty` used everywhere else in this file,
+// never on-order-but-not-received), how many complete units of this assembly
+// could actually be built right now?" — the limiting-component MRP calc:
+// BuildableQty = MIN over every required component of floor(available / required-per-unit).
+//
+// Scoped to THIS node's own direct requirements only (`node.self` + `node.parts`) —
+// it does not recurse into a child sub-assembly's own buildability. A nested
+// sub-assembly is itself a separate buildable unit with its own number; folding
+// it into the parent's limiting-component set would conflate "we can build the
+// sub-assembly" with "we have the sub-assembly already built and in hand",
+// which are different questions this function isn't asked to answer.
+//
+// `ItemQty` (BomPart.qty) is the quantity needed for THIS JOB'S entire required
+// build count of the assembly (matching rollUp's own totalCost/totalPartQty,
+// which add `p.qty` directly with no per-instance multiplication) — not "per one
+// assembly unit". Dividing by the assembly's own required qty (`node.self.qty`)
+// recovers the per-unit ratio the MIN/floor formula needs.
+export type BuildableInfo = {
+  buildableQty: number; // complete units buildable right now
+  buildablePct: number; // buildableQty / assembly's own required qty, capped at 100
+  limitingParts: { pn: string; available: number; required: number }[]; // the actual bottleneck(s) — every part tied for the minimum
+};
+
+// `null` when the node has no own buy/build line at all (a pure "Contents Only"
+// container — e.g. a section, or an assembly whose contents are the requirement
+// rather than the assembly itself) — there is no "how many units" question to
+// answer for something that was never itself a unit to build.
+export function buildableQtyFor(node: BomNode): BuildableInfo | null {
+  if (!node.self) return null;
+  const unitQty = node.self.qty > 0 ? node.self.qty : 1;
+
+  if (node.parts.length === 0) {
+    // No recorded components under this assembly — its own line is the only
+    // requirement, so buildability is just its own coverage.
+    const buildableQty = Math.min(node.self.receivedQty, unitQty);
+    return {
+      buildableQty,
+      buildablePct: Math.min(100, Math.round((buildableQty / unitQty) * 100)),
+      limitingParts: [],
+    };
+  }
+
+  let buildableQty = Infinity;
+  const perUnitByPart = new Map<string, number>();
+  for (const p of node.parts) {
+    const perUnit = p.qty / unitQty;
+    if (perUnit <= 0) continue; // a zero/negative BOM qty gates nothing
+    perUnitByPart.set(p.pn, perUnit);
+    const possible = Math.floor(p.receivedQty / perUnit);
+    if (possible < buildableQty) buildableQty = possible;
+  }
+  if (!Number.isFinite(buildableQty)) buildableQty = unitQty; // no part with a positive required qty — nothing to gate it
+  buildableQty = Math.max(0, buildableQty);
+
+  const limitingParts = node.parts
+    .filter((p) => {
+      const perUnit = perUnitByPart.get(p.pn);
+      return perUnit != null && Math.floor(p.receivedQty / perUnit) === buildableQty;
+    })
+    .map((p) => ({ pn: p.pn, available: p.receivedQty, required: perUnitByPart.get(p.pn)! }));
+
+  return { buildableQty, buildablePct: Math.min(100, Math.round((buildableQty / unitQty) * 100)), limitingParts };
+}
+
 export function withSelfInStats(node: BomNode): BomNode {
   if (!node.self) return node;
   const s = node.stats;
