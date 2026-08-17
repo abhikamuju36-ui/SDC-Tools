@@ -13,8 +13,12 @@ import { writeFileSync } from "node:fs";
 
 // ── Audit: Parts Cost Projection Formula Across All Projects (2026-08-15) ────
 //
-// Live, per-job reconciliation of Projection = Invoiced + Left to be Invoiced
-// + ETC, against Budget (Job.costQuoted), for every TotalETO-tracked job.
+// Live, per-job reconciliation of Projection = Invoiced + ETC, against Budget
+// (Job.costQuoted), for every TotalETO-tracked job. Left to be Invoiced is
+// checked and reported too, but is NOT part of Projection — see the
+// 2026-08-17 fix in parts-budget-projection.ts's header for why summing it in
+// (this audit's own original formula, until this date) double-counts money
+// already sitting, undrawn-down, inside ETC.
 // Re-derives each job through getPartsCostFinancials's own building blocks
 // (not the aggregate function itself, so this stays an independent check
 // rather than a test that a function agrees with itself) and cross-checks
@@ -161,15 +165,17 @@ async function main() {
     }
 
     // ── PROJECTION FORMULA MISMATCH — the defining identity itself ────────
-    const expectedProjection = invoiced + leftToInvoice + (etc ?? 0);
+    // Left to be Invoiced deliberately excluded (2026-08-17 fix) — see the
+    // file header.
+    const expectedProjection = invoiced + (etc ?? 0);
     if (Math.abs(projectionTotal - expectedProjection) > CENT) {
-      flags.push(`PROJECTION FORMULA MISMATCH — projection ${money(projectionTotal)} != invoiced+leftToInvoice+etc ${money(expectedProjection)}`);
+      flags.push(`PROJECTION FORMULA MISMATCH — projection ${money(projectionTotal)} != invoiced+etc ${money(expectedProjection)}`);
     }
 
     // ── ROUNDING DIFFERENCE — same check the UI now fixes with
     // reconcilePartsCostRounding; reported here so the audit itself proves
     // the fix was needed, per job. ─────────────────────────────────────────
-    const naiveSum = Math.round(invoiced) + Math.round(leftToInvoice) + Math.round(etc ?? 0);
+    const naiveSum = Math.round(invoiced) + Math.round(etc ?? 0);
     if (naiveSum !== Math.round(projectionTotal)) {
       flags.push(`ROUNDING DIFFERENCE — independently-rounded segments sum to ${naiveSum}, projection rounds to ${Math.round(projectionTotal)}`);
     }
@@ -185,17 +191,14 @@ async function main() {
       flags.push(`SOURCE MISMATCH — Purchased ${money(purchased)} vs getPartsCostSpentByJob ${money(srcPurchased)}`);
     }
 
-    // ── DOUBLE COUNT SUSPECTED — the one mechanism that can actually put the
-    // same dollar in two buckets: if the EtcEntry row's STORED hoursWorked
-    // (this month's booked-AP drawdown, which is what shrinks ETC) is stale
-    // against a FRESH re-query of the same month, ETC hasn't drawn down by
-    // what was actually booked — money can be sitting in "Left to be
-    // invoiced" (a live snapshot) while ALSO still counted in a too-high,
-    // not-yet-caught-up ETC. A big new PO with no invoice yet widens
-    // Purchased/Left-to-invoice without ever touching hoursWorked (which only
-    // sees AP DOCUMENTS, not raw POs) until a manager revises ETC down or the
-    // invoice eventually posts — this is the live, checkable shape of that
-    // gap, not a hypothetical. ─────────────────────────────────────────────
+    // ── STALE ETC DRAWDOWN SUSPECTED — a NARROWER, residual risk, now that
+    // Projection = Invoiced + ETC no longer sums Left to be Invoiced on top of
+    // it (2026-08-17 fix). The main double-count is gone by construction; what
+    // remains is that ETC itself can still lag: if the EtcEntry row's STORED
+    // hoursWorked (this month's booked-AP drawdown, which is what shrinks
+    // ETC) is stale against a FRESH re-query of the same month, ETC hasn't
+    // drawn down by what was actually booked yet — an outdated New ETC, not a
+    // formula bug, but still worth a manager's look when flagged. ──────────
     if (month) {
       const stored = partsEntryByJobMonth.get(`${j.id}::${month}`);
       const fresh = freshBookedByMonth.get(month)?.get(j.jobId) ?? 0;

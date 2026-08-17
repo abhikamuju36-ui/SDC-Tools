@@ -5,29 +5,59 @@ import type { PartsCostLine } from "@/lib/sync-totaleto";
 
 // "Part Cost Budget Projection" — where a job lands by the time it's finished.
 //
-//   projection = purchased + estimate to purchase
-//   estimate to purchase = [estimate to complete at the START of this month]
-//                          − [money spent during this month]
+//   projection = invoiced (Parts Actual, GL-posted) + estimate to purchase (ETC)
 //
-// Per Dan (2026-07-29), who owns this definition. The reasoning: everything
-// already on a PO is committed spend, and what's left to commit is whatever the
-// month opened with minus what's since gone out.
+// ── 2026-08-17 fix: this used to be `purchased + estimateToPurchase`, which
+// double-counts committed-but-unposted spend ───────────────────────────────
+//
+// `purchased` = `actual + committedNotPosted` (open PO balance + anything
+// invoiced but not yet GL-posted — the card's "Left to be invoiced"). The
+// formula's own reasoning (Dan, 2026-07-29, kept below for the parts still
+// true) assumed `estimateToPurchase` (the app's Parts New ETC) is already NET
+// of everything on an open PO — i.e. that a manager's New ETC represents
+// "what's left to commit BEYOND what's already committed." That assumption
+// requires `estimateToPurchase`'s own monthly drawdown to net against the SAME
+// basis `committedNotPosted` is measured against (Purchased). It does not:
+// `hoursWorked` on the PARTS_COST EtcEntry — the "money spent this month" that
+// draws `priorEtc` down into New ETC — comes from `getPartsCostBookedByJob`,
+// the AP-document/GL-posted basis (see sync-powerbi.ts §41), the exact same
+// basis as `actual`/"Invoiced". It is NEVER reduced by an open PO until that
+// PO is actually invoiced. So a PO opened this month raises `committedNotPosted`
+// immediately, but does nothing to New ETC until the invoice posts — possibly
+// a different month, possibly never before a manager revises their estimate.
+// Until then, that PO's dollars sit in BOTH `committedNotPosted` ("Left to be
+// invoiced") AND, undiminished, inside `estimateToPurchase` ("ETC") — the exact
+// double-count the 2026-08-15 audit's own `DOUBLE COUNT SUSPECTED` check named
+// as a live, checkable mechanism ("this is the live, checkable shape of that
+// gap, not a hypothetical") but treated as a diagnostic to watch rather than a
+// defect to fix. Confirmed on real project data (screenshot review, 2026-08-17):
+// Invoiced $47,192 + Left to be invoiced $84,877 + ETC $165,313 summed to
+// $297,382, well past the $212,505 (Invoiced + ETC) a manager's own New ETC —
+// which already represents "what it will cost to finish the job from here" —
+// actually implies.
+//
+// The fix is `invoiced + estimateToPurchase`, not `purchased + estimateToPurchase`:
+// a manager's Parts New ETC is the forward-looking estimate to COMPLETE the
+// job, which already has to account for whatever is presently on order (a
+// competent estimate of "what's left to finish this job" cannot exclude
+// commitments already made) — so ETC alone, added to what's already posted to
+// the ledger, is the projection. `committedNotPosted` ("Left to be invoiced")
+// stays a real, displayed figure — it answers "how much of ETC is already
+// spoken for by an open PO" — it is just never summed into the total again.
 //
 // ── Estimate to purchase IS the app's Parts New ETC ───────────────────────────
 // Not a coincidence — it's the same arithmetic. The PARTS_COST EtcEntry for a
-// month (syncPartsCost) stores exactly Dan's two terms:
+// month (syncPartsCost) stores exactly:
 //
 //   priorEtc    = the prior month's confirmed Parts New ETC
 //                 → the estimate to complete AT THE START of this month
-//   hoursWorked = money spent this month, straight from TotalETO
-//                 (verified 2026-07-19 to match [Part Cost Purchased] to the dollar)
+//   hoursWorked = money spent (GL-posted/AP-document basis) this month
 //
 // and the effective New ETC is suggestNewEtc(priorEtc, hoursWorked) = prior −
-// spent, i.e. Dan's estimate to purchase. So this reads that field rather than
-// recomputing it. Two payoffs: no start-of-month snapshot has to be guessed at,
-// and the projection agrees with the Parts Cost row the managers review on the
-// Monthly ETC grid — a manager's confirmed override is honoured instead of
-// silently contradicted.
+// spent. So this reads that field rather than recomputing it. Two payoffs: no
+// start-of-month snapshot has to be guessed at, and the projection agrees with
+// the Parts Cost row the managers review on the Monthly ETC grid — a manager's
+// confirmed override is honoured instead of silently contradicted.
 //
 // ── Why NOT Power BI's [Part Cost Estimated To Complete] ─────────────────────
 // It was the estimate half here until 2026-07-30, and it inflated every
@@ -51,9 +81,15 @@ import type { PartsCostLine } from "@/lib/sync-totaleto";
 // being wrong; they're right — those jobs are done buying, so nothing is left to
 // commit and the projection should equal Purchased.
 //
-// Note that projection ≥ purchased ALWAYS, by construction. That's not a defect
-// — parts can't be un-bought, so a finished-buying job projects at exactly what
-// it purchased. The old bug was the SIZE of the gap, not its sign.
+// The claim in this paragraph ("projection >= purchased ALWAYS, by
+// construction") was true of the OLD `purchased + estimateToPurchase` formula
+// this section is defending, and is no longer true of the 2026-08-17 fix above
+// it — `invoiced + estimateToPurchase` can land below `purchased` whenever ETC
+// hasn't (yet) caught up to an open PO's full amount, which is the honest
+// answer: a manager's estimate can legitimately be revised, or lag, behind what
+// TotalETO already shows committed. That is a real, visible signal now (a small
+// or zero ETC beside a large "Left to be invoiced" says the estimate needs a
+// look), not something the formula should paper over by adding Purchased back in.
 //
 // Also not the report's [Budget Projection] measure, which is
 //   invoiced-before-this-month + estimate-to-complete
@@ -134,18 +170,23 @@ FILTER(
   return out;
 }
 
-// Returns the two halves alongside the total: the UI shows them in the bar's
-// tooltip, because a projection that equals Purchased to the dollar (nothing
-// left to purchase) otherwise looks like a bug.
+// Returns `committedNotPosted` alongside the total for display only (the
+// card's "Left to be invoiced") — it no longer feeds `total` (2026-08-17, see
+// the header). `actual + committedNotPosted` is still the old `purchased`
+// figure, kept available to callers that want it, but the projection itself
+// does not sum it.
 export type PartsBudgetProjection = {
   /** Parts Actual — GL-posted spend. The projection's base (2026-08-10). */
   actual: number;
   /**
    * Committed but not on the ledger: open PO balance plus anything billed on an
-   * invoice that never posts to the GL. Split out from `actual` rather than folded
-   * into it, so the figure the UI labels "actual" is only money the job ledger
-   * would show, while the projection still counts committed spend the way Dan's
-   * definition intends. actual + committedNotPosted is the old `purchased`.
+   * invoice that never posts to the GL. Informational only as of 2026-08-17 —
+   * shown on the card as "Left to be invoiced, included in ETC" — because a
+   * manager's `estimateToPurchase` (Parts New ETC) already has to account for
+   * whatever is presently on order to be a real estimate of what's left to
+   * finish the job; summing this back in double-counts it. actual +
+   * committedNotPosted is still the old `purchased` figure, for callers that
+   * want it.
    */
   committedNotPosted: number;
   estimateToPurchase: number;
@@ -174,18 +215,18 @@ export async function computePartsBudgetProjection(
   // nothing left to commit. Negative would push the projection below money
   // already spent — the exact defect the report measure has.
   estimateToPurchase = Math.max(0, estimateToPurchase);
-  // Base = GL-posted actual; the open/unposted commitment rides as its own term
-  // rather than being hidden inside it (2026-08-10). The TOTAL is unchanged —
-  // actual + committedNotPosted is exactly the old purchasedTotal — so the
-  // projection itself, and its comparison against Budget, mean what they always
-  // did. What changed is that the figure presented as ACTUAL no longer includes
-  // money that has not been spent.
+  // Base = GL-posted actual. `committedNotPosted` is computed and returned for
+  // display ("Left to be invoiced") but — 2026-08-17 — is NOT part of `total`
+  // any more: `estimateToPurchase` (ETC) is drawn down by GL-posted spend only
+  // (see the header), never by an open PO's balance, so it still contains
+  // whatever `committedNotPosted` represents until that PO is actually
+  // invoiced. Adding both to `actual` counted that money twice.
   const actual = actualTotal(lines);
   const committedNotPosted = Math.max(0, purchasedTotal(lines) - actual);
   return {
     actual,
     committedNotPosted,
     estimateToPurchase,
-    total: actual + committedNotPosted + estimateToPurchase,
+    total: actual + estimateToPurchase,
   };
 }

@@ -17,38 +17,50 @@ import type { PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
 // Audited 2026-08-15 (report: "Audit Parts Cost Projection Formula Across All
 // Projects") after several projects showed a large "over budget" projection
 // and the request was to confirm the three components — Invoiced, Left to be
-// Invoiced, ETC — aren't double-counting the same money.
+// Invoiced, ETC — aren't double-counting the same money. That audit concluded
+// they weren't, on the grounds that each is a distinctly-defined, non-
+// overlapping slice — true of their DEFINITIONS, but it didn't check whether
+// summing all three double-counts the same dollar across TIME, which it does.
+// Corrected 2026-08-17 after a real project's figures were reviewed and found
+// to double-count exactly this way (see parts-budget-projection.ts's header
+// for the full mechanism):
 //
-// They are not. Each is already a correctly-scoped, non-overlapping slice:
 //   invoiced       = actualTotal(lines)      — GL-posted spend only (lifetime)
 //   leftToInvoice  = purchasedTotal(lines) − invoiced, floored at 0
 //                    — committed (open PO balance + anything invoiced but not
-//                      yet GL-posted); `purchased` already INCLUDES invoiced
-//                      amounts by construction (PART_PURCHASE_SQL sums
-//                      remaining-uninvoiced-balance + invoiced-to-date), so
-//                      subtracting `invoiced` back out is what stops this
-//                      double-counting it, not what causes it.
-//   etc            = the job's Parts New ETC for the applicable month, itself
-//                    ALREADY net of "this month's booked spend" (see
-//                    parts-budget-projection.ts's own header) — floored at 0
-//                    so an overspent month can't push the projection below
-//                    money already committed.
-// This is not a new formula: it is `computePartsBudgetProjection` (already
-// correct, and already the one function every "ETC" figure on this card
-// traces back to — see the audit) relabeled to the vocabulary the audit
-// asked for, plus `Job.costQuoted` for Budget and the variance arithmetic,
-// so every consumer reads ONE function instead of separately re-deriving
-// (and risking re-deriving differently) the same numbers `job-hours/page.tsx`
-// used to compute inline.
+//                      yet GL-posted). Displayed, and included in
+//                      `totalSpent`, but NOT in `projection` — see below.
+//   etc            = the job's Parts New ETC for the applicable month —
+//                    floored at 0 so an overspent month can't push the
+//                    projection below money already spent. This is drawn down
+//                    by GL-posted spend only (the same basis as `invoiced`),
+//                    NEVER by an open PO's balance — so it still contains
+//                    whatever `leftToInvoice` represents until that PO is
+//                    actually invoiced. Summing `invoiced + leftToInvoice +
+//                    etc` counted that money twice; `invoiced + etc` does not,
+//                    because a manager's ETC is meant to already answer "what
+//                    will it cost to finish this job", which necessarily
+//                    accounts for whatever's already on order.
 //
-// What this does NOT change: the underlying formula, sources, or business
-// rules (GL-posted-only Actual, lifetime Purchased, EtcEntry-sourced ETC) —
-// none of that was found broken. What it fixes is that there was exactly one
-// place computing it (this page's own inline IIFE) instead of a named,
-// reusable function every other page could call, and a real (if usually
-// sub-dollar) display artifact: three components rounded independently for
-// display do not always sum to the total rounded independently — see
-// `reconcilePartsCostRounding` below.
+//   Total Parts Cost Spent = invoiced + leftToInvoice   (unchanged — this is
+//                                                         real money moved or
+//                                                         committed to date)
+//   Projection             = invoiced + etc             (fixed 2026-08-17)
+//
+// `leftToInvoice` stays a real, displayed figure — "how much of ETC is
+// already spoken for by an open PO" is worth knowing — it is just never
+// summed into `projection` again.
+//
+// This reads `computePartsBudgetProjection` — the one function every "ETC"
+// figure on this card traces back to — relabeled to the vocabulary the audit
+// asked for, plus `Job.costQuoted` for Budget and the variance arithmetic, so
+// every consumer reads ONE function instead of separately re-deriving (and
+// risking re-deriving differently) the same numbers `job-hours/page.tsx` used
+// to compute inline.
+//
+// A real (if usually sub-dollar) display artifact also lives here: components
+// rounded independently for display do not always sum to a total rounded
+// independently — see `reconcilePartsCostRounding` below.
 
 function monthKeyOf(d: Date): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;

@@ -2,7 +2,7 @@
 
 import { usd } from "@/components/ui/format";
 import { card } from "@/components/ui/classnames";
-import { reconcilePartsCostRounding, type PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
+import { reconcilePartsCostRounding, sharedBarMax, scaleToPct, type PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
 
 // Fixed palette (2026-08-11, by request) — no longer the SDC-blue ramp, but
 // still fixed constants rather than anything data-derived, so the same dollar
@@ -11,7 +11,7 @@ import { reconcilePartsCostRounding, type PartsCostFinancials } from "@/lib/part
 // yellow = still a forecast), same idea the blue ramp encoded, new colours.
 const BAR_BUDGET = "#5489EF";
 const BAR_INVOICED = "#061D39"; // Invoiced — GL-posted, most certain
-const BAR_SPENT = "#AACEE8"; // Left to be invoiced — committed, not yet on the ledger
+const BAR_SPENT = "#AACEE8"; // Left to be invoiced — committed, not yet on the ledger. Informational-only chip swatch since 2026-08-17; no longer a bar fill.
 const BAR_PROJECTED = "#FFDE51"; // ETC — forecast
 
 // Height taller than before (2026-08-10, by request) so the second bar's
@@ -120,10 +120,18 @@ const CAPTION_H = "2rem";
 // narrower than the card already needs for its OWN captions ("Actual /
 // Projection"), so this block was never actually the thing forcing the card
 // wide; it only looked that way while wrapping was in the mix.
-function SegmentMarker({ color, label, value }: { color: string; label: string; value: number }) {
+function SegmentMarker({ color, label, value, note, informational }: { color: string; label: string; value: number; note?: string; informational?: boolean }) {
   return (
     <div className="flex items-center gap-1 whitespace-nowrap">
-      <span className="inline-block h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: color }} />
+      {/* `informational` (2026-08-17): an OUTLINE swatch, not a filled one — this
+          chip names a figure that is NOT one of the bar's own stacked segments
+          (see the double-count fix below), so it deliberately doesn't look like
+          one. A filled dot here would read as "this color is somewhere in that
+          bar", which is exactly the misreading this fix removes. */}
+      <span
+        className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${informational ? "border border-current bg-transparent" : ""}`}
+        style={informational ? { borderColor: color } : { background: color }}
+      />
       <span className="font-sans text-micro text-sdc-gray-600">{label}</span>
       {/* text-xs/font-bold/sdc-navy (2026-08-12b) — the same value-label
           treatment as the bars above; unchanged by this pass. The category
@@ -131,6 +139,7 @@ function SegmentMarker({ color, label, value }: { color: string; label: string; 
           same "modest label beside a bold figure" pairing the "Budget" /
           "Actual / Projection" captions under the bars already use. */}
       <span className="font-mono text-xs font-bold tabular-nums text-sdc-navy">{usd(value)}</span>
+      {note && <span className="font-sans text-micro italic text-sdc-muted">{note}</span>}
     </div>
   );
 }
@@ -167,6 +176,15 @@ function SegmentMarker({ color, label, value }: { color: string; label: string; 
 //        pairs use) instead of sitting a full gap-4 apart, and the three
 //        segment labels renamed again — Invoiced / Left to be invoiced / ETC
 //        — replacing the (a) names. Colors, values and stacking unchanged.
+//   2026-08-17 (double-count fix, by request): Bar 2 dropped from three
+//        stacked segments to TWO — Invoiced, then ETC — because "Left to be
+//        invoiced" was already inside ETC (ETC draws down by GL-posted spend
+//        only, never by an open PO's balance — see
+//        parts-budget-projection.ts's header for the mechanism and real
+//        numbers). Left to be invoiced is still shown, as an informational
+//        chip beside the bars labelled "Included in ETC", not as a segment.
+//        "Total Parts Cost Spent" (Invoiced + Left to be invoiced) is
+//        unchanged — that sum was never the bug.
 //
 // These KPIs originally lived inside PartsCostSection (77c6187) and were lost
 // when the two-tab Procurement drawer replaced that component wholesale
@@ -203,42 +221,53 @@ export function PartsCostSummary({
   const estimate = financials.budget;
   const hasProjection = financials.etc != null;
 
-  // ── The Actual/Projection bar's three segments (2026-08-10) ───────────────
+  // ── The Actual/Projection bar's TWO segments (2026-08-17 fix) ─────────────
   //
-  // Stacked as INCREMENTS, not the absolute figures themselves, which is what
-  // stops the bar double-counting: Actual is already inside committed spend, and
-  // committed spend is already inside Projection, so each segment above the first
-  // is only the PART of the next figure that isn't already accounted for by the
-  // segment below it. The three summed equal projTotal exactly.
+  // Used to be three, stacked as increments — Invoiced, then Left to be
+  // invoiced, then ETC — on the theory that Actual sits inside committed
+  // spend and committed spend sits inside Projection. That theory doesn't
+  // hold: ETC (the app's Parts New ETC) is drawn down by GL-posted spend
+  // only, never by an open PO's balance, so "Left to be invoiced" money stays
+  // fully present inside ETC until it's actually invoiced — stacking it a
+  // second time between Invoiced and ETC double-counted it. See
+  // parts-budget-projection.ts's header for the full mechanism and the real
+  // numbers that surfaced it.
+  //
+  // The bar now stacks exactly what Projection sums: Invoiced (GL-posted,
+  // most certain) then the remaining ETC forecast on top. "Left to be
+  // invoiced" is still shown — just as an informational side figure below,
+  // not a segment of this bar — because it answers a real question ("how
+  // much of ETC is already spoken for by an open PO") that showing only two
+  // segments would otherwise drop.
   //
   // The BASE segment is Parts Actual — GL-posted spend — not `paid` (2026-08-10).
   // `paid` counts invoices flagged never to post to the general ledger, so it read
-  // high against the job ledger people check this card against. The bar's total
-  // height is unchanged: what moved out of segment 1 moved into segment 2, which
-  // is where committed-but-not-on-the-ledger money belongs.
+  // high against the job ledger people check this card against.
   const invoiced = financials.invoiced; // base segment — "Invoiced"
-  const spent = financials.totalSpent; // everything committed (invoiced + left to invoice)
-  const projTotal = financials.projection; // bar 2's own total height
-  const spentIncrement = financials.leftToInvoice; // "Left to be invoiced"
-  const projIncrement = financials.etc ?? 0; // "ETC"
+  const spent = financials.totalSpent; // Invoiced + Left to be invoiced — NOT the bar's total (see below)
+  const projTotal = financials.projection; // = invoiced + etc — the bar's own total height
+  const leftToInvoiceAmount = financials.leftToInvoice; // informational only — "Left to be invoiced", included in ETC
+  const projIncrement = financials.etc ?? 0; // "ETC" — the bar's second (and last) segment
 
   // ── Rounding that can't visibly contradict itself (audit finding) ─────────
   //
-  // Rounding Invoiced/Left to Invoice/ETC to whole dollars independently, then
-  // summing those three DISPLAYED numbers, doesn't always equal the displayed
-  // Projection total rounded on its own — e.g. 23207.616 + 101371.554 +
-  // 189298.04 = 313877.21 exactly, but round()+round()+round() of the three
-  // parts = 313878, one dollar more than round(313877.21) = 313877. Nothing
-  // in the underlying math is wrong; the fix is to round for DISPLAY only,
-  // hierarchically: reconcile Invoiced+Left-to-invoice against their own
-  // (separately rounded) "Total Parts Cost Spent" first, then let ETC absorb
-  // whatever's left to reach the (separately rounded) Projection total. That
-  // guarantees both displayed subtotals — Total Parts Cost Spent, and
-  // Projection — always equal the sum of the segment figures shown beside them.
-  const [invoicedDisplay, leftToInvoiceDisplay] = reconcilePartsCostRounding([invoiced, spentIncrement]);
+  // Two independent reconciliations now, for the two captions that each sum a
+  // different pair of displayed figures:
+  //   - "Total Parts Cost Spent" = Invoiced + Left to be invoiced (unchanged
+  //     by the 2026-08-17 fix — still real money moved or committed).
+  //   - The bar's own two segments = Invoiced + ETC, which must sum to the
+  //     separately-rounded Projection total the same way.
+  // Rounding each figure independently, then summing the DISPLAYED numbers,
+  // doesn't always equal a total rounded on its own — e.g. 23207.616 +
+  // 189298.04 = 212505.66 exactly, but round(23207.616) + round(189298.04) =
+  // 212506, one dollar more than round(212505.66) = 212506... the fix is to
+  // round for DISPLAY only, letting the LAST term in each sum absorb whatever
+  // rounding residue is left, so both displayed subtotals always equal the
+  // sum of the figures shown beside them.
+  const [invoicedDisplay, leftToInvoiceDisplay] = reconcilePartsCostRounding([invoiced, leftToInvoiceAmount]);
   const totalSpentDisplay = invoicedDisplay + leftToInvoiceDisplay;
   const projTotalDisplay = Math.round(projTotal);
-  const etcDisplay = hasProjection ? Math.max(0, projTotalDisplay - totalSpentDisplay) : 0;
+  const etcDisplay = hasProjection ? Math.max(0, projTotalDisplay - invoicedDisplay) : 0;
 
   // ── ONE shared scale for both bars (2026-08-10c, by request) ──────────────
   //
@@ -249,25 +278,49 @@ export function PartsCostSummary({
   // height; by request that's reverted, since the two bars ARE meant to be
   // compared by height, and the fixed-scale version made every job's Budget
   // bar look identical regardless of its actual size.
-  const maxValue = Math.max(1, estimate ?? 0, projTotal);
-  const pct = (v: number) => Math.min(100, (v / maxValue) * 100);
+  //
+  // `maxValue` and `pct` (now `sharedBarMax`/`scaleToPct`, extracted to
+  // parts-cost-financials-shared.ts 2026-08-17 so the invariant below is
+  // provable with real arithmetic, not just readable) are the ONLY two things
+  // that decide a bar's height — there is deliberately no second, per-bar
+  // scale anywhere else in this file. Reported concern: "the second bar looks
+  // taller despite a lower total" — the shared domain here already makes that
+  // impossible by construction (see tests/parts-cost-bar-scale.test.ts). On
+  // the specific figures reported the actual gap was a real but small ~1.4%,
+  // genuinely hard to eyeball at a glance — especially with a bright yellow
+  // segment on top of one bar and none on the other; brighter colour reads as
+  // "more" even at equal or lesser height. The pixel math itself was already
+  // correct; headroom (below) is the one concrete thing that was missing.
+  const maxValue = sharedBarMax(estimate ?? 0, projTotal);
+  // Headroom (2026-08-17, by request: "only a small headroom for labels if
+  // needed") — the value LABEL sits inside the same fixed-height frame as the
+  // fill (see the frame's own comment below), packed against its bottom edge
+  // alongside the fill. At a full 100% fill, the label has to render above the
+  // frame's own top edge with nothing reserved for it. Capping the domain's
+  // ceiling at 94% instead of 100% means even the tallest bar on the shared
+  // scale leaves a consistent 6% band clear at the top for the label — the
+  // SAME cap for both bars, so it changes nothing about their relative
+  // heights (a value at 50% of maxValue is still exactly half the height of a
+  // value at 100% of maxValue; both simply top out at 94% of BAR_H rather than
+  // 100%), only where "full height" now sits inside the frame.
+  const FILL_CEILING_PCT = 94;
+  const pct = (v: number) => scaleToPct(v, maxValue, FILL_CEILING_PCT);
   // A percentage-of-scale as an actual PIXEL height against BAR_H — see the
   // value-label fix below for why this replaced the old `${pct}%` heights.
   const barPx = (percent: number) => (BAR_H * percent) / 100;
 
   // Segments bottom-to-top, each sized against the SAME shared scale as
-  // Budget — Bar 2's own rendered height is the sum of these three, which
+  // Budget — Bar 2's own rendered height is the sum of these two, which
   // equals pct(projTotal) exactly, so "the bar's total height is Projection"
-  // still holds. Always both actuals; the projection segment only exists (and
-  // is only labelled) when there IS a projection to show — you can't state a
-  // share of a figure that was never computed.
+  // still holds. Always the actual; the ETC segment only exists (and is only
+  // labelled) when there IS a projection to show — you can't state a share
+  // of a figure that was never computed.
   // `value` here is the RECONCILED whole-dollar figure (see above) — what's
   // displayed beside the bar — while `heightPct` still scales off the raw,
   // full-precision figure, since the bar's geometry has no rounding-sum
   // problem to begin with (only the printed dollar labels do).
   const segments: { key: string; label: string; value: number; color: string; heightPct: number }[] = [
     { key: "invoiced", label: "Invoiced", value: invoicedDisplay, color: BAR_INVOICED, heightPct: pct(invoiced) },
-    { key: "left-to-invoice", label: "Left to be invoiced", value: leftToInvoiceDisplay, color: BAR_SPENT, heightPct: pct(spentIncrement) },
   ];
   if (hasProjection) {
     segments.push({ key: "etc", label: "ETC", value: etcDisplay, color: BAR_PROJECTED, heightPct: pct(projIncrement) });
@@ -277,7 +330,10 @@ export function PartsCostSummary({
   // nothing about the compact layout below is positioned per-segment any
   // more (2026-08-12c). Keeping this order is still worth doing: it's the
   // one remaining thread connecting "which chip is this" back to "where in
-  // the bar does that dollar figure live".
+  // the bar does that dollar figure live". "Left to be invoiced" is added
+  // separately, after the two real segments — see the render below — since
+  // it names money already inside ETC rather than a segment of its own
+  // (2026-08-17 fix).
   const labelOrder = [...segments].reverse();
 
   // ONE meter: where the job is HEADING against what it was sold for.
@@ -347,14 +403,15 @@ export function PartsCostSummary({
           tightening the pair doesn't also crowd the labels beside it. Budget
           and Bar 2 share one scale (`pct`), so Budget draws visibly shorter
           than a larger Actual/Projection bar. Bar 2 is one cumulative column
-          (Invoiced, then Left to be invoiced, then ETC); its OWN rendered
-          height is the sum of the three, which is Projection's own share of
-          the shared scale. No border on the fills, no reference lines, no
-          brackets — the colour step is the only thing separating one segment
-          from the next. The three segment rows sit in a compact vertical
-          list beside the bars (2026-08-12d), ordered to match the bar's
-          top-to-bottom stacking, so no row can ever overlap another and
-          nothing here can be wider than its own longest row — see that
+          (Invoiced, then ETC — 2026-08-17, was Invoiced/Left to be
+          invoiced/ETC until the double-count fix, see this file's header);
+          its OWN rendered height is the sum of the two, which is
+          Projection's own share of the shared scale. No border on the
+          fills, no reference lines, no brackets — the colour step is the
+          only thing separating one segment from the next. The segment rows
+          sit in a compact vertical list beside the bars (2026-08-12d),
+          ordered to match the bar's top-to-bottom stacking, so no row can
+          ever overlap another and nothing here can be wider than its own longest row — see that
           list's own comment below.
 
           Both captions are pinned to a fixed `h-8` box (2026-08-11b) — NOT
@@ -474,14 +531,15 @@ export function PartsCostSummary({
             {/* Same fix as Budget's frame just above — see its comment. */}
             <div className="flex flex-col items-center justify-end" style={{ width: BAR_W, height: BAR_H }}>
               <span className="mb-0.5 whitespace-nowrap font-mono text-xs font-bold leading-none tabular-nums text-sdc-navy">{usd(projTotalDisplay)}</span>
-              {/* The three segments stack bottom-to-top inside their own
+              {/* The two segments stack bottom-to-top inside their own
                   sub-column (flex-col-reverse: first array item —
                   "Invoiced" — ends up at the bottom, matching before).
                   Each gets a PIXEL height (barPx), so the stack's rendered
-                  height is exactly the sum of Invoiced + Left to be invoiced
-                  + ETC with no percentage-of-an-auto-height-parent ambiguity
-                  — it sums to barPx(pct(projTotal)) exactly, still no
-                  fourth invisible segment padding it out further. */}
+                  height is exactly Invoiced + ETC with no
+                  percentage-of-an-auto-height-parent ambiguity — it sums to
+                  barPx(pct(projTotal)) exactly (2026-08-17: was Invoiced +
+                  Left to be invoiced + ETC before the double-count fix — see
+                  this file's header). */}
               <div className="flex w-full flex-col-reverse">
                 {segments.map((s, i) => (
                   <div key={s.key} className={`w-full flex-shrink-0 ${i === segments.length - 1 ? "rounded-t-sm" : ""}`} style={{ height: barPx(s.heightPct), background: s.color }} />
@@ -496,23 +554,30 @@ export function PartsCostSummary({
           </div>
         </div>
 
-        {/* The three segment rows, as one compact vertical list
-            (2026-08-12d, by request — the horizontal flex-wrap version just
-            before this "caused the layout to become unbalanced and
-            stretched"). No absolute positioning, no `placeMarkers` collision
-            math (both removed with the pinned-to-segment version this
-            replaced), and — this time — no wrap cap either: `flex-col` never
-            asks its parent for more than its own widest ROW, so it can't
-            drag the card wider the way the flex-wrap attempt did (see
-            SegmentMarker's own header for exactly how that happened).
-            `shrink-0` still matters here for the same reason it does
-            everywhere else in this card: a block that gets squeezed below
-            its own content's width can only end in overlap, and this one's
-            content is unbreakable dollar figures. */}
+        {/* The segment rows, as one compact vertical list (2026-08-12d, by
+            request — the horizontal flex-wrap version just before this
+            "caused the layout to become unbalanced and stretched"). No
+            absolute positioning, no `placeMarkers` collision math (both
+            removed with the pinned-to-segment version this replaced), and —
+            this time — no wrap cap either: `flex-col` never asks its parent
+            for more than its own widest ROW, so it can't drag the card wider
+            the way the flex-wrap attempt did (see SegmentMarker's own header
+            for exactly how that happened). `shrink-0` still matters here for
+            the same reason it does everywhere else in this card: a block
+            that gets squeezed below its own content's width can only end in
+            overlap, and this one's content is unbreakable dollar figures.
+
+            "Left to be invoiced" (2026-08-17) is listed LAST and rendered
+            with `informational` — it is not one of the two rows above it,
+            which are the bar's own real segments; it is money already
+            counted inside "ETC", shown here because "how much of ETC is
+            already on an open PO" is a real, useful question even though the
+            bar no longer draws it as its own stack. */}
         <div className="flex shrink-0 flex-col gap-1">
           {labelOrder.map((s) => (
             <SegmentMarker key={s.key} color={s.color} label={s.label} value={s.value} />
           ))}
+          <SegmentMarker color={BAR_SPENT} label="Left to be invoiced" value={leftToInvoiceDisplay} note="Included in ETC" informational />
         </div>
       </div>
 
@@ -525,21 +590,27 @@ export function PartsCostSummary({
       <div className="flex-1" />
 
       {/* "Total Parts Cost Spent" is a named figure people look for.
-          2026-08-11 (by request): Invoiced + Left to be invoiced — i.e. the
-          bar's bottom two segments, `spent` — NOT the GL-posted-only figure
-          this caption showed 2026-08-10 through 2026-08-11a. That earlier
-          choice existed because a cumulative committed total once read
-          $399,177 on job 1116 against a $349,732 ledger; the two segments
-          summed here are the exact same two dollar figures the legend prints
-          (Invoiced + Left to be invoiced), so this reconciles with what's on
-          screen rather than with the ledger. ETC is deliberately excluded —
-          it's a forecast, not spend. */}
+          2026-08-11 (by request): Invoiced + Left to be invoiced, `spent` —
+          NOT the GL-posted-only figure this caption showed 2026-08-10 through
+          2026-08-11a. That earlier choice existed because a cumulative
+          committed total once read $399,177 on job 1116 against a $349,732
+          ledger; the two figures summed here are the exact same two dollar
+          values the legend prints (Invoiced + Left to be invoiced), so this
+          reconciles with what's on screen rather than with the ledger. ETC
+          is deliberately excluded — it's a forecast, not spend.
+          As of 2026-08-17 (the double-count fix) this is NOT "the bar's own
+          two segments" any more — the bar stacks Invoiced + ETC (=
+          Projection); this caption sums Invoiced + Left to be invoiced (=
+          Total Parts Cost Spent), a genuinely different pair that happens to
+          share the same "Invoiced" figure. Both are still correct; they now
+          answer two different questions ("spent or committed so far" vs.
+          "where the job lands"), which is why the card shows both. */}
       {/* The AMOUNT carries the emphasis, not the whole line (2026-08-11f, by
           request): navy + bold + `text-sm` against the label's muted `text-note`
           makes the figure the thing the eye lands on, without turning a quiet
           caption into a second heading competing with "Projection vs Budget"
-          right beneath it. The expression is untouched — still exactly the
-          bar's own bottom two segments. */}
+          right beneath it. The expression is untouched — still exactly
+          Invoiced + Left to be invoiced. */}
       {/* `mt-1`, not `mt-2` (2026-08-11f): the taller bars consumed the whole
           72.8px `flex-1` spacer that used to sit here, which left this card's
           natural height 3.5px ABOVE the ETC card's — and since the two stretch

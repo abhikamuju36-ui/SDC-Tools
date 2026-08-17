@@ -69,8 +69,74 @@ test("the projection is based on Parts Actual, not on the committed total", () =
   assert.match(
     fn,
     /committedNotPosted/,
-    "open/unposted commitment must ride as its OWN term so the figure labelled actual excludes it while the projection still counts it",
+    "open/unposted commitment must ride as its OWN term, computed and returned for display, even though it no longer feeds `total`",
   );
+});
+
+// ── Left to be invoiced must never be summed into Projection again (2026-08-17) ─
+//
+// Reported and confirmed on real project data: Invoiced $47,192 + Left to be
+// invoiced $84,877 + ETC $165,313 summed to $297,382, well past the $212,505
+// (Invoiced + ETC) a manager's own New ETC — already an estimate of what's
+// left to FINISH the job, which has to account for whatever's on order —
+// actually implies. Root cause: the Parts New ETC that becomes
+// `estimateToPurchase` is drawn down by GL-posted spend only
+// (getPartsCostBookedByJob, the same basis as `actual`), never by an open
+// PO's balance, so `committedNotPosted` money stays inside it, undiminished,
+// until that PO is actually invoiced. Summing it in on top of `actual` counted
+// it twice.
+
+test("computePartsBudgetProjection's total is actual + estimateToPurchase, NOT + committedNotPosted", () => {
+  const proj = code("src", "lib", "parts-budget-projection.ts");
+  const fn = functionSpan(proj, "computePartsBudgetProjection");
+  assert.match(fn, /total:\s*actual\s*\+\s*estimateToPurchase/, "the double-count fix: committedNotPosted must not be added into total");
+  assert.doesNotMatch(
+    fn,
+    /total:\s*actual\s*\+\s*committedNotPosted\s*\+\s*estimateToPurchase/,
+    "this is the exact formula that double-counted Left to be invoiced — it must not come back",
+  );
+});
+
+test("the audit script's own defining identity checks invoiced+etc, not invoiced+leftToInvoice+etc", () => {
+  const audit = code("scripts", "parts-cost-projection-audit.ts");
+  assert.match(audit, /const expectedProjection = invoiced \+ \(etc \?\? 0\)/, "the audit's PROJECTION FORMULA MISMATCH check must match the fixed formula");
+  assert.doesNotMatch(audit, /invoiced \+ leftToInvoice \+ \(etc \?\? 0\)/, "the audit must not silently re-assert the pre-fix formula");
+});
+
+test("the Parts Cost card's bar stacks exactly two segments — Invoiced and ETC — never Left to be invoiced", () => {
+  const src = code("src", "components", "PartsCostSummary.tsx");
+  assert.match(
+    src,
+    /const segments: \{[\s\S]{0,120}\}\[\] = \[\s*\{ key: "invoiced"/,
+    "the segments array must start with Invoiced",
+  );
+  assert.doesNotMatch(
+    src,
+    /key: "left-to-invoice"/,
+    "Left to be invoiced must never be a bar segment again — it is money already inside ETC, not an increment on top of it",
+  );
+  // The bar's own two-segment sum must be reconciled against Projection using
+  // Invoiced (not Invoiced+LeftToInvoice) — see the rounding-residue fix.
+  assert.match(
+    src,
+    /const etcDisplay = hasProjection \? Math\.max\(0, projTotalDisplay - invoicedDisplay\) : 0/,
+    "the ETC segment must absorb rounding residue against Invoiced alone, not against totalSpentDisplay (which still includes Left to be invoiced)",
+  );
+});
+
+test("Left to be invoiced is still shown, as an informational chip labelled Included in ETC", () => {
+  const src = code("src", "components", "PartsCostSummary.tsx");
+  assert.match(
+    src,
+    /<SegmentMarker color=\{BAR_SPENT\} label="Left to be invoiced" value=\{leftToInvoiceDisplay\} note="Included in ETC" informational \/>/,
+    "Left to be invoiced must remain visible, explicitly marked as informational (not a bar segment) and labelled as included in ETC",
+  );
+});
+
+test("Total Parts Cost Spent is untouched by the fix — still Invoiced + Left to be invoiced", () => {
+  // This sum was never the bug; only Projection (which also added ETC) was.
+  const src = code("src", "components", "PartsCostSummary.tsx");
+  assert.match(src, /const totalSpentDisplay = invoicedDisplay \+ leftToInvoiceDisplay/);
 });
 
 // ── Root cause 2: the GL-posted rule ────────────────────────────────────────

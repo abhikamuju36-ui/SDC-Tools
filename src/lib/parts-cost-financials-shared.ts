@@ -1,4 +1,5 @@
 import type { PartsCostLine } from "@/lib/sync-totaleto";
+import { reconcileRounding } from "@/lib/rounding";
 
 // Split out of parts-cost-financials.ts (2026-08-15): that file starts with
 // `import "server-only"`, so a CLIENT component importing anything more than
@@ -60,21 +61,40 @@ export type PartsCostFinancials = {
 // different total than the one displayed, which reads as the app being
 // wrong even though nothing in the underlying math is.
 //
-// Fixed with the standard "largest remainder" allocation: floor every part,
-// then hand the leftover whole dollars (the difference between the floors'
-// sum and the correctly-rounded total) to whichever parts lost the most to
-// flooring. The result always sums to exactly Math.round(total), and no
-// individual figure is ever off by more than the same ~$1 plain rounding
-// already risked — this only decides WHICH parts absorb it, so the visible
-// pieces always add up to the visible total.
+// Fixed with the standard "largest remainder" allocation — see
+// src/lib/rounding.ts's `reconcileRounding` for the full explanation and the
+// actual implementation. This name is kept as a thin re-export (2026-08-17,
+// when the algorithm was generalized for the Hours tab's own grouped rollups)
+// purely so every existing import of `reconcilePartsCostRounding` keeps
+// working unchanged; there is exactly one canonical implementation now.
 export function reconcilePartsCostRounding(parts: number[]): number[] {
-  const total = Math.round(parts.reduce((s, p) => s + p, 0));
-  const floors = parts.map((p) => Math.floor(p));
-  const floorSum = floors.reduce((s, f) => s + f, 0);
-  const remainders = parts.map((p, i) => p - floors[i]);
-  const order = remainders.map((_, i) => i).sort((a, b) => remainders[b] - remainders[a]);
-  const toDistribute = Math.max(0, Math.min(parts.length, total - floorSum));
-  const result = [...floors];
-  for (let k = 0; k < toDistribute; k++) result[order[k]] += 1;
-  return result;
+  return reconcileRounding(parts);
+}
+
+// ── One shared bar-height scale, extracted so it's independently testable
+// with real arithmetic (2026-08-17) ────────────────────────────────────────
+//
+// Reported: "the second [Actual/Projection] bar is visually taller even
+// though its total value is lower than the Budget bar." The bars were
+// already scaled off one shared domain (PartsCostSummary.tsx's `maxValue` and
+// `pct`), not independently normalized — this extraction doesn't change that
+// behavior, it moves the two calls that decide it into a plain function a
+// test can call directly with real numbers, rather than only being provable
+// by reading the component's source.
+//
+// `sharedBarMax` floors at 1 (never 0) so a job with no budget on file and no
+// projection yet doesn't produce a divide-by-zero `NaN` height for either bar.
+export function sharedBarMax(...values: number[]): number {
+  return Math.max(1, ...values);
+}
+
+// `ceilingPct` < 100 reserves headroom for a value label sitting inside the
+// same fixed-height frame as the fill (see PartsCostSummary.tsx) — the SAME
+// ceiling applies to every value scaled against a given `sharedMax`, so it
+// changes where "full height" sits inside the frame without changing any
+// value's height RELATIVE to another (half of `sharedMax` is still exactly
+// half the height of `sharedMax` itself, just capped at `ceilingPct` of the
+// frame instead of 100%).
+export function scaleToPct(value: number, sharedMax: number, ceilingPct = 94): number {
+  return Math.min(ceilingPct, (value / sharedMax) * ceilingPct);
 }
