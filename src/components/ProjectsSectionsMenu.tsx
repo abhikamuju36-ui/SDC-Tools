@@ -4,11 +4,8 @@ import { TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_BTN_NEUTRAL } from "@/componen
 import { useDraftParamsMenu } from "@/components/useDraftParamMenu";
 import { encodeParamList } from "@/lib/quoted-display-prefs";
 import { MenuStatus, MenuApplyHint, MenuGroup, MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
-import { RESTRICTED_SECTION_CODES } from "@/lib/sections";
 import { useProjectsEditMode } from "@/components/ProjectsEditMode";
 import { useGridView } from "@/components/GridViewProvider";
-import { useRouter } from "next/navigation";
-import { useRef } from "react";
 
 // "Sections ▾" — which columns the grid shows: the four phase pickers plus the
 // info columns (Job/Customer/Type/…), replacing five toolbar buttons.
@@ -66,30 +63,14 @@ export function ProjectsSectionsMenu({
   // The info columns' half: instant, no request, no pending state to show.
   const { hidden: hiddenSet, toggle: toggleInfo, setHidden: setHiddenInfo } = useGridView();
 
-  // ── Fetch the restricted sections only when they're actually wanted ────────
-  //
-  // The Edit Mode toggle no longer refreshes the route unless a restricted
-  // column is already on screen (see ProjectsEditMode) — that refresh re-rendered
-  // 233 rows to usually change nothing, and was what "updating columns…" waited
-  // on. The one thing that DID depend on it is this list: the server omits PM,
-  // Manufacturing and the two Warranty sections while locked, so without a
-  // refresh they'd never appear here and could never be switched on.
-  //
-  // So the cost moves to the moment it's needed: if this menu is opened while
-  // editing and the server hasn't sent them, ask for them then. Opening a menu is
-  // a deliberate act and a wait there is expected; toggling a switch is not.
-  const { editing } = useProjectsEditMode();
-  const router = useRouter();
-  const askedRef = useRef(false);
-  const hasRestricted = phases.some((p) => p.sections.some((sec) => RESTRICTED_SECTION_CODES.has(sec.code)));
-  // On OPEN, not on the mode change — asking as soon as Edit Mode flipped would
-  // just move the same refresh back onto the toggle, which is the thing being
-  // fixed. Once per mount is enough; if it fails there is nothing to retry into.
-  function onOpenMaybeFetch(open: boolean) {
-    if (!open || !editing || hasRestricted || askedRef.current) return;
-    askedRef.current = true;
-    router.refresh();
-  }
+  // `phases` (this menu's available options) always includes PM/Manufacturing/
+  // Warranty by the time editing is genuinely on — ProjectsEditMode's enable()
+  // refreshes unconditionally now, precisely so this menu never has to fetch
+  // anything itself on open. Reading `pending` from the SAME source (rather
+  // than this hook's own, unrelated draftParams pending) means the button
+  // reflects "still catching up right after unlocking" too, not only "still
+  // applying my last cols/hide tick".
+  const { pending: editModePending } = useProjectsEditMode();
 
   const cols = draft.cols ?? [];
   // Read from the instant store, not a draft — this moves on the click's own frame.
@@ -106,24 +87,13 @@ export function ProjectsSectionsMenu({
   }
 
   return (
-    <details
-      ref={detailsRef}
-      {...detailsProps}
-      onToggle={(e) => {
-        // The hook's handler owns apply-on-close; this only adds the
-        // fetch-on-open above. Both must run, and its ignore-descendants guard
-        // still applies because it sees the same event.
-        detailsProps.onToggle(e);
-        if (e.target === e.currentTarget) onOpenMaybeFetch(e.currentTarget.open);
-      }}
-      className="group relative inline-block"
-    >
+    <details ref={detailsRef} {...detailsProps} className="group relative inline-block">
       <summary
-        className={`${TOOLBAR_BTN} ${allShown ? TOOLBAR_BTN_NEUTRAL : TOOLBAR_BTN_ACTIVE} ${pending ? "opacity-60" : ""}`}
+        className={`${TOOLBAR_BTN} ${allShown ? TOOLBAR_BTN_NEUTRAL : TOOLBAR_BTN_ACTIVE} ${pending || editModePending ? "opacity-60" : ""}`}
       >
         Sections
         {` (${shownCount}/${allSections.length})`}
-        <MenuStatus pending={pending} />
+        <MenuStatus pending={pending || editModePending} />
       </summary>
       <div className="motion-menu-panel styled-scrollbar absolute left-0 top-full z-30 mt-2 max-h-[calc(var(--app-vh)_*_0.7)] w-72 overflow-y-auto rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
         {phases.map((p) => {

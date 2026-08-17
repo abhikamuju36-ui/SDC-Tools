@@ -76,11 +76,11 @@ export function ProjectsEditModeProvider({
   initiallyUnlocked: boolean;
   // True only when the current ?cols= actually asks for one of the four
   // restricted sections — i.e. when flipping the mode genuinely adds or removes
-  // a column and only a server render can do it.
-  //
-  // With the default column set those four are hidden either way, so the refresh
-  // that used to fire on EVERY toggle re-rendered all 233 rows to produce
-  // identical markup. That is what "updating columns…" was waiting on.
+  // a RENDERED grid column and only a server render can do it. Consulted by
+  // disable() only: turning editing OFF while none of those four are currently
+  // shown has nothing to remove from the grid, so that refresh can be skipped.
+  // enable() no longer checks this — see its own comment for why turning ON
+  // always refreshes regardless of what's currently rendered.
   columnsDependOnMode: boolean;
   children: ReactNode;
 }) {
@@ -91,10 +91,17 @@ export function ProjectsEditModeProvider({
   function enable() {
     setEditing(true);
     writeProjectsEditCookie(true);
-    // Only when a restricted column is genuinely being added: it doesn't exist in
-    // the current markup and nothing but a server render can produce it. The
-    // CELLS unlock on the click regardless — that has always been client state.
-    if (columnsDependOnMode) startTransition(() => router.refresh());
+    // Unlike disable() below, this one refreshes UNCONDITIONALLY. It isn't only
+    // the grid's rendered columns that depend on the server's `editingNow` — the
+    // Sections picker's own AVAILABLE options (`phases`, built from
+    // `visibleSections` in quoted/page.tsx) do too, and those must appear the
+    // moment editing turns on, not only when `?cols=` already asked for a
+    // restricted section. Skipping this refresh (the previous behaviour, gated
+    // on `columnsDependOnMode`) is exactly what let PM/Manufacturing/Warranty
+    // stay absent from the picker after a fresh unlock until something else —
+    // opening the menu, which used to fire its own untracked, unindicated
+    // refresh — happened to trigger a server round trip.
+    startTransition(() => router.refresh());
   }
 
   async function disable(): Promise<boolean> {
