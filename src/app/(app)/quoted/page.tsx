@@ -130,6 +130,25 @@ const EMPTY_ACTUALS: ReadonlyMap<string, number> = new Map();
 
 const MONEY_INPUT_PAIRED = "w-[4.5rem] min-w-0 border-none bg-transparent text-left tabular-nums outline-none";
 
+// Pinned — width AND max-width, not just min-width (2026-08-14) — because the
+// bare `min-w-[170px]` this replaces was the one column with no upper bound
+// in a `w-full` table where every other column (DATA_COL_STYLE, the frozen
+// #/Job Id/Job columns, the var(--*-col-width) metadata columns) pins its own
+// width. `table-layout: auto` hands unclaimed space to whichever column has
+// none of its own, so Parts Cost stretched to soak up the rest of the scroll
+// container — the large blank strip to the right of the figures.
+//
+// The actual width rule lives in globals.css, keyed off `.pc-col` (applied to
+// the <th>/<td> below) and `.hide-actuals` — NOT a server-computed inline
+// style. Show Actuals is a deliberately render-free switch (see
+// ProjectsShowActualsSwitch's flip(): it only ever toggles the `hide-actuals`
+// class client-side, `replaceState`s the URL, and never re-renders this
+// server component) — a width baked in from `showActuals` at THIS render
+// would match whichever state the page happened to load in and go stale the
+// instant someone actually clicked the switch. CSS reacting to the same class
+// the switch already flips is the only way the width tracks it live.
+const PARTS_COST_COL_CLASS = "pc-col";
+
 // Group sub-bands: lighter SDC brand tints, each distinct, all drawn from the
 // brand palette (blue/green/yellow tints + light blue), with one bold brand
 // blue for the large General Engineering block so it reads as its own zone.
@@ -809,7 +828,7 @@ export default async function QuotedPage({
                   Job.costActualHistorical in the schema, in the TotalETO sync
                   and in the Power BI measures they come from, so don't rename
                   those chasing this merge either. */}
-              <th rowSpan={3} className="min-w-[170px] border-l border-sdc-border bg-sdc-green-bg px-1 py-2 text-left align-bottom text-sdc-green-text">
+              <th rowSpan={3} className={`${PARTS_COST_COL_CLASS} border-l border-sdc-border bg-sdc-green-bg px-1 py-2 text-left align-bottom text-sdc-green-text`}>
                 PARTS COST
               </th>
             </tr>
@@ -1199,7 +1218,7 @@ export default async function QuotedPage({
                       width — widened back to the cell's full width by
                       `.hide-actuals .parts-cost-quoted` when there's only one
                       figure to show. */}
-                  <td className={`overflow-hidden whitespace-nowrap border-l border-sdc-border px-1 py-1.5 text-left align-middle text-label font-medium ${partsCostTone}`}>
+                  <td className={`${PARTS_COST_COL_CLASS} overflow-hidden whitespace-nowrap border-l border-sdc-border px-1 py-1.5 text-left align-middle text-label font-medium ${partsCostTone}`}>
                     <span className="parts-cost-quoted inline-flex items-center gap-0.5 text-sdc-blue-dark">
                       <span>$</span>
                       <MoneyCell
@@ -1217,6 +1236,7 @@ export default async function QuotedPage({
                         defaultValue={job.costActualHistorical != null ? Number(job.costActualHistorical).toString() : ""}
                         ariaLabel={`Parts Cost Actual, ${job.jobName}`}
                         className={MONEY_INPUT_PAIRED}
+                        maxFractionDigits={0}
                       />
                     </span>
                   </td>

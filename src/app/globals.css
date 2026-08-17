@@ -487,6 +487,37 @@ table[data-grid="projects"].hide-actuals td.quoted-actual-cell > .actual-suffix 
   width: 100% !important;
 }
 
+/* ── Parts Cost column WIDTH, also keyed off the switch (2026-08-14) ─────────
+ *
+ * `.pc-col` marks the Parts Cost <th>/<td> in quoted/page.tsx. This has to be a
+ * CSS rule, not a server-computed inline `style`, because Show Actuals is
+ * DELIBERATELY a render-free switch — see ProjectsShowActualsSwitch's flip(): it
+ * only ever toggles this same `hide-actuals` class client-side and never asks the
+ * server to re-render. An inline width picked from `showActuals` at render time
+ * would match whichever state the page happened to LOAD in and then sit stale the
+ * moment someone actually clicked the switch (measured: toggle off, and a
+ * server-computed width stayed at the ON figure since nothing re-ran to shrink
+ * it). Reacting to the class the switch already flips is the only way the width
+ * tracks it live.
+ *
+ * WIDE is the base rule — comfortably fits the paired quoted/actual MoneyCells
+ * (4.5rem each, MONEY_INPUT_PAIRED in quoted/page.tsx) plus their "$"/"/" glyphs.
+ * NARROW overrides it under `.hide-actuals`, at the same specificity trick as the
+ * `.actual-suffix` rule above (`table[data-grid="projects"]` + the state class
+ * outranks a bare `.pc-col` class, so source order can't flip which one wins) —
+ * fits a lone 7-figure quote ("$3,992,738") with its cell padding, nothing more,
+ * since there's no sibling figure to share the cell with in this state. */
+table[data-grid="projects"] .pc-col {
+  width: 196px;
+  min-width: 196px;
+  max-width: 196px;
+}
+table[data-grid="projects"].hide-actuals .pc-col {
+  width: 96px;
+  min-width: 96px;
+  max-width: 96px;
+}
+
 /* ── Show Actuals ON: quoted / actual, BOTH (§50, by request) ────────────────
  *
  * ON shows the pair — "1800 / 2352", quoted then actual — which is what the base rules

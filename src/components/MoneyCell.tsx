@@ -20,12 +20,19 @@ export function MoneyCell({
   defaultValue,
   ariaLabel,
   className,
+  maxFractionDigits = 2,
 }: {
   name: string;
   // Raw numeric string, e.g. "1300000". Empty for "no figure on file".
   defaultValue: string;
   ariaLabel: string;
   className?: string;
+  // Caps decimals in the AT-REST display only (mid-edit always shows the raw
+  // typed string, unrounded). Parts Cost Actual passes 0 — it's synced from
+  // TotalETO with cents attached, and "$728,806.96" reads as false precision
+  // next to a whole-dollar quote. Defaults to 2 so every other caller (Parts
+  // Cost Quoted, the ETC grid's cells) keeps today's behavior.
+  maxFractionDigits?: number;
 }) {
   const [raw, setRaw] = useState(defaultValue);
   const [editing, setEditing] = useState(false);
@@ -62,7 +69,7 @@ export function MoneyCell({
     if (raw === "") return "";
     const n = Number(raw);
     if (!Number.isFinite(n)) return raw; // mid-typing junk: show it, don't eat it
-    return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
+    return n.toLocaleString(undefined, { maximumFractionDigits: maxFractionDigits });
   })();
 
   return (

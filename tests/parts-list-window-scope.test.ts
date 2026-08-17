@@ -46,12 +46,12 @@ test("row inclusion for Invoiced+range switches off the resolved window's invoic
   assert.match(fnBody, /p\.invoicedAmount === 0/, "a windowed row is excluded by zero invoiced amount, not by its collapsed lifetime invoicedDate");
 });
 
-test("Purchase mode's date-inclusion branch is unchanged — still a plain purchasedDate/invoicedDate comparison", () => {
+test("Purchase mode's date-inclusion branch is unchanged — still a plain purchasedDate/invoicedDate comparison, with Req/Exp Date added as more single-field modes alongside it (2026-08-14)", () => {
   const fnBody = functionBody("PartsListTab");
   assert.match(
     fnBody,
-    /dateType === "purchase" \? p\.purchasedDate : p\.invoicedDate/,
-    "Purchase mode (and Invoiced mode before a window resolves) must still use the original single-date check",
+    /dateType === "purchase" \? p\.purchasedDate :\s*dateType === "invoice" \? p\.invoicedDate :\s*dateType === "req" \? p\.requiredDate :\s*p\.expectedDate/,
+    "Purchase/Invoiced/Req Date/Exp Date must each resolve to their own plain date field — none of them may pick up windowed-invoiced logic",
   );
 });
 

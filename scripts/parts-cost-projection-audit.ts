@@ -7,8 +7,7 @@ import {
   getJobPartsCost,
 } from "../src/lib/sync-totaleto";
 import { computePartsBudgetProjection, purchasedTotal, actualTotal } from "../src/lib/parts-budget-projection";
-import { getExecutionEtcByJob } from "../src/lib/execution-etc";
-import { monthWindowUtc, effectiveNewEtc } from "../src/lib/etc";
+import { monthWindowUtc } from "../src/lib/etc";
 import { PARTS_COST_SECTION } from "../src/lib/sections";
 import { writeFileSync } from "node:fs";
 
@@ -61,10 +60,6 @@ type Row = {
   variancePct: number | null;
   flags: string[];
 };
-
-function monthKeyOf(d: Date): string {
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-}
 
 async function main() {
   const args = process.argv.slice(2);

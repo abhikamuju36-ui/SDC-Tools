@@ -186,6 +186,7 @@ export function NewProjectRows({
                 defaultValue=""
                 ariaLabel="New project Parts Cost Actual"
                 className="w-[4.5rem] min-w-0 border-none bg-transparent text-left tabular-nums outline-none"
+                maxFractionDigits={0}
               />
             </span>
           </td>

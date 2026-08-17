@@ -48,9 +48,14 @@ test("the readiness summary's uncovered count uses isUncoveredPart", () => {
 });
 
 test("the Parts List \"Uncovered (no PO)\" filter uses isUncoveredPart for the noPO status", () => {
+  // 2026-08-15: Status became a checkbox multi-select (any number of statuses
+  // at once, by request), so the single-status ternary this used to pin
+  // became an OR across every currently-selected status — same per-status
+  // rule as before (noPO still resolves via isUncoveredPart, not p.st.key),
+  // just no longer limited to exactly one at a time.
   assert.match(
     CODE,
-    /status === "noPO" \? isUncoveredPart\(p\) : p\.st\.key === status/,
+    /s === "noPO" \? isUncoveredPart\(p\) : p\.st\.key === s/,
     "the noPO branch of the status filter must call the same rule as the card and the summary",
   );
 });
