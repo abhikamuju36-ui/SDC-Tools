@@ -21,59 +21,71 @@ export type OperationalEntry = {
   sectionName: string;
   functionGroup: string;
   task: string;
+  // The Hours tab's "Group By: Department" tier (2026-08-17, fix — see the
+  // module header's "Department means operational" note). Deliberately its
+  // OWN naming, not a re-render of `functionGroup`: for Section 10 it splits
+  // Shop into Mechanical Build / Electrical Build / Manufacturing Operations
+  // (functionGroup collapses all three into one "Shop"), and for Sections
+  // 40/50/70/80/90 it's "<Section Name> — <Engineering|Shop>" rather than the
+  // bare "Engineering"/"Shop" functionGroup uses — a different, coarser-in-
+  // some-places/finer-in-others cut of the same 30 codes, by request.
+  department: string;
 };
 
 export const UNDEFINED_LABEL = "Undefined / Unmapped";
 
 export const OPERATIONAL_GROUPING: Record<string, OperationalEntry> = {
   // ── Complete Design and Build (10) ──────────────────────────────────────────
-  "10-111": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "PM", task: "Project Management" },
-  "10-211": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "ME", task: "Machine Design" },
-  "10-312": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "CE", task: "Design and Drawings" },
-  "10-313": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "CE", task: "Software" },
-  "10-515": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "General Engineering", task: "HMI" },
-  "10-516": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "General Engineering", task: "Robot" },
-  "10-517": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "General Engineering", task: "Vision" },
-  "10-518": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "General Engineering", task: "Database and Device" },
-  "10-411": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "Shop", task: "Mechanical Build" },
-  "10-412": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "Shop", task: "Panel Build" },
-  "10-413": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "Shop", task: "Manufacturing" },
+  "10-111": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "PM", task: "Project Management", department: "Project Management" },
+  "10-211": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "ME", task: "Machine Design", department: "Mechanical Engineering" },
+  "10-312": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "CE", task: "Design and Drawings", department: "Controls Engineering" },
+  "10-313": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "CE", task: "Software", department: "Controls Engineering" },
+  "10-515": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "General Engineering", task: "HMI", department: "General Engineering" },
+  "10-516": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "General Engineering", task: "Robot", department: "General Engineering" },
+  "10-517": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "General Engineering", task: "Vision", department: "General Engineering" },
+  "10-518": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "General Engineering", task: "Database and Device", department: "General Engineering" },
+  "10-411": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "Shop", task: "Mechanical Build", department: "Mechanical Build" },
+  "10-412": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "Shop", task: "Panel Build", department: "Electrical Build" },
+  "10-413": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "Shop", task: "Manufacturing", department: "Manufacturing Operations" },
 
   // ── Machine Testing (40) ─────────────────────────────────────────────────────
-  "40-211": { sectionNumber: "40", sectionName: "Machine Testing", functionGroup: "Engineering", task: "ME and CE" },
-  "40-411": { sectionNumber: "40", sectionName: "Machine Testing", functionGroup: "Shop", task: "Builder and Electricians" },
+  "40-211": { sectionNumber: "40", sectionName: "Machine Testing", functionGroup: "Engineering", task: "ME and CE", department: "Machine Testing — Engineering" },
+  "40-411": { sectionNumber: "40", sectionName: "Machine Testing", functionGroup: "Shop", task: "Builder and Electricians", department: "Machine Testing — Shop" },
 
   // ── Teardown and Install (50) ────────────────────────────────────────────────
-  "50-211": { sectionNumber: "50", sectionName: "Teardown and Install", functionGroup: "Engineering", task: "ME and CE" },
-  "50-411": { sectionNumber: "50", sectionName: "Teardown and Install", functionGroup: "Shop", task: "Builder and Electricians" },
+  "50-211": { sectionNumber: "50", sectionName: "Teardown and Install", functionGroup: "Engineering", task: "ME and CE", department: "Teardown & Install — Engineering" },
+  "50-411": { sectionNumber: "50", sectionName: "Teardown and Install", functionGroup: "Shop", task: "Builder and Electricians", department: "Teardown & Install — Shop" },
 
   // ── Warranty (70) ────────────────────────────────────────────────────────────
-  "70-211": { sectionNumber: "70", sectionName: "Warranty", functionGroup: "Engineering", task: "ME and CE" },
-  "70-411": { sectionNumber: "70", sectionName: "Warranty", functionGroup: "Shop", task: "Builder and Electricians" },
+  "70-211": { sectionNumber: "70", sectionName: "Warranty", functionGroup: "Engineering", task: "ME and CE", department: "Warranty — Engineering" },
+  "70-411": { sectionNumber: "70", sectionName: "Warranty", functionGroup: "Shop", task: "Builder and Electricians", department: "Warranty — Shop" },
 
   // ── Service (80) — real codes read off the live Paylocity export, 2026-08-17 ─
   // 112/211/311/313/516 are all engineering-shaped functions with no per-function
   // breakout requested for this phase, so they roll onto one Engineering/"ME and
   // CE" task, the same many-to-one shape 10-413/10-414 already uses for
   // Manufacturing. 411/412/414 roll onto Shop/"Builder and Electricians" likewise.
-  "80-112": { sectionNumber: "80", sectionName: "Service", functionGroup: "Engineering", task: "ME and CE" },
-  "80-211": { sectionNumber: "80", sectionName: "Service", functionGroup: "Engineering", task: "ME and CE" },
-  "80-311": { sectionNumber: "80", sectionName: "Service", functionGroup: "Engineering", task: "ME and CE" },
-  "80-313": { sectionNumber: "80", sectionName: "Service", functionGroup: "Engineering", task: "ME and CE" },
-  "80-516": { sectionNumber: "80", sectionName: "Service", functionGroup: "Engineering", task: "ME and CE" },
-  "80-411": { sectionNumber: "80", sectionName: "Service", functionGroup: "Shop", task: "Builder and Electricians" },
-  "80-412": { sectionNumber: "80", sectionName: "Service", functionGroup: "Shop", task: "Builder and Electricians" },
-  "80-414": { sectionNumber: "80", sectionName: "Service", functionGroup: "Shop", task: "Builder and Electricians" },
+  "80-112": { sectionNumber: "80", sectionName: "Service", functionGroup: "Engineering", task: "ME and CE", department: "Service — Engineering" },
+  "80-211": { sectionNumber: "80", sectionName: "Service", functionGroup: "Engineering", task: "ME and CE", department: "Service — Engineering" },
+  "80-311": { sectionNumber: "80", sectionName: "Service", functionGroup: "Engineering", task: "ME and CE", department: "Service — Engineering" },
+  "80-313": { sectionNumber: "80", sectionName: "Service", functionGroup: "Engineering", task: "ME and CE", department: "Service — Engineering" },
+  "80-516": { sectionNumber: "80", sectionName: "Service", functionGroup: "Engineering", task: "ME and CE", department: "Service — Engineering" },
+  "80-411": { sectionNumber: "80", sectionName: "Service", functionGroup: "Shop", task: "Builder and Electricians", department: "Service — Shop" },
+  "80-412": { sectionNumber: "80", sectionName: "Service", functionGroup: "Shop", task: "Builder and Electricians", department: "Service — Shop" },
+  "80-414": { sectionNumber: "80", sectionName: "Service", functionGroup: "Shop", task: "Builder and Electricians", department: "Service — Shop" },
 
-  // ── Spare Parts (90) — kept flat, no Engineering/Shop split, per request ─────
-  // Function Group mirrors the section itself; Task still distinguishes what the
-  // hours actually were, using the same task vocabulary as the other phases so a
-  // report reading "ME and CE" or "Manufacturing" means the same thing everywhere.
-  "90-211": { sectionNumber: "90", sectionName: "Spare parts", functionGroup: "Spare parts", task: "ME and CE" },
-  "90-311": { sectionNumber: "90", sectionName: "Spare parts", functionGroup: "Spare parts", task: "ME and CE" },
-  "90-411": { sectionNumber: "90", sectionName: "Spare parts", functionGroup: "Spare parts", task: "Builder and Electricians" },
-  "90-412": { sectionNumber: "90", sectionName: "Spare parts", functionGroup: "Spare parts", task: "Builder and Electricians" },
-  "90-414": { sectionNumber: "90", sectionName: "Spare parts", functionGroup: "Spare parts", task: "Manufacturing" },
+  // ── Spare Parts (90) ─────────────────────────────────────────────────────────
+  // sectionName/functionGroup stay flat here (no Engineering/Shop split), per
+  // the original request for this section. `department` DOES split it —
+  // 2026-08-17, by explicit request ("apply the same standard structure for
+  // Sections 70, 80 and 90") — so this is the one tier where Spare Parts reads
+  // differently depending on which dimension you picked; that's intentional,
+  // not a drift between the two.
+  "90-211": { sectionNumber: "90", sectionName: "Spare parts", functionGroup: "Spare parts", task: "ME and CE", department: "Spare Parts — Engineering" },
+  "90-311": { sectionNumber: "90", sectionName: "Spare parts", functionGroup: "Spare parts", task: "ME and CE", department: "Spare Parts — Engineering" },
+  "90-411": { sectionNumber: "90", sectionName: "Spare parts", functionGroup: "Spare parts", task: "Builder and Electricians", department: "Spare Parts — Shop" },
+  "90-412": { sectionNumber: "90", sectionName: "Spare parts", functionGroup: "Spare parts", task: "Builder and Electricians", department: "Spare Parts — Shop" },
+  "90-414": { sectionNumber: "90", sectionName: "Spare parts", functionGroup: "Spare parts", task: "Manufacturing", department: "Spare Parts — Shop" },
 };
 
 export function sectionNumberAndName(code: string): { sectionNumber: string; sectionName: string } {
@@ -89,16 +101,28 @@ export function taskFor(code: string): string {
   return OPERATIONAL_GROUPING[code]?.task ?? UNDEFINED_LABEL;
 }
 
+// The Hours tab's "Group By: Department" — see OperationalEntry.department's
+// own comment for why this is a distinct tier from `functionGroup`, not an
+// alias for it. This is the ONLY thing "Department" is allowed to mean for
+// that Group By dimension — never `Employee.department` (the HR/Paylocity
+// field), which stays available as its own, separate FILTER
+// (HoursFilters.departments / getHoursFilterOptions) and nothing else. A
+// second grouping path built on that field is exactly how this regressed
+// once already (2026-08-17).
+export function departmentFor(code: string): string {
+  return OPERATIONAL_GROUPING[code]?.department ?? UNDEFINED_LABEL;
+}
+
 // ── Reverse lookups, for narrowing a group-by tree node ─────────────────────────
 //
 // Built once at module load. "sectionName" narrows on sectionNumber (the stable
 // key — two sections could in principle share a display name; numbers can't
-// collide), "functionGroup"/"task" narrow on the label itself, deliberately
-// spanning every section that uses it (e.g. "Engineering" rolls up Machine
-// Testing + Teardown + Warranty + Service together when picked with nothing above
-// it in the group-by order) — the same flat-label rollup `department` already
-// does, and exactly what lets "how many total Engineering hours across every
-// phase" be answered by picking Function Group alone.
+// collide), "functionGroup"/"task"/"department" narrow on the label itself,
+// deliberately spanning every section that uses it (e.g. "Engineering" rolls up
+// Machine Testing + Teardown + Warranty + Service together when Function Group
+// is picked with nothing narrower above it) — which is exactly what lets "how
+// many total Engineering hours across every phase" be answered by picking one
+// dimension alone.
 function buildReverseIndex<K extends keyof OperationalEntry>(key: K): Map<string, string[]> {
   const index = new Map<string, string[]>();
   for (const [code, entry] of Object.entries(OPERATIONAL_GROUPING)) {
@@ -113,6 +137,7 @@ function buildReverseIndex<K extends keyof OperationalEntry>(key: K): Map<string
 const CODES_BY_SECTION_NUMBER = buildReverseIndex("sectionNumber");
 const CODES_BY_FUNCTION_GROUP = buildReverseIndex("functionGroup");
 const CODES_BY_TASK = buildReverseIndex("task");
+const CODES_BY_DEPARTMENT = buildReverseIndex("department");
 
 export function codesInSection(sectionNumber: string): string[] {
   return CODES_BY_SECTION_NUMBER.get(sectionNumber) ?? [];
@@ -124,4 +149,8 @@ export function codesInFunctionGroup(functionGroup: string): string[] {
 
 export function codesInTask(task: string): string[] {
   return CODES_BY_TASK.get(task) ?? [];
+}
+
+export function codesInDepartment(department: string): string[] {
+  return CODES_BY_DEPARTMENT.get(department) ?? [];
 }

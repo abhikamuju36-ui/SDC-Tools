@@ -3,7 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { SECTIONS, HOURS_IMPORT_CODES } from "@/lib/sections";
-import { buildHoursWhere, rollupByDepartment, rollupByOperationalTier, type HoursFilters, type HoursGroupBy, type HoursGroupRow, type HoursDetailSortKey } from "@/lib/hours-filters";
+import { buildHoursWhere, rollupByOperationalTier, type HoursFilters, type HoursGroupBy, type HoursGroupRow, type HoursDetailSortKey } from "@/lib/hours-filters";
 import { taskFor } from "@/lib/hours-operational-grouping";
 import type { SortState } from "@/lib/table-sort";
 
@@ -290,16 +290,20 @@ export async function queryHoursSummary(filters: HoursFilters): Promise<HoursSum
 export async function queryHoursGrouped(filters: HoursFilters, groupBy: HoursGroupBy): Promise<HoursGroupRow[]> {
   const where = await resolveWhere(filters);
 
-  if (groupBy === "department") {
-    const byEmployee = await prisma.jobHoursDetail.groupBy({ by: ["employeeId"], where, _sum: { hours: true }, _count: true });
-    const employees = await prisma.employee.findMany({
-      where: { paylocityId: { in: byEmployee.map((r) => r.employeeId) } },
-      select: { paylocityId: true, department: true },
-    });
-    const departmentByEmployeeId = new Map(employees.map((e) => [e.paylocityId!, e.department?.trim() || "—"]));
-    return rollupByDepartment(
-      byEmployee.map((r) => ({ employeeId: r.employeeId, hours: Number(r._sum.hours ?? 0), punchCount: r._count })),
-      departmentByEmployeeId,
+  // "Department" is Section+Function-derived (hours-operational-grouping.ts's
+  // `departmentFor`), NOT the employee's raw HR/Paylocity `Employee.department`
+  // string — that regressed once already (2026-08-17) via a SEPARATE code path
+  // here that grouped by `employeeId` and re-rolled by the HR field. Fixed by
+  // deleting that path entirely and routing "department" through the exact
+  // same `groupBy: ["section"]` + rollupByOperationalTier mechanism every other
+  // operational tier already uses — there is only one way left to compute any
+  // of these four dimensions, so a second implementation can't quietly grow
+  // back next to it.
+  if (groupBy === "sectionName" || groupBy === "functionGroup" || groupBy === "taskDescription" || groupBy === "department") {
+    const g = await prisma.jobHoursDetail.groupBy({ by: ["section"], where, _sum: { hours: true }, _count: true });
+    return rollupByOperationalTier(
+      g.map((r) => ({ section: r.section, hours: Number(r._sum.hours ?? 0), punchCount: r._count })),
+      groupBy,
     );
   }
 
@@ -334,18 +338,6 @@ export async function queryHoursGrouped(filters: HoursFilters, groupBy: HoursGro
     return g
       .map((r) => ({ key: r.section, label: `${r.section} — ${SECTION_NAME.get(r.section) ?? r.section}`, hours: Number(r._sum.hours ?? 0), punchCount: r._count }))
       .sort((a, b) => b.hours - a.hours);
-  }
-
-  if (groupBy === "sectionName" || groupBy === "functionGroup" || groupBy === "taskDescription") {
-    // Same base aggregate the flat "section" dimension above already runs — the
-    // operational hierarchy is a re-labeling of these per-code totals, not a
-    // second query shape, which is what keeps it reconciled to the same total by
-    // construction.
-    const g = await prisma.jobHoursDetail.groupBy({ by: ["section"], where, _sum: { hours: true }, _count: true });
-    return rollupByOperationalTier(
-      g.map((r) => ({ section: r.section, hours: Number(r._sum.hours ?? 0), punchCount: r._count })),
-      groupBy,
-    );
   }
 
   if (groupBy === "month") {

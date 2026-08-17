@@ -6,9 +6,11 @@ import {
   sectionNumberAndName,
   functionGroupFor,
   taskFor,
+  departmentFor,
   codesInSection,
   codesInFunctionGroup,
   codesInTask,
+  codesInDepartment,
 } from "../src/lib/hours-operational-grouping";
 import { HOURS_IMPORT_CODES } from "../src/lib/sections";
 import { rollupByOperationalTier } from "../src/lib/hours-filters";
@@ -19,12 +21,13 @@ import { rollupByOperationalTier } from "../src/lib/hours-filters";
 // group." Both are decidable without a database, so they're tests here rather
 // than a claim.
 
-test("every code the app can import resolves to a real (non-Undefined) label at all three tiers", () => {
+test("every code the app can import resolves to a real (non-Undefined) label at all four tiers", () => {
   for (const code of HOURS_IMPORT_CODES) {
     assert.ok(OPERATIONAL_GROUPING[code], `${code} has no entry in OPERATIONAL_GROUPING`);
     assert.notEqual(sectionNumberAndName(code).sectionName, UNDEFINED_LABEL, `${code} section name`);
     assert.notEqual(functionGroupFor(code), UNDEFINED_LABEL, `${code} function group`);
     assert.notEqual(taskFor(code), UNDEFINED_LABEL, `${code} task`);
+    assert.notEqual(departmentFor(code), UNDEFINED_LABEL, `${code} department`);
   }
 });
 
@@ -34,13 +37,45 @@ test("a code the table has never seen classifies as Undefined at every tier, not
   assert.equal(sectionNumberAndName(bogus).sectionNumber, UNDEFINED_LABEL);
   assert.equal(functionGroupFor(bogus), UNDEFINED_LABEL);
   assert.equal(taskFor(bogus), UNDEFINED_LABEL);
+  assert.equal(departmentFor(bogus), UNDEFINED_LABEL);
 });
 
-test("reverse lookups round-trip the forward map — every code appears under its own section/group/task", () => {
+test("reverse lookups round-trip the forward map — every code appears under its own section/group/task/department", () => {
   for (const [code, entry] of Object.entries(OPERATIONAL_GROUPING)) {
     assert.ok(codesInSection(entry.sectionNumber).includes(code), `${code} missing from codesInSection(${entry.sectionNumber})`);
     assert.ok(codesInFunctionGroup(entry.functionGroup).includes(code), `${code} missing from codesInFunctionGroup(${entry.functionGroup})`);
     assert.ok(codesInTask(entry.task).includes(code), `${code} missing from codesInTask(${entry.task})`);
+    assert.ok(codesInDepartment(entry.department).includes(code), `${code} missing from codesInDepartment(${entry.department})`);
+  }
+});
+
+// ── Department: its own tier, not an alias for Function Group (2026-08-17) ──
+
+test("department splits Section 10's Shop by exact function — Mechanical Build / Electrical Build / Manufacturing Operations", () => {
+  assert.equal(departmentFor("10-411"), "Mechanical Build");
+  assert.equal(departmentFor("10-412"), "Electrical Build");
+  assert.equal(departmentFor("10-413"), "Manufacturing Operations");
+  // Function Group, by contrast, collapses all three into one "Shop" — the
+  // two tiers are deliberately different cuts of the same codes.
+  assert.equal(functionGroupFor("10-411"), "Shop");
+  assert.equal(functionGroupFor("10-412"), "Shop");
+  assert.equal(functionGroupFor("10-413"), "Shop");
+});
+
+test("department combines Section Name and Engineering/Shop for 40/50/70/80/90, per request", () => {
+  assert.equal(departmentFor("40-211"), "Machine Testing — Engineering");
+  assert.equal(departmentFor("40-411"), "Machine Testing — Shop");
+  assert.equal(departmentFor("50-211"), "Teardown & Install — Engineering");
+  assert.equal(departmentFor("70-411"), "Warranty — Shop");
+  assert.equal(departmentFor("80-211"), "Service — Engineering");
+  assert.equal(departmentFor("90-411"), "Spare Parts — Shop");
+});
+
+test("department never produces a raw employee/HR department string", () => {
+  // The exact invalid groups reported in the regression.
+  const invalid = new Set(["Mechanical Build / Manufacturing", "Manufacturing", "Machine Wiring", "Electrical Engineering", "Unassigned", "—"]);
+  for (const code of HOURS_IMPORT_CODES) {
+    assert.ok(!invalid.has(departmentFor(code)), `${code} resolved to "${departmentFor(code)}", a raw HR-looking department value`);
   }
 });
 

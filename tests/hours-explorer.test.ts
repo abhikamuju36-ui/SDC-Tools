@@ -1,6 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildHoursWhere, rollupByDepartment, narrowFiltersForGroupValue, parseHoursGroupByList, reconcileGroupRowHours } from "../src/lib/hours-filters";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { buildHoursWhere, rollupByOperationalTier, narrowFiltersForGroupValue, parseHoursGroupByList, reconcileGroupRowHours } from "../src/lib/hours-filters";
+
+// Source-inspection helper, same pattern tests/parts-actual-gl-posted.test.ts already
+// uses (no database in CI) — for the regression guard at the bottom of this file.
+const ROOT = join(import.meta.dirname, "..");
+function code(...parts: string[]): string {
+  return readFileSync(join(ROOT, ...parts), "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/[^\n]*$/gm, "")
+    .replace(/\/\/[^\n"'`]*$/gm, "");
+}
+
+function functionSpan(source: string, name: string): string {
+  const start = source.indexOf(`export async function ${name}`);
+  assert.ok(start >= 0, `${name} must exist in the source`);
+  const nextExport = source.indexOf("\nexport ", start + 1);
+  return nextExport === -1 ? source.slice(start) : source.slice(start, nextExport);
+}
 
 // hours-filters.ts is the I/O-free half of the Hours tab's query layer (hours-explorer.ts
 // does the actual Prisma calls) — same split as undefined-hours-rules.ts / sections.ts,
@@ -105,8 +124,14 @@ test("narrows section by setting sections to exactly the one value", () => {
   assert.deepEqual(narrowFiltersForGroupValue({}, "section", "10-211").sections, ["10-211"]);
 });
 
-test("narrows department by setting departments to exactly the one value", () => {
-  assert.deepEqual(narrowFiltersForGroupValue({}, "department", "Mechanical Engineering").departments, ["Mechanical Engineering"]);
+// "department" narrows like the other operational tiers (expanding into
+// `sections`), NEVER by setting `.departments` (the employee HR filter) —
+// see the regression-guard tests near the bottom of this file for why that
+// distinction is pinned as hard as possible.
+test("narrows department by expanding into every raw code that operational department covers", () => {
+  const narrowed = narrowFiltersForGroupValue({}, "department", "Mechanical Engineering");
+  assert.deepEqual(narrowed.sections, ["10-211"]);
+  assert.equal(narrowed.departments, undefined, "must not touch the HR-department filter field");
 });
 
 test("narrows month by setting months, not by widening from/to", () => {
@@ -181,69 +206,116 @@ test("a repeated dimension is de-duped, keeping its first position", () => {
   assert.deepEqual(parseHoursGroupByList("job,employee,job"), ["job", "employee"]);
 });
 
-// ── rollupByDepartment ───────────────────────────────────────────────────────
+// ── Group By: Department is Section+Function-derived — regression fix
+// (2026-08-17: this had fallen back to the raw employee/HR department field
+// a second time, via `queryHoursGrouped`'s own separate `employeeId` ->
+// `Employee.department` code path and the now-deleted `rollupByDepartment`) ──
 
-test("rolls several employees into one department bucket", () => {
-  const byEmployee = [
-    { employeeId: "e1", hours: 10, punchCount: 3 },
-    { employeeId: "e2", hours: 5, punchCount: 2 },
-    { employeeId: "e3", hours: 8, punchCount: 1 },
+test("rollupByOperationalTier's department tier rolls several codes into the standard operational groups", () => {
+  const bySection = [
+    { section: "10-211", hours: 10, punchCount: 3 }, // Mechanical Engineering
+    { section: "10-312", hours: 5, punchCount: 2 }, // Controls Engineering
+    { section: "10-313", hours: 3, punchCount: 1 }, // Controls Engineering (same department as 10-312)
   ];
-  const deptById = new Map([
-    ["e1", "Mechanical Engineering"],
-    ["e2", "Mechanical Engineering"],
-    ["e3", "Controls Engineering"],
-  ]);
-  const g = rollupByDepartment(byEmployee, deptById);
+  const g = rollupByOperationalTier(bySection, "department");
   const me = g.find((x) => x.key === "Mechanical Engineering")!;
-  assert.equal(me.hours, 15);
-  assert.equal(me.punchCount, 5);
+  assert.equal(me.hours, 10);
   const ce = g.find((x) => x.key === "Controls Engineering")!;
-  assert.equal(ce.hours, 8);
+  assert.equal(ce.hours, 8, "10-312 and 10-313 both roll into ONE Controls Engineering bucket");
+  // None of the invalid, HR-sourced groups a regression would produce.
+  for (const invalid of ["Mechanical Build / Manufacturing", "Manufacturing", "Machine Wiring", "Electrical Engineering", "Unassigned", "—"]) {
+    assert.ok(!g.some((x) => x.key === invalid), `"${invalid}" is a raw HR department value and must never appear under Group By: Department`);
+  }
 });
 
-test("an employee with no department mapping lands under the em dash, not dropped", () => {
-  const byEmployee = [{ employeeId: "unknown", hours: 4, punchCount: 1 }];
-  const g = rollupByDepartment(byEmployee, new Map());
+test("department rollup splits Section 10's Shop into Mechanical Build / Electrical Build / Manufacturing Operations", () => {
+  // Unlike Function Group, which collapses all three into one "Shop" —
+  // Department is deliberately more granular here, by request.
+  const bySection = [
+    { section: "10-411", hours: 4, punchCount: 1 },
+    { section: "10-412", hours: 6, punchCount: 1 },
+    { section: "10-413", hours: 9, punchCount: 1 },
+  ];
+  const g = rollupByOperationalTier(bySection, "department");
+  assert.deepEqual(
+    g.map((x) => x.key).sort(),
+    ["Electrical Build", "Manufacturing Operations", "Mechanical Build"],
+  );
+});
+
+test("department rollup combines Section Name + Engineering/Shop for Sections 40/50/70/80/90", () => {
+  const bySection = [
+    { section: "40-211", hours: 1, punchCount: 1 },
+    { section: "50-411", hours: 1, punchCount: 1 },
+    { section: "70-211", hours: 1, punchCount: 1 },
+    { section: "80-411", hours: 1, punchCount: 1 },
+    { section: "90-211", hours: 1, punchCount: 1 },
+  ];
+  const g = rollupByOperationalTier(bySection, "department");
+  assert.deepEqual(
+    g.map((x) => x.key).sort(),
+    ["Machine Testing — Engineering", "Service — Shop", "Spare Parts — Engineering", "Teardown & Install — Shop", "Warranty — Engineering"].sort(),
+  );
+});
+
+test("an unmapped code lands under Undefined / Unmapped, never silently joins another department", () => {
+  const g = rollupByOperationalTier([{ section: "99-999", hours: 4, punchCount: 1 }], "department");
   assert.equal(g.length, 1);
-  assert.equal(g[0].key, "—");
-  assert.equal(g[0].hours, 4);
+  assert.equal(g[0].key, "Undefined / Unmapped");
+  assert.equal(g[0].hours, 4, "the hours are still counted, just under the honest label");
 });
 
 test("department rollup preserves the total — nothing is dropped or double-counted", () => {
-  const byEmployee = [
-    { employeeId: "e1", hours: 10, punchCount: 3 },
-    { employeeId: "e2", hours: 5, punchCount: 2 },
-    { employeeId: "e3", hours: 8, punchCount: 1 },
-    { employeeId: "e4", hours: 2.5, punchCount: 1 },
+  const bySection = [
+    { section: "10-211", hours: 10, punchCount: 3 },
+    { section: "10-312", hours: 5, punchCount: 2 },
+    { section: "99-999", hours: 2.5, punchCount: 1 }, // deliberately unmapped
   ];
-  const deptById = new Map([
-    ["e1", "Mechanical Engineering"],
-    ["e2", "Mechanical Engineering"],
-    ["e3", "Controls Engineering"],
-  ]); // e4 deliberately unmapped
-  const expected = byEmployee.reduce((s, e) => s + e.hours, 0);
-  const g = rollupByDepartment(byEmployee, deptById);
+  const expected = bySection.reduce((s, r) => s + r.hours, 0);
+  const g = rollupByOperationalTier(bySection, "department");
   const got = g.reduce((s, x) => s + x.hours, 0);
   assert.ok(Math.abs(got - expected) < 1e-9);
   assert.equal(
     g.reduce((s, x) => s + x.punchCount, 0),
-    byEmployee.reduce((s, e) => s + e.punchCount, 0),
+    bySection.reduce((s, r) => s + r.punchCount, 0),
   );
 });
 
-test("department rollup sorts biggest first", () => {
-  const byEmployee = [
-    { employeeId: "e1", hours: 3, punchCount: 1 },
-    { employeeId: "e2", hours: 30, punchCount: 1 },
-  ];
-  const deptById = new Map([
-    ["e1", "Small Team"],
-    ["e2", "Big Team"],
-  ]);
-  const g = rollupByDepartment(byEmployee, deptById);
-  assert.equal(g[0].key, "Big Team");
-  assert.equal(g[1].key, "Small Team");
+// ── The regression guard itself ─────────────────────────────────────────────
+//
+// Source-inspection, not just behavioral tests above: those prove the CURRENT
+// wiring is correct, but the actual incident was a SECOND implementation
+// quietly growing back next to the first. These assert the dangerous shapes
+// are structurally absent, so a future edit that reintroduces either one
+// fails a test immediately rather than shipping silently.
+
+test("rollupByDepartment no longer exists — there is exactly one rollup path for every operational tier", () => {
+  const src = code("src", "lib", "hours-filters.ts");
+  assert.doesNotMatch(src, /export function rollupByDepartment/, "the HR-department rollup must stay deleted, not just unused");
+});
+
+test("queryHoursGrouped's 'department' branch groups by section, never by employeeId + Employee.department", () => {
+  // Scoped to the specific if-block handling "department" — not the whole
+  // function, which also has a legitimate "employee" branch that DOES call
+  // prisma.employee.findMany (to resolve names for display, an unrelated
+  // concern), and not the whole file, which legitimately selects
+  // Employee.department elsewhere (the Department FILTER's own option list).
+  const fn = functionSpan(code("src", "lib", "hours-explorer.ts"), "queryHoursGrouped");
+  const start = fn.indexOf('groupBy === "sectionName"');
+  assert.ok(start >= 0, "the merged operational-tier branch (sectionName/functionGroup/taskDescription/department) must exist");
+  const branch = fn.slice(start, fn.indexOf("\n  }", start) + 4);
+  assert.match(branch, /groupBy === "department"/, "the department case must be part of this ONE branch, not a separate one");
+  assert.doesNotMatch(branch, /employeeId/, "the department branch must never touch employeeId at all");
+  assert.doesNotMatch(branch, /prisma\.employee\.findMany/, 'must never look up Employee rows to answer a "department" group');
+  assert.match(branch, /by:\s*\["section"\]/, "must group the punch table by section, the same aggregate every other operational tier uses");
+});
+
+test("narrowFiltersForGroupValue's department case expands sections, never sets the HR departments field", () => {
+  const src = code("src", "lib", "hours-filters.ts");
+  const fn = src.slice(src.indexOf("export function narrowFiltersForGroupValue"));
+  const caseBlock = fn.slice(fn.indexOf('case "department"'), fn.indexOf('case "department"') + 120);
+  assert.match(caseBlock, /sections:\s*codesInDepartment\(value\)/);
+  assert.doesNotMatch(caseBlock, /departments:\s*\[value\]/, "narrowing on the HR field is the exact bug being guarded against");
 });
 
 // ── reconcileGroupRowHours — the Hours tab never shows a decimal, and a set
