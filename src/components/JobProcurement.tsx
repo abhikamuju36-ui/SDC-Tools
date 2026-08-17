@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
-import type { BomNode, BomPart, JobBom, PoLineDetail, PoLineGroup, Vendor } from "@/lib/job-bom";
+import type { BomNode, BomPart, JobBom, PoLineGroup, Vendor } from "@/lib/job-bom";
 import { isUncoveredPart } from "@/lib/job-bom-rules";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
 import { usd } from "@/components/ui/format";
@@ -53,6 +53,24 @@ const DAY = 86_400_000;
 // `noPO` is now only what job-bom-rules.ts calls genuinely uncovered.
 type StatusKey = "received" | "hold" | "noPO" | "overdue" | "soon" | "ordered" | "stock" | "process";
 type PartStatus = { key: StatusKey; label: string; cls: string; sub: string };
+
+// Status filter options, in the order the multi-select checkbox list (and the
+// old single-select dropdown before it) presents them. Default selection is
+// every status except `hold` — "On hold" parts are real but usually not what
+// someone reviewing the buy-list wants to see by default; they can still turn
+// it on.
+const STATUS_FILTER_OPTIONS: { value: StatusKey; label: string }[] = [
+  { value: "received", label: "Received" },
+  { value: "ordered", label: "On order" },
+  { value: "soon", label: "Due soon" },
+  { value: "overdue", label: "Overdue" },
+  { value: "stock", label: "From stock" },
+  { value: "process", label: "In process" },
+  { value: "noPO", label: "Uncovered (no PO)" },
+  { value: "hold", label: "On hold" },
+];
+const ALL_STATUS_KEYS: StatusKey[] = STATUS_FILTER_OPTIONS.map((o) => o.value);
+const DEFAULT_STATUS_KEYS: StatusKey[] = ALL_STATUS_KEYS.filter((k) => k !== "hold");
 
 function partStatus(
   p: { status: BomPart["status"]; source?: BomPart["source"]; hold: boolean; expectedDate: string | null; requiredDate: string | null; poId?: string | null; poNumber?: string | null },
@@ -272,14 +290,21 @@ function barClasses(pct: number): { bar: string; text: string } {
   return { bar: "bg-sdc-red", text: "text-sdc-red-text" };
 }
 
-function ReadinessBar({ pct, width = "w-full" }: { pct: number; width?: string }) {
+// `size` defaults to the original dense "sm" the Assemblies tree's per-row bars
+// still use (unchanged); "lg" is only for the Procurement header's Readiness
+// summary (2026-08-14, by request — "too small and hard to read... should
+// look like an important summary element, not a tiny secondary detail"), a
+// thicker track and a headline-sized percentage rather than a scaled-up copy
+// of the row bar.
+function ReadinessBar({ pct, width = "w-full", size = "sm" }: { pct: number; width?: string; size?: "sm" | "lg" }) {
   const { bar, text } = barClasses(pct);
+  const lg = size === "lg";
   return (
-    <div className={`flex items-center gap-2 ${width}`} title={`${pct}% ready`}>
-      <div className="h-1.5 flex-1 overflow-hidden rounded-full bg-sdc-gray-100">
+    <div className={`flex items-center ${lg ? "gap-3" : "gap-2"} ${width}`} title={`${pct}% ready`}>
+      <div className={`${lg ? "h-3" : "h-1.5"} flex-1 overflow-hidden rounded-full bg-sdc-gray-100`}>
         <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
       </div>
-      <span className={`w-9 shrink-0 text-right text-note font-bold tabular-nums ${text}`}>{pct}%</span>
+      <span className={`${lg ? "w-16 text-2xl" : "w-9 text-note"} shrink-0 text-right font-bold tabular-nums ${text}`}>{pct}%</span>
     </div>
   );
 }
@@ -311,15 +336,8 @@ type FlatPart = BomPart & {
   // silently mixing a monthly figure with a lifetime one (the exact
   // anti-pattern sync-totaleto.ts's own comments repeatedly call out).
   pctInvoiced: number | null; // round(invoiced / total * 100)
-  jobCostExclSdc: number; // totalPrice, 0 when in-house (SDC) — always lifetime, untouched by this fix
   leftToSpend: number | null; // totalPrice - invoicedAmount
 };
-
-// In-house = made by SDC (manufacturer SDC, or supplier is Steven Douglas / SDC).
-function isInHouse(manufacturer: string | null | undefined, supplier: string | null | undefined): boolean {
-  if ((manufacturer ?? "").trim().toUpperCase() === "SDC") return true;
-  return /steven\s*douglas|\bSDC\b/i.test(supplier ?? "");
-}
 
 function sectionLabelFor(section: BomNode): string {
   const specId = typeof section.id === "string" ? Number(section.id.replace(/\D/g, "")) : Number(section.id);
@@ -344,11 +362,11 @@ type PersistedState = {
   tab: "assemblies" | "parts";
   view: "list" | "card";
   query: string;
-  status: "all" | StatusKey;
+  status: StatusKey[];
   category: string;
   manufacturer: string;
   supplier: string;
-  dateType: "purchase" | "invoice";
+  dateType: "purchase" | "invoice" | "req" | "exp";
   from: string;
   to: string;
   upcomingWeek: number;
@@ -416,6 +434,39 @@ function makePoGroup(poKey: string, poParts: FlatPart[]): PoGroup {
   return { poKey, poNumber: isNoPo ? null : poParts[0].poNumber, parts: poParts, received, total, expected, status, pastDue };
 }
 
+// Groups a FlatPart[] list into one row per (supplier, PO) pair — the same
+// Map<supplier, Map<poKey, parts[]>> → makePoGroup pattern PartsCardView's own
+// vendor grouping already uses (see its `vendorGroups` useMemo), just
+// flattened: the risk cards (2026-08-14, by request — "group by PO instead
+// of individual parts") want one flat list of PO rows, not a vendor-then-PO
+// tree. A part with no PO number groups under NO_PO_KEY per supplier, same
+// as everywhere else in this file — there's no real PO to split those out
+// by, so every no-PO part for one supplier lands in ONE row (which is
+// exactly the "No PO / Unassigned" grouping the request asks for; the No
+// Purchase Order card's own eligibility already guarantees `poNumber` is
+// null for every part it passes in here).
+//
+// Preserves the INPUT array's own order within each group's first
+// appearance (a `Map` iterates in insertion order) — a caller that passes an
+// already date-sorted list (the risk cards' delivery/upcoming arrays, both
+// sorted by due date ascending before reaching here) gets PO rows that come
+// out sorted by their own earliest due date too, for free: the first part
+// belonging to a given PO, in an already-sorted array, can only be the
+// earliest one for that PO, since any earlier-due part sharing the same PO
+// would already have appeared (and created the group) before it.
+function groupPartsByPo(parts: FlatPart[]): { supplier: string; po: PoGroup }[] {
+  const byKey = new Map<string, { supplier: string; poKey: string; parts: FlatPart[] }>();
+  for (const p of parts) {
+    const supplier = p.supplier ?? "Unknown supplier";
+    const poKey = p.poNumber ?? NO_PO_KEY;
+    const key = `${supplier} ${poKey}`;
+    const bucket = byKey.get(key);
+    if (bucket) bucket.parts.push(p);
+    else byKey.set(key, { supplier, poKey, parts: [p] });
+  }
+  return [...byKey.values()].map((b) => ({ supplier: b.supplier, po: makePoGroup(b.poKey, b.parts) }));
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Component
 // ─────────────────────────────────────────────────────────────────────────────
@@ -432,11 +483,11 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   // is persisted to localStorage (see the effect below).
   const [view, setView] = useState<"list" | "card">(() => saved.view ?? "list");
   const [query, setQuery] = useState(() => saved.query ?? "");
-  const [status, setStatus] = useState<"all" | StatusKey>(() => saved.status ?? "all");
+  const [status, setStatus] = useState<Set<StatusKey>>(() => new Set(Array.isArray(saved.status) ? saved.status : DEFAULT_STATUS_KEYS));
   const [category, setCategory] = useState(() => saved.category ?? "all");
   const [manufacturer, setManufacturer] = useState(() => saved.manufacturer ?? "all");
   const [supplier, setSupplier] = useState(() => saved.supplier ?? "all");
-  const [dateType, setDateType] = useState<"purchase" | "invoice">(() => saved.dateType ?? "purchase");
+  const [dateType, setDateType] = useState<"purchase" | "invoice" | "req" | "exp">(() => saved.dateType ?? "purchase");
   const [from, setFrom] = useState(() => saved.from ?? "");
   const [to, setTo] = useState(() => saved.to ?? "");
   // Default hidden columns (fresh users; anyone with a stored set keeps theirs).
@@ -447,7 +498,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   // Persist everything under one key.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const data: PersistedState = { tab, view, query, status, category, manufacturer, supplier, dateType, from, to, upcomingWeek, hiddenPartCols: [...hidden], colWidths };
+    const data: PersistedState = { tab, view, query, status: [...status], category, manufacturer, supplier, dateType, from, to, upcomingWeek, hiddenPartCols: [...hidden], colWidths };
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch {
@@ -467,7 +518,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   // row (table mode, filters cleared, then scroll+flash) and copy the part #.
   const drillToPart = useCallback(
     (p: DrillablePart) => {
-      setStatus("all");
+      setStatus(() => new Set(ALL_STATUS_KEYS));
       setCategory("all");
       setManufacturer("all");
       setSupplier("all");
@@ -485,6 +536,23 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
     [toast],
   );
 
+  // Jump from a risk card's Part No (Group By = Part) straight to that
+  // part's own row in the Parts List — WITHOUT touching any filter, search,
+  // sort or column state, unlike drillToPart above (whose whole job is
+  // guaranteeing the target renders by clearing everything that could hide
+  // it). `p.id` already IS the stable identity this needs — job + part +
+  // assembly/line, baked into the BOM row's own database id (job-bom-rules.ts
+  // dedupes its "unique procurement requirement" by this same id) — so two
+  // rows sharing a part number can never resolve to each other. If an active
+  // filter is hiding the target row, PartsListTab's own drill effect detects
+  // that (the row simply won't be in the DOM) and surfaces it via a toast
+  // instead of silently doing nothing or quietly changing the user's filters.
+  const jumpToPartRow = useCallback((p: DrillablePart) => {
+    setTab("parts");
+    setView("list");
+    setDrill((d) => ({ key: String(p.id), nonce: d.nonce + 1 }));
+  }, []);
+
   // Copy any string to the clipboard with a toast — reused by the PO-number
   // buttons (part numbers use drillToPart, which also copies).
   const copyText = useCallback(
@@ -496,7 +564,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   );
 
   const clearFilters = useCallback(() => {
-    setStatus("all");
+    setStatus(() => new Set(DEFAULT_STATUS_KEYS));
     setCategory("all");
     setManufacturer("all");
     setSupplier("all");
@@ -624,7 +692,6 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
           : invoicedAmount > 0
             ? 100
             : 0;
-      const jobCostExclSdc = isInHouse(p.manufacturer, supplier) ? 0 : totalPrice;
       const flat: FlatPart = {
         ...p,
         parentPN,
@@ -641,7 +708,6 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
         totalPrice,
         invoicedAmount,
         pctInvoiced,
-        jobCostExclSdc,
         leftToSpend: activeAttribution ? null : totalPrice - invoicedAmount,
       };
       out.push(flat);
@@ -698,15 +764,41 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
     [parts, bom.vendors],
   );
 
+  // Open the PO side panel from an ALREADY-BUILT PoGroup, rather than
+  // re-deriving its parts from `poNumber ?? NO_PO_KEY` the way openPoFor does
+  // (2026-08-14, found live: the risk cards' own "No Purchase Order" group is
+  // NOT "every part with no PO for this supplier" — it's isUncoveredPart's
+  // narrower "no PO AND not stock/process-covered AND not on hold" — so
+  // re-deriving via a bare supplier+null-PO match pulled in stock/process/
+  // hold parts the card never counted, and the drawer opened showing 6 parts
+  // for a card row that said 1). The risk cards already hold the exact,
+  // correctly-filtered PoGroup they rendered the row from; handing it
+  // straight to the panel is the only way "card count" and "drawer count"
+  // can never drift apart, regardless of what a future eligibility rule
+  // changes on any one card. Delivery Slip/Upcoming route through this too,
+  // not just No PO — their own eligibility happens to agree with a raw
+  // poNumber match today, but that agreement is incidental, not guaranteed.
+  const openPoGroup = useCallback(
+    (sup: string, po: PoGroup) => {
+      const authoritative = findAuthoritativePo(bom.vendors, po.poNumber);
+      setPoPanel({ supplier: sup, po, authoritative });
+    },
+    [bom.vendors],
+  );
+
   return (
     <div className="flex flex-col gap-4">
-      {/* Top readiness summary line */}
-      <div className="flex flex-wrap items-center gap-x-4 gap-y-2 rounded-lg border border-sdc-border bg-white px-4 py-3 shadow-sm">
-        <span className="text-micro font-bold uppercase tracking-wider text-sdc-gray-400">Readiness</span>
-        <div className="w-40">
-          <ReadinessBar pct={summary.pct} />
+      {/* Top readiness summary line — sized up (2026-08-14, by request) to read
+          as the important summary it is, not a secondary detail: a larger
+          label, a headline-sized percentage on a thicker bar (ReadinessBar's
+          size="lg"), and bigger counts text, with more breathing room in the
+          card itself. */}
+      <div className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-lg border border-sdc-border bg-white px-5 py-4 shadow-sm">
+        <span className="text-sm font-bold uppercase tracking-wider text-sdc-gray-400">Readiness</span>
+        <div className="w-56">
+          <ReadinessBar pct={summary.pct} size="lg" />
         </div>
-        <span className="text-sm text-sdc-gray-600">
+        <span className="text-base text-sdc-gray-600">
           <span className="font-semibold text-sdc-navy tabular-nums" title="Unique procurement requirements. An assembly released as “Assembly Only” counts once, as itself — its subcomponents are bought with it and are not counted separately.">{num(summary.total)}</span> parts
           {" · "}
           <span className={summary.noPO ? "font-semibold text-sdc-red-text tabular-nums" : "tabular-nums"} title="Not covered by anything: no purchase order, no inventory pull and no process schedule.">
@@ -752,8 +844,10 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
           drill={drill}
           vendors={bom.vendors}
           onPartClick={drillToPart}
+          onJumpToPart={jumpToPartRow}
           onCopy={copyText}
           onOpenPo={openPoFor}
+          onOpenPoGroup={openPoGroup}
           windowStatus={{
             requested: windowRequested,
             pending: pendingWindow,
@@ -772,6 +866,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
           authoritative={poPanel.authoritative}
           onClose={() => setPoPanel(null)}
           onPartClick={drillToPart}
+          onOpenPo={openPoFor}
         />
       )}
     </div>
@@ -885,7 +980,10 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
         <button type="button" onClick={() => setCollapsed(new Set(allKeys))} className={ghostBtn}>Collapse All</button>
       </div>
 
-      <DragScroll className="max-h-[calc(var(--app-vh)_*_0.78)] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
+      {/* 1.01, up from 0.78 (2026-08-14, by request — "increase vertical height
+          ~30%") — the extra room goes straight to more visible rows before this
+          scrolls, since it's a max-height on the scroll container, not padding. */}
+      <DragScroll className="max-h-[calc(var(--app-vh)_*_1.01)] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
         <div className="min-w-[846px]">
           {bom.roots.map((section) => (
             <div key={section.key}>
@@ -1279,6 +1377,7 @@ type ColKey =
   | "po"
   | "purchased"
   | "invoiceddate"
+  | "req"
   | "exp"
   | "lead"
   | "due"
@@ -1286,7 +1385,6 @@ type ColKey =
   | "total"
   | "invoiced"
   | "pctinv"
-  | "jobcost"
   | "leftspend"
   | "status";
 
@@ -1301,14 +1399,14 @@ const ALL_COLS: { key: ColKey; label: string; align?: "right"; title?: string }[
   { key: "po", label: "PO #" },
   { key: "purchased", label: "Purchased" },
   { key: "invoiceddate", label: "Invoiced" },
-  { key: "exp", label: "Exp" },
+  { key: "req", label: "Required Date", title: "eps.RequiredDate — when the part is needed" },
+  { key: "exp", label: "Expected Date", title: "Current due date (DateRequired || PurchaseDateRequired)" },
   { key: "lead", label: "Lead" },
   { key: "due", label: "Due" },
   { key: "unit", label: "Unit $", align: "right" },
   { key: "total", label: "Total $", align: "right" },
   { key: "invoiced", label: "Invoiced $", align: "right" },
   { key: "pctinv", label: "% Inv", align: "right" },
-  { key: "jobcost", label: "Job Cost", align: "right", title: "Job parts cost, excl SDC supplier" },
   { key: "leftspend", label: "Left to Spend", align: "right" },
   { key: "status", label: "Status" },
 ];
@@ -1316,7 +1414,15 @@ const ALL_COLS: { key: ColKey; label: string; align?: "right"; title?: string }[
 // Columns hidden on a first visit. Named so "Reset" can actually restore them —
 // it used to be an inline literal at the useState call, which left Reset and
 // "Show all" doing the identical thing (clear the set), so Reset never reset.
-const DEFAULT_HIDDEN_COLS: ColKey[] = ["parent", "category", "exp", "lead", "due"];
+//
+// The default-VISIBLE set is deliberately the 13 columns named in the request
+// (2026-08-14): Qty, Part No, Desc, Mfr, Supplier, PO #, Purchased, Required
+// Date, Expected Date, Unit $, Total $, Invoiced $, Status — everything else
+// in ALL_COLS is hidden by default, including "invoiceddate" (the Invoiced
+// DATE column, "Invoiced" — not to be confused with "invoiced", the Invoiced
+// $ money column, which stays visible) and "req"/"exp" (Required/Expected
+// Date), which are NOW in the default-visible 13 rather than hidden.
+const DEFAULT_HIDDEN_COLS: ColKey[] = ["parent", "category", "invoiceddate", "lead", "due", "pctinv", "leftspend"];
 
 // Invoiced+range window fetch status — passed down so PartsListTab can show a
 // fail-soft status message and PartsTableView can render the reconciliation
@@ -1337,16 +1443,16 @@ type PartsListState = {
   setView: (v: "list" | "card") => void;
   query: string;
   setQuery: (v: string) => void;
-  status: "all" | StatusKey;
-  setStatus: (v: "all" | StatusKey) => void;
+  status: Set<StatusKey>;
+  setStatus: (updater: (prev: Set<StatusKey>) => Set<StatusKey>) => void;
   category: string;
   setCategory: (v: string) => void;
   manufacturer: string;
   setManufacturer: (v: string) => void;
   supplier: string;
   setSupplier: (v: string) => void;
-  dateType: "purchase" | "invoice";
-  setDateType: (v: "purchase" | "invoice") => void;
+  dateType: "purchase" | "invoice" | "req" | "exp";
+  setDateType: (v: "purchase" | "invoice" | "req" | "exp") => void;
   from: string;
   setFrom: (v: string) => void;
   to: string;
@@ -1373,14 +1479,14 @@ const DEFAULT_COL_WIDTH: Record<ColKey, number> = {
   po: 72,
   purchased: 80,
   invoiceddate: 64,
-  exp: 80,
+  req: 84,
+  exp: 84,
   lead: 60,
   due: 68,
   unit: 72,
   total: 72,
   invoiced: 72,
   pctinv: 52,
-  jobcost: 72,
   leftspend: 84,
   status: 120,
 };
@@ -1413,6 +1519,7 @@ function partsListSortColumns(now: number): SortColumns<FlatPart, ColKey> {
     po: { type: "id", value: (p) => p.poNumber },
     purchased: { type: "date", value: (p) => p.purchasedDate },
     invoiceddate: { type: "date", value: (p) => p.invoicedDate },
+    req: { type: "date", value: (p) => p.requiredDate },
     exp: { type: "date", value: (p) => p.expectedDate },
     // LeadChip's own underlying number (days from purchased to expected),
     // with the same "negative reads as no data" rule it renders with: a
@@ -1434,7 +1541,6 @@ function partsListSortColumns(now: number): SortColumns<FlatPart, ColKey> {
     total: { type: "currency", value: (p) => p.totalPrice },
     invoiced: { type: "currency", value: (p) => p.invoicedAmount },
     pctinv: { type: "number", value: (p) => p.pctInvoiced },
-    jobcost: { type: "currency", value: (p) => p.jobCostExclSdc },
     leftspend: { type: "currency", value: (p) => p.leftToSpend },
     status: { type: "status", value: (p) => p.st.label },
   };
@@ -1446,8 +1552,10 @@ function PartsListTab({
   drill,
   vendors,
   onPartClick,
+  onJumpToPart,
   onCopy,
   onOpenPo,
+  onOpenPoGroup,
   windowStatus,
 }: {
   parts: FlatPart[];
@@ -1455,30 +1563,54 @@ function PartsListTab({
   drill: { key: string; nonce: number };
   vendors: Vendor[];
   onPartClick: (p: DrillablePart) => void;
+  onJumpToPart: (p: DrillablePart) => void;
   onCopy: (text: string, label?: string) => void;
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
+  onOpenPoGroup: (supplier: string, po: PoGroup) => void;
   windowStatus: WindowStatus;
 }) {
   const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, upcomingWeek, setUpcomingWeek, colWidths, setColWidths, clearFilters } = state;
+  const { toast } = useToast();
   const now = useMemo(() => Date.now(), []);
+  // "Active" for status means the selection differs from the default (every
+  // status except On Hold) — the same "not the neutral view" test every other
+  // filter here already applies against its own "all" baseline.
+  const statusIsDefault = status.size === DEFAULT_STATUS_KEYS.length && DEFAULT_STATUS_KEYS.every((k) => status.has(k));
   const filtersActive =
-    status !== "all" || category !== "all" || manufacturer !== "all" || supplier !== "all" || query !== "" || dateType !== "purchase" || from !== "" || to !== "";
+    !statusIsDefault || category !== "all" || manufacturer !== "all" || supplier !== "all" || query !== "" || dateType !== "purchase" || from !== "" || to !== "";
 
   // Drill effect — after a short delay, scroll the matching row into center and
   // flash it. Keyed on `nonce` so re-drilling the same part re-fires. Uses the
-  // sdc-yellow-bg token for the flash (removed after ~1.8s).
+  // vibrant --sdc-yellow token (not the pale --sdc-yellow-bg every status
+  // tint already uses) so the flash reads as unmistakably stronger than the
+  // row's own status tint, fading out after a few seconds.
+  //
+  // `parts` (the job's FULL, unfiltered buy-list — not `filtered` below) is
+  // what tells "genuinely hidden by an active filter" apart from "no such
+  // part in this job at all": the general onPartClick drill (drillToPart,
+  // above in JobProcurement) always clears every filter before setting
+  // `drill`, so its target is guaranteed to render and this branch is
+  // effectively dead for it; onJumpToPart's whole point is NOT clearing
+  // filters, so a genuinely-hidden row is an expected outcome here, not a bug
+  // — surfaced as a toast rather than a silent no-op or a quiet filter reset.
   const rootRef = useRef<HTMLDivElement>(null);
   useEffect(() => {
     if (!drill.key) return;
     const t = window.setTimeout(() => {
       const el = rootRef.current?.querySelector<HTMLElement>(`[data-part-key="${drill.key}"]`);
-      if (!el) return;
+      if (!el) {
+        const targetId = Number(drill.key);
+        if (parts.some((p) => p.id === targetId)) {
+          toast("That part is hidden by the current Parts List filters.", "info");
+        }
+        return;
+      }
       el.scrollIntoView({ behavior: "smooth", block: "center" });
-      el.style.transition = "background-color 0.25s ease";
-      el.style.backgroundColor = "var(--sdc-yellow-bg)";
+      el.style.transition = "background-color 0.3s ease";
+      el.style.backgroundColor = "var(--sdc-yellow)";
       window.setTimeout(() => {
         el.style.backgroundColor = "";
-      }, 1800);
+      }, 3000);
     }, 200);
     return () => window.clearTimeout(t);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1517,8 +1649,16 @@ function PartsListTab({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return parts.filter((p) => {
-      if (status !== "all") {
-        const matches = status === "noPO" ? isUncoveredPart(p) : p.st.key === status;
+      if (status.size < ALL_STATUS_KEYS.length) {
+        // OR across every CURRENTLY SELECTED status, each judged by its own
+        // rule — unchanged from the single-select version, just no longer
+        // limited to exactly one bucket at a time. "noPO" still resolves via
+        // isUncoveredPart rather than p.st.key, since a part can be genuinely
+        // uncovered while its displayed status reads "ON HOLD" (partStatus
+        // checks `hold` before `noPO`) — isUncoveredPart doesn't care about
+        // hold, so selecting "Uncovered (no PO)" must still catch it even
+        // though p.st.key for that row is "hold", not "noPO".
+        const matches = [...status].some((s) => (s === "noPO" ? isUncoveredPart(p) : p.st.key === s));
         if (!matches) return false;
       }
       if (category !== "all" && p.category !== category) return false;
@@ -1538,9 +1678,15 @@ function PartsListTab({
           // in a different month.
           if (p.invoicedAmount === 0) return false;
         } else {
-          // Purchase mode (always), or Invoiced mode before the window has
-          // resolved (loading/failed) — unchanged from before this fix.
-          const d = dateType === "purchase" ? p.purchasedDate : p.invoicedDate;
+          // Purchase mode (always), Req Date/Exp Date (always — no windowed
+          // attribution exists for either, only Invoiced gets one), or
+          // Invoiced mode before the window has resolved (loading/failed) —
+          // unchanged from before this fix.
+          const d =
+            dateType === "purchase" ? p.purchasedDate :
+            dateType === "invoice" ? p.invoicedDate :
+            dateType === "req" ? p.requiredDate :
+            p.expectedDate; // "exp"
           if (!d) return false;
           const day = d.slice(0, 10);
           if (from && day < from) return false;
@@ -1572,7 +1718,7 @@ function PartsListTab({
 
   return (
     <div ref={rootRef} className="flex flex-col gap-3">
-      <RiskCards parts={parts} onPartClick={onPartClick} now={now} upcomingWeek={upcomingWeek} setUpcomingWeek={setUpcomingWeek} />
+      <RiskCards parts={parts} onOpenPoGroup={onOpenPoGroup} onJumpToPart={onJumpToPart} now={now} upcomingWeek={upcomingWeek} setUpcomingWeek={setUpcomingWeek} />
 
       {/* Filter row */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sdc-border bg-white px-3 py-2.5 shadow-sm">
@@ -1619,17 +1765,7 @@ function PartsListTab({
 
         <span className="mx-1 h-5 w-px bg-sdc-border" aria-hidden />
 
-        <FilterSelect label="Status" value={status} onChange={(v) => setStatus(v as typeof status)} options={[
-          { value: "all", label: "All status" },
-          { value: "received", label: "Received" },
-          { value: "ordered", label: "On order" },
-          { value: "soon", label: "Due soon" },
-          { value: "overdue", label: "Overdue" },
-          { value: "stock", label: "From stock" },
-          { value: "process", label: "In process" },
-          { value: "noPO", label: "Uncovered (no PO)" },
-          { value: "hold", label: "On hold" },
-        ]} />
+        <StatusFilter value={status} onChange={setStatus} />
         <FilterSelect label="Category" value={category} onChange={setCategory} options={[{ value: "all", label: "All categories" }, ...distinct.cats.map((c) => ({ value: c, label: c }))]} />
         <FilterSelect label="Mfr" value={manufacturer} onChange={setManufacturer} options={[{ value: "all", label: "All manufacturers" }, ...distinct.mfrs.map((c) => ({ value: c, label: c }))]} />
         <FilterSelect label="Supplier" value={supplier} onChange={setSupplier} options={[{ value: "all", label: "All suppliers" }, ...distinct.sups.map((c) => ({ value: c, label: c }))]} />
@@ -1638,8 +1774,13 @@ function PartsListTab({
 
         <Segmented
           value={dateType}
-          onChange={(v) => setDateType(v as "purchase" | "invoice")}
-          options={[{ value: "purchase", label: "Purchase" }, { value: "invoice", label: "Invoiced" }]}
+          onChange={(v) => setDateType(v as "purchase" | "invoice" | "req" | "exp")}
+          options={[
+            { value: "purchase", label: "Purchase" },
+            { value: "invoice", label: "Invoiced" },
+            { value: "req", label: "Req Date" },
+            { value: "exp", label: "Exp Date" },
+          ]}
         />
         <input type="date" aria-label="From date" value={from} onChange={(e) => setFrom(e.target.value)} className="h-8 rounded-md border border-sdc-border bg-white px-2 text-xs text-sdc-navy outline-none focus:border-sdc-blue" />
         <span className="text-xs text-sdc-gray-400">to</span>
@@ -1748,6 +1889,8 @@ function PartRowCells({
         return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.purchasedDate)}</span>;
       case "invoiceddate":
         return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.invoicedDate)}</span>;
+      case "req":
+        return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.requiredDate)}</span>;
       case "exp":
         return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.expectedDate)}</span>;
       case "lead":
@@ -1771,8 +1914,6 @@ function PartRowCells({
             {p.pctInvoiced === null ? "—" : `${p.pctInvoiced}%`}
           </span>
         );
-      case "jobcost":
-        return <span className="whitespace-nowrap font-mono text-note font-semibold tabular-nums text-sdc-navy" title="Job parts cost, excl SDC supplier">{p.jobCostExclSdc > 0 ? usd(p.jobCostExclSdc) : "—"}</span>;
       case "leftspend":
         return (
           <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy" title={p.leftToSpend === null ? "Not meaningful for a windowed Invoiced $ figure" : undefined}>
@@ -1862,11 +2003,10 @@ function PartsTableView({
       a.unit += p.unitPrice;
       a.total += p.totalPrice;
       a.invoiced += p.invoicedAmount;
-      a.jobcost += p.jobCostExclSdc;
       if (p.leftToSpend !== null) a.left += p.leftToSpend;
       return a;
     },
-    { qty: 0, unit: 0, total: 0, invoiced: 0, jobcost: 0, left: 0 },
+    { qty: 0, unit: 0, total: 0, invoiced: 0, left: 0 },
   );
   const totPct = windowStatus.active ? null : tot.total > 0 ? Math.round((tot.invoiced / tot.total) * 100) : tot.invoiced > 0 ? 100 : 0;
   const footCell = (key: ColKey, idx: number): string => {
@@ -1876,14 +2016,16 @@ function PartsTableView({
       case "total": return usd(tot.total);
       case "invoiced": return usd(tot.invoiced);
       case "pctinv": return totPct === null ? "—" : `${totPct}%`;
-      case "jobcost": return usd(tot.jobcost);
       case "leftspend": return windowStatus.active ? "—" : usd(tot.left);
       default: return idx === 0 ? "Total" : "";
     }
   };
 
   return (
-    <DragScroll className="max-h-[calc(var(--app-vh)_*_0.74)] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
+    // 0.96, up from 0.74 (2026-08-14, by request — "increase vertical height
+    // ~30%") — kept in step with the Card view below (view === "card") and the
+    // Assemblies tab above, so switching between them doesn't visibly jump.
+    <DragScroll className="max-h-[calc(var(--app-vh)_*_0.96)] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
       <table className="table-fixed border-collapse text-left" style={{ width: totalWidth, minWidth: "100%" }}>
         <colgroup>
             {cols.map((c) => (
@@ -2103,8 +2245,11 @@ function PartsCardView({
     s === "received" ? "bg-sdc-green" : s === "partial" ? "bg-sdc-yellow" : s === "late" || s === "noPO" ? "bg-sdc-red" : "bg-sdc-blue";
 
   return (
+    // 0.96, up from 0.74 (2026-08-14, by request) — kept in step with the List
+    // (table) view above, so switching the List/Card segmented control doesn't
+    // visibly jump.
     <div
-      className="grid max-h-[calc(var(--app-vh)_*_0.74)] gap-3 overflow-y-auto styled-scrollbar"
+      className="grid max-h-[calc(var(--app-vh)_*_0.96)] gap-3 overflow-y-auto styled-scrollbar"
       style={{ gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))" }}
     >
       {vendorGroups.map((v) => {
@@ -2220,33 +2365,48 @@ function PartsCardView({
 
 // ── PO detail — right-side sliding panel ─────────────────────────────────────
 
-// One sort-key set, two column maps: the panel's line-items table has two
-// possible row shapes (an authoritative PO's own lines, or the BOM-part
-// fallback when no PO match exists — see the render below), and only one of
-// the two is ever mounted at a time. Same six logical columns either way, so
-// one shared key type lets a single `useColumnSort` and header row serve both.
-type PoLineSortKey = "part" | "qty" | "ordered" | "expected" | "received" | "price";
+// The drawer's parts table (2026-08-14, by request — "reuse the same sorting
+// behavior and formatting already used in the main Parts List") always shows
+// THIS JOB's own BOM parts for the PO (`po.parts`, a FlatPart[]) through the
+// exact same column system the main Parts List table uses — `ColKey`,
+// `ALL_COLS`, `partsListSortColumns`, `PartRowCells` — rather than the two
+// bespoke row shapes this used to switch between (an authoritative PO's own
+// vendor lines, which can include lines outside this job's BOM entirely, vs.
+// a BOM-part fallback). Those raw vendor lines can't carry Mfr/Required
+// Date/Invoiced $/Status — fields only a BOM `FlatPart` has — so there is no
+// shape that satisfies "the same fields and sorting as the Parts List" AND
+// "every real vendor line, including non-BOM ones" at once; this keeps the
+// former and drops the individual non-BOM line rows. Supplier-wide awareness
+// of the real PO (including any non-BOM lines) isn't lost, though — the
+// authoritative "PO Lines (Supplier Status)" bar below still reads
+// `authoritative.received/itemCount/pct` exactly as before.
+const PO_PANEL_COL_KEYS: ColKey[] = ["qty", "pn", "desc", "mfr", "purchased", "invoiceddate", "req", "exp", "unit", "total", "invoiced", "status"];
 
-const PO_LINE_COLUMNS: SortColumns<PoLineDetail, PoLineSortKey> = {
-  part: { type: "id", value: (l) => l.partNumber },
-  qty: { type: "number", value: (l) => l.qty },
-  ordered: { type: "date", value: (l) => l.orderedDate },
-  expected: { type: "date", value: (l) => l.expectedDate },
-  // The cell shows "Exp <date>" instead of a received date until received —
-  // but the RECEIVED column's own underlying value is the received date, full
-  // stop; an unreceived line simply doesn't have one yet (null, sorts last),
-  // same reasoning as PartsDetailTable's own `received` column.
-  received: { type: "date", value: (l) => l.receivedDate },
-  price: { type: "currency", value: (l) => l.price },
-};
-
-const PO_FALLBACK_COLUMNS: SortColumns<FlatPart, PoLineSortKey> = {
-  part: { type: "id", value: (p) => p.pn },
-  qty: { type: "number", value: (p) => p.qty },
-  ordered: { type: "date", value: (p) => p.purchasedDate },
-  expected: { type: "date", value: (p) => p.expectedDate },
-  received: { type: "date", value: (p) => p.receivedDate },
-  price: { type: "currency", value: (p) => p.unitPrice },
+// Pinned column widths (2026-08-14, fixing reported clipping) — this table had
+// none, unlike the main Parts List's own (`DEFAULT_COL_WIDTH` + a `<colgroup>`,
+// `table-fixed`). Auto layout with no width hints sizes every column to its
+// OWN widest cell with no ceiling, and "Desc" is free text across up to
+// several dozen rows — measured live on a 42-part PO, it grew to 584px on its
+// own and dragged the table to 1424px total against a 440px-wide drawer: not
+// "some overflow", 984px of it, with the column doing the damage never once
+// truncating (`overflow-hidden`/`truncate` in PartRowCells only clips a cell
+// that's already narrower than its content — it can't cap a column that's
+// simply never been told a width to be narrower THAN). `table-fixed` + this
+// colgroup force every column to actually respect a width, which is what
+// makes PartRowCells' existing truncate+title behavior finally apply.
+const PO_PANEL_COL_WIDTH: Partial<Record<ColKey, number>> = {
+  qty: 44,
+  pn: 110,
+  desc: 200,
+  mfr: 90,
+  purchased: 72,
+  invoiceddate: 68,
+  req: 78,
+  exp: 78,
+  unit: 64,
+  total: 68,
+  invoiced: 72,
+  status: 96,
 };
 
 function PoPanel({
@@ -2255,21 +2415,27 @@ function PoPanel({
   authoritative,
   onClose,
   onPartClick,
+  onOpenPo,
 }: {
   supplier: string;
   po: PoGroup;
   authoritative?: PoLineGroup;
   onClose: () => void;
   onPartClick: (p: DrillablePart) => void;
+  onOpenPo: (supplier: string | null, poNumber: string | null) => void;
 }) {
-  // Map BOM parts by normalized PN so authoritative PO lines that exist in the
-  // BOM can still drill to their Parts-List row.
-  const bomByPn = useMemo(() => {
-    const m = new Map<string, FlatPart>();
-    for (const p of po.parts) m.set(normPn(p.pn), p);
-    return m;
-  }, [po]);
-  const lineSort = useColumnSort<PoLineSortKey>();
+  const nowMs = useMemo(() => Date.now(), []);
+  const cols = useMemo(() => ALL_COLS.filter((c) => PO_PANEL_COL_KEYS.includes(c.key)), []);
+  const sortColumns = useMemo(() => partsListSortColumns(nowMs), [nowMs]);
+  const lineSort = useColumnSort<ColKey>();
+  const sortedParts = sortRows(po.parts, lineSort.sort, sortColumns);
+  // Sum of the pinned widths above — the table's own width, so `table-fixed`
+  // has a real number to divide among the `<colgroup>` below rather than
+  // shrinking every column proportionally to fit whatever the drawer
+  // happens to be (which is what `table-fixed` does to a 100%-wide table
+  // with no explicit width of its own).
+  const tableWidth = cols.reduce((sum, c) => sum + (PO_PANEL_COL_WIDTH[c.key] ?? 80), 0);
+
   // Mount closed, then flip to open on the next frame so the slide-in plays.
   const [open, setOpen] = useState(false);
   useEffect(() => {
@@ -2292,23 +2458,28 @@ function PoPanel({
     return () => window.removeEventListener("keydown", onKey);
   }, [requestClose]);
 
+  // Required/Expected/Purchased/Invoiced — the header-level rollup the task
+  // asks for ("PO #, Supplier, Number of parts, Required date, Expected
+  // date, Purchased / invoiced information"). Required/Purchased are the
+  // EARLIEST among the PO's parts (when the first thing was needed/bought);
+  // Expected stays the LATEST, unchanged from before this pass — "when is
+  // this PO fully in" is the useful reading of a single expected date across
+  // several parts, not the soonest one.
   const stats = useMemo(() => {
-    const now = Date.now();
-    let ordered: string | null = null; // earliest purchase
-    let due: string | null = null; // latest expected
+    let purchased: string | null = null;
+    let required: string | null = null;
+    let expected: string | null = null;
     let value = 0;
+    let invoicedTotal = 0;
     for (const p of po.parts) {
-      if (p.purchasedDate && (!ordered || p.purchasedDate.slice(0, 10) < ordered.slice(0, 10))) ordered = p.purchasedDate;
-      if (p.expectedDate && (!due || p.expectedDate.slice(0, 10) > due.slice(0, 10))) due = p.expectedDate;
+      if (p.purchasedDate && (!purchased || p.purchasedDate.slice(0, 10) < purchased.slice(0, 10))) purchased = p.purchasedDate;
+      if (p.requiredDate && (!required || p.requiredDate.slice(0, 10) < required.slice(0, 10))) required = p.requiredDate;
+      if (p.expectedDate && (!expected || p.expectedDate.slice(0, 10) > expected.slice(0, 10))) expected = p.expectedDate;
       value += (p.unitPrice || 0) * (p.qty || 0);
+      invoicedTotal += p.invoicedAmount || 0;
     }
     const pct = po.total ? Math.round((po.received / po.total) * 100) : 0;
-    const isPastDue = (p: FlatPart) => {
-      if (p.status === "received" || !p.expectedDate) return false;
-      const t = new Date(p.expectedDate).getTime();
-      return !Number.isNaN(t) && t < now;
-    };
-    return { ordered, due, value, pct, isPastDue, nowMs: now };
+    return { purchased, required, expected, value, invoicedTotal, pct };
   }, [po]);
 
   const badge = po.pastDue
@@ -2331,9 +2502,18 @@ function PoPanel({
         onClick={requestClose}
         className={`absolute inset-0 bg-sdc-navy/40 motion-interactive ${open ? "opacity-100" : "opacity-0"}`}
       />
-      {/* Panel */}
+      {/* Panel — 800px, up from 440px (2026-08-14, fixing reported clipping):
+          440px was sized for the drawer's ORIGINAL 6-column line-items table
+          (Part/Qty/Ordered/Expected/Received/Price); it now holds the Parts
+          List's own 12-column set (PO_PANEL_COL_KEYS), whose pinned widths
+          above sum to ~1015px. 800px comfortably fits every column but the
+          widest "Desc" values without scrolling on a normal desktop width,
+          leaving the table's own horizontal scroll (see its wrapper's
+          comment) as the fallback for a genuinely long value or a narrower
+          viewport, not the only way to see most of the table. Still capped
+          by the same `max-w-[calc(var(--app-vw)_*_0.92)]` for small screens. */}
       <aside
-        className={`absolute right-0 top-0 flex h-full w-[440px] max-w-[calc(var(--app-vw)_*_0.92)] flex-col bg-white shadow-xl motion-interactive ${open ? "translate-x-0" : "translate-x-full"}`}
+        className={`absolute right-0 top-0 flex h-full w-[800px] max-w-[calc(var(--app-vw)_*_0.92)] flex-col bg-white shadow-xl motion-interactive ${open ? "translate-x-0" : "translate-x-full"}`}
       >
         {/* Header */}
         <div className="flex flex-col gap-3 border-b border-sdc-border-soft p-4">
@@ -2353,10 +2533,16 @@ function PoPanel({
             </div>
           </div>
 
-          {/* Summary stats */}
+          {/* Summary stats — Parts/Required/Expected/Purchased/Invoiced/PO
+              Value. This row already wraps (`flex-wrap`), unlike the compact
+              risk cards' own single-line header, so growing from 3 stats to
+              6 costs a second line here rather than an overflow. */}
           <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
-            <Stat label="Ordered" value={fmtDate(stats.ordered)} />
-            <Stat label="Due" value={fmtDate(stats.due)} tone={po.pastDue ? "danger" : undefined} />
+            <Stat label="Parts" value={num(po.total)} />
+            <Stat label="Required" value={fmtDate(stats.required)} />
+            <Stat label="Expected" value={fmtDate(stats.expected)} tone={po.pastDue ? "danger" : undefined} />
+            <Stat label="Purchased" value={fmtDate(stats.purchased)} />
+            <Stat label="Invoiced" value={stats.invoicedTotal > 0 ? usd(stats.invoicedTotal) : "—"} />
             <Stat label="PO Value" value={stats.value > 0 ? usd(stats.value) : "—"} />
           </div>
 
@@ -2375,87 +2561,56 @@ function PoPanel({
           </div>
         </div>
 
-        {/* Lines table — authoritative PO lines when matched (every real line,
-            incl. non-BOM), else the BOM-part rows. */}
-        <div className="flex-1 overflow-y-auto styled-scrollbar">
-          <table className="w-full border-collapse text-left">
+        {/* Parts table — same columns, sort keys and row cells (`PartRowCells`)
+            as the main Parts List table, just scoped to this PO's own parts
+            and status-tinted the same way (`STATUS_ROW_BG`) instead of the
+            old bespoke received/past-due/pending tint.
+
+            `table-fixed` + the `<colgroup>`/`tableWidth` above (2026-08-14,
+            fixing reported clipping) — see PO_PANEL_COL_WIDTH's own comment
+            for why a plain `w-full` auto-layout table let "Desc" balloon to
+            584px and drag the whole table to 1424px. This wrapper still
+            scrolls both ways (`overflow-y-auto` also computes `overflow-x`
+            to `auto` per every browser's shared, if unspecified, behavior —
+            `styled-scrollbar` already themes both scrollbars), so a PO whose
+            columns still don't fit the drawer (narrow viewport, an unusually
+            long value) scrolls to reach them rather than clipping with no
+            way to get there; the drawer's own width below is sized so that
+            no longer needs to happen at a normal desktop width. */}
+        <div className="flex-1 overflow-auto styled-scrollbar">
+          <table className="table-fixed border-collapse text-left" style={{ width: tableWidth, minWidth: "100%" }}>
+            <colgroup>
+              {cols.map((c) => (
+                <col key={c.key} style={{ width: PO_PANEL_COL_WIDTH[c.key] }} />
+              ))}
+            </colgroup>
             <thead className="sticky top-0 z-[1]">
               <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
-                <SortableTh label="Part" sortKey="part" type="id" sort={lineSort.sort} onSort={lineSort.onSort} className="px-3 py-2" />
-                <SortableTh label="Qty" sortKey="qty" type="number" sort={lineSort.sort} onSort={lineSort.onSort} className="px-2 py-2" />
-                <SortableTh label="Ordered" sortKey="ordered" type="date" sort={lineSort.sort} onSort={lineSort.onSort} className="px-2 py-2" />
-                <SortableTh label="Expected" sortKey="expected" type="date" sort={lineSort.sort} onSort={lineSort.onSort} className="px-2 py-2" />
-                <SortableTh label="Received" sortKey="received" type="date" sort={lineSort.sort} onSort={lineSort.onSort} className="px-2 py-2" />
-                <SortableTh label="Price" sortKey="price" type="currency" sort={lineSort.sort} onSort={lineSort.onSort} className="px-3 py-2" />
+                {cols.map((c) => (
+                  <SortableTh
+                    key={c.key}
+                    label={c.label}
+                    sortKey={c.key}
+                    type={sortColumns[c.key].type}
+                    sort={lineSort.sort}
+                    onSort={lineSort.onSort}
+                    title={c.title}
+                    className="px-2 py-2"
+                  />
+                ))}
               </tr>
             </thead>
             <tbody>
-              {authoritative
-                ? sortRows(authoritative.lines, lineSort.sort, PO_LINE_COLUMNS).map((l, i) => {
-                    const isRcvd = l.status === "received" || !!l.receivedDate;
-                    const expT = l.expectedDate ? new Date(l.expectedDate).getTime() : NaN;
-                    const isPast = !isRcvd && Number.isFinite(expT) && expT < stats.nowMs;
-                    const rowTint = isRcvd ? "bg-sdc-green-bg/50" : isPast ? "bg-sdc-red-bg/50" : "bg-sdc-yellow-bg/40";
-                    const match = bomByPn.get(normPn(l.partNumber));
-                    return (
-                      <tr key={`${l.partNumber}-${i}`} className={`border-b border-sdc-border-soft/60 ${rowTint}`}>
-                        <td className="px-3 py-2">
-                          {match ? (
-                            <button type="button" onClick={() => handlePart(match)} title="Copy part # · locate row" className="inline-flex items-center gap-1 font-mono text-note font-semibold text-sdc-blue">
-                              {l.partNumber}
-                              <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
-                                <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
-                              </svg>
-                            </button>
-                          ) : (
-                            <span className="font-mono text-note font-semibold text-sdc-navy">{l.partNumber}</span>
-                          )}
-                          <div className="line-clamp-1 text-label text-sdc-gray-600" title={l.desc}>{l.desc || "—"}</div>
-                        </td>
-                        <td className="px-2 py-2 text-right text-note font-semibold tabular-nums text-sdc-gray-600">{num(l.qty)}</td>
-                        <td className="px-2 py-2 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(l.orderedDate)}</td>
-                        <td className={`px-2 py-2 whitespace-nowrap font-mono text-label ${isPast ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(l.expectedDate)}</td>
-                        <td className="px-2 py-2 whitespace-nowrap font-mono text-label">
-                          {isRcvd ? <span className="font-semibold text-sdc-green-text">✓ {fmtDate(l.receivedDate)}</span> : <span className="text-sdc-yellow-text">Exp {fmtDate(l.expectedDate)}</span>}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-label text-sdc-gray-600">{l.price > 0 ? usd(l.price) : "—"}</td>
-                      </tr>
-                    );
-                  })
-                : sortRows(po.parts, lineSort.sort, PO_FALLBACK_COLUMNS).map((p, i) => {
-                    const isRcvd = p.status === "received" || !!p.receivedDate;
-                    const isPast = stats.isPastDue(p);
-                    const rowTint = isRcvd ? "bg-sdc-green-bg/50" : isPast ? "bg-sdc-red-bg/50" : "bg-sdc-yellow-bg/40";
-                    return (
-                      <tr key={`${p.id}-${i}`} className={`border-b border-sdc-border-soft/60 ${rowTint}`}>
-                        <td className="px-3 py-2">
-                          <button
-                            type="button"
-                            onClick={() => handlePart(p)}
-                            title="Copy part # · locate row"
-                            className="inline-flex items-center gap-1 font-mono text-note font-semibold text-sdc-blue"
-                          >
-                            {p.pn}
-                            <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400" aria-hidden>
-                              <rect x="5" y="5" width="8" height="8" rx="1.5" /><path d="M3 11 V3 a1 1 0 0 1 1-1 h7" strokeLinecap="round" />
-                            </svg>
-                          </button>
-                          <div className="line-clamp-1 text-label text-sdc-gray-600" title={p.desc}>{p.desc || "—"}</div>
-                        </td>
-                        <td className="px-2 py-2 text-right text-note font-semibold tabular-nums text-sdc-gray-600">{num(p.qty)}</td>
-                        <td className="px-2 py-2 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.purchasedDate)}</td>
-                        <td className={`px-2 py-2 whitespace-nowrap font-mono text-label ${isPast ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(p.expectedDate)}</td>
-                        <td className="px-2 py-2 whitespace-nowrap font-mono text-label">
-                          {isRcvd ? (
-                            <span className="font-semibold text-sdc-green-text">✓ {fmtDate(p.receivedDate)}</span>
-                          ) : (
-                            <span className="text-sdc-yellow-text">Exp {fmtDate(p.expectedDate)}</span>
-                          )}
-                        </td>
-                        <td className="px-3 py-2 text-right font-mono text-label text-sdc-gray-600">{p.unitPrice > 0 ? usd(p.unitPrice) : "—"}</td>
-                      </tr>
-                    );
-                  })}
+              {sortedParts.map((p, i) => (
+                <tr
+                  key={`${p.id}-${i}`}
+                  onClick={() => handlePart(p)}
+                  title="Copy part # · locate row"
+                  className={`cursor-pointer border-b border-sdc-border-soft/60 ${STATUS_ROW_BG[p.st.key]}`}
+                >
+                  <PartRowCells p={p} cols={cols} now={nowMs} onOpenPo={onOpenPo} />
+                </tr>
+              ))}
             </tbody>
           </table>
         </div>
@@ -2613,41 +2768,71 @@ const PANEL_HEADER_ROW =
 const PANEL_HEADER_GROUP =
   "contents @[470px]:flex @[470px]:flex-wrap @[470px]:items-center @[470px]:gap-x-4 @[470px]:gap-y-1";
 
-// The "See all" side panel's own table (below) shows a different column SET
-// per risk card (PO # only for Upcoming; Supplier/Exp dropped for No-PO) — one
-// map covering every possible column, same as the Parts List's own
-// per-visibility-menu columns, so the header row just decides which entries
-// of it to render as SortableTh.
-type RiskSortKey = "po" | "part" | "desc" | "supplier" | "req" | "exp";
+// Earliest required date among a group of parts — the No Purchase Order
+// card's own primary date (there's no PO to hang an Expected date off), and
+// the Required half of the other two cards' PO rows. Not part of PoGroup /
+// makePoGroup: those are shared with the Card view and PoPanel, neither of
+// which needs a required-date rollup, so this stays local to the risk cards.
+function earliestRequired(poParts: FlatPart[]): string | null {
+  let acc: string | null = null;
+  for (const p of poParts) {
+    if (p.requiredDate && (!acc || p.requiredDate < acc)) acc = p.requiredDate;
+  }
+  return acc;
+}
 
-const RISK_TABLE_COLUMNS: SortColumns<FlatPart, RiskSortKey> = {
-  po: { type: "id", value: (p) => p.poNumber },
-  part: { type: "id", value: (p) => p.pn },
-  desc: { type: "text", value: (p) => p.desc || null },
-  supplier: { type: "text", value: (p) => p.supplier },
-  req: { type: "date", value: (p) => p.requiredDate },
-  exp: { type: "date", value: (p) => p.expectedDate },
+// One row per (supplier, PO) group — both the compact cards' own primary row
+// and the "See all" side panel's table (2026-08-14, by request — "group by
+// PO instead of individual parts"). `relevantDate` is precomputed per card's
+// own meaning before sorting (Delivery Slip/Upcoming: the PO's soonest
+// Expected date, `makePoGroup`'s own `expected`; No Purchase Order: the PO's
+// soonest Required date, via `earliestRequired` above) so one sort-column
+// map can serve all three cards without knowing which one a row came from.
+type RiskPoRow = { supplier: string; po: PoGroup; relevantDate: string | null };
+type RiskPoSortKey = "po" | "supplier" | "count" | "date";
+
+const RISK_PO_COLUMNS: SortColumns<RiskPoRow, RiskPoSortKey> = {
+  po: { type: "id", value: (r) => r.po.poNumber },
+  supplier: { type: "text", value: (r) => r.supplier },
+  count: { type: "number", value: (r) => r.po.total },
+  date: { type: "date", value: (r) => r.relevantDate },
 };
 
 function RiskCards({
   parts,
-  onPartClick,
+  onOpenPoGroup,
+  onJumpToPart,
   now,
   upcomingWeek,
   setUpcomingWeek,
 }: {
   parts: FlatPart[];
-  onPartClick: (p: DrillablePart) => void;
+  // Takes the ALREADY-BUILT PoGroup a card's own eligibility filter produced,
+  // not a bare (supplier, poNumber) pair — see openPoGroup's own comment for
+  // why: a card's grouping can be narrower than "every part sharing this
+  // supplier and PO", and re-deriving from scratch loses that.
+  onOpenPoGroup: (supplier: string, po: PoGroup) => void;
+  // Part mode's own click action — jump to this exact part's row in the
+  // Parts List below, preserving every filter/search/sort/column choice
+  // (see onJumpToPart's own comment in JobProcurement for why this can't
+  // just reuse the PO drawer's onOpenPoGroup or Assemblies' onPartClick).
+  onJumpToPart: (p: DrillablePart) => void;
   now: number;
   upcomingWeek: number;
   setUpcomingWeek: (n: number) => void;
 }) {
   const [seeAll, setSeeAll] = useState<null | "delivery" | "nopo" | "upcoming">(null);
+  // Presentation only — PO mode groups rows by (supplier, PO) and clicking one
+  // opens the PO drawer; Part mode lists the same qualifying parts individually
+  // (Part No / Description / Supplier / Required / Expected) with no drawer.
+  // Every card switches together, and neither mode changes which parts
+  // qualify — `risk` below is computed once, independent of `groupBy`.
+  const [groupBy, setGroupBy] = useState<"po" | "part">("po");
   // One sort state for all three "See all" modes (they share a row shape and
-  // a table), reset on every open — Supplier/PO # exist in some modes and not
-  // others, and a sort left over from a differently-shaped table would apply
-  // invisibly, with no header arrow on screen to explain the new order.
-  const seeAllSort = useColumnSort<RiskSortKey>();
+  // a table), reset on every open — a sort left over from a differently-
+  // shaped table would apply invisibly, with no header arrow on screen to
+  // explain the new order.
+  const seeAllSort = useColumnSort<RiskPoSortKey>();
   const openSeeAll = (mode: "delivery" | "nopo" | "upcoming") => {
     seeAllSort.setSort(null);
     setSeeAll(mode);
@@ -2679,8 +2864,10 @@ function RiskCards({
       if (!p.requiredDate) return acc;
       return !acc || p.requiredDate < acc ? p.requiredDate : acc;
     }, null);
-
-    // No PO — the same isUncoveredPart eligibility the Parts List filter and
+    // Grouped by (supplier, PO) — `delivery` is already sorted by due date
+    // ascending, so (per groupPartsByPo's own comment) these rows come out
+    // sorted by their own earliest due date too, with no extra sort needed.
+    const deliveryPos = groupPartsByPo(delivery);
     // the readiness summary use (no PO, no stock pull, no process schedule,
     // BOM release status already applied, not on hold). `parts` is already
     // deduped by item id (job-bom-rules.ts's own unique-requirement counting),
@@ -2696,6 +2883,31 @@ function RiskCards({
       if (Number.isFinite(t) && t <= weekEnd) noPoThisWeek++;
       if (p.requiredDate && (!noPoOldest || p.requiredDate < noPoOldest)) noPoOldest = p.requiredDate;
     }
+    // Grouped by supplier (every part here has `poNumber === null` by
+    // isUncoveredPart's own definition, so groupPartsByPo's PO half always
+    // resolves to NO_PO_KEY — one row per supplier, exactly the "No PO /
+    // Unassigned" grouping asked for). `noPo` isn't date-sorted (unlike
+    // delivery/upcoming), so these rows are explicitly sorted oldest-
+    // required-first, same read as the card's own `noPoOldest` stat.
+    const noPoPos = groupPartsByPo(noPo).sort((a, b) => {
+      const ra = earliestRequired(a.po.parts);
+      const rb = earliestRequired(b.po.parts);
+      if (ra == null && rb == null) return 0;
+      if (ra == null) return 1;
+      if (rb == null) return -1;
+      return ra < rb ? -1 : ra > rb ? 1 : 0;
+    });
+    // Part-mode equivalent of noPoPos' own ordering — individual parts
+    // (rather than one row per supplier), oldest required date first, same
+    // read as `noPoOldest`.
+    const noPoSorted = [...noPo].sort((a, b) => {
+      const ra = a.requiredDate;
+      const rb = b.requiredDate;
+      if (ra == null && rb == null) return 0;
+      if (ra == null) return 1;
+      if (rb == null) return -1;
+      return ra < rb ? -1 : ra > rb ? 1 : 0;
+    });
 
     // Upcoming — not received, due tomorrow through ~8 weeks out.
     const upStart = today + 1 * DAY;
@@ -2718,18 +2930,49 @@ function RiskCards({
       return { week: w, parts: wParts, count: wParts.length };
     });
 
-    return { delivery, deliveryAvgLate, deliveryOldest, noPo, noPoThisWeek, noPoOldest, upcoming, weekData };
+    // Grouped over the FULL 8-week upcoming set (not just the selected
+    // week) — this is what "See all" shows, same as `risk.upcoming` always
+    // was, so opening it still surfaces every upcoming PO regardless of
+    // which week button is active on the compact card underneath it.
+    const upcomingAllPos = groupPartsByPo(upcoming);
+
+    return { delivery, deliveryAvgLate, deliveryOldest, deliveryPos, noPo, noPoThisWeek, noPoOldest, noPoPos, noPoSorted, upcoming, upcomingAllPos, weekData };
   }, [parts, now]);
 
   const selectedWeek = risk.weekData.find((w) => w.week === upcomingWeek) ?? risk.weekData[0];
-  const selectedParts = selectedWeek?.parts ?? [];
+  // Memoized so its reference is stable across renders once the selected
+  // week settles — the `?? []` fallback would otherwise mint a fresh empty
+  // array every render (whenever `selectedWeek` is undefined), which
+  // defeats `upcomingPos`'s own memo below (its dep would look "changed"
+  // every render even with no real data change).
+  const selectedParts = useMemo(() => selectedWeek?.parts ?? [], [selectedWeek]);
   const upSuppliers = new Set(selectedParts.map((p) => p.supplier).filter(Boolean)).size;
   const upNearest = selectedParts.length ? selectedParts.map(dueMs).filter(Number.isFinite).sort((a, b) => a - b)[0] : null;
+  // Same grouping the other two cards use, over whichever week is selected —
+  // `selectedParts` is already a sorted subset of `upcoming` (itself sorted
+  // by due date ascending), so this comes out earliest-due-first too.
+  const upcomingPos = useMemo(() => groupPartsByPo(selectedParts), [selectedParts]);
 
-  const drillRow = (p: FlatPart) => onPartClick(p);
+  const openPo = (row: { supplier: string; po: PoGroup }) => onOpenPoGroup(row.supplier, row.po);
 
   return (
     <div className="flex flex-col gap-3">
+      {/* Group By — presentation only. Toggling never changes which parts
+          qualify for a card (see `groupBy`'s own comment above); it only
+          swaps each card's rows between one-per-PO (opens the drawer) and
+          one-per-part (no drawer) and the header count that goes with it. */}
+      <div className="flex items-center gap-2 self-start">
+        <span className="text-xs font-semibold uppercase tracking-wide text-sdc-gray-500">Group By</span>
+        <Segmented
+          value={groupBy}
+          onChange={setGroupBy}
+          options={[
+            { value: "po", label: "PO" },
+            { value: "part", label: "Part" },
+          ]}
+        />
+      </div>
+
       {/* Delivery Slip · No Purchase Order · Upcoming Deliveries — one row on
           desktop (by request). All three used to be a 2-up grid plus a
           full-width third card below it; folded into a single 3-column grid
@@ -2806,18 +3049,50 @@ function RiskCards({
                 Delivery Slip
               </span>
               <div className={PANEL_HEADER_GROUP}>
-                <Stat label="Parts" value={num(risk.delivery.length)} />
+                {/* "5 · 37" under "POs · Parts" (2026-08-14, by request —
+                    "counts... should clearly represent the new PO-based
+                    grouping... show both metrics"), replacing the bare part
+                    count this used to show. Part mode emphasizes the part
+                    count alone — there's no PO grouping to report. */}
+                {groupBy === "po" ? (
+                  <Stat label="POs · Parts" value={`${risk.deliveryPos.length} · ${risk.delivery.length}`} />
+                ) : (
+                  <Stat label="Parts" value={num(risk.delivery.length)} />
+                )}
                 <Stat label="Avg Late" value={`+${risk.deliveryAvgLate}d`} tone={risk.deliveryAvgLate > 0 ? "danger" : undefined} />
                 <Stat label="Oldest Req" value={fmtDate(risk.deliveryOldest)} />
-                <SeeAllBtn onClick={() => openSeeAll("delivery")} disabled={risk.delivery.length === 0} />
+                <SeeAllBtn onClick={() => openSeeAll("delivery")} disabled={risk.deliveryPos.length === 0} />
               </div>
             </div>
           </div>
           <div className="h-[284px] overflow-y-auto styled-scrollbar">
-            {risk.delivery.length === 0 ? (
+            {/* One row per PO (2026-08-14, by request — "group by PO instead
+                of individual parts"), clicking opens the PO drawer instead
+                of drilling to the Parts List row. `row.po.total` is the
+                exact same count `makePoGroup` also feeds the Card view and
+                PoPanel with, so this can never disagree with either. */}
+            {groupBy === "po" ? (
+              risk.deliveryPos.length === 0 ? (
+                <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No deliveries due or overdue.</p>
+              ) : (
+                risk.deliveryPos.map((row, i) => (
+                  <PoRiskRow
+                    key={`${row.supplier}-${row.po.poKey}-${i}`}
+                    poNumber={row.po.poNumber}
+                    supplier={row.supplier}
+                    count={row.po.total}
+                    dates={[
+                      { label: "Required", value: earliestRequired(row.po.parts) },
+                      { label: "Expected", value: row.po.expected, late: row.po.pastDue },
+                    ]}
+                    onClick={() => openPo(row)}
+                  />
+                ))
+              )
+            ) : risk.delivery.length === 0 ? (
               <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No deliveries due or overdue.</p>
             ) : (
-              risk.delivery.map((p, i) => <SlipRow key={`${p.id}-${i}`} p={p} now={now} onClick={() => drillRow(p)} />)
+              risk.delivery.map((p) => <PartRiskRow key={p.id} part={p} onClick={() => onJumpToPart(p)} />)
             )}
           </div>
         </div>
@@ -2831,29 +3106,49 @@ function RiskCards({
                 No Purchase Order
               </span>
               <div className={PANEL_HEADER_GROUP}>
-                <Stat label="Parts" value={num(risk.noPo.length)} tone={risk.noPo.length ? "danger" : undefined} />
+                {/* "Suppliers · Parts", not "POs · Parts" — every row here is
+                    a genuinely no-PO group (isUncoveredPart guarantees
+                    `poNumber === null`), so grouping only ever splits by
+                    supplier; a "POs" count would always just read the same
+                    as the supplier count and add nothing. Part mode drops
+                    the supplier grouping entirely, so only Parts remains. */}
+                {groupBy === "po" ? (
+                  <Stat label="Suppliers · Parts" value={`${risk.noPoPos.length} · ${risk.noPo.length}`} tone={risk.noPo.length ? "danger" : undefined} />
+                ) : (
+                  <Stat label="Parts" value={num(risk.noPo.length)} tone={risk.noPo.length ? "danger" : undefined} />
+                )}
                 <Stat label="This Week" value={num(risk.noPoThisWeek)} />
                 <Stat label="Oldest Req" value={fmtDate(risk.noPoOldest)} />
-                <SeeAllBtn onClick={() => openSeeAll("nopo")} disabled={risk.noPo.length === 0} />
+                <SeeAllBtn onClick={() => openSeeAll("nopo")} disabled={risk.noPoPos.length === 0} />
               </div>
             </div>
           </div>
           <div className="h-[284px] overflow-y-auto styled-scrollbar">
-            {risk.noPo.length === 0 ? (
+            {/* One row per supplier (2026-08-14, by request — "group... under
+                a clear No PO / Unassigned grouping using the same existing
+                uncovered logic"): every row is labelled "No PO" (there is no
+                real PO number to show), grouped by supplier, clicking opens
+                the same PO drawer with `poNumber: null` — its existing
+                "Parts without PO" branch, unchanged. */}
+            {groupBy === "po" ? (
+              risk.noPoPos.length === 0 ? (
+                <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">All parts have purchase orders.</p>
+              ) : (
+                risk.noPoPos.map((row, i) => (
+                  <PoRiskRow
+                    key={`${row.supplier}-${i}`}
+                    poNumber={null}
+                    supplier={row.supplier}
+                    count={row.po.total}
+                    dates={[{ label: "Required", value: earliestRequired(row.po.parts) }]}
+                    onClick={() => openPo(row)}
+                  />
+                ))
+              )
+            ) : risk.noPoSorted.length === 0 ? (
               <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">All parts have purchase orders.</p>
             ) : (
-              risk.noPo.map((p, i) => (
-                <div
-                  key={`${p.id}-${i}`}
-                  onClick={() => drillRow(p)}
-                  title="Copy part # · locate row"
-                  className="grid cursor-pointer grid-cols-[minmax(0,100px)_1fr_minmax(0,58px)] items-center gap-3 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
-                >
-                  <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
-                  <span className="truncate text-note text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
-                  <span className="truncate font-mono text-label text-sdc-gray-600">{fmtDate(p.requiredDate)}</span>
-                </div>
-              ))
+              risk.noPoSorted.map((p) => <PartRiskRow key={p.id} part={p} onClick={() => onJumpToPart(p)} />)
             )}
           </div>
         </div>
@@ -2888,10 +3183,14 @@ function RiskCards({
                 Upcoming Deliveries
               </span>
               <div className={PANEL_HEADER_GROUP}>
-                <Stat label="Parts" value={num(selectedParts.length)} />
+                {groupBy === "po" ? (
+                  <Stat label="POs · Parts" value={`${upcomingPos.length} · ${selectedParts.length}`} />
+                ) : (
+                  <Stat label="Parts" value={num(selectedParts.length)} />
+                )}
                 <Stat label="Suppliers" value={num(upSuppliers)} />
                 <Stat label="Nearest" value={upNearest ? fmtDate(new Date(upNearest).toISOString()) : "—"} />
-                <SeeAllBtn onClick={() => openSeeAll("upcoming")} disabled={risk.upcoming.length === 0} />
+                <SeeAllBtn onClick={() => openSeeAll("upcoming")} disabled={risk.upcomingAllPos.length === 0} />
               </div>
             </div>
             {/* Line 2 — the week picker, and nothing else.
@@ -2919,58 +3218,124 @@ function RiskCards({
             </div>
           </div>
           <div className="h-[284px] overflow-y-auto styled-scrollbar">
-            {selectedParts.length === 0 ? (
+            {groupBy === "po" ? (
+              upcomingPos.length === 0 ? (
+                <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No parts with an expected date in week {selectedWeek?.week ?? 1}.</p>
+              ) : (
+                upcomingPos.map((row, i) => (
+                  <PoRiskRow
+                    key={`${row.supplier}-${row.po.poKey}-${i}`}
+                    poNumber={row.po.poNumber}
+                    supplier={row.supplier}
+                    count={row.po.total}
+                    dates={[
+                      { label: "Expected", value: row.po.expected },
+                      { label: "Required", value: earliestRequired(row.po.parts) },
+                    ]}
+                    onClick={() => openPo(row)}
+                  />
+                ))
+              )
+            ) : selectedParts.length === 0 ? (
               <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No parts with an expected date in week {selectedWeek?.week ?? 1}.</p>
             ) : (
-              selectedParts.map((p, i) => <UpcomingRow key={`${p.id}-${i}`} p={p} onClick={() => drillRow(p)} />)
+              selectedParts.map((p) => <PartRiskRow key={p.id} part={p} onClick={() => onJumpToPart(p)} />)
             )}
           </div>
         </div>
       </div>
 
-      {seeAll && (
-        <SidePanel
-          title={seeAll === "delivery" ? "Delivery Slip" : seeAll === "nopo" ? "Parts without Purchase Order" : "Upcoming Deliveries"}
-          subtitle={
-            seeAll === "delivery"
-              ? `${risk.delivery.length} parts due or overdue`
-              : seeAll === "nopo"
-                ? `${risk.noPo.length} parts need a PO`
-                : `${risk.upcoming.length} parts due in the next 8 weeks`
-          }
-          onClose={() => setSeeAll(null)}
-        >
-          <table className="w-full border-collapse text-left">
-            <thead className="sticky top-0 z-[1]">
-              <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
-                {seeAll === "upcoming" && <SortableTh label="PO #" sortKey="po" type="id" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-3 py-2" />}
-                <SortableTh label="Part #" sortKey="part" type="id" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-3 py-2" />
-                <SortableTh label="Desc" sortKey="desc" type="text" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-2 py-2" />
-                {seeAll !== "nopo" && <SortableTh label="Supplier" sortKey="supplier" type="text" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-2 py-2" />}
-                <SortableTh label="Req" sortKey="req" type="date" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-2 py-2" />
-                {seeAll !== "nopo" && <SortableTh label="Exp" sortKey="exp" type="date" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-2 py-2" />}
-              </tr>
-            </thead>
-            <tbody>
-              {sortRows(seeAll === "delivery" ? risk.delivery : seeAll === "nopo" ? risk.noPo : risk.upcoming, seeAllSort.sort, RISK_TABLE_COLUMNS).map((p, i) => (
-                <tr
-                  key={`${p.id}-${i}`}
-                  onClick={() => { onPartClick(p); setSeeAll(null); }}
-                  title="Copy part # · locate row"
-                  className={`cursor-pointer border-b border-sdc-border-soft/60 ${STATUS_ROW_BG[p.st.key]}`}
-                >
-                  {seeAll === "upcoming" && <td className="px-3 py-1.5 font-mono text-label text-sdc-gray-600">{p.poNumber || "—"}</td>}
-                  <td className="px-3 py-1.5 font-mono text-note font-semibold text-sdc-blue">{p.pn}</td>
-                  <td className="px-2 py-1.5 text-note text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
-                  {seeAll !== "nopo" && <td className="px-2 py-1.5"><SupplierChip supplier={p.supplier} /></td>}
-                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.requiredDate)}</td>
-                  {seeAll !== "nopo" && <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.expectedDate)}</td>}
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </SidePanel>
-      )}
+      {/* "See all" — PO-grouped rows too (2026-08-14, by request — kept
+          consistent with the compact cards above: same rows, same click-
+          opens-the-PO-drawer behavior, just more of them visible at once and
+          sortable by PO #/Supplier/Parts/Date). Built fresh on every render
+          rather than memoized — these lists are already computed above and
+          this only re-shapes them with one precomputed `relevantDate` per
+          row, cheap at the sizes a risk card ever holds. */}
+      {(() => {
+        const seeAllRows: RiskPoRow[] =
+          seeAll === "delivery"
+            ? risk.deliveryPos.map((row) => ({ ...row, relevantDate: row.po.expected }))
+            : seeAll === "nopo"
+              ? risk.noPoPos.map((row) => ({ ...row, relevantDate: earliestRequired(row.po.parts) }))
+              : seeAll === "upcoming"
+                ? risk.upcomingAllPos.map((row) => ({ ...row, relevantDate: row.po.expected }))
+                : [];
+        // Part mode's own row set — the SAME qualifying parts, individually,
+        // with no PO grouping. "upcoming" here is the full 8-week set
+        // (risk.upcoming), matching upcomingAllPos' own "see all ignores the
+        // compact card's selected week" rule.
+        const seeAllParts: FlatPart[] =
+          seeAll === "delivery" ? risk.delivery : seeAll === "nopo" ? risk.noPoSorted : seeAll === "upcoming" ? risk.upcoming : [];
+        return (
+          seeAll && (
+            <SidePanel
+              title={seeAll === "delivery" ? "Delivery Slip" : seeAll === "nopo" ? "Parts without Purchase Order" : "Upcoming Deliveries"}
+              subtitle={
+                seeAll === "delivery"
+                  ? `${risk.deliveryPos.length} POs · ${risk.delivery.length} parts due or overdue`
+                  : seeAll === "nopo"
+                    ? `${risk.noPoPos.length} suppliers · ${risk.noPo.length} parts need a PO`
+                    : `${risk.upcomingAllPos.length} POs · ${risk.upcoming.length} parts due in the next 8 weeks`
+              }
+              onClose={() => setSeeAll(null)}
+            >
+              {groupBy === "po" ? (
+                <table className="w-full border-collapse text-left">
+                  <thead className="sticky top-0 z-[1]">
+                    <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
+                      <SortableTh label="PO #" sortKey="po" type="id" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-3 py-2" />
+                      <SortableTh label="Supplier" sortKey="supplier" type="text" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-2 py-2" />
+                      <SortableTh label="Parts" sortKey="count" type="number" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-2 py-2" />
+                      <SortableTh label={seeAll === "nopo" ? "Oldest Req" : "Expected"} sortKey="date" type="date" sort={seeAllSort.sort} onSort={seeAllSort.onSort} className="px-2 py-2" />
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {sortRows(seeAllRows, seeAllSort.sort, RISK_PO_COLUMNS).map((row, i) => (
+                      <tr
+                        key={`${row.supplier}-${row.po.poKey}-${i}`}
+                        onClick={() => { openPo(row); setSeeAll(null); }}
+                        title="Open PO details"
+                        className={`cursor-pointer border-b border-sdc-border-soft/60 ${row.po.pastDue ? "bg-sdc-red-bg/40 hover:bg-sdc-red-bg/70" : "hover:bg-sdc-blue-light/30"}`}
+                      >
+                        <td className="px-3 py-1.5 font-mono text-note font-semibold text-sdc-blue">{row.po.poNumber ?? "No PO"}</td>
+                        <td className="px-2 py-1.5 text-note text-sdc-navy" title={row.supplier}><span className="line-clamp-1">{row.supplier}</span></td>
+                        <td className="px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums text-sdc-gray-600">{row.po.total}</td>
+                        <td className={`px-2 py-1.5 whitespace-nowrap font-mono text-label ${row.po.pastDue ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}>{fmtDate(row.relevantDate)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              ) : (
+                // Part mode — no drawer to open, so no onClick/cursor-pointer
+                // on these rows, unlike every PO-mode row above.
+                <table className="w-full border-collapse text-left">
+                  <thead className="sticky top-0 z-[1]">
+                    <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
+                      <th className="px-3 py-2">Part No</th>
+                      <th className="px-2 py-2">Description</th>
+                      <th className="px-2 py-2">Supplier</th>
+                      <th className="px-2 py-2">Required</th>
+                      <th className="px-2 py-2">Expected</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {seeAllParts.map((p) => (
+                      <tr key={p.id} className="border-b border-sdc-border-soft/60">
+                        <td className="px-3 py-1.5 font-mono text-note font-semibold text-sdc-navy">{p.pn}</td>
+                        <td className="px-2 py-1.5 text-note text-sdc-gray-600" title={p.desc}><span className="line-clamp-1">{p.desc}</span></td>
+                        <td className="px-2 py-1.5 text-note text-sdc-navy" title={p.supplier ?? "—"}><span className="line-clamp-1">{p.supplier ?? "—"}</span></td>
+                        <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.requiredDate)}</td>
+                        <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.expectedDate)}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              )}
+            </SidePanel>
+          )
+        );
+      })()}
     </div>
   );
 }
@@ -2988,57 +3353,80 @@ function SeeAllBtn({ onClick, disabled }: { onClick: () => void; disabled?: bool
   );
 }
 
-function SlipRow({ p, now, onClick }: { p: FlatPart; now: number; onClick: () => void }) {
-  const expT = p.expectedDate ? new Date(p.expectedDate).getTime() : NaN;
-  const expLate = Number.isFinite(expT) && expT < startOfTodayMs(now);
+// One compact row per (supplier, PO) group — the risk cards' own primary row
+// shape (2026-08-14, by request — "group by PO instead of individual parts"),
+// replacing the old per-part SlipRow/UpcomingRow/inline-No-PO-row. `dates`
+// carries 1 or 2 {label, value, late?} entries so the same component serves
+// all three cards: Delivery Slip and Upcoming each show two dates (mirroring
+// the old SlipRow/UpcomingRow's own two-date layout, in each row's own
+// order); No Purchase Order shows only Required, since there's no PO/
+// Expected to speak of. `count` is the PO group's own `total` — never
+// re-derived, so it can't disagree with what opening the drawer shows.
+// `gridTemplateColumns` is inline rather than a Tailwind arbitrary class
+// because the column count is dynamic (1 vs 2 date columns) — a Tailwind
+// class has to be a static string the build can scan for, which a
+// `dates.length`-shaped template can't be.
+function PoRiskRow({
+  poNumber,
+  supplier,
+  count,
+  dates,
+  onClick,
+}: {
+  poNumber: string | null;
+  supplier: string;
+  count: number;
+  dates: { label: string; value: string | null; late?: boolean }[];
+  onClick: () => void;
+}) {
   return (
-    // Supplier dropped from this compact row (still in "See all"), and the
-    // description column carries an explicit `minmax(50px,1fr)` floor — not
-    // just `1fr` — both by measurement, not guesswork. This card is now a
-    // third of the Procurement risk-card row (~300px, down from ~50% before
-    // the 3-up layout), and a bare `1fr` next to several `minmax(0,Npx)`
-    // siblings resolved to a measured 0px at that width: with no minimum of
-    // its own, the description lost every round of space-distribution to the
-    // fixed columns and the part description rendered as nothing at all,
-    // which is worse than truncating it. `minmax(0,Npx)` on the remaining
-    // fixed columns still lets THEM compress instead of overflowing (a wide
-    // screen renders every column at its old, un-squeezed size), but now
-    // description is guaranteed at least 50px — a few legible characters —
-    // before anything else gets to grow further.
     <div
       onClick={onClick}
-      title="Copy part # · locate row"
-      className="grid cursor-pointer grid-cols-[minmax(0,88px)_minmax(50px,1fr)_minmax(0,58px)_minmax(0,58px)] items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+      title="Open PO details"
+      className="grid cursor-pointer items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+      style={{ gridTemplateColumns: `minmax(0,64px) minmax(50px,1fr) minmax(0,26px) ${dates.map(() => "minmax(0,58px)").join(" ")}` }}
     >
-      <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
-      <span className="truncate text-note text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
-      <span className="truncate font-mono text-label text-sdc-gray-600" title={fmtDate(p.requiredDate)}>{fmtDate(p.requiredDate)}</span>
-      <span className={`truncate font-mono text-label ${expLate ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`} title={fmtDate(p.expectedDate)}>{fmtDate(p.expectedDate)}</span>
+      <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={poNumber ?? "No PO"}>
+        {poNumber ?? "No PO"}
+      </span>
+      <span className="truncate text-note text-sdc-navy" title={supplier}>{supplier}</span>
+      <span className="truncate text-right font-mono text-label text-sdc-gray-600" title={`${count} part${count === 1 ? "" : "s"}`}>{count}</span>
+      {dates.map((d) => (
+        <span
+          key={d.label}
+          className={`truncate font-mono text-label ${d.late ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}
+          title={`${d.label} ${fmtDate(d.value)}`}
+        >
+          {fmtDate(d.value)}
+        </span>
+      ))}
     </div>
   );
 }
 
-function UpcomingRow({ p, onClick }: { p: FlatPart; onClick: () => void }) {
+// Part-mode equivalent of PoRiskRow — one row per individual part, no PO
+// grouping. Unlike every PO-mode row, there's no drawer to open here (there
+// may not even be a single PO behind the row) — clicking instead jumps to
+// this exact part's row in the Parts List below, via onJumpToPart.
+function PartRiskRow({ part, onClick }: { part: FlatPart; onClick: () => void }) {
   return (
-    // PO # and Supplier dropped from this compact row (both still in "See
-    // all", which already shows PO # only for this list). Same reasoning as
-    // SlipRow just above: this card is now a third of the Procurement
-    // risk-card row (~300px), and measuring live rather than guessing —
-    // `minmax(0,Npx)` on every fixed column stops a squeezed column from
-    // overflowing, but a bare `1fr` description next to that many fixed
-    // siblings still measured out to 0px, losing the one field that says
-    // WHAT part this row is about. `minmax(50px,1fr)` guarantees it a floor
-    // before anything else grows further; PN and both dates keep their own
-    // `minmax(0,Npx)` ceilings so a wide screen renders unchanged.
     <div
       onClick={onClick}
-      title="Copy part # · locate row"
-      className="grid cursor-pointer grid-cols-[minmax(0,88px)_minmax(50px,1fr)_minmax(0,58px)_minmax(0,58px)] items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+      title="Locate this part in the Parts List"
+      className="grid cursor-pointer items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
+      style={{ gridTemplateColumns: "minmax(0,84px) minmax(80px,1fr) minmax(60px,110px) minmax(0,58px) minmax(0,58px)" }}
     >
-      <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={p.pn}>{p.pn}</span>
-      <span className="truncate text-note text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>
-      <span className="truncate font-mono text-label text-sdc-gray-600" title={fmtDate(p.expectedDate)}>{fmtDate(p.expectedDate)}</span>
-      <span className="truncate font-mono text-label text-sdc-gray-600" title={fmtDate(p.requiredDate)}>{fmtDate(p.requiredDate)}</span>
+      <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={part.pn}>
+        {part.pn}
+      </span>
+      <span className="truncate text-note text-sdc-gray-600" title={part.desc}>{part.desc}</span>
+      <span className="truncate text-note text-sdc-navy" title={part.supplier ?? "—"}>{part.supplier ?? "—"}</span>
+      <span className="truncate text-right font-mono text-label text-sdc-gray-600" title={`Required ${fmtDate(part.requiredDate)}`}>
+        {fmtDate(part.requiredDate)}
+      </span>
+      <span className="truncate text-right font-mono text-label text-sdc-gray-600" title={`Expected ${fmtDate(part.expectedDate)}`}>
+        {fmtDate(part.expectedDate)}
+      </span>
     </div>
   );
 }
@@ -3078,5 +3466,62 @@ function FilterSelect({ value, onChange, options }: { label: string; value: stri
         <option key={o.value} value={o.value}>{o.label}</option>
       ))}
     </select>
+  );
+}
+
+// Status filter — checkbox multi-select (by request: allow more than one
+// status selected at once). Modeled on the Columns menu above rather than on
+// FilterSelect's native <select>: a <select> has no way to show checkboxes or
+// stay open across several picks in a row, and this needs both. Same
+// stay-open-until-outside-click `<details>` pattern, its own ref/effect so it
+// doesn't interfere with the Columns menu's.
+function StatusFilter({ value, onChange }: { value: Set<StatusKey>; onChange: (updater: (prev: Set<StatusKey>) => Set<StatusKey>) => void }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  useEffect(() => {
+    function onDown(e: MouseEvent) {
+      const el = ref.current;
+      if (el?.open && !el.contains(e.target as Node)) el.open = false;
+    }
+    document.addEventListener("mousedown", onDown);
+    return () => document.removeEventListener("mousedown", onDown);
+  }, []);
+
+  const allSelected = value.size >= ALL_STATUS_KEYS.length;
+  const toggle = (key: StatusKey) =>
+    onChange((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key);
+      else next.add(key);
+      return next;
+    });
+
+  return (
+    <details ref={ref} className="relative">
+      <summary className={`flex h-8 cursor-pointer list-none items-center gap-1.5 rounded-md border px-3 text-xs font-medium hover:bg-sdc-blue-light ${allSelected ? "border-sdc-border bg-white text-sdc-navy" : "border-sdc-blue bg-sdc-blue-light text-sdc-blue-dark"}`}>
+        Status
+        {!allSelected && (
+          <span className="inline-flex min-w-[16px] items-center justify-center rounded-full bg-sdc-blue px-1 text-label font-bold text-white tabular-nums">
+            {value.size}
+          </span>
+        )}
+        <svg viewBox="0 0 16 16" width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2"><path d="M3 6 L8 11 L13 6" strokeLinecap="round" strokeLinejoin="round" /></svg>
+      </summary>
+      <div className="absolute left-0 z-20 mt-1 w-52 overflow-auto styled-scrollbar rounded-lg border border-sdc-border bg-white p-1.5 shadow-lg">
+        {STATUS_FILTER_OPTIONS.map((o) => (
+          <label key={o.value} className="flex cursor-pointer items-center gap-2 rounded px-2 py-1 text-xs text-sdc-navy hover:bg-sdc-blue-light">
+            <input type="checkbox" checked={value.has(o.value)} onChange={() => toggle(o.value)} />
+            {o.label}
+          </label>
+        ))}
+        <div className="mt-1.5 flex flex-wrap gap-2 border-t border-sdc-border-soft pt-1.5">
+          <button type="button" onClick={() => onChange(() => new Set(ALL_STATUS_KEYS))} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-note font-medium text-sdc-navy hover:bg-sdc-blue-light">
+            Select all
+          </button>
+          <button type="button" onClick={() => onChange(() => new Set())} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-note font-medium text-sdc-navy hover:bg-sdc-blue-light">
+            Clear
+          </button>
+        </div>
+      </div>
+    </details>
   );
 }
