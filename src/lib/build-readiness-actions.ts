@@ -93,6 +93,8 @@ type SnapshotRawRow = {
   customer: string | null;
   status: string;
   overallReadinessPct: number;
+  requiredQtyTotal: number;
+  coveredQtyTotal: number;
   assembliesTotal: number;
   assembliesReady: number;
   assembliesPartial: number;
@@ -111,7 +113,7 @@ type SnapshotRawRow = {
 export async function getBuildReadinessData(filters?: BuildReadinessFilters): Promise<BuildReadinessData> {
   const [rows, meta] = await Promise.all([
     prisma.$queryRaw<SnapshotRawRow[]>`
-      SELECT jobId, jobName, customer, status, overallReadinessPct, assembliesTotal, assembliesReady, assembliesPartial,
+      SELECT jobId, jobName, customer, status, overallReadinessPct, requiredQtyTotal, coveredQtyTotal, assembliesTotal, assembliesReady, assembliesPartial,
              assembliesBlocked, partsUncovered, partsOnOrder, partsPastDue, partsDueSoon7d, materialValueTotal,
              materialValueAtRisk, nextUnlockDate, detailJson, computedAt
       FROM BuildReadinessJobSnapshot ORDER BY jobId
@@ -125,6 +127,8 @@ export async function getBuildReadinessData(filters?: BuildReadinessFilters): Pr
     customer: r.customer,
     status: r.status as JobSnapshotRow["status"],
     overallReadinessPct: r.overallReadinessPct,
+    requiredQtyTotal: r.requiredQtyTotal,
+    coveredQtyTotal: r.coveredQtyTotal,
     assembliesTotal: r.assembliesTotal,
     assembliesReady: r.assembliesReady,
     assembliesPartial: r.assembliesPartial,

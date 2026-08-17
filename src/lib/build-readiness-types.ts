@@ -34,6 +34,7 @@ export type BlockerEntry = {
   partPn: string;
   partDesc: string;
   supplier: string | null;
+  poNumber: string | null;
   materialValue: number;
   daysLate: number | null;
   expectedDate: string | null;
@@ -76,6 +77,11 @@ export type UpcomingDeliveryEntry = {
   incomingParts: { pn: string; qty: number }[];
   buildableBefore: number | null;
   buildableAfter: number | null;
+  // Mirrors the exact `u.part.status === "ordered"` test partsOnOrder's own
+  // source loop (classifyJobBom) uses — so the main table's "On Order" cell
+  // can drill straight into `detail.upcoming.filter(u => u.onOrder)` and
+  // reconcile with the KPI by construction, no live fetch needed.
+  onOrder: boolean;
 };
 
 export type JobDetail = {
@@ -91,8 +97,24 @@ export type JobSnapshotRow = {
   jobId: string;
   jobName: string;
   customer: string | null;
-  status: "ok" | "failed" | "empty";
+  // "empty" = no BOM at all. "notReleased" = a BOM tree exists but walking it
+  // found zero required parts anywhere yet (nothing released for Purchasing
+  // to act on). Both are distinct from a real, measured 0%.
+  status: "ok" | "failed" | "empty" | "notReleased";
+  // Quantity-weighted coverage over every unique required part job-wide (see
+  // job-bom-rules.ts's quantityReadiness) — NOT the same question as the
+  // assembliesTotal/Ready/Partial/Blocked group below, see their own comment.
   overallReadinessPct: number;
+  requiredQtyTotal: number; // denominator behind overallReadinessPct
+  coveredQtyTotal: number; // numerator behind overallReadinessPct
+  // These four count TotalETO release-status-tagged BUILDABLE UNITS ONLY (a
+  // BOM node with its own self/buy line — release "Assembly Only" or "Both").
+  // Confirmed live (2026-08-17): most jobs never set that field and are
+  // procured as a flat parts list, so assembliesTotal legitimately reads 0
+  // for the large majority of real jobs even at high overallReadinessPct —
+  // that is NOT a bug, it's a different question ("how many independently-
+  // bought sub-assemblies does this job have") than readiness answers ("how
+  // much of this job's required material is covered"). Do not conflate them.
   assembliesTotal: number;
   assembliesReady: number;
   assembliesPartial: number;

@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { usd } from "@/components/ui/format";
 import { useColumnSort } from "@/components/useColumnSort";
 import { SortableTh } from "@/components/ui/SortableHeader";
@@ -11,12 +11,13 @@ import {
   type BuildReadinessData,
   type BuildReadinessFilters,
   type JobSnapshotRow,
-  type AssemblyDetail,
 } from "@/lib/build-readiness-types";
 import { getBuildReadinessData, triggerBuildReadinessRefresh, refreshBuildReadinessProject } from "@/lib/build-readiness-actions";
 import type { BuildReadinessSharedView } from "@/lib/build-readiness-views-actions";
 import { BuildReadinessFilterBar } from "@/components/build-readiness/BuildReadinessFilters";
 import { BuildReadinessInsights } from "@/components/build-readiness/BuildReadinessInsights";
+import { useDrillStack, type DrillFrame } from "@/components/build-readiness/useDrillStack";
+import { DrillContent } from "@/components/build-readiness/DrillContent";
 
 const POLL_MS = 2000;
 
@@ -88,7 +89,7 @@ export function BuildReadinessDashboard({
 }) {
   const [data, setData] = useState(initialData);
   const [filters, setFilters] = useState<BuildReadinessFilters>({});
-  const [drillJobId, setDrillJobId] = useState<string | null>(null);
+  const drill = useDrillStack();
   const [refreshingProject, setRefreshingProject] = useState<string | null>(null);
   const sort = useColumnSort<ProjectSortKey>({ key: "readiness", direction: "asc" });
   const pollTimer = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -160,8 +161,6 @@ export function BuildReadinessDashboard({
     return { activeProjects, overallPct, assembliesReady, assembliesPartial, assembliesBlocked, partsUncovered, partsOnOrder, partsPastDue, partsDueSoon7d, materialValueAtRisk };
   }, [jobs]);
 
-  const drillJob = drillJobId ? jobs.find((j) => j.jobId === drillJobId) ?? null : null;
-
   // Group-boundary + hairline vertical separators, shared by every non-frozen
   // header/body cell so the two stay in lockstep (spec: subtle column
   // separators, stronger between logical groups — Project | Readiness |
@@ -225,36 +224,47 @@ export function BuildReadinessDashboard({
             </thead>
             <tbody>
               {sortedJobs.map((j) => {
-                const selected = drillJobId === j.jobId;
+                const selected = drill.isOpenForJob(j.jobId);
                 const frozenBg = selected ? "bg-sdc-blue-light/40" : "bg-white group-hover:bg-sdc-blue-light/30";
+                // Every numeric/date cell drills to the SAME snapshot field
+                // its KPI is read from — see BuildReadinessDrillViews.tsx's
+                // own header for the exact reconciliation each filter uses.
+                const cell = (frame: DrillFrame, node: ReactNode, className: string) => (
+                  <td
+                    onClick={(e) => { e.stopPropagation(); drill.push(frame); }}
+                    className={`cursor-pointer border-b border-sdc-border-soft/60 px-2 py-1.5 hover:underline ${className}`}
+                  >
+                    {node}
+                  </td>
+                );
                 return (
                   <tr
                     key={j.jobId}
-                    onClick={() => setDrillJobId(j.jobId === drillJobId ? null : j.jobId)}
+                    onClick={() => drill.push({ kind: "assemblies", jobId: j.jobId, filter: "all" })}
                     className={`group cursor-pointer hover:bg-sdc-blue-light/30 ${selected ? "bg-sdc-blue-light/40" : ""}`}
                   >
-                    <td className={`frozen-col sticky left-0 z-[1] ${FROZEN_JOBID_W} ${frozenBg} border-b border-sdc-border-soft/60 px-3 py-1.5 font-mono text-note font-semibold text-sdc-blue ${selected ? "border-l-4 border-l-sdc-blue" : ""}`}>
+                    <td className={`frozen-col sticky left-0 z-[1] ${FROZEN_JOBID_W} ${frozenBg} border-b border-sdc-border-soft/60 px-3 py-1.5 font-mono text-note font-semibold text-sdc-blue group-hover:underline ${selected ? "border-l-4 border-l-sdc-blue" : ""}`}>
                       {j.jobId}
                     </td>
-                    <td className={`frozen-col frozen-col-last sticky z-[1] ${FROZEN_PROJECT_LEFT} ${FROZEN_PROJECT_W} ${frozenBg} truncate border-b border-sdc-border-soft/60 px-2 py-1.5 text-note text-sdc-navy`} title={j.jobName}>
+                    <td className={`frozen-col frozen-col-last sticky z-[1] ${FROZEN_PROJECT_LEFT} ${FROZEN_PROJECT_W} ${frozenBg} truncate border-b border-sdc-border-soft/60 px-2 py-1.5 text-note text-sdc-navy group-hover:underline`} title={j.jobName}>
                       {j.jobName}
                     </td>
                     <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-note text-sdc-gray-600 ${V}`}>{j.customer ?? "—"}</td>
-                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right ${VG}`}>
-                      <span className="inline-flex justify-end">
-                        <ReadinessPill pct={j.overallReadinessPct} status={j.status} />
-                      </span>
-                    </td>
-                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600 ${V}`}>{num(j.assembliesTotal)}</td>
-                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-green-text ${V}`}>{num(j.assembliesReady)}</td>
-                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-yellow-text ${V}`}>{num(j.assembliesPartial)}</td>
-                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text ${V}`}>{num(j.assembliesBlocked)}</td>
-                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600 ${VG}`}>{num(j.partsUncovered)}</td>
-                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600 ${V}`}>{num(j.partsOnOrder)}</td>
-                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600 ${V}`}>{num(j.partsPastDue)}</td>
-                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600 ${V}`}>{num(j.partsDueSoon7d)}</td>
-                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums text-sdc-navy ${VG}`}>{usd(j.materialValueTotal)}</td>
-                    <td className={`whitespace-nowrap border-b border-sdc-border-soft/60 px-2 py-1.5 font-mono text-label text-sdc-gray-600 ${V}`}>{fmtDate(j.nextUnlockDate)}</td>
+                    {cell(
+                      { kind: "assemblies", jobId: j.jobId, filter: "all" },
+                      <span className="inline-flex justify-end"><ReadinessPill pct={j.overallReadinessPct} status={j.status} requiredQtyTotal={j.requiredQtyTotal} /></span>,
+                      `text-right ${VG}`,
+                    )}
+                    {cell({ kind: "assemblies", jobId: j.jobId, filter: "all" }, num(j.assembliesTotal), `text-right font-mono text-note tabular-nums text-sdc-gray-600 ${V}`)}
+                    {cell({ kind: "assemblies", jobId: j.jobId, filter: "ready" }, num(j.assembliesReady), `text-right font-mono text-note tabular-nums text-sdc-green-text ${V}`)}
+                    {cell({ kind: "assemblies", jobId: j.jobId, filter: "partial" }, num(j.assembliesPartial), `text-right font-mono text-note tabular-nums text-sdc-yellow-text ${V}`)}
+                    {cell({ kind: "assemblies", jobId: j.jobId, filter: "blocked" }, num(j.assembliesBlocked), `text-right font-mono text-note tabular-nums text-sdc-red-text ${V}`)}
+                    {cell({ kind: "parts", jobId: j.jobId, filter: "missing" }, num(j.partsUncovered), `text-right font-mono text-note tabular-nums text-sdc-gray-600 ${VG}`)}
+                    {cell({ kind: "parts", jobId: j.jobId, filter: "onOrder" }, num(j.partsOnOrder), `text-right font-mono text-note tabular-nums text-sdc-gray-600 ${V}`)}
+                    {cell({ kind: "parts", jobId: j.jobId, filter: "pastDue" }, num(j.partsPastDue), `text-right font-mono text-note tabular-nums text-sdc-gray-600 ${V}`)}
+                    {cell({ kind: "parts", jobId: j.jobId, filter: "dueSoon" }, num(j.partsDueSoon7d), `text-right font-mono text-note tabular-nums text-sdc-gray-600 ${V}`)}
+                    {cell({ kind: "material", jobId: j.jobId }, usd(j.materialValueTotal), `text-right font-mono text-note font-semibold tabular-nums text-sdc-navy ${VG}`)}
+                    {cell({ kind: "nextUnlock", jobId: j.jobId }, fmtDate(j.nextUnlockDate), `whitespace-nowrap font-mono text-label text-sdc-gray-600 ${V}`)}
                   </tr>
                 );
               })}
@@ -263,112 +273,10 @@ export function BuildReadinessDashboard({
         )}
       </div>
 
-      {drillJob && (
-        <ProjectDrillPanel
-          job={drillJob}
-          onClose={() => setDrillJobId(null)}
-          onRefresh={() => handleRefreshProject(drillJob.jobId)}
-          refreshing={refreshingProject === drillJob.jobId}
-        />
-      )}
+      <DrillContent jobs={jobs} drill={drill} onRefreshProject={handleRefreshProject} refreshingProjectId={refreshingProject} />
 
-      <BuildReadinessInsights jobs={jobs} />
+      <BuildReadinessInsights jobs={jobs} push={drill.push} stack={drill.stack} />
     </div>
   );
 }
 
-type AsmSortKey = "assembly" | "release" | "required" | "covered" | "readiness" | "buildable" | "missing" | "onOrder" | "pastDue" | "nextDelivery" | "estBuildable";
-
-const ASM_COLUMNS: SortColumns<AssemblyDetail, AsmSortKey> = {
-  assembly: { type: "text", value: (r) => r.label },
-  release: { type: "text", value: (r) => r.release },
-  required: { type: "number", value: (r) => r.requiredQty },
-  covered: { type: "number", value: (r) => r.coveredQty },
-  readiness: { type: "number", value: (r) => r.readinessPct },
-  buildable: { type: "number", value: (r) => r.buildableQty },
-  missing: { type: "number", value: (r) => r.missingParts },
-  onOrder: { type: "number", value: (r) => r.onOrderParts },
-  pastDue: { type: "number", value: (r) => r.pastDueParts },
-  nextDelivery: { type: "date", value: (r) => r.nextExpectedDelivery },
-  estBuildable: { type: "date", value: (r) => r.estimatedBuildableDate },
-};
-
-const RELEASE_LABEL: Record<AssemblyDetail["release"], string> = {
-  contentsOnly: "Contents Only",
-  assemblyOnly: "Assembly Only",
-  bothAssemblyAndContents: "Both Assembly + Contents",
-};
-
-function ProjectDrillPanel({ job, onClose, onRefresh, refreshing }: { job: JobSnapshotRow; onClose: () => void; onRefresh: () => void; refreshing: boolean }) {
-  const sort = useColumnSort<AsmSortKey>();
-  const rows = useMemo(() => sortRows(job.detail.assemblies, sort.sort, ASM_COLUMNS), [job.detail.assemblies, sort.sort]);
-  const v = "border-l border-sdc-border-soft";
-
-  return (
-    <div className="rounded-xl border border-sdc-border bg-white shadow-sm">
-      <div className="flex items-center justify-between gap-3 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
-        <div>
-          <span className="text-sm font-bold text-sdc-navy">{job.jobId} — {job.jobName}</span>
-          <span className="ml-2 text-note text-sdc-muted">Computed {new Date(job.computedAt).toLocaleString()}</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <button type="button" onClick={onRefresh} disabled={refreshing} className="rounded-md border border-sdc-border bg-white px-2.5 py-1 text-xs font-medium text-sdc-navy hover:bg-sdc-blue-light disabled:cursor-not-allowed disabled:opacity-50">
-            {refreshing ? "Refreshing…" : "Refresh this project"}
-          </button>
-          <button type="button" onClick={onClose} className="rounded-md border border-sdc-border bg-white px-2 py-1 text-xs font-medium text-sdc-navy hover:bg-sdc-blue-light">
-            Close
-          </button>
-        </div>
-      </div>
-      {rows.length === 0 ? (
-        <div className="p-6">
-          <EmptyState title="No released BOM available for this project." />
-        </div>
-      ) : (
-        <div className="max-h-[420px] overflow-auto">
-          <table className="w-full min-w-[1000px] border-collapse text-left">
-            <thead className="sticky top-0 z-[1]">
-              <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
-                <SortableTh label="Assembly" sortKey="assembly" type="text" sort={sort.sort} onSort={sort.onSort} className="px-3 py-2" />
-                <SortableTh label="Release Status" sortKey="release" type="text" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
-                <SortableTh label="Required Qty" sortKey="required" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
-                <SortableTh label="Covered Qty" sortKey="covered" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
-                <SortableTh label="Readiness %" sortKey="readiness" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
-                <SortableTh label="Buildable Now" sortKey="buildable" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
-                <SortableTh label="Missing" sortKey="missing" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
-                <SortableTh label="On Order" sortKey="onOrder" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
-                <SortableTh label="Past Due" sortKey="pastDue" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
-                <SortableTh label="Next Expected" sortKey="nextDelivery" type="date" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
-                <SortableTh label="Est. Buildable" sortKey="estBuildable" type="date" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
-              </tr>
-            </thead>
-            <tbody>
-              {rows.map((a) => (
-                <tr key={a.key} className="border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/20" title={a.limitingParts.length ? `Limiting: ${a.limitingParts.map((lp) => `${lp.pn} (${lp.available}/${lp.required})`).join(", ")}` : undefined}>
-                  <td className="px-3 py-1.5 text-note text-sdc-navy">{a.label}</td>
-                  <td className={`px-2 py-1.5 text-note text-sdc-gray-600 ${v}`}>{RELEASE_LABEL[a.release]}</td>
-                  <td className={`px-2 py-1.5 text-right font-mono text-note tabular-nums ${v}`}>{num(a.requiredQty)}</td>
-                  <td className={`px-2 py-1.5 text-right font-mono text-note tabular-nums ${v}`}>{num(a.coveredQty)}</td>
-                  <td className={`px-2 py-1.5 text-right ${v}`}>
-                    <span className="inline-flex justify-end">
-                      <ReadinessPill pct={a.readinessPct} />
-                    </span>
-                  </td>
-                  <td className={`px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums ${v} ${a.buildableQty == null ? "text-sdc-gray-400" : a.buildableQty >= a.requiredQty ? "text-sdc-green-text" : a.buildableQty > 0 ? "text-sdc-yellow-text" : "text-sdc-red-text"}`}>
-                    {a.buildableQty == null ? "—" : `${num(a.buildableQty)} (${a.buildablePct}%)`}
-                  </td>
-                  {/* Real counts, never null — a true 0 must print as 0, not "—" (§9). */}
-                  <td className={`px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text ${v}`}>{num(a.missingParts)}</td>
-                  <td className={`px-2 py-1.5 text-right font-mono text-note tabular-nums ${v}`}>{num(a.onOrderParts)}</td>
-                  <td className={`px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text ${v}`}>{num(a.pastDueParts)}</td>
-                  <td className={`whitespace-nowrap px-2 py-1.5 font-mono text-label text-sdc-gray-600 ${v}`}>{fmtDate(a.nextExpectedDelivery)}</td>
-                  <td className={`whitespace-nowrap px-2 py-1.5 font-mono text-label text-sdc-gray-600 ${v}`}>{fmtDate(a.estimatedBuildableDate)}</td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      )}
-    </div>
-  );
-}

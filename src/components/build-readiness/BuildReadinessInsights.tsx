@@ -1,13 +1,15 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { usd } from "@/components/ui/format";
 import { useColumnSort } from "@/components/useColumnSort";
 import { SortableTh } from "@/components/ui/SortableHeader";
 import { sortRows, type SortColumns } from "@/lib/table-sort";
 import { ReadinessPill } from "@/components/build-readiness/ReadinessPill";
+import { Stat } from "@/components/procurement/PoDetailPanel";
 import { type JobSnapshotRow, type BlockerReason, type SupplierRiskRow, BLOCKER_REASON_LABEL } from "@/lib/build-readiness-types";
-import { computeUpcomingUnlocks, computeSupplierRisk, computeReadinessForecast } from "@/lib/build-readiness-forecast";
+import { computeUpcomingUnlocks, computeSupplierRisk, computeReadinessForecast, mergeAssemblyInstances } from "@/lib/build-readiness-forecast";
+import type { DrillFrame } from "@/components/build-readiness/useDrillStack";
 
 function num(n: number): string {
   return Math.round(n).toLocaleString();
@@ -19,21 +21,91 @@ function fmtDate(s: string | null): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-function SectionCard({ title, subtitle, children }: { title: string; subtitle?: React.ReactNode; children: React.ReactNode }) {
+// ── Card shell — one visual language for every summary card ─────────────────
+//
+// Ported from JobProcurement.tsx's own risk cards (Delivery Slip / No
+// Purchase Order / Upcoming Deliveries — the reference this redesign
+// matches): a colored icon badge next to the title, a Stat (label-over-
+// value, reused from PoDetailPanel.tsx rather than re-implemented) pinned to
+// the header's right edge, and a FIXED body height rather than a `max-h`
+// stretch. Fixed, not max, is what makes "cards in the same row are the same
+// height" true regardless of how many rows each one's data happens to have —
+// a short table doesn't leave its card looking shorter, and a long one
+// scrolls internally (`styled-scrollbar`) instead of growing the card.
+// Copied rather than imported from JobProcurement.tsx on purpose: that
+// component's own header sizing is tuned with `@container` breakpoints for a
+// harder problem (3 stats + a button, in a row that can be 1-3 cards wide)
+// that these single-stat headers don't have, and duplicating a few small
+// classes is lower-risk than reworking an already-delicate, already-shipped
+// component to serve a second caller.
+type CardTone = "green" | "red" | "yellow" | "blue" | "gray";
+const TONE_ICON_CLS: Record<CardTone, string> = {
+  green: "bg-sdc-green-bg text-sdc-green-text",
+  red: "bg-sdc-red-bg text-sdc-red-text",
+  yellow: "bg-sdc-yellow-bg text-sdc-yellow-text",
+  blue: "bg-sdc-blue-light text-sdc-blue-dark",
+  gray: "bg-sdc-gray-100 text-sdc-gray-600",
+};
+
+function SectionCard({
+  title,
+  icon,
+  tone,
+  statLabel,
+  statValue,
+  statTone,
+  extra,
+  minWidth,
+  children,
+}: {
+  title: string;
+  icon: string;
+  tone: CardTone;
+  statLabel: string;
+  statValue: string;
+  statTone?: "danger";
+  // A second header line — only Upcoming Unlocks' week picker needs this;
+  // every other card keeps the compact one-line header, which is what keeps
+  // What Can We Build Now and Top Blockers (the only two cards sharing a
+  // row) the same height as each other with no measuring involved.
+  extra?: ReactNode;
+  // Table min-width, so a card squeezed by its row (or a wide table in a
+  // 2-up row) scrolls horizontally instead of crushing its own columns — the
+  // same `overflow-auto` + `min-w-[…]` pairing the main Project Readiness
+  // table already uses.
+  minWidth: number;
+  children: ReactNode;
+}) {
+  const twoLineHeader = !!extra;
   return (
-    <div className="flex flex-col overflow-hidden rounded-xl border border-sdc-border bg-white shadow-sm">
-      <div className="border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2">
-        <span className="text-sm font-bold text-sdc-navy">{title}</span>
-        {subtitle && <span className="ml-2 text-note text-sdc-muted">{subtitle}</span>}
+    <div className="flex flex-col overflow-hidden rounded-lg border border-sdc-border bg-white shadow-sm">
+      <div className={`flex flex-col justify-center gap-1.5 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 ${twoLineHeader ? "h-20 py-2" : "h-14 py-1.5"}`}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="inline-flex items-center gap-2 text-note font-bold uppercase tracking-wider text-sdc-navy">
+            <span className={`inline-flex h-[18px] w-[18px] shrink-0 items-center justify-center rounded text-xs font-bold ${TONE_ICON_CLS[tone]}`} aria-hidden>
+              {icon}
+            </span>
+            {title}
+          </span>
+          <Stat label={statLabel} value={statValue} tone={statTone} />
+        </div>
+        {extra}
       </div>
-      <div className="max-h-[360px] overflow-auto">{children}</div>
+      <div className="h-[360px] overflow-auto styled-scrollbar">
+        <div style={{ minWidth }}>{children}</div>
+      </div>
     </div>
   );
 }
 
 // ── What Can We Build Now ────────────────────────────────────────────────────
 
-type BuildableRow = { jobId: string; jobName: string; assemblyKey: string; label: string; buildableQty: number; requiredQty: number; readinessPct: number; materialValue: number; riskCount: number };
+// `assemblyKeys` (plural) — every BOM tree position sharing this part number
+// within this job, merged into one row. See mergeAssemblyInstances's own
+// header comment (build-readiness-forecast.ts) for why a reused sub-assembly
+// design can legitimately produce more than one AssemblyDetail per job, and
+// why this card merges them rather than listing each position separately.
+type BuildableRow = { jobId: string; jobName: string; assemblyKeys: string[]; label: string; buildableQty: number; requiredQty: number; readinessPct: number; materialValue: number; riskCount: number };
 type BuildableSortKey = "job" | "assembly" | "buildable" | "required" | "readiness" | "material" | "risk";
 const BUILDABLE_COLUMNS: SortColumns<BuildableRow, BuildableSortKey> = {
   job: { type: "id", value: (r) => r.jobId },
@@ -45,25 +117,60 @@ const BUILDABLE_COLUMNS: SortColumns<BuildableRow, BuildableSortKey> = {
   risk: { type: "number", value: (r) => r.riskCount },
 };
 
-function WhatCanWeBuildNow({ jobs }: { jobs: JobSnapshotRow[] }) {
+// Order-independent equality — the same merged row can be reached (and its
+// drawer re-opened) regardless of which order its underlying keys happen to
+// rebuild in.
+function sameKeySet(a: string[], b: string[]): boolean {
+  return a.length === b.length && a.every((k) => b.includes(k));
+}
+
+function WhatCanWeBuildNow({ jobs, stack, push }: { jobs: JobSnapshotRow[]; stack: DrillFrame[]; push: (f: DrillFrame) => void }) {
   const sort = useColumnSort<BuildableSortKey>({ key: "material", direction: "desc" });
   const rows = useMemo<BuildableRow[]>(() => {
     const out: BuildableRow[] = [];
     for (const j of jobs) {
       const blockersByAsm = new Map<string, number>();
       for (const b of j.detail.blockers) blockersByAsm.set(b.assemblyKey, (blockersByAsm.get(b.assemblyKey) ?? 0) + 1);
+
+      // Grouped by part number, not by BOM tree position — the same reused
+      // sub-assembly design can appear more than once in one job's BOM (see
+      // mergeAssemblyInstances's own header comment), and this card asks
+      // "what can I build of THIS assembly, across the whole job," not
+      // "list every position it occurs at." Falls back to the node's own
+      // key when there's no real part number (defensive — every assembly
+      // that reaches this card already has buildableQty > 0, which the
+      // pn-less "Loose parts" synthetic bucket never does, but grouping by
+      // an empty string would otherwise merge unrelated loose-parts buckets
+      // from different sections).
+      const groups = new Map<string, { label: string; assemblyKeys: string[]; instances: typeof j.detail.assemblies }>();
       for (const a of j.detail.assemblies) {
         if (a.buildableQty == null || a.buildableQty <= 0) continue;
+        const groupKey = a.pn || a.key;
+        let g = groups.get(groupKey);
+        if (!g) {
+          g = { label: a.label, assemblyKeys: [], instances: [] };
+          groups.set(groupKey, g);
+        }
+        g.assemblyKeys.push(a.key);
+        g.instances.push(a);
+      }
+
+      for (const g of groups.values()) {
+        const merged = mergeAssemblyInstances(g.instances);
         out.push({
           jobId: j.jobId,
           jobName: j.jobName,
-          assemblyKey: a.key,
-          label: a.label,
-          buildableQty: a.buildableQty,
-          requiredQty: a.requiredQty,
-          readinessPct: a.readinessPct,
-          materialValue: a.materialValue,
-          riskCount: blockersByAsm.get(a.key) ?? 0,
+          assemblyKeys: g.assemblyKeys,
+          label: g.label,
+          // Never actually null here — every instance in `g.instances` was
+          // pre-filtered to buildableQty > 0 above, so the merged sum can't
+          // be null either; the `?? 0` is only to satisfy BuildableRow's
+          // non-nullable type.
+          buildableQty: merged.buildableQty ?? 0,
+          requiredQty: merged.requiredQty,
+          readinessPct: merged.readinessPct,
+          materialValue: merged.materialValue,
+          riskCount: g.assemblyKeys.reduce((s, k) => s + (blockersByAsm.get(k) ?? 0), 0),
         });
       }
     }
@@ -72,7 +179,7 @@ function WhatCanWeBuildNow({ jobs }: { jobs: JobSnapshotRow[] }) {
   const sorted = useMemo(() => sortRows(rows, sort.sort, BUILDABLE_COLUMNS), [rows, sort.sort]);
 
   return (
-    <SectionCard title="What Can We Build Now" subtitle={`${rows.length} assemblies`}>
+    <SectionCard title="What Can We Build Now" icon="✓" tone="green" statLabel="Assemblies" statValue={num(rows.length)} minWidth={640}>
       <table className="w-full border-collapse text-left">
         <thead className="sticky top-0 z-[1]">
           <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
@@ -86,22 +193,37 @@ function WhatCanWeBuildNow({ jobs }: { jobs: JobSnapshotRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map((r) => (
-            <tr key={`${r.jobId}-${r.assemblyKey}`} className="border-b border-sdc-border-soft/60">
-              <td className="px-3 py-1.5 font-mono text-note font-semibold text-sdc-blue">{r.jobId}</td>
-              <td className="px-2 py-1.5 text-note text-sdc-navy">{r.label}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums text-sdc-green-text">{num(r.buildableQty)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600">{num(r.requiredQty)}</td>
-              <td className="px-2 py-1.5 text-right">
-                <span className="inline-flex justify-end">
-                  <ReadinessPill pct={r.readinessPct} />
-                </span>
-              </td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{usd(r.materialValue)}</td>
-              {/* Always a real count, never null — 0 prints as 0 (§9). */}
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-muted">{num(r.riskCount)}</td>
-            </tr>
-          ))}
+          {sorted.map((r) => {
+            const open = stack.some((f) => f.kind === "assemblyDetail" && f.jobId === r.jobId && sameKeySet(f.assemblyKeys, r.assemblyKeys));
+            return (
+              <tr
+                key={`${r.jobId}-${r.assemblyKeys.join(",")}`}
+                onClick={() => push({ kind: "assemblyDetail", jobId: r.jobId, assemblyKeys: r.assemblyKeys })}
+                className={`cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/20 ${open ? "bg-sdc-blue-light/40" : ""}`}
+              >
+                <td className="px-3 py-1.5">
+                  <button
+                    type="button"
+                    onClick={(e) => { e.stopPropagation(); push({ kind: "assemblies", jobId: r.jobId, filter: "all" }); }}
+                    className="font-mono text-note font-semibold text-sdc-blue hover:underline"
+                  >
+                    {r.jobId}
+                  </button>
+                </td>
+                <td className="px-2 py-1.5 text-note text-sdc-blue hover:underline">{r.label}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums text-sdc-green-text">{num(r.buildableQty)}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600">{num(r.requiredQty)}</td>
+                <td className="px-2 py-1.5 text-right">
+                  <span className="inline-flex justify-end">
+                    <ReadinessPill pct={r.readinessPct} />
+                  </span>
+                </td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{usd(r.materialValue)}</td>
+                {/* Always a real count, never null — 0 prints as 0 (§9). */}
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-muted">{num(r.riskCount)}</td>
+              </tr>
+            );
+          })}
           {sorted.length === 0 && (
             <tr><td colSpan={7} className="px-4 py-6 text-center text-xs text-sdc-gray-400">Nothing is buildable right now.</td></tr>
           )}
@@ -124,7 +246,7 @@ const BLOCKER_COLUMNS: SortColumns<BlockerGroupRow, BlockerSortKey> = {
   daysLate: { type: "number", value: (r) => r.avgDaysLate },
 };
 
-function TopBlockers({ jobs }: { jobs: JobSnapshotRow[] }) {
+function TopBlockers({ jobs, stack, push }: { jobs: JobSnapshotRow[]; stack: DrillFrame[]; push: (f: DrillFrame) => void }) {
   const sort = useColumnSort<BlockerSortKey>({ key: "material", direction: "desc" });
   const rows = useMemo<BlockerGroupRow[]>(() => {
     const byReason = new Map<BlockerReason, { projects: Set<string>; assemblies: Set<string>; parts: number; materialValue: number; daysLateSum: number; daysLateCount: number }>();
@@ -157,7 +279,7 @@ function TopBlockers({ jobs }: { jobs: JobSnapshotRow[] }) {
   const sorted = useMemo(() => sortRows(rows, sort.sort, BLOCKER_COLUMNS), [rows, sort.sort]);
 
   return (
-    <SectionCard title="Top Blockers" subtitle={`${rows.reduce((s, r) => s + r.parts, 0)} parts blocked`}>
+    <SectionCard title="Top Blockers" icon="!" tone="red" statLabel="Parts Blocked" statValue={num(rows.reduce((s, r) => s + r.parts, 0))} minWidth={560}>
       <table className="w-full border-collapse text-left">
         <thead className="sticky top-0 z-[1]">
           <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
@@ -170,16 +292,23 @@ function TopBlockers({ jobs }: { jobs: JobSnapshotRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map((r) => (
-            <tr key={r.reason} className="border-b border-sdc-border-soft/60">
-              <td className="px-3 py-1.5 text-note font-semibold text-sdc-navy">{BLOCKER_REASON_LABEL[r.reason]}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.projects)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.assemblies)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums text-sdc-red-text">{num(r.parts)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{usd(r.materialValue)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{r.avgDaysLate != null ? `${r.avgDaysLate}d` : "—"}</td>
-            </tr>
-          ))}
+          {sorted.map((r) => {
+            const open = stack.some((f) => f.kind === "blockerReason" && f.reason === r.reason);
+            return (
+              <tr
+                key={r.reason}
+                onClick={() => push({ kind: "blockerReason", reason: r.reason })}
+                className={`cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/20 ${open ? "bg-sdc-blue-light/40" : ""}`}
+              >
+                <td className="px-3 py-1.5 text-note font-semibold text-sdc-blue hover:underline">{BLOCKER_REASON_LABEL[r.reason]}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.projects)}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.assemblies)}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums text-sdc-red-text">{num(r.parts)}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{usd(r.materialValue)}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{r.avgDaysLate != null ? `${r.avgDaysLate}d` : "—"}</td>
+              </tr>
+            );
+          })}
           {sorted.length === 0 && (
             <tr><td colSpan={6} className="px-4 py-6 text-center text-xs text-sdc-gray-400">No blockers across active projects.</td></tr>
           )}
@@ -191,21 +320,31 @@ function TopBlockers({ jobs }: { jobs: JobSnapshotRow[] }) {
 
 // ── Upcoming Unlocks ─────────────────────────────────────────────────────────
 
-function UpcomingUnlocks({ jobs, now }: { jobs: JobSnapshotRow[]; now: number }) {
+function UpcomingUnlocks({ jobs, now, stack, push }: { jobs: JobSnapshotRow[]; now: number; stack: DrillFrame[]; push: (f: DrillFrame) => void }) {
   const [week, setWeek] = useState(1);
   const rows = useMemo(() => computeUpcomingUnlocks(jobs, week, now), [jobs, week, now]);
 
   return (
     <SectionCard
       title="Upcoming Unlocks"
-      subtitle={
-        <span className="ml-2 inline-flex gap-0.5 align-middle">
+      icon="→"
+      tone="blue"
+      statLabel="Expected"
+      statValue={num(rows.length)}
+      minWidth={860}
+      extra={
+        <div className="flex flex-wrap items-center gap-1">
           {Array.from({ length: 8 }, (_, i) => i + 1).map((w) => (
-            <button key={w} type="button" onClick={() => setWeek(w)} className={`rounded px-1.5 py-0.5 text-note font-semibold ${w === week ? "bg-sdc-blue text-white" : "bg-sdc-blue-light text-sdc-blue-dark hover:bg-sdc-blue-100"}`}>
+            <button
+              key={w}
+              type="button"
+              onClick={() => setWeek(w)}
+              className={`rounded-md px-2 py-1 text-note font-semibold motion-interactive ${w === week ? "bg-sdc-blue text-white" : "bg-sdc-blue-light text-sdc-blue-dark hover:bg-sdc-blue-100"}`}
+            >
               {w}W
             </button>
           ))}
-        </span>
+        </div>
       }
     >
       <table className="w-full border-collapse text-left">
@@ -221,19 +360,65 @@ function UpcomingUnlocks({ jobs, now }: { jobs: JobSnapshotRow[]; now: number })
           </tr>
         </thead>
         <tbody>
-          {rows.map((r, i) => (
-            <tr key={`${r.jobId}-${r.assemblyKey}-${i}`} className="border-b border-sdc-border-soft/60">
-              <td className="px-3 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(r.expectedDate)}</td>
-              <td className="px-2 py-1.5 font-mono text-note font-semibold text-sdc-blue">{r.poNumber ?? "No PO"}</td>
-              <td className="px-2 py-1.5 text-note text-sdc-navy">{r.supplier ?? "—"}</td>
-              <td className="px-2 py-1.5 font-mono text-note text-sdc-gray-600">{r.jobId}</td>
-              <td className="px-2 py-1.5 text-note text-sdc-gray-600">{r.incomingParts.map((p) => `+${p.qty} ${p.pn}`).join(", ")}</td>
-              <td className="px-2 py-1.5 text-note text-sdc-navy">{r.assemblyLabel}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums">
-                {r.buildableBefore ?? "—"} → <span className="text-sdc-green-text">{r.buildableAfter ?? "—"}</span>
-              </td>
-            </tr>
-          ))}
+          {rows.map((r, i) => {
+            const open = r.poNumber != null && stack.some((f) => f.kind === "po" && f.jobId === r.jobId && f.poNumber === r.poNumber);
+            return (
+              <tr key={`${r.jobId}-${r.assemblyKey}-${i}`} className={`border-b border-sdc-border-soft/60 ${open ? "bg-sdc-blue-light/40" : ""}`}>
+                <td className="px-3 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(r.expectedDate)}</td>
+                <td className="px-2 py-1.5 font-mono text-note font-semibold text-sdc-blue">
+                  {r.poNumber ? (
+                    <button type="button" onClick={() => push({ kind: "po", jobId: r.jobId, supplier: r.supplier, poNumber: r.poNumber! })} title="View PO details" className="cursor-pointer hover:underline">
+                      {r.poNumber}
+                    </button>
+                  ) : (
+                    "No PO"
+                  )}
+                </td>
+                <td className="px-2 py-1.5 text-note text-sdc-navy">{r.supplier ?? "—"}</td>
+                <td className="px-2 py-1.5">
+                  <button type="button" onClick={() => push({ kind: "assemblies", jobId: r.jobId, filter: "all" })} className="font-mono text-note text-sdc-blue hover:underline">
+                    {r.jobId}
+                  </button>
+                </td>
+                <td className="px-2 py-1.5">
+                  <button
+                    type="button"
+                    onClick={() => push({ kind: "assemblyDetail", jobId: r.jobId, assemblyKeys: [r.assemblyKey], highlightPn: r.incomingParts[0]?.pn })}
+                    className="text-note text-sdc-blue hover:underline"
+                  >
+                    {r.incomingParts.map((p) => `+${p.qty} ${p.pn}`).join(", ")}
+                  </button>
+                </td>
+                <td className="px-2 py-1.5">
+                  <button type="button" onClick={() => push({ kind: "assemblyDetail", jobId: r.jobId, assemblyKeys: [r.assemblyKey] })} className="text-note text-sdc-blue hover:underline">
+                    {r.assemblyLabel}
+                  </button>
+                </td>
+                <td className="px-2 py-1.5 text-right">
+                  <button
+                    type="button"
+                    onClick={() =>
+                      push({
+                        kind: "buildableCalc",
+                        jobId: r.jobId,
+                        assemblyKey: r.assemblyKey,
+                        poNumber: r.poNumber,
+                        supplier: r.supplier,
+                        expectedDate: r.expectedDate,
+                        incomingPn: r.incomingParts[0]?.pn ?? "",
+                        incomingQty: r.incomingParts[0]?.qty ?? 0,
+                        buildableBefore: r.buildableBefore,
+                        buildableAfter: r.buildableAfter,
+                      })
+                    }
+                    className="font-mono text-note font-semibold tabular-nums hover:underline"
+                  >
+                    {r.buildableBefore ?? "—"} → <span className="text-sdc-green-text">{r.buildableAfter ?? "—"}</span>
+                  </button>
+                </td>
+              </tr>
+            );
+          })}
           {rows.length === 0 && (
             <tr><td colSpan={7} className="px-4 py-6 text-center text-xs text-sdc-gray-400">No parts expected in week {week}.</td></tr>
           )}
@@ -257,13 +442,13 @@ const SUPPLIER_COLUMNS: SortColumns<SupplierRiskRow, SupplierSortKey> = {
   material: { type: "currency", value: (r) => r.materialValue },
 };
 
-function SupplierRisk({ jobs }: { jobs: JobSnapshotRow[] }) {
+function SupplierRisk({ jobs, stack, push }: { jobs: JobSnapshotRow[]; stack: DrillFrame[]; push: (f: DrillFrame) => void }) {
   const sort = useColumnSort<SupplierSortKey>({ key: "material", direction: "desc" });
   const rows = useMemo(() => computeSupplierRisk(jobs), [jobs]);
   const sorted = useMemo(() => sortRows(rows, sort.sort, SUPPLIER_COLUMNS), [rows, sort.sort]);
 
   return (
-    <SectionCard title="Supplier Risk" subtitle={`${rows.length} suppliers`}>
+    <SectionCard title="Supplier Risk" icon="!" tone="yellow" statLabel="Suppliers" statValue={num(rows.length)} minWidth={720}>
       <table className="w-full border-collapse text-left">
         <thead className="sticky top-0 z-[1]">
           <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
@@ -278,18 +463,25 @@ function SupplierRisk({ jobs }: { jobs: JobSnapshotRow[] }) {
           </tr>
         </thead>
         <tbody>
-          {sorted.map((r) => (
-            <tr key={r.supplier} className="border-b border-sdc-border-soft/60">
-              <td className="px-3 py-1.5 text-note font-semibold text-sdc-navy">{r.supplier}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.openPOs)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.partsOutstanding)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text">{num(r.pastDue)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{r.avgDaysLate != null ? `${r.avgDaysLate}d` : "—"}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.assembliesBlocked)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.projectsAffected)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{usd(r.materialValue)}</td>
-            </tr>
-          ))}
+          {sorted.map((r) => {
+            const open = stack.some((f) => f.kind === "supplier" && f.supplier === r.supplier);
+            return (
+              <tr
+                key={r.supplier}
+                onClick={() => push({ kind: "supplier", supplier: r.supplier })}
+                className={`cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/20 ${open ? "bg-sdc-blue-light/40" : ""}`}
+              >
+                <td className="px-3 py-1.5 text-note font-semibold text-sdc-blue hover:underline">{r.supplier}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.openPOs)}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.partsOutstanding)}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text">{num(r.pastDue)}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{r.avgDaysLate != null ? `${r.avgDaysLate}d` : "—"}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.assembliesBlocked)}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.projectsAffected)}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{usd(r.materialValue)}</td>
+              </tr>
+            );
+          })}
           {sorted.length === 0 && (
             <tr><td colSpan={8} className="px-4 py-6 text-center text-xs text-sdc-gray-400">No supplier data yet.</td></tr>
           )}
@@ -301,10 +493,10 @@ function SupplierRisk({ jobs }: { jobs: JobSnapshotRow[] }) {
 
 // ── 8-Week Readiness Forecast ────────────────────────────────────────────────
 
-function ReadinessForecast({ jobs, now }: { jobs: JobSnapshotRow[]; now: number }) {
+function ReadinessForecast({ jobs, now, stack, push }: { jobs: JobSnapshotRow[]; now: number; stack: DrillFrame[]; push: (f: DrillFrame) => void }) {
   const weeks = useMemo(() => computeReadinessForecast(jobs, now), [jobs, now]);
   return (
-    <SectionCard title="8-Week Readiness Forecast">
+    <SectionCard title="8-Week Readiness Forecast" icon="▸" tone="gray" statLabel="Weeks" statValue={num(weeks.length)} minWidth={560}>
       <table className="w-full border-collapse text-left">
         <thead className="sticky top-0 z-[1]">
           <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
@@ -317,40 +509,54 @@ function ReadinessForecast({ jobs, now }: { jobs: JobSnapshotRow[]; now: number 
           </tr>
         </thead>
         <tbody>
-          {weeks.map((w) => (
-            <tr key={w.week} className="border-b border-sdc-border-soft/60">
-              <td className="px-3 py-1.5 font-semibold text-sdc-navy">{w.week}W</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(w.assembliesBuildableCumulative)}</td>
-              <td className="px-2 py-1.5">
-                <div className="flex items-center gap-2">
-                  <div className="h-1.5 w-24 overflow-hidden rounded-full bg-sdc-gray-100">
-                    <div className="h-full rounded-full bg-sdc-green" style={{ width: `${w.cumulativeBuildablePct}%` }} />
+          {weeks.map((w) => {
+            const open = stack.some((f) => f.kind === "forecastWeek" && f.week === w.week);
+            return (
+              <tr
+                key={w.week}
+                onClick={() => push({ kind: "forecastWeek", week: w.week })}
+                className={`cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/20 ${open ? "bg-sdc-blue-light/40" : ""}`}
+              >
+                <td className="px-3 py-1.5 font-semibold text-sdc-blue hover:underline">{w.week}W</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(w.assembliesBuildableCumulative)}</td>
+                <td className="px-2 py-1.5">
+                  <div className="flex items-center gap-2">
+                    <div className="h-1.5 w-24 overflow-hidden rounded-full bg-sdc-gray-100">
+                      <div className="h-full rounded-full bg-sdc-green" style={{ width: `${w.cumulativeBuildablePct}%` }} />
+                    </div>
+                    <span className="font-mono text-note tabular-nums">{w.cumulativeBuildablePct}%</span>
                   </div>
-                  <span className="font-mono text-note tabular-nums">{w.cumulativeBuildablePct}%</span>
-                </div>
-              </td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(w.partsArriving)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-green-text">{num(w.assembliesUnlocked)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(w.projectsReaching100)}</td>
-            </tr>
-          ))}
+                </td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(w.partsArriving)}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-green-text">{num(w.assembliesUnlocked)}</td>
+                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(w.projectsReaching100)}</td>
+              </tr>
+            );
+          })}
         </tbody>
       </table>
     </SectionCard>
   );
 }
 
-export function BuildReadinessInsights({ jobs }: { jobs: JobSnapshotRow[] }) {
+export function BuildReadinessInsights({ jobs, push, stack }: { jobs: JobSnapshotRow[]; push: (f: DrillFrame) => void; stack: DrillFrame[] }) {
   const now = useMemo(() => Date.now(), []);
   return (
     <div className="flex flex-col gap-4">
+      {/* Row 1 — What Can We Build Now / Top Blockers. Upcoming Unlocks moved
+          to its own full-width row below (2026-08-17, by request): its own
+          7-column table lost too many columns to a 1/3-width card, worse
+          than the vertical space a dedicated row costs it. */}
       <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
-        <WhatCanWeBuildNow jobs={jobs} />
-        <TopBlockers jobs={jobs} />
+        <WhatCanWeBuildNow jobs={jobs} stack={stack} push={push} />
+        <TopBlockers jobs={jobs} stack={stack} push={push} />
       </div>
-      <UpcomingUnlocks jobs={jobs} now={now} />
-      <SupplierRisk jobs={jobs} />
-      <ReadinessForecast jobs={jobs} now={now} />
+      <UpcomingUnlocks jobs={jobs} now={now} stack={stack} push={push} />
+      {/* Row 2 — Supplier Risk / 8-Week Readiness Forecast. */}
+      <div className="grid grid-cols-1 gap-4 xl:grid-cols-2">
+        <SupplierRisk jobs={jobs} stack={stack} push={push} />
+        <ReadinessForecast jobs={jobs} now={now} stack={stack} push={push} />
+      </div>
     </div>
   );
 }

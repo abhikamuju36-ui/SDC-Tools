@@ -28,7 +28,7 @@ const CODE = RAW.replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
   .replace(/\/\/[^\n"'`]*$/gm, "");
 
 test("JobProcurement imports the centralized isUncoveredPart rule", () => {
-  assert.match(CODE, /import \{ isUncoveredPart \} from "@\/lib\/job-bom-rules";/);
+  assert.match(CODE, /import \{[^}]*\bisUncoveredPart\b[^}]*\} from "@\/lib\/job-bom-rules";/);
 });
 
 test("the No Purchase Order risk card counts via isUncoveredPart, not a raw PO-null check", () => {

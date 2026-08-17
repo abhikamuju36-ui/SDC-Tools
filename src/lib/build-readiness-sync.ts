@@ -29,7 +29,10 @@ import {
   type BomPart,
   isUncoveredPart,
   buildableQtyFor,
+  quantityReadiness,
 } from "@/lib/job-bom-rules";
+import { flattenBomParts } from "@/lib/po-detail";
+import { walkJobBomUnits } from "@/lib/build-readiness-tree";
 import { etcActiveJobFilter } from "@/lib/job-filters";
 import type { BlockerEntry, BlockerReason, AssemblyDetail, JobDetail, UpcomingDeliveryEntry } from "@/lib/build-readiness-types";
 
@@ -127,14 +130,16 @@ function partMaterialValue(p: BomPart): number {
 // One assembly node's full detail row, plus the blocker/upcoming entries its
 // own direct parts (and its own `self` line) contribute. Does NOT recurse
 // into children — each child produces its own row via its own call.
+// `key`/`ownParts` come from build-readiness-tree.ts's `walkJobBomUnits` —
+// the one place that walk + key-assignment happens now.
 function classifyNode(
   node: BomNode,
-  keyPrefix: string,
+  key: string,
+  ownParts: BomPart[],
   jobId: string,
   jobName: string,
   now: number,
 ): { detail: AssemblyDetail; blockers: BlockerEntry[]; upcoming: { part: BomPart; assemblyLabel: string }[]; blockedPartIds: Set<number> } {
-  const ownParts: BomPart[] = node.self ? [node.self, ...node.parts] : node.parts;
   const blockers: BlockerEntry[] = [];
   const upcoming: { part: BomPart; assemblyLabel: string }[] = [];
   const blockedPartIds = new Set<number>();
@@ -152,11 +157,12 @@ function classifyNode(
         reason,
         jobId,
         jobName,
-        assemblyKey: node.key,
+        assemblyKey: key,
         assemblyLabel: node.label,
         partPn: p.pn,
         partDesc: p.desc,
         supplier: p.supplier,
+        poNumber: p.poId ?? null,
         materialValue: partMaterialValue(p),
         daysLate: p.expectedDate ? Math.max(0, Math.round((now - new Date(p.expectedDate).getTime()) / DAY)) : null,
         expectedDate: p.expectedDate,
@@ -181,11 +187,12 @@ function classifyNode(
         reason: "awaiting_release",
         jobId,
         jobName,
-        assemblyKey: node.key,
+        assemblyKey: key,
         assemblyLabel: node.label,
         partPn: p.pn,
         partDesc: p.desc,
         supplier: p.supplier,
+        poNumber: p.poId ?? null,
         materialValue: 0, // already counted once under its natural reason above
         daysLate: null,
         expectedDate: p.expectedDate,
@@ -210,7 +217,7 @@ function classifyNode(
   }
 
   const detail: AssemblyDetail = {
-    key: `${keyPrefix}${node.key}`,
+    key,
     pn: node.pn,
     label: node.label,
     release: node.release,
@@ -239,6 +246,8 @@ function classifyNode(
 export function classifyJobBom(bom: JobBom, jobId: string, jobName: string, now: number): {
   detail: JobDetail;
   overallReadinessPct: number;
+  requiredQtyTotal: number;
+  coveredQtyTotal: number;
   assembliesTotal: number;
   assembliesReady: number;
   assembliesPartial: number;
@@ -256,11 +265,19 @@ export function classifyJobBom(bom: JobBom, jobId: string, jobName: string, now:
   const upcomingSource: { part: BomPart; assemblyLabel: string; assemblyKey: string }[] = [];
   const blockedPartIds = new Set<number>();
 
+  // `assembliesTotal`/Ready/Partial/Blocked count TotalETO release-status-
+  // tagged BUILDABLE UNITS ONLY (a node with its own self/buy line — release
+  // "Assembly Only" or "Both"). Confirmed live (2026-08-17): most jobs never
+  // set that field at all and are procured as a flat parts list, so these
+  // read 0 for the large majority of real jobs even at high overall
+  // readiness. That is NOT a bug — it answers "how many independently-bought
+  // sub-assemblies does this job have," a genuinely different question from
+  // "how much of this job's required material is covered," which is what
+  // overallReadinessPct (below) answers. Do not conflate the two again.
   let assembliesTotal = 0, assembliesReady = 0, assembliesPartial = 0, assembliesBlocked = 0;
-  let statsReceived = 0, statsTotal = 0;
 
-  const visit = (node: BomNode, keyPrefix: string) => {
-    const { detail, blockers: nodeBlockers, upcoming, blockedPartIds: nodeBlocked } = classifyNode(node, keyPrefix, jobId, jobName, now);
+  for (const unit of walkJobBomUnits(bom)) {
+    const { detail, blockers: nodeBlockers, upcoming, blockedPartIds: nodeBlocked } = classifyNode(unit.node, unit.key, unit.ownParts, jobId, jobName, now);
     assemblies.push(detail);
     blockers.push(...nodeBlockers);
     for (const u of upcoming) upcomingSource.push({ part: u.part, assemblyLabel: u.assemblyLabel, assemblyKey: detail.key });
@@ -272,48 +289,16 @@ export function classifyJobBom(bom: JobBom, jobId: string, jobName: string, now:
       else if (detail.buildableQty > 0) assembliesPartial++;
       else assembliesBlocked++;
     }
-    statsReceived += node.stats.received;
-    statsTotal += node.stats.total;
-
-    for (const child of node.children) visit(child, `${keyPrefix}${node.key}/`);
-  };
-
-  for (const section of bom.roots) {
-    for (const child of section.children) visit(child, "");
-    if (section.parts.length > 0) {
-      // Synthetic "Loose parts" bucket for a section's direct parts — no
-      // `self` line (buildableQtyFor returns null for it), same as
-      // JobProcurement.tsx's own LoosePartsRow treats these as a group with
-      // no single "unit" concept, just individual buy items.
-      const looseReceived = section.parts.filter((p) => p.status === "received").length;
-      const looseTotal = section.parts.length;
-      const looseNode: BomNode = {
-        key: `${section.key}-loose`,
-        id: `${section.key}-loose`,
-        depth: section.depth + 1,
-        label: "Loose parts",
-        pn: "",
-        desc: "",
-        isAssembly: false,
-        release: "contentsOnly",
-        self: null,
-        children: [],
-        parts: section.parts,
-        stats: {
-          total: looseTotal,
-          received: looseReceived,
-          noPO: section.parts.filter((p) => p.status === "noPO").length,
-          ordered: section.parts.filter((p) => p.status === "ordered").length,
-          stock: section.parts.filter((p) => p.source === "stock" || p.source === "process").length,
-          pct: looseTotal ? Math.round((looseReceived / looseTotal) * 100) : 0,
-        },
-        totalCost: 0,
-        totalPartQty: 0,
-        nestedAssemblies: 0,
-      };
-      visit(looseNode, `${section.key}/`);
-    }
   }
+
+  // Project-level readiness: quantity-weighted coverage over the whole job's
+  // UNIQUE required parts (flattenBomParts already dedupes by physical part
+  // id — po-detail.ts's own header — so a sub-assembly legitimately reused
+  // under two parents contributes its parts once here, not twice). This is
+  // the exact same function+dedup JobProcurement.tsx's own top-of-page
+  // summary uses, so the two can never disagree about the same job again.
+  // partsLines ([]) is PO/cost enrichment this calc never reads.
+  const { requiredQty: requiredQtyTotal, coveredQty: coveredQtyTotal, pct: overallReadinessPct } = quantityReadiness(flattenBomParts(bom, []));
 
   const now0 = now;
   const weekEnd = now0 + 7 * DAY;
@@ -355,11 +340,17 @@ export function classifyJobBom(bom: JobBom, jobId: string, jobName: string, now:
       incomingParts: [{ pn: u.part.pn, qty: u.part.qty }],
       buildableBefore: null, // filled in by the read layer, which recomputes buildable-before/after per window
       buildableAfter: null,
+      // Mirrors the exact test partsOnOrder's own source loop above uses —
+      // so a drilldown on the main table's "On Order" cell can filter
+      // `detail.upcoming` directly and reconcile with the KPI by construction.
+      onOrder: u.part.status === "ordered",
     }));
 
   return {
     detail: { assemblies, vendors: bom.vendors, blockers, upcoming },
-    overallReadinessPct: statsTotal ? Math.round((statsReceived / statsTotal) * 100) : 0,
+    overallReadinessPct,
+    requiredQtyTotal: Math.round(requiredQtyTotal),
+    coveredQtyTotal: Math.round(coveredQtyTotal),
     assembliesTotal,
     assembliesReady,
     assembliesPartial,
@@ -376,24 +367,29 @@ export function classifyJobBom(bom: JobBom, jobId: string, jobName: string, now:
 
 // ── Persistence (raw SQL — see schema.prisma's own comment on why) ─────────
 
-async function upsertSnapshot(jobId: string, jobName: string, customer: string | null, status: "ok" | "failed" | "empty", computed: ReturnType<typeof classifyJobBom> | null): Promise<void> {
+// "notReleased": a BOM tree exists (this job is not "empty"/"No BOM") but
+// walking it found zero actual required parts anywhere — set by the callers
+// below, right after classifyJobBom, since only they know both facts
+// (bom.roots.length > 0 AND requiredQtyTotal === 0) at once.
+async function upsertSnapshot(jobId: string, jobName: string, customer: string | null, status: "ok" | "failed" | "empty" | "notReleased", computed: ReturnType<typeof classifyJobBom> | null): Promise<void> {
   const c = computed ?? {
     detail: { assemblies: [], vendors: [], blockers: [], upcoming: [] },
-    overallReadinessPct: 0, assembliesTotal: 0, assembliesReady: 0, assembliesPartial: 0, assembliesBlocked: 0,
+    overallReadinessPct: 0, requiredQtyTotal: 0, coveredQtyTotal: 0, assembliesTotal: 0, assembliesReady: 0, assembliesPartial: 0, assembliesBlocked: 0,
     partsUncovered: 0, partsOnOrder: 0, partsPastDue: 0, partsDueSoon7d: 0,
     materialValueTotal: 0, materialValueAtRisk: 0, nextUnlockDate: null as string | null,
   };
   const detailJson = JSON.stringify(c.detail);
   await prisma.$executeRaw`
     INSERT INTO BuildReadinessJobSnapshot
-      (jobId, jobName, customer, status, overallReadinessPct, assembliesTotal, assembliesReady, assembliesPartial, assembliesBlocked,
+      (jobId, jobName, customer, status, overallReadinessPct, requiredQtyTotal, coveredQtyTotal, assembliesTotal, assembliesReady, assembliesPartial, assembliesBlocked,
        partsUncovered, partsOnOrder, partsPastDue, partsDueSoon7d, materialValueTotal, materialValueAtRisk, nextUnlockDate, detailJson, computedAt)
     VALUES
-      (${jobId}, ${jobName}, ${customer}, ${status}, ${c.overallReadinessPct}, ${c.assembliesTotal}, ${c.assembliesReady}, ${c.assembliesPartial}, ${c.assembliesBlocked},
+      (${jobId}, ${jobName}, ${customer}, ${status}, ${c.overallReadinessPct}, ${c.requiredQtyTotal}, ${c.coveredQtyTotal}, ${c.assembliesTotal}, ${c.assembliesReady}, ${c.assembliesPartial}, ${c.assembliesBlocked},
        ${c.partsUncovered}, ${c.partsOnOrder}, ${c.partsPastDue}, ${c.partsDueSoon7d}, ${c.materialValueTotal}, ${c.materialValueAtRisk}, ${c.nextUnlockDate ? new Date(c.nextUnlockDate) : null}, ${detailJson}, NOW(3))
     ON DUPLICATE KEY UPDATE
       jobName = VALUES(jobName), customer = VALUES(customer), status = VALUES(status),
-      overallReadinessPct = VALUES(overallReadinessPct), assembliesTotal = VALUES(assembliesTotal),
+      overallReadinessPct = VALUES(overallReadinessPct), requiredQtyTotal = VALUES(requiredQtyTotal), coveredQtyTotal = VALUES(coveredQtyTotal),
+      assembliesTotal = VALUES(assembliesTotal),
       assembliesReady = VALUES(assembliesReady), assembliesPartial = VALUES(assembliesPartial), assembliesBlocked = VALUES(assembliesBlocked),
       partsUncovered = VALUES(partsUncovered), partsOnOrder = VALUES(partsOnOrder), partsPastDue = VALUES(partsPastDue), partsDueSoon7d = VALUES(partsDueSoon7d),
       materialValueTotal = VALUES(materialValueTotal), materialValueAtRisk = VALUES(materialValueAtRisk),
@@ -434,7 +430,7 @@ export async function refreshOneJob(jobId: string): Promise<void> {
     return;
   }
   const computed = classifyJobBom(bom, job.jobId, job.jobName, Date.now());
-  await upsertSnapshot(job.jobId, job.jobName, job.customer, "ok", computed);
+  await upsertSnapshot(job.jobId, job.jobName, job.customer, computed.requiredQtyTotal === 0 ? "notReleased" : "ok", computed);
 }
 
 // The full cross-job pass. Fire-and-forget from build-readiness-actions.ts —
@@ -459,7 +455,7 @@ export async function refreshBuildReadiness(triggeredByName: string | null): Pro
         await upsertSnapshot(job.jobId, job.jobName, job.customer, failed ? "failed" : "empty", null);
       } else {
         const computed = classifyJobBom(bom, job.jobId, job.jobName, Date.now());
-        await upsertSnapshot(job.jobId, job.jobName, job.customer, "ok", computed);
+        await upsertSnapshot(job.jobId, job.jobName, job.customer, computed.requiredQtyTotal === 0 ? "notReleased" : "ok", computed);
       }
     } catch (err) {
       console.error(`[build-readiness] snapshot upsert failed for job ${job.jobId}:`, err);

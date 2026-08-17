@@ -417,7 +417,16 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
 
     // Roots of this spec = the top node(s) from tblEngTop. Fall back to
     // parents that never appear as a child (reference buildTree.topParentIds).
-    let topNodeIds = (topsBySpec.get(specId) ?? []).map((tp) => tp.TopItemID);
+    //
+    // De-duplicated via a Set — `tblEngTop` has no unique constraint on
+    // (ProjectID, ItemID) enforced at this layer, and a duplicate row there
+    // used to reach `buildAssembly()` below unfiltered (unlike the fallback
+    // branch three lines down, which was already Set-built). Two calls to
+    // buildAssembly() with the identical `keyPath` produce two structurally
+    // identical subtrees — the same assembly, part, and blocker rows twice,
+    // with byte-identical keys — which is exactly the shape reported as
+    // "duplicate assembly rows" in Build Readiness's What Can We Build Now.
+    let topNodeIds = [...new Set((topsBySpec.get(specId) ?? []).map((tp) => tp.TopItemID))];
     topNodeIds = topNodeIds.filter((id) => tree.assemblyIds.has(id));
     if (topNodeIds.length === 0) {
       const childIds = new Set(tree.deduped.map((r) => r.ChildID));

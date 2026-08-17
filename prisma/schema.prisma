@@ -873,8 +873,10 @@ model BuildReadinessJobSnapshot {
   jobId               String    @unique @db.VarChar(32)
   jobName             String    @db.VarChar(255)
   customer            String?   @db.VarChar(255)
-  status              String    @default("ok") @db.VarChar(16) // "ok" | "failed" | "empty" (no released BOM at all)
-  overallReadinessPct Int       @default(0)
+  status              String    @default("ok") @db.VarChar(16) // "ok" | "failed" | "empty" (no BOM at all) | "notReleased" (BOM exists, zero required parts released)
+  overallReadinessPct Int       @default(0) // quantity-weighted coverage over every unique required part job-wide — see job-bom-rules.ts's quantityReadiness()
+  requiredQtyTotal    Int       @default(0) // denominator behind overallReadinessPct — also the "notReleased"/limited-scope signal
+  coveredQtyTotal     Int       @default(0) // numerator behind overallReadinessPct
   assembliesTotal     Int       @default(0)
   assembliesReady     Int       @default(0) // buildableQty >= required, right now
   assembliesPartial   Int       @default(0) // some coverage, not fully buildable

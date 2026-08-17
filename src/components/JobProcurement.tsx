@@ -2,7 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type ReactNode } from "react";
 import type { BomNode, BomPart, JobBom, PoLineGroup, Vendor } from "@/lib/job-bom";
-import { isUncoveredPart } from "@/lib/job-bom-rules";
+import { isUncoveredPart, quantityReadiness } from "@/lib/job-bom-rules";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
 import { usd } from "@/components/ui/format";
 import { useToast } from "@/components/ui/Toast";
@@ -13,10 +13,26 @@ import { sequenced } from "@/lib/request-sequence";
 import { useColumnSort } from "@/components/useColumnSort";
 import { SortableTh, SortableColumnHeader } from "@/components/ui/SortableHeader";
 import { sortRows, type SortColumns } from "@/lib/table-sort";
-
-// A minimal shape shared by BOM leaf parts (Assemblies detail table) and the
-// flattened Parts List rows — enough to drill + copy.
-type DrillablePart = { id: number; pn: string };
+import {
+  DAY,
+  STATUS_ROW_BG,
+  COST_BASIS_NOTE,
+  isEstimatedCost,
+  num,
+  fmtDate,
+  partStatus,
+  sectionLabelFor,
+  findAuthoritativePo,
+  authoritativeVendorRollup,
+  makePoGroup,
+  flattenBomParts,
+  NO_PO_KEY,
+  type FlatPart,
+  type PoGroup,
+  type DrillablePart,
+  type StatusKey,
+} from "@/lib/po-detail";
+import { PoPanel, ReleaseBadge, SupplierAvatar, Stat, ALL_COLS, partsListSortColumns, PartRowCells, type ColKey } from "@/components/procurement/PoDetailPanel";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Procurement drawer — the Build Readiness "Procurement" view, ported to the
@@ -30,29 +46,6 @@ type DrillablePart = { id: number; pn: string };
 // Pure/SSR-safe at module scope; every `new Date()` lives inside a handler or
 // useMemo (this is a client component).
 // ─────────────────────────────────────────────────────────────────────────────
-
-// PM-facing section (spec) label overrides — DISPLAY ONLY, keyed by SpecID.
-// Matches the Scheduler's SECTION_LABEL_OVERRIDE so both apps read the same.
-const SECTION_LABEL_OVERRIDE: Record<number, string> = {
-  10: "Mechanical Design and Build",
-  30: "Control-Related Parts",
-  40: "Machine Testing-Related Parts",
-  90: "Spare Parts",
-};
-
-const DAY = 86_400_000;
-
-// ── Status model ─────────────────────────────────────────────────────────────
-// One derived status per part (mirrors the Scheduler's _procPartStatus). Time-
-// relative keys (overdue/soon) resolve against a `now` passed by the caller.
-//
-// `stock` and `process` exist because a requirement with no purchase order is
-// not automatically a procurement gap: it can be coming out of inventory or
-// being built in-house on an ETO process schedule. Those used to fall through
-// to "NO PO" (red) or "ON ORDER" (blue, with no PO to point at) — both wrong.
-// `noPO` is now only what job-bom-rules.ts calls genuinely uncovered.
-type StatusKey = "received" | "hold" | "noPO" | "overdue" | "soon" | "ordered" | "stock" | "process";
-type PartStatus = { key: StatusKey; label: string; cls: string; sub: string };
 
 // Status filter options, in the order the multi-select checkbox list (and the
 // old single-select dropdown before it) presents them. Default selection is
@@ -71,216 +64,6 @@ const STATUS_FILTER_OPTIONS: { value: StatusKey; label: string }[] = [
 ];
 const ALL_STATUS_KEYS: StatusKey[] = STATUS_FILTER_OPTIONS.map((o) => o.value);
 const DEFAULT_STATUS_KEYS: StatusKey[] = ALL_STATUS_KEYS.filter((k) => k !== "hold");
-
-function partStatus(
-  p: { status: BomPart["status"]; source?: BomPart["source"]; hold: boolean; expectedDate: string | null; requiredDate: string | null; poId?: string | null; poNumber?: string | null },
-  now: number,
-): PartStatus {
-  if (p.status === "received") return { key: "received", label: "RECEIVED", cls: "received", sub: "" };
-  if (p.hold) return { key: "hold", label: "ON HOLD", cls: "hold", sub: "in ETO" };
-  if (p.status === "noPO") return { key: "noPO", label: "NO PO", cls: "noPO", sub: "" };
-  if (p.source === "stock") return { key: "stock", label: "FROM STOCK", cls: "stock", sub: "inventory pull" };
-  if (p.source === "process") return { key: "process", label: "IN PROCESS", cls: "process", sub: "built in-house" };
-  const due = p.expectedDate || p.requiredDate;
-  if (due) {
-    const t = new Date(due).getTime();
-    if (!Number.isNaN(t)) {
-      const diff = Math.ceil((t - now) / DAY);
-      if (diff < 0) return { key: "overdue", label: "OVERDUE", cls: "overdue", sub: `${Math.abs(diff)}d late` };
-      if (diff <= 14) return { key: "soon", label: "DUE SOON", cls: "soon", sub: `in ${diff}d` };
-      return { key: "ordered", label: "ON ORDER", cls: "ordered", sub: `in ${diff}d` };
-    }
-  }
-  return { key: "ordered", label: "ON ORDER", cls: "ordered", sub: "" };
-}
-
-const STATUS_PILL: Record<StatusKey, string> = {
-  received: "bg-sdc-green-bg text-sdc-green-text",
-  ordered: "bg-sdc-blue-light text-sdc-blue-dark",
-  soon: "bg-sdc-yellow-bg text-sdc-yellow-text",
-  overdue: "bg-sdc-red-bg text-sdc-red-text",
-  noPO: "border border-sdc-red-border bg-white text-sdc-red-text",
-  hold: "bg-sdc-gray-100 text-sdc-gray-600",
-  // Covered, just not by a purchase order — read as progress, not as a gap.
-  stock: "bg-sdc-green-bg/70 text-sdc-green-text",
-  process: "bg-sdc-blue-light text-sdc-blue-dark",
-};
-
-// Light row tint per status — same hues as the status pills, applied to the
-// whole Parts-List row so status reads at a glance (with a slightly stronger
-// tint on hover). The drill-flash (inline style) still wins over these.
-const STATUS_ROW_BG: Record<StatusKey, string> = {
-  received: "bg-sdc-green-bg/90 hover:bg-sdc-green-bg",
-  ordered: "bg-sdc-blue-light/75 hover:bg-sdc-blue-light/95",
-  soon: "bg-sdc-yellow-bg/90 hover:bg-sdc-yellow-bg",
-  overdue: "bg-sdc-red-bg/90 hover:bg-sdc-red-bg",
-  noPO: "bg-sdc-red-bg/45 hover:bg-sdc-red-bg/80",
-  hold: "bg-sdc-gray-100 hover:bg-sdc-gray-100",
-  stock: "bg-sdc-green-bg/50 hover:bg-sdc-green-bg/80",
-  process: "bg-sdc-blue-light/60 hover:bg-sdc-blue-light/90",
-};
-
-// ── Cost basis disclosure ────────────────────────────────────────────────────
-// A price that is NOT this job's own PO price is still the right number to show
-// (a stock pull and an item master's last purchased price are both real money),
-// but it is an estimate of what this job will pay rather than what it agreed to
-// pay — so every non-PO figure says where it came from on hover.
-const COST_BASIS_NOTE: Record<BomPart["costBasis"], string> = {
-  po: "This job's purchase order price",
-  pull: "Inventory pull price — issued from stock, no PO",
-  bom: "Cost entered on the BOM line",
-  lastCost: "Last purchased price (LPP) from the item master — no PO on this job",
-  listCost: "List price from the item master — no PO and no purchase history",
-  none: "No price on the PO, the BOM line or the item master",
-};
-
-// True where the price came from something other than a committed PO line, so
-// the cell can mark itself as an estimate.
-const isEstimatedCost = (b: BomPart["costBasis"]) => b !== "po" && b !== "none";
-
-// ── Release-status badge ─────────────────────────────────────────────────────
-// An assembly can appear in the parts list as one line to buy, with nothing
-// beneath it — that is its BOM release status talking, not missing data. Without
-// this badge a row like 1116-DB-000 (LEFT PICK CONVEYOR, one $1,430 purchase)
-// looks identical to a loose part, and anyone comparing against the tree would
-// reasonably assume its subcomponents had been dropped by mistake.
-function ReleaseBadge({ p }: { p: Pick<BomPart, "isAssembly" | "release"> }) {
-  if (!p.isAssembly) return null;
-  const both = p.release === "bothAssemblyAndContents";
-  return (
-    <span
-      className="rounded bg-sdc-gray-100 px-1 text-micro font-bold tracking-wide text-sdc-gray-600"
-      title={
-        both
-          ? "Released as “Both Assembly and Contents” — this assembly is purchased AND its contents are procured separately"
-          : "Released as “Assembly Only” — purchased whole, so its subcomponents are not separate requirements"
-      }
-    >
-      {both ? "ASSY+" : "ASSY"}
-    </span>
-  );
-}
-
-function StatusPill({ st }: { st: PartStatus }) {
-  return (
-    <span className={`inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-micro font-bold tracking-wide ${STATUS_PILL[st.key]}`} title={st.sub || st.label}>
-      {st.label}
-      {st.sub ? <span className="font-medium opacity-70">{st.sub}</span> : null}
-    </span>
-  );
-}
-
-// Lead time chip — weeks between purchase and expected delivery. ≤4w ok (green),
-// ≤8w warn (amber), >8w long (blue). Day count in the tooltip.
-function LeadChip({ ordered, expected }: { ordered: string | null; expected: string | null }) {
-  const days = daysBetween(ordered, expected);
-  if (days == null || days < 0) return <span className="text-label text-sdc-gray-400">—</span>;
-  const wks = Math.round((days / 7) * 2) / 2;
-  const cls = wks <= 4 ? "bg-sdc-green-bg text-sdc-green-text" : wks <= 8 ? "bg-sdc-yellow-bg text-sdc-yellow-text" : "bg-sdc-blue-light text-sdc-blue-dark";
-  return (
-    <span className={`inline-flex items-center rounded px-1.5 py-0.5 text-label font-semibold tabular-nums ${cls}`} title={`${days} day lead time (ordered → expected delivery)`}>
-      {wks}w
-    </span>
-  );
-}
-
-// Due countdown chip — green "RCVD" when received, else weeks ahead (+Nw) /
-// due-soon (+Nw amber) / late (-Nw red) vs. the expected date.
-function DueChip({ expected, received, now }: { expected: string | null; received: boolean; now: number }) {
-  if (received) return <span className="inline-flex items-center rounded bg-sdc-green-bg px-1.5 py-0.5 text-micro font-bold text-sdc-green-text" title="Already received">RCVD</span>;
-  if (!expected) return <span className="text-label text-sdc-gray-400">—</span>;
-  const t = new Date(expected).getTime();
-  if (Number.isNaN(t)) return <span className="text-label text-sdc-gray-400">—</span>;
-  const rawDays = (t - now) / DAY;
-  const daysRounded = Math.round(rawDays);
-  const wks = Math.round((rawDays / 7) * 2) / 2;
-  const base = "inline-flex items-center rounded px-1.5 py-0.5 text-label font-semibold tabular-nums";
-  if (rawDays > 7) return <span className={`${base} bg-sdc-green-bg text-sdc-green-text`} title={`Due in ${daysRounded} days`}>+{wks}w</span>;
-  if (rawDays >= 0) return <span className={`${base} bg-sdc-yellow-bg text-sdc-yellow-text`} title={`Due in ${daysRounded} days`}>+{wks}w</span>;
-  const overWks = Math.round((Math.abs(rawDays) / 7) * 2) / 2;
-  return <span className={`${base} bg-sdc-red-bg text-sdc-red-text`} title={`${Math.abs(daysRounded)} days overdue`}>-{overWks}w</span>;
-}
-
-function num(n: number): string {
-  return (Math.round(n) || 0).toLocaleString();
-}
-
-// Compact date — "Dec 14". Formats a passed ISO string only. "—" for empty/bad.
-function fmtDate(s: string | null | undefined): string {
-  if (!s) return "—";
-  const d = new Date(s);
-  if (Number.isNaN(d.getTime())) return "—";
-  return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
-}
-
-// Days between two ISO dates (b − a), or null if either is missing/invalid.
-function daysBetween(a: string | null | undefined, b: string | null | undefined): number | null {
-  if (!a || !b) return null;
-  const da = new Date(a).getTime();
-  const db = new Date(b).getTime();
-  if (Number.isNaN(da) || Number.isNaN(db)) return null;
-  return Math.round((db - da) / DAY);
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// Shared visual atoms (supplier chip / status badge / readiness bar)
-// ─────────────────────────────────────────────────────────────────────────────
-
-const AVATAR_PALETTE = [
-  "#3182CE", "#429C5D", "#805AD5", "#DD6B20", "#D44A4A",
-  "#2B8A8A", "#C05621", "#6B46C1", "#2F855A", "#C53030",
-  "#2C7A7B", "#744210", "#553C9A", "#276749", "#9B2C2C",
-  "#2A69AC", "#B7791F", "#4A5568", "#285E61", "#702459",
-];
-
-function avatarColor(name: string): string {
-  const hash = name.split("").reduce((h, c) => (h * 31 + c.charCodeAt(0)) >>> 0, 0);
-  return AVATAR_PALETTE[hash % AVATAR_PALETTE.length];
-}
-
-function supplierInitials(supplier: string): string {
-  return supplier
-    .split(/[\s.]+/)
-    .filter(Boolean)
-    .slice(0, 2)
-    .map((w) => w[0])
-    .join("")
-    .toUpperCase()
-    .slice(0, 2);
-}
-
-// Square colored-initial avatar (same palette as SupplierChip), sized for the
-// vendor card header.
-function SupplierAvatar({ supplier, size = 30 }: { supplier: string; size?: number }) {
-  return (
-    <span
-      aria-hidden
-      className="inline-flex shrink-0 items-center justify-center rounded font-bold text-white"
-      style={{ width: size, height: size, background: avatarColor(supplier), fontSize: Math.round(size * 0.38) }}
-    >
-      {supplierInitials(supplier)}
-    </span>
-  );
-}
-
-function SupplierChip({ supplier }: { supplier: string | null }) {
-  if (!supplier) return <span className="text-note text-sdc-gray-400">—</span>;
-  const initials = supplierInitials(supplier);
-  return (
-    <span className="flex min-w-0 items-center gap-1.5">
-      <span
-        aria-hidden
-        className="inline-flex h-[15px] w-[15px] shrink-0 items-center justify-center rounded text-micro font-bold text-white"
-        style={{ background: avatarColor(supplier) }}
-      >
-        {initials}
-      </span>
-      <span className="truncate text-note font-medium text-sdc-navy" title={supplier}>
-        {supplier}
-      </span>
-    </span>
-  );
-}
 
 // Readiness bar color: green >= 90, amber >= 60, red below (matches the
 // Scheduler's _procBarColor threshold).
@@ -310,49 +93,6 @@ function ReadinessBar({ pct, width = "w-full", size = "sm" }: { pct: number; wid
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Flatten + join
-// ─────────────────────────────────────────────────────────────────────────────
-
-// A BOM leaf part enriched with its parent assembly + the joined PO purchase
-// line (category / purchased / invoiced / PO#) and derived lead/due.
-type FlatPart = BomPart & {
-  parentPN: string;
-  parentDesc: string;
-  sectionId: string;
-  sectionLabel: string;
-  category: string | null;
-  purchasedDate: string | null;
-  invoicedDate: string | null;
-  poNumber: string | null;
-  leadDays: number | null;
-  st: PartStatus;
-  // Power BI "Parts Cost" money fields — from the matched PartsCostLine.
-  totalPrice: number; // line totalPrice (fallback unitPrice * qty), always lifetime
-  invoicedAmount: number; // lifetime, OR window-scoped when an Invoiced+range window is active
-  // null when a window is active: totalPrice stays lifetime while invoicedAmount
-  // becomes window-scoped, so "% of lifetime committed value invoiced THIS
-  // window" and "lifetime committed minus this window's invoiced slice" are
-  // both numbers with no coherent business meaning — not shown rather than
-  // silently mixing a monthly figure with a lifetime one (the exact
-  // anti-pattern sync-totaleto.ts's own comments repeatedly call out).
-  pctInvoiced: number | null; // round(invoiced / total * 100)
-  leftToSpend: number | null; // totalPrice - invoicedAmount
-};
-
-function sectionLabelFor(section: BomNode): string {
-  const specId = typeof section.id === "string" ? Number(section.id.replace(/\D/g, "")) : Number(section.id);
-  const title = SECTION_LABEL_OVERRIDE[specId] ?? section.desc ?? "";
-  return `Section ${specId}${title ? ` — ${title}` : ""}`;
-}
-
-// The Parts List "Parent Assembly" cell's own text, shared with its sort
-// accessor below (PARTS_LIST_COLUMNS) so the two can never disagree about
-// what a parentless part reads as.
-function parentLineFor(p: FlatPart): string {
-  return p.parentPN ? `${p.parentPN}${p.parentDesc ? ` — ${p.parentDesc}` : ""}` : "Loose parts";
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Persisted UI state
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -374,39 +114,6 @@ type PersistedState = {
   colWidths: Partial<Record<ColKey, number>>;
 };
 
-// Numeric-safe PO lookup against the authoritative vendor data (mirrors the
-// Scheduler's parseInt-based match). Returns undefined when there's no match,
-// which is the signal to keep the BOM-derived counts.
-function findAuthoritativePo(vendors: Vendor[] | undefined, poNumber: string | null): PoLineGroup | undefined {
-  if (!vendors?.length || !poNumber) return undefined;
-  const target = parseInt(poNumber, 10);
-  for (const v of vendors) {
-    for (const po of v.pos) {
-      if (po.poId === poNumber) return po;
-      const a = parseInt(po.poId, 10);
-      if (!Number.isNaN(a) && !Number.isNaN(target) && a === target) return po;
-    }
-  }
-  return undefined;
-}
-
-// Authoritative supplier rollup (received / itemCount across all the supplier's
-// POs), matched by vendor name. Undefined when the supplier has no PO data.
-function authoritativeVendorRollup(vendors: Vendor[] | undefined, supplier: string): { received: number; itemCount: number; pct: number } | undefined {
-  if (!vendors?.length) return undefined;
-  const key = supplier.trim().toLowerCase();
-  const v = vendors.find((x) => x.name.trim().toLowerCase() === key);
-  if (!v) return undefined;
-  let received = 0;
-  let itemCount = 0;
-  for (const po of v.pos) {
-    received += po.received;
-    itemCount += po.itemCount;
-  }
-  if (itemCount === 0) return undefined;
-  return { received, itemCount, pct: Math.round((received / itemCount) * 100) };
-}
-
 function loadPersisted(): Partial<PersistedState> {
   if (typeof window === "undefined") return {};
   try {
@@ -417,21 +124,6 @@ function loadPersisted(): Partial<PersistedState> {
   } catch {
     return {};
   }
-}
-
-// Build one PO's group (received/expected/status rollup) from the parts sharing
-// a supplier + PO key. Shared by the Card view and the table/assembly PO-panel.
-function makePoGroup(poKey: string, poParts: FlatPart[]): PoGroup {
-  const isNoPo = poKey === NO_PO_KEY;
-  const received = poParts.filter((p) => p.st.key === "received").length;
-  const total = poParts.length;
-  let expected: string | null = null;
-  for (const p of poParts) {
-    if (p.expectedDate && (!expected || p.expectedDate.slice(0, 10) < expected.slice(0, 10))) expected = p.expectedDate;
-  }
-  const pastDue = poParts.some((p) => p.st.key === "overdue");
-  const status: PoGroup["status"] = isNoPo ? "noPO" : received >= total ? "received" : "ordered";
-  return { poKey, poNumber: isNoPo ? null : poParts[0].poNumber, parts: poParts, received, total, expected, status, pastDue };
 }
 
 // Groups a FlatPart[] list into one row per (supplier, PO) pair — the same
@@ -576,24 +268,8 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
 
   const partsState = { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, upcomingWeek, setUpcomingWeek, colWidths, setColWidths, clearFilters } as const;
 
-  // PO purchase lines indexed by normalized part number, newest purchase first.
-  const lineIndex = useMemo(() => {
-    const m = new Map<string, PartsCostLine[]>();
-    for (const l of partsLines ?? []) {
-      const key = normPn(l.partNumber);
-      if (!key) continue;
-      const arr = m.get(key);
-      if (arr) arr.push(l);
-      else m.set(key, [l]);
-    }
-    for (const arr of m.values()) {
-      arr.sort((a, b) => (b.purchaseDate ?? "").localeCompare(a.purchaseDate ?? ""));
-    }
-    return m;
-  }, [partsLines]);
-
   // Every normalized part number in the CURRENT BOM tree — independent of
-  // lineIndex/partsLines (which come from TotalETO's purchasing data, not the
+  // partsLines (which comes from TotalETO's purchasing data, not the
   // BOM). Needed so attributeInvoicedWindow can tell "a real invoiced line
   // whose part isn't in this job's BOM at all" apart from "a real BOM part
   // with zero invoice activity in the window" — found live (job 1142, July
@@ -663,85 +339,25 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   // Every BOM leaf part flattened + enriched + deduped by part id, so this is a
   // true procurement buy-list (each physical part once) — the source for the
   // Parts List table, the two summary cards, and the top readiness line.
-  const parts = useMemo<FlatPart[]>(() => {
-    const out: FlatPart[] = [];
-    const seen = new Set<number>();
-    const now = Date.now();
-
-    const enrich = (p: BomPart, parentPN: string, parentDesc: string, sectionId: string, sectionLabel: string) => {
-      if (seen.has(p.id)) return;
-      seen.add(p.id);
-      const line = lineIndex.get(normPn(p.pn))?.[0] ?? null;
-      const supplier = p.supplier ?? line?.supplier ?? null;
-      const totalPrice = line?.totalPrice ?? p.unitPrice * p.qty;
-
-      // Lifetime by default (unchanged from before this fix). When an
-      // Invoiced+range window is active AND resolved, invoicedAmount becomes
-      // exactly what was invoiced against THIS part's number within that
-      // window (attributeInvoicedWindow already summed across every PO line
-      // the part has ever had, not just the newest one lineIndex shows —
-      // see that function's own comment for why), and pctInvoiced/
-      // leftToSpend become null rather than mixing a windowed figure with
-      // totalPrice's lifetime one.
-      const windowedInvoiced = activeAttribution?.byPartNumber.get(normPn(p.pn));
-      const invoicedAmount = activeAttribution ? (windowedInvoiced ?? 0) : (line?.invoicedAmount ?? 0);
-      const pctInvoiced = activeAttribution
-        ? null
-        : totalPrice > 0
-          ? Math.round((invoicedAmount / totalPrice) * 100)
-          : invoicedAmount > 0
-            ? 100
-            : 0;
-      const flat: FlatPart = {
-        ...p,
-        parentPN,
-        parentDesc,
-        sectionId,
-        sectionLabel,
-        category: line?.category ?? null,
-        purchasedDate: line?.purchaseDate ?? null,
-        invoicedDate: line?.invoicedDate ?? null,
-        poNumber: p.poId ?? line?.poNumber ?? null,
-        supplier,
-        leadDays: daysBetween(line?.purchaseDate ?? null, p.expectedDate),
-        st: partStatus(p, now),
-        totalPrice,
-        invoicedAmount,
-        pctInvoiced,
-        leftToSpend: activeAttribution ? null : totalPrice - invoicedAmount,
-      };
-      out.push(flat);
-    };
-
-    const walk = (node: BomNode, sectionId: string, sectionLabel: string) => {
-      // A "Both Assembly and Contents" assembly is itself one of the things to
-      // buy (job-bom-rules.ts: BomNode.self). It belongs in the buy-list next to
-      // the loose parts, not only in the tree.
-      if (node.self) enrich(node.self, node.pn, node.desc, sectionId, sectionLabel);
-      for (const p of node.parts) enrich(p, node.pn, node.desc, sectionId, sectionLabel);
-      for (const c of node.children) walk(c, sectionId, sectionLabel);
-    };
-
-    for (const section of bom.roots) {
-      const sectionId = String(section.id);
-      const sectionLabel = sectionLabelFor(section);
-      // Loose parts directly under the section have no parent assembly.
-      for (const p of section.parts) enrich(p, "", "", sectionId, sectionLabel);
-      for (const c of section.children) walk(c, sectionId, sectionLabel);
-    }
-    return out;
-  }, [bom, lineIndex, activeAttribution]);
+  // (lib/po-detail.ts — shared with the Build Readiness PO drawer, which
+  // fetches its own bom/partsLines for a single PO via a Server Action rather
+  // than rendering this whole component.)
+  const parts = useMemo<FlatPart[]>(() => flattenBomParts(bom, partsLines, activeAttribution), [bom, partsLines, activeAttribution]);
 
   // Top summary line. `noPO` is a real procurement gap — nothing purchased,
   // nothing pulled from stock, no process schedule — and is counted separately
   // from the parts that are covered without a PO, which get their own figure so
   // the difference is visible rather than hidden inside one number.
+  // `pct` is quantity-weighted (job-bom-rules.ts's quantityReadiness) — the
+  // exact same function+dedup Build Readiness's own project-level
+  // overallReadinessPct uses (build-readiness-sync.ts), so this job's number
+  // here and on the Build Readiness main table can never disagree.
   const summary = useMemo(() => {
     const total = parts.length;
     const received = parts.filter((p) => p.st.key === "received").length;
     const noPO = parts.filter(isUncoveredPart).length;
     const covered = parts.filter((p) => p.source === "stock" || p.source === "process").length;
-    const pct = total ? Math.round((received / total) * 100) : 0;
+    const { pct } = quantityReadiness(parts);
     return { total, received, noPO, covered, pct };
   }, [parts]);
 
@@ -1366,51 +982,6 @@ function PartsDetailTable({
 // Parts List tab
 // ═════════════════════════════════════════════════════════════════════════════
 
-type ColKey =
-  | "qty"
-  | "pn"
-  | "desc"
-  | "parent"
-  | "category"
-  | "mfr"
-  | "supplier"
-  | "po"
-  | "purchased"
-  | "invoiceddate"
-  | "req"
-  | "exp"
-  | "lead"
-  | "due"
-  | "unit"
-  | "total"
-  | "invoiced"
-  | "pctinv"
-  | "leftspend"
-  | "status";
-
-const ALL_COLS: { key: ColKey; label: string; align?: "right"; title?: string }[] = [
-  { key: "qty", label: "Qty", align: "right" },
-  { key: "pn", label: "Part No" },
-  { key: "desc", label: "Desc" },
-  { key: "parent", label: "Parent Assembly" },
-  { key: "category", label: "Category" },
-  { key: "mfr", label: "Mfr" },
-  { key: "supplier", label: "Supplier" },
-  { key: "po", label: "PO #" },
-  { key: "purchased", label: "Purchased" },
-  { key: "invoiceddate", label: "Invoiced" },
-  { key: "req", label: "Required Date", title: "eps.RequiredDate — when the part is needed" },
-  { key: "exp", label: "Expected Date", title: "Current due date (DateRequired || PurchaseDateRequired)" },
-  { key: "lead", label: "Lead" },
-  { key: "due", label: "Due" },
-  { key: "unit", label: "Unit $", align: "right" },
-  { key: "total", label: "Total $", align: "right" },
-  { key: "invoiced", label: "Invoiced $", align: "right" },
-  { key: "pctinv", label: "% Inv", align: "right" },
-  { key: "leftspend", label: "Left to Spend", align: "right" },
-  { key: "status", label: "Status" },
-];
-
 // Columns hidden on a first visit. Named so "Reset" can actually restore them —
 // it used to be an inline literal at the useState call, which left Reset and
 // "Show all" doing the identical thing (clear the set), so Reset never reset.
@@ -1492,59 +1063,6 @@ const DEFAULT_COL_WIDTH: Record<ColKey, number> = {
 };
 const MIN_COL_WIDTH = 48;
 
-// One accessor per ColKey, covering every column the visibility menu can show
-// — `SortColumns<FlatPart, ColKey>` (a `Record`, not a `Partial`) means TypeScript
-// itself catches a column added to ALL_COLS with no matching sort entry.
-//
-// A function of `now`, not a bare module-level constant like PARTS_DETAIL_COLUMNS
-// above — only the "due" column needs it (a countdown against the current time,
-// same as DueChip), but that one dependency means the whole map has to be built
-// per-render rather than once at module scope. Mirrors HoursDetailPanel's own
-// rollupSortColumns(groupBy): a plain function, called through a `useMemo` at the
-// call site rather than recomputed on every render.
-function partsListSortColumns(now: number): SortColumns<FlatPart, ColKey> {
-  return {
-    qty: { type: "number", value: (p) => p.qty },
-    pn: { type: "id", value: (p) => p.pn },
-    desc: { type: "text", value: (p) => p.desc || null },
-    parent: { type: "text", value: (p) => parentLineFor(p) },
-    category: { type: "text", value: (p) => p.category },
-    // Sorts on exactly what the cell displays (In-house (SDC), not the raw
-    // manufacturer code) — same convention as every "status"-typed column.
-    mfr: { type: "text", value: (p) => (p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || null) },
-    supplier: { type: "text", value: (p) => p.supplier },
-    // Null for STOCK/PROCESS/NO-PO rows alike (no PO number exists) — nulls
-    // already sort last in both directions, which is the right place for
-    // "there is no PO" regardless of why.
-    po: { type: "id", value: (p) => p.poNumber },
-    purchased: { type: "date", value: (p) => p.purchasedDate },
-    invoiceddate: { type: "date", value: (p) => p.invoicedDate },
-    req: { type: "date", value: (p) => p.requiredDate },
-    exp: { type: "date", value: (p) => p.expectedDate },
-    // LeadChip's own underlying number (days from purchased to expected),
-    // with the same "negative reads as no data" rule it renders with: a
-    // negative lead time is display "—", so it sorts where "—" sorts.
-    lead: {
-      type: "number",
-      value: (p) => {
-        const d = daysBetween(p.purchasedDate, p.expectedDate);
-        return d != null && d >= 0 ? d : null;
-      },
-    },
-    // DueChip's own underlying number (days from now to expected) — null once
-    // received, matching its "RCVD" display rather than a stale countdown.
-    due: {
-      type: "number",
-      value: (p) => (p.st.key === "received" || !p.expectedDate ? null : (new Date(p.expectedDate).getTime() - now) / DAY),
-    },
-    unit: { type: "currency", value: (p) => p.unitPrice },
-    total: { type: "currency", value: (p) => p.totalPrice },
-    invoiced: { type: "currency", value: (p) => p.invoicedAmount },
-    pctinv: { type: "number", value: (p) => p.pctInvoiced },
-    leftspend: { type: "currency", value: (p) => p.leftToSpend },
-    status: { type: "status", value: (p) => p.st.label },
-  };
-}
 
 function PartsListTab({
   parts,
@@ -1829,114 +1347,6 @@ function PartsListTab({
   );
 }
 
-function PartRowCells({
-  p,
-  cols,
-  now,
-  onOpenPo,
-}: {
-  p: FlatPart;
-  cols: { key: ColKey; label: string; align?: "right"; title?: string }[];
-  now: number;
-  onOpenPo: (supplier: string | null, poNumber: string | null) => void;
-}) {
-  const parentLine = parentLineFor(p);
-  const cell = (key: ColKey) => {
-    switch (key) {
-      case "qty":
-        return <span className="text-note font-bold tabular-nums text-sdc-navy">{num(p.qty)}</span>;
-      case "pn":
-        // Blue link-style — the row itself copies the PN + drills, so the link
-        // is the affordance (no separate copy glyph).
-        return (
-          <span className="flex items-center gap-1 truncate font-mono text-note font-bold text-sdc-blue group-hover:underline" title={p.pn}>
-            <span className="truncate">{p.pn}</span>
-            <ReleaseBadge p={p} />
-          </span>
-        );
-      case "desc":
-        return <span className="block truncate text-note font-semibold text-sdc-navy" title={p.desc}>{p.desc || "—"}</span>;
-      case "parent":
-        return (
-          <span className={`block truncate font-mono text-label font-medium ${p.parentPN ? "text-sdc-navy" : "italic text-sdc-muted"}`} title={parentLine}>
-            {parentLine}
-          </span>
-        );
-      case "category":
-        return <span className="block truncate text-note font-medium text-sdc-navy" title={p.category ?? ""}>{p.category || "—"}</span>;
-      case "mfr":
-        return <span className="block truncate text-note font-medium text-sdc-navy" title={p.manufacturer}>{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>;
-      case "supplier":
-        return <SupplierChip supplier={p.supplier} />;
-      case "po":
-        return p.poNumber ? (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poNumber); }}
-            title="View PO"
-            className="block truncate text-left font-mono text-note font-medium text-sdc-blue hover:underline"
-          >
-            {p.poNumber}
-          </button>
-        ) : p.source === "stock" ? (
-          <span className="text-label font-semibold text-sdc-green-text" title={`Pulled from inventory (${num(p.pullQty)} issued) — no purchase order needed`}>STOCK</span>
-        ) : p.source === "process" ? (
-          <span className="text-label font-semibold text-sdc-blue-dark" title="Built in-house on an ETO process schedule — no purchase order needed">PROCESS</span>
-        ) : (
-          <span className="text-label font-semibold text-sdc-red-text">NO PO</span>
-        );
-      case "purchased":
-        return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.purchasedDate)}</span>;
-      case "invoiceddate":
-        return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.invoicedDate)}</span>;
-      case "req":
-        return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.requiredDate)}</span>;
-      case "exp":
-        return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.expectedDate)}</span>;
-      case "lead":
-        return <LeadChip ordered={p.purchasedDate} expected={p.expectedDate} />;
-      case "due":
-        return <DueChip expected={p.expectedDate} received={p.st.key === "received"} now={now} />;
-      case "unit":
-        return (
-          <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy" title={COST_BASIS_NOTE[p.costBasis]}>
-            {p.unitPrice > 0 ? usd(p.unitPrice) : "—"}
-            {p.unitPrice > 0 && isEstimatedCost(p.costBasis) ? <span className="ml-0.5 text-sdc-gray-400" aria-hidden>*</span> : null}
-          </span>
-        );
-      case "total":
-        return <span className="whitespace-nowrap font-mono text-note font-semibold tabular-nums text-sdc-navy">{p.totalPrice > 0 ? usd(p.totalPrice) : "—"}</span>;
-      case "invoiced":
-        return <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy">{usd(p.invoicedAmount)}</span>;
-      case "pctinv":
-        return (
-          <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-gray-600" title={p.pctInvoiced === null ? "Not meaningful for a windowed Invoiced $ figure" : undefined}>
-            {p.pctInvoiced === null ? "—" : `${p.pctInvoiced}%`}
-          </span>
-        );
-      case "leftspend":
-        return (
-          <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy" title={p.leftToSpend === null ? "Not meaningful for a windowed Invoiced $ figure" : undefined}>
-            {p.leftToSpend === null ? "—" : usd(p.leftToSpend)}
-          </span>
-        );
-      case "status":
-        return <StatusPill st={p.st} />;
-    }
-  };
-  return (
-    <>
-      {cols.map((c) => (
-        <td
-          key={c.key}
-          className={`overflow-hidden border-b border-r border-sdc-border-soft px-2 py-1 align-middle ${c.align === "right" ? "text-right" : ""}`}
-        >
-          {cell(c.key)}
-        </td>
-      ))}
-    </>
-  );
-}
 
 function PartsTableView({
   parts,
@@ -2121,8 +1531,6 @@ function PartsTableView({
   );
 }
 
-const NO_PO_KEY = "__NO_PO__";
-
 // What a PO row's dot conveys. Deliberately its own type rather than reusing
 // PoGroup["status"], which has no way to say "open, on time, nothing in yet" —
 // the gap that made a not-yet-due PO render as if it had no PO.
@@ -2136,17 +1544,6 @@ const PO_ROW_STATE_LABEL: Record<PoRowState, string> = {
   open: "On order — nothing received yet, not yet due",
   late: "Past due",
   noPO: "No PO raised",
-};
-
-type PoGroup = {
-  poKey: string;
-  poNumber: string | null;
-  parts: FlatPart[];
-  received: number;
-  total: number;
-  expected: string | null; // soonest expected date among the PO's parts
-  status: "received" | "ordered" | "noPO";
-  pastDue: boolean;
 };
 
 type VendorGroup = {
@@ -2359,288 +1756,6 @@ function PartsCardView({
           No parts match the current filters.
         </p>
       )}
-    </div>
-  );
-}
-
-// ── PO detail — right-side sliding panel ─────────────────────────────────────
-
-// The drawer's parts table (2026-08-14, by request — "reuse the same sorting
-// behavior and formatting already used in the main Parts List") always shows
-// THIS JOB's own BOM parts for the PO (`po.parts`, a FlatPart[]) through the
-// exact same column system the main Parts List table uses — `ColKey`,
-// `ALL_COLS`, `partsListSortColumns`, `PartRowCells` — rather than the two
-// bespoke row shapes this used to switch between (an authoritative PO's own
-// vendor lines, which can include lines outside this job's BOM entirely, vs.
-// a BOM-part fallback). Those raw vendor lines can't carry Mfr/Required
-// Date/Invoiced $/Status — fields only a BOM `FlatPart` has — so there is no
-// shape that satisfies "the same fields and sorting as the Parts List" AND
-// "every real vendor line, including non-BOM ones" at once; this keeps the
-// former and drops the individual non-BOM line rows. Supplier-wide awareness
-// of the real PO (including any non-BOM lines) isn't lost, though — the
-// authoritative "PO Lines (Supplier Status)" bar below still reads
-// `authoritative.received/itemCount/pct` exactly as before.
-const PO_PANEL_COL_KEYS: ColKey[] = ["qty", "pn", "desc", "mfr", "purchased", "invoiceddate", "req", "exp", "unit", "total", "invoiced", "status"];
-
-// Pinned column widths (2026-08-14, fixing reported clipping) — this table had
-// none, unlike the main Parts List's own (`DEFAULT_COL_WIDTH` + a `<colgroup>`,
-// `table-fixed`). Auto layout with no width hints sizes every column to its
-// OWN widest cell with no ceiling, and "Desc" is free text across up to
-// several dozen rows — measured live on a 42-part PO, it grew to 584px on its
-// own and dragged the table to 1424px total against a 440px-wide drawer: not
-// "some overflow", 984px of it, with the column doing the damage never once
-// truncating (`overflow-hidden`/`truncate` in PartRowCells only clips a cell
-// that's already narrower than its content — it can't cap a column that's
-// simply never been told a width to be narrower THAN). `table-fixed` + this
-// colgroup force every column to actually respect a width, which is what
-// makes PartRowCells' existing truncate+title behavior finally apply.
-const PO_PANEL_COL_WIDTH: Partial<Record<ColKey, number>> = {
-  qty: 44,
-  pn: 110,
-  desc: 200,
-  mfr: 90,
-  purchased: 72,
-  invoiceddate: 68,
-  req: 78,
-  exp: 78,
-  unit: 64,
-  total: 68,
-  invoiced: 72,
-  status: 96,
-};
-
-function PoPanel({
-  supplier,
-  po,
-  authoritative,
-  onClose,
-  onPartClick,
-  onOpenPo,
-}: {
-  supplier: string;
-  po: PoGroup;
-  authoritative?: PoLineGroup;
-  onClose: () => void;
-  onPartClick: (p: DrillablePart) => void;
-  onOpenPo: (supplier: string | null, poNumber: string | null) => void;
-}) {
-  const nowMs = useMemo(() => Date.now(), []);
-  const cols = useMemo(() => ALL_COLS.filter((c) => PO_PANEL_COL_KEYS.includes(c.key)), []);
-  const sortColumns = useMemo(() => partsListSortColumns(nowMs), [nowMs]);
-  const lineSort = useColumnSort<ColKey>();
-  const sortedParts = sortRows(po.parts, lineSort.sort, sortColumns);
-  // Sum of the pinned widths above — the table's own width, so `table-fixed`
-  // has a real number to divide among the `<colgroup>` below rather than
-  // shrinking every column proportionally to fit whatever the drawer
-  // happens to be (which is what `table-fixed` does to a 100%-wide table
-  // with no explicit width of its own).
-  const tableWidth = cols.reduce((sum, c) => sum + (PO_PANEL_COL_WIDTH[c.key] ?? 80), 0);
-
-  // Mount closed, then flip to open on the next frame so the slide-in plays.
-  const [open, setOpen] = useState(false);
-  useEffect(() => {
-    const id = window.requestAnimationFrame(() => setOpen(true));
-    return () => window.cancelAnimationFrame(id);
-  }, []);
-
-  // Animate out, then unmount via the parent after the transition.
-  const requestClose = useCallback(() => {
-    setOpen(false);
-    window.setTimeout(onClose, 200);
-  }, [onClose]);
-
-  // Escape closes.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") requestClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [requestClose]);
-
-  // Required/Expected/Purchased/Invoiced — the header-level rollup the task
-  // asks for ("PO #, Supplier, Number of parts, Required date, Expected
-  // date, Purchased / invoiced information"). Required/Purchased are the
-  // EARLIEST among the PO's parts (when the first thing was needed/bought);
-  // Expected stays the LATEST, unchanged from before this pass — "when is
-  // this PO fully in" is the useful reading of a single expected date across
-  // several parts, not the soonest one.
-  const stats = useMemo(() => {
-    let purchased: string | null = null;
-    let required: string | null = null;
-    let expected: string | null = null;
-    let value = 0;
-    let invoicedTotal = 0;
-    for (const p of po.parts) {
-      if (p.purchasedDate && (!purchased || p.purchasedDate.slice(0, 10) < purchased.slice(0, 10))) purchased = p.purchasedDate;
-      if (p.requiredDate && (!required || p.requiredDate.slice(0, 10) < required.slice(0, 10))) required = p.requiredDate;
-      if (p.expectedDate && (!expected || p.expectedDate.slice(0, 10) > expected.slice(0, 10))) expected = p.expectedDate;
-      value += (p.unitPrice || 0) * (p.qty || 0);
-      invoicedTotal += p.invoicedAmount || 0;
-    }
-    const pct = po.total ? Math.round((po.received / po.total) * 100) : 0;
-    return { purchased, required, expected, value, invoicedTotal, pct };
-  }, [po]);
-
-  const badge = po.pastDue
-    ? { label: "PAST DUE", cls: "bg-sdc-red-bg text-sdc-red-text" }
-    : stats.pct >= 90
-      ? { label: "RECEIVED", cls: "bg-sdc-green-bg text-sdc-green-text" }
-      : stats.pct >= 60
-        ? { label: "PARTIAL", cls: "bg-sdc-yellow-bg text-sdc-yellow-text" }
-        : { label: "PENDING", cls: "bg-sdc-blue-light text-sdc-blue-dark" };
-
-  const handlePart = (p: FlatPart) => {
-    onPartClick(p);
-    requestClose();
-  };
-
-  return (
-    <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label={`PO ${po.poNumber ?? "without number"}`}>
-      {/* Backdrop */}
-      <div
-        onClick={requestClose}
-        className={`absolute inset-0 bg-sdc-navy/40 motion-interactive ${open ? "opacity-100" : "opacity-0"}`}
-      />
-      {/* Panel — 800px, up from 440px (2026-08-14, fixing reported clipping):
-          440px was sized for the drawer's ORIGINAL 6-column line-items table
-          (Part/Qty/Ordered/Expected/Received/Price); it now holds the Parts
-          List's own 12-column set (PO_PANEL_COL_KEYS), whose pinned widths
-          above sum to ~1015px. 800px comfortably fits every column but the
-          widest "Desc" values without scrolling on a normal desktop width,
-          leaving the table's own horizontal scroll (see its wrapper's
-          comment) as the fallback for a genuinely long value or a narrower
-          viewport, not the only way to see most of the table. Still capped
-          by the same `max-w-[calc(var(--app-vw)_*_0.92)]` for small screens. */}
-      <aside
-        className={`absolute right-0 top-0 flex h-full w-[800px] max-w-[calc(var(--app-vw)_*_0.92)] flex-col bg-white shadow-xl motion-interactive ${open ? "translate-x-0" : "translate-x-full"}`}
-      >
-        {/* Header */}
-        <div className="flex flex-col gap-3 border-b border-sdc-border-soft p-4">
-          <div className="flex items-start justify-between gap-3">
-            <div className="flex min-w-0 items-center gap-2.5">
-              <SupplierAvatar supplier={supplier} size={38} />
-              <div className="min-w-0">
-                <div className="truncate text-base font-bold text-sdc-navy" title={supplier}>{supplier}</div>
-                <div className="font-mono text-xs text-sdc-gray-600">{po.poNumber ? `PO #${po.poNumber}` : "Parts without PO"}</div>
-              </div>
-            </div>
-            <div className="flex items-center gap-2">
-              <span className={`shrink-0 rounded px-1.5 py-0.5 text-micro font-bold tracking-wide ${badge.cls}`}>{badge.label}</span>
-              <button type="button" onClick={requestClose} aria-label="Close" className="rounded p-1 text-sdc-gray-400 hover:bg-sdc-gray-100 hover:text-sdc-navy">
-                <svg viewBox="0 0 16 16" width="16" height="16" fill="none" stroke="currentColor" strokeWidth="1.8"><path d="M4 4 L12 12 M12 4 L4 12" strokeLinecap="round" /></svg>
-              </button>
-            </div>
-          </div>
-
-          {/* Summary stats — Parts/Required/Expected/Purchased/Invoiced/PO
-              Value. This row already wraps (`flex-wrap`), unlike the compact
-              risk cards' own single-line header, so growing from 3 stats to
-              6 costs a second line here rather than an overflow. */}
-          <div className="flex flex-wrap items-end gap-x-6 gap-y-2">
-            <Stat label="Parts" value={num(po.total)} />
-            <Stat label="Required" value={fmtDate(stats.required)} />
-            <Stat label="Expected" value={fmtDate(stats.expected)} tone={po.pastDue ? "danger" : undefined} />
-            <Stat label="Purchased" value={fmtDate(stats.purchased)} />
-            <Stat label="Invoiced" value={stats.invoicedTotal > 0 ? usd(stats.invoicedTotal) : "—"} />
-            <Stat label="PO Value" value={stats.value > 0 ? usd(stats.value) : "—"} />
-          </div>
-
-          {/* Progress bars — authoritative PO-line status (when matched) plus the
-              BOM assembly-readiness bar. */}
-          <div className="flex flex-col gap-2">
-            {authoritative && (
-              <PanelBar
-                label="PO Lines (Supplier Status)"
-                received={authoritative.received}
-                total={authoritative.itemCount}
-                pct={authoritative.pct}
-              />
-            )}
-            <PanelBar label="Parts (Assembly Readiness)" received={po.received} total={po.total} pct={stats.pct} />
-          </div>
-        </div>
-
-        {/* Parts table — same columns, sort keys and row cells (`PartRowCells`)
-            as the main Parts List table, just scoped to this PO's own parts
-            and status-tinted the same way (`STATUS_ROW_BG`) instead of the
-            old bespoke received/past-due/pending tint.
-
-            `table-fixed` + the `<colgroup>`/`tableWidth` above (2026-08-14,
-            fixing reported clipping) — see PO_PANEL_COL_WIDTH's own comment
-            for why a plain `w-full` auto-layout table let "Desc" balloon to
-            584px and drag the whole table to 1424px. This wrapper still
-            scrolls both ways (`overflow-y-auto` also computes `overflow-x`
-            to `auto` per every browser's shared, if unspecified, behavior —
-            `styled-scrollbar` already themes both scrollbars), so a PO whose
-            columns still don't fit the drawer (narrow viewport, an unusually
-            long value) scrolls to reach them rather than clipping with no
-            way to get there; the drawer's own width below is sized so that
-            no longer needs to happen at a normal desktop width. */}
-        <div className="flex-1 overflow-auto styled-scrollbar">
-          <table className="table-fixed border-collapse text-left" style={{ width: tableWidth, minWidth: "100%" }}>
-            <colgroup>
-              {cols.map((c) => (
-                <col key={c.key} style={{ width: PO_PANEL_COL_WIDTH[c.key] }} />
-              ))}
-            </colgroup>
-            <thead className="sticky top-0 z-[1]">
-              <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
-                {cols.map((c) => (
-                  <SortableTh
-                    key={c.key}
-                    label={c.label}
-                    sortKey={c.key}
-                    type={sortColumns[c.key].type}
-                    sort={lineSort.sort}
-                    onSort={lineSort.onSort}
-                    title={c.title}
-                    className="px-2 py-2"
-                  />
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {sortedParts.map((p, i) => (
-                <tr
-                  key={`${p.id}-${i}`}
-                  onClick={() => handlePart(p)}
-                  title="Copy part # · locate row"
-                  className={`cursor-pointer border-b border-sdc-border-soft/60 ${STATUS_ROW_BG[p.st.key]}`}
-                >
-                  <PartRowCells p={p} cols={cols} now={nowMs} onOpenPo={onOpenPo} />
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </aside>
-    </div>
-  );
-}
-
-function PanelBar({ label, received, total, pct }: { label: string; received: number; total: number; pct: number }) {
-  const color = pct >= 90 ? "bg-sdc-green" : pct >= 60 ? "bg-sdc-yellow" : "bg-sdc-blue";
-  return (
-    <div>
-      <div className="mb-1 flex items-center justify-between text-label">
-        <span className="font-semibold uppercase tracking-wide text-sdc-gray-400">{label}</span>
-        <span className="text-sdc-gray-600 tabular-nums">
-          {received}/{total} · <span className="font-semibold text-sdc-navy">{pct}%</span>
-        </span>
-      </div>
-      <div className="h-1.5 overflow-hidden rounded-full bg-sdc-gray-100">
-        <div className={`h-full rounded-full ${color}`} style={{ width: `${Math.min(100, pct)}%` }} />
-      </div>
-    </div>
-  );
-}
-
-function Stat({ label, value, tone }: { label: string; value: string; tone?: "danger" }) {
-  return (
-    <div className="flex flex-col">
-      <span className="text-micro font-bold uppercase tracking-wider text-sdc-gray-400">{label}</span>
-      <span className={`font-mono text-xs font-semibold tabular-nums ${tone === "danger" ? "text-sdc-red-text" : "text-sdc-navy"}`}>{value}</span>
     </div>
   );
 }

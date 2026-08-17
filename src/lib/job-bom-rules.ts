@@ -315,8 +315,38 @@ export function unitPriceFor(r: BomRow, ctx: BomContext): { price: number; basis
   return { price: 0, basis: "none" };
 }
 
+// Quantity-weighted coverage — the one formula every readiness % in this app
+// must use (statsForRoots below, classifyJobBom's project-level rollup in
+// build-readiness-sync.ts, and JobProcurement.tsx's own top-of-page summary).
+// A line's coverage is capped at its own required qty so an over-shipped or
+// over-ordered line can't mask a shortfall elsewhere in the sum — matching
+// this file's existing "no PO is not the same as missing" carefulness, but
+// for quantity instead of a count. Line-count coverage (received lines /
+// total lines) was the previous formula: a line 99%-received by quantity
+// counted identically to one 0%-received, which is what let a handful of
+// small-quantity shortfalls on an otherwise-finished job drag readiness down
+// far more than the real remaining work justified — confirmed against live
+// data (2026-08-17), not just reasoned about.
+export function quantityReadiness(parts: { qty: number; receivedQty: number }[]): {
+  requiredQty: number;
+  coveredQty: number;
+  pct: number;
+} {
+  let requiredQty = 0;
+  let coveredQty = 0;
+  for (const p of parts) {
+    requiredQty += p.qty;
+    coveredQty += Math.min(p.receivedQty, p.qty);
+  }
+  return { requiredQty, coveredQty, pct: requiredQty > 0 ? Math.round((coveredQty / requiredQty) * 100) : 0 };
+}
+
 // Readiness over UNIQUE requirements (deduped by ChildID), matching the
-// reference report's unique-part counting.
+// reference report's unique-part counting. `pct` is quantity-weighted
+// (quantityReadiness above) even though `total`/`received`/`noPO`/`ordered`/
+// `stock` stay line-COUNTS — those remain meaningful on their own ("43
+// missing parts" is a real, useful count), it is specifically the single
+// summary percentage that must never be a count-of-lines ratio.
 export function statsForRoots(rootIds: number[], t: SpecTree, ctx: BomContext): BomStats {
   const visited = new Set<number>();
   const rows: BomRow[] = [];
@@ -338,7 +368,8 @@ export function statsForRoots(rootIds: number[], t: SpecTree, ctx: BomContext): 
     if (src === "stock" || src === "process") stock++;
   }
   const total = unique.length;
-  return { total, received, noPO, ordered, stock, pct: total ? Math.round((received / total) * 100) : 0 };
+  const { pct } = quantityReadiness(unique.map((r) => ({ qty: qtyOf(r), receivedQty: receivedQtyFor(r, ctx) })));
+  return { total, received, noPO, ordered, stock, pct };
 }
 
 export function makePart(r: BomRow, t: SpecTree, ctx: BomContext): BomPart {
