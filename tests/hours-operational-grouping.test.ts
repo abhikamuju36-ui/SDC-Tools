@@ -3,10 +3,12 @@ import assert from "node:assert/strict";
 import {
   OPERATIONAL_GROUPING,
   UNDEFINED_LABEL,
+  DEPARTMENT_ORDER,
   sectionNumberAndName,
   functionGroupFor,
   taskFor,
   departmentFor,
+  departmentOrderRank,
   codesInSection,
   codesInFunctionGroup,
   codesInTask,
@@ -133,4 +135,54 @@ test("rollupByOperationalTier: taskDescription merges Manufacturing across its t
   const g = rollupByOperationalTier(bySection, "taskDescription");
   const mfg = g.find((r) => r.label === "Manufacturing")!;
   assert.equal(mfg.hours, 10);
+});
+
+// ── Department reads in a fixed business order, never by hours (2026-08-17) ─
+
+test("every department a real code can resolve to has a position in DEPARTMENT_ORDER", () => {
+  const realDepartments = new Set(Object.values(OPERATIONAL_GROUPING).map((e) => e.department));
+  for (const d of realDepartments) {
+    assert.ok(DEPARTMENT_ORDER.includes(d), `"${d}" is a real department but missing from DEPARTMENT_ORDER`);
+  }
+});
+
+test("departmentOrderRank follows the exact given sequence", () => {
+  assert.equal(departmentOrderRank("Project Management"), 0);
+  assert.equal(departmentOrderRank("Mechanical Engineering"), 1);
+  assert.equal(departmentOrderRank("Controls Engineering"), 2);
+  assert.ok(departmentOrderRank("Mechanical Build") < departmentOrderRank("Electrical Build"));
+  assert.ok(departmentOrderRank("Electrical Build") < departmentOrderRank("Manufacturing Operations"));
+  assert.ok(departmentOrderRank("Manufacturing Operations") < departmentOrderRank("Service — Engineering"));
+});
+
+test("an unrecognized department (including UNDEFINED_LABEL) ranks after every real one", () => {
+  const maxRealRank = Math.max(...DEPARTMENT_ORDER.map((d) => departmentOrderRank(d)));
+  assert.ok(departmentOrderRank(UNDEFINED_LABEL) > maxRealRank);
+  assert.ok(departmentOrderRank("Some Made Up Department") > maxRealRank);
+});
+
+test("rollupByOperationalTier's department tier sorts by the fixed order, NOT by hours descending", () => {
+  // Deliberately built so hours-descending would produce the OPPOSITE order:
+  // Manufacturing Operations has the most hours but must still sort AFTER
+  // Project Management, which has the fewest.
+  const bySection = [
+    { section: "10-413", hours: 500, punchCount: 1 }, // Manufacturing Operations
+    { section: "10-211", hours: 200, punchCount: 1 }, // Mechanical Engineering
+    { section: "10-111", hours: 10, punchCount: 1 }, // Project Management
+  ];
+  const g = rollupByOperationalTier(bySection, "department");
+  assert.deepEqual(
+    g.map((r) => r.label),
+    ["Project Management", "Mechanical Engineering", "Manufacturing Operations"],
+    "must follow DEPARTMENT_ORDER, not the 500/200/10 hours ordering",
+  );
+});
+
+test("the other three tiers are UNAFFECTED — they still sort biggest-first", () => {
+  const bySection = [
+    { section: "10-111", hours: 10, punchCount: 1 }, // Complete Design and Build
+    { section: "80-211", hours: 500, punchCount: 1 }, // Service
+  ];
+  const bySectionName = rollupByOperationalTier(bySection, "sectionName");
+  assert.equal(bySectionName[0].label, "Service", "sectionName must still sort by hours, unchanged by the department fix");
 });

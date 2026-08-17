@@ -3,7 +3,7 @@ import "server-only";
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import { SECTIONS, HOURS_IMPORT_CODES } from "@/lib/sections";
-import { buildHoursWhere, rollupByOperationalTier, type HoursFilters, type HoursGroupBy, type HoursGroupRow, type HoursDetailSortKey } from "@/lib/hours-filters";
+import { buildHoursWhere, rollupByOperationalTier, departmentFilterRank, type HoursFilters, type HoursGroupBy, type HoursGroupRow, type HoursDetailSortKey } from "@/lib/hours-filters";
 import { taskFor } from "@/lib/hours-operational-grouping";
 import type { SortState } from "@/lib/table-sort";
 
@@ -110,9 +110,11 @@ export async function getHoursFilterOptions(): Promise<HoursFilterOptions> {
     })
     .sort((a, b) => a.name.localeCompare(b.name));
 
-  const departments = [...new Set(employeeList.map((e) => e.department))].sort((a, b) =>
-    a === "—" ? 1 : b === "—" ? -1 : a.localeCompare(b),
-  );
+  const departments = [...new Set(employeeList.map((e) => e.department))].sort((a, b) => {
+    const ra = departmentFilterRank(a);
+    const rb = departmentFilterRank(b);
+    return ra !== rb ? ra - rb : a.localeCompare(b);
+  });
 
   return { jobs, sections, employees: employeeList, departments };
 }

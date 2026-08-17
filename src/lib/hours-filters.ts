@@ -1,7 +1,8 @@
 import type { Prisma } from "@prisma/client";
 import type { SortState } from "@/lib/table-sort";
-import { sectionNumberAndName, functionGroupFor, taskFor, departmentFor, codesInSection, codesInFunctionGroup, codesInTask, codesInDepartment, UNDEFINED_LABEL } from "@/lib/hours-operational-grouping";
+import { sectionNumberAndName, functionGroupFor, taskFor, departmentFor, codesInSection, codesInFunctionGroup, codesInTask, codesInDepartment, departmentOrderRank, UNDEFINED_LABEL } from "@/lib/hours-operational-grouping";
 import { reconcileRounding } from "@/lib/rounding";
+import { EMPLOYEE_TEAMS, teamFor } from "@/lib/employee-teams";
 
 // ── Filtering/grouping rules for the Hours tab, kept I/O-free ──────────────────
 //
@@ -40,6 +41,28 @@ export type HoursFilters = {
   from?: string; // "YYYY-MM-DD", inclusive
   to?: string; // "YYYY-MM-DD", inclusive
 };
+
+// The Department FILTER's own display order (2026-08-17, by request — "match
+// the order used in Monthly ETC"), for the raw HR strings `HoursFilters.
+// departments` holds. Business order, not alphabetical: the same
+// delivery-team sequence employee-teams.ts already defines and
+// HoursDetailPanel.tsx's own departmentRank() already uses for exactly this
+// reason — reused, not re-derived. A raw HR string that resolves to one of
+// the 7 teams (via that file's own alias table, e.g. "Mechanical Build /
+// Manufacturing" -> Build) ranks by that team's position; anything else
+// (Finance, Sales, a typo, a since-renamed department) sorts alphabetically
+// after every ranked team; the blank "—" bucket always sorts last of all.
+// This is the FILTER's own order — see `departmentOrderRank` in
+// hours-operational-grouping.ts for the unrelated Group By dimension's order,
+// which is Section+Function-derived and has no reason to share a function
+// with this HR-string one even though both now read "business order, not
+// alphabetical."
+export function departmentFilterRank(department: string): number {
+  if (department === "—") return Number.MAX_SAFE_INTEGER;
+  const team = teamFor({ department });
+  const i = team ? EMPLOYEE_TEAMS.indexOf(team) : -1;
+  return i === -1 ? Number.MAX_SAFE_INTEGER - 1 : i;
+}
 
 export type HoursGroupBy = "job" | "employee" | "section" | "department" | "date" | "month" | "sectionName" | "functionGroup" | "taskDescription";
 
@@ -351,5 +374,15 @@ export function rollupByOperationalTier(bySection: { section: string; hours: num
     cur.punchCount += r.punchCount;
     rolled.set(key, cur);
   }
-  return [...rolled.values()].sort((a, b) => b.hours - a.hours);
+  const rows = [...rolled.values()];
+  // "Department" reads in the fixed business order (2026-08-17, by request —
+  // "match Monthly ETC exactly"), never by hours: a manager scanning down the
+  // list expects PM/ME/CE/... in the same sequence every month, regardless of
+  // which one happened to log the most hours. The other three tiers are
+  // unaffected — sectionName/functionGroup/taskDescription still read
+  // biggest-first, which is what they were built for and nobody asked to change.
+  if (tier === "department") {
+    return rows.sort((a, b) => departmentOrderRank(a.label) - departmentOrderRank(b.label));
+  }
+  return rows.sort((a, b) => b.hours - a.hours);
 }

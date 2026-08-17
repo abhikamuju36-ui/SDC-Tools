@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { buildHoursWhere, rollupByOperationalTier, narrowFiltersForGroupValue, parseHoursGroupByList, reconcileGroupRowHours } from "../src/lib/hours-filters";
+import { buildHoursWhere, rollupByOperationalTier, narrowFiltersForGroupValue, parseHoursGroupByList, reconcileGroupRowHours, departmentFilterRank } from "../src/lib/hours-filters";
 
 // Source-inspection helper, same pattern tests/parts-actual-gl-posted.test.ts already
 // uses (no database in CI) — for the regression guard at the bottom of this file.
@@ -358,4 +358,35 @@ test("every row is addressable by its own key regardless of input order", () => 
 
 test("an empty set of rows reconciles to an empty map, not an error", () => {
   assert.equal(reconcileGroupRowHours([]).size, 0);
+});
+
+// ── The Department FILTER's own order — the raw HR strings, ranked by the
+// same 7-team business order Monthly ETC/HoursDetailPanel already use
+// (2026-08-17) ────────────────────────────────────────────────────────────
+
+test("departmentFilterRank orders the 7 delivery teams in their real sequence, not alphabetically", () => {
+  const ranked = ["Project Management", "Mechanical Engineering", "Controls Engineering", "Mechanical Build", "Electrical Build", "Manufacturing Operations", "Service Engineering"];
+  for (let i = 1; i < ranked.length; i++) {
+    assert.ok(departmentFilterRank(ranked[i - 1]) < departmentFilterRank(ranked[i]), `${ranked[i - 1]} must rank before ${ranked[i]}`);
+  }
+});
+
+test("departmentFilterRank resolves a legacy/aliased HR spelling to its team's position", () => {
+  // "Mechanical Build / Manufacturing" is Build's own legacy alias in
+  // employee-teams.ts — it must rank alongside "Mechanical Build", not
+  // wherever it would fall alphabetically (after "Mechanical Engineering").
+  assert.equal(departmentFilterRank("Mechanical Build / Manufacturing"), departmentFilterRank("Mechanical Build"));
+});
+
+test("an unranked real department sorts after every team but before the blank bucket", () => {
+  const financeRank = departmentFilterRank("Finance");
+  const serviceRank = departmentFilterRank("Service Engineering");
+  const blankRank = departmentFilterRank("—");
+  assert.ok(financeRank > serviceRank, "an unranked department must sort after all 7 real teams");
+  assert.ok(financeRank < blankRank, "an unranked but real department must still sort before the blank bucket");
+});
+
+test("the blank department always sorts last of all", () => {
+  const allRanks = ["Project Management", "Finance", "Anything", "—"].map(departmentFilterRank);
+  assert.equal(Math.max(...allRanks), departmentFilterRank("—"));
 });

@@ -154,3 +154,43 @@ export function codesInTask(task: string): string[] {
 export function codesInDepartment(department: string): string[] {
   return CODES_BY_DEPARTMENT.get(department) ?? [];
 }
+
+// ── Fixed business order for "Group By: Department" (2026-08-17) ───────────
+//
+// Not sorted by hours, not alphabetical — the same left-to-right reading
+// order as the "Estimate to Complete" reference sheet's own layout: each
+// Section 10 function group in its column order (PM, ME, CE, General
+// Engineering, then Shop split into its three trades), then each later
+// phase in sequence, Engineering before Shop within a phase, ending with
+// Spare Parts. `UNDEFINED_LABEL` is deliberately absent from this list — see
+// `departmentOrderRank` below — so it always sorts after every real
+// department, never accidentally slotted in the middle by an edit here.
+export const DEPARTMENT_ORDER: string[] = [
+  "Project Management",
+  "Mechanical Engineering",
+  "Controls Engineering",
+  "General Engineering",
+  "Mechanical Build",
+  "Electrical Build",
+  "Manufacturing Operations",
+  "Machine Testing — Engineering",
+  "Machine Testing — Shop",
+  "Teardown & Install — Engineering",
+  "Teardown & Install — Shop",
+  "Warranty — Engineering",
+  "Warranty — Shop",
+  "Service — Engineering",
+  "Service — Shop",
+  "Spare Parts — Engineering",
+  "Spare Parts — Shop",
+];
+
+const DEPARTMENT_RANK = new Map(DEPARTMENT_ORDER.map((d, i) => [d, i]));
+
+// A department NOT in the fixed list — today that's only `UNDEFINED_LABEL`,
+// since every real code the app imports resolves to one of the 17 above —
+// ranks after all of them, so it reads at the bottom of any department-
+// ordered list without needing its own special-cased position in the array.
+export function departmentOrderRank(department: string): number {
+  return DEPARTMENT_RANK.get(department) ?? Number.MAX_SAFE_INTEGER;
+}
