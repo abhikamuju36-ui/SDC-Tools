@@ -5,13 +5,13 @@ import { usd } from "@/components/ui/format";
 import { useColumnSort } from "@/components/useColumnSort";
 import { SortableTh } from "@/components/ui/SortableHeader";
 import { sortRows, type SortColumns } from "@/lib/table-sort";
+import { EmptyState } from "@/components/ui/EmptyState";
+import { ReadinessPill } from "@/components/build-readiness/ReadinessPill";
 import {
   type BuildReadinessData,
   type BuildReadinessFilters,
   type JobSnapshotRow,
   type AssemblyDetail,
-  readinessBand,
-  type ReadinessBand,
 } from "@/lib/build-readiness-types";
 import { getBuildReadinessData, triggerBuildReadinessRefresh, refreshBuildReadinessProject } from "@/lib/build-readiness-actions";
 import type { BuildReadinessSharedView } from "@/lib/build-readiness-views-actions";
@@ -19,6 +19,14 @@ import { BuildReadinessFilterBar } from "@/components/build-readiness/BuildReadi
 import { BuildReadinessInsights } from "@/components/build-readiness/BuildReadinessInsights";
 
 const POLL_MS = 2000;
+
+// Frozen-column geometry for the main table (Job ID + Project stay put on
+// horizontal scroll). Fixed rem widths, not measured content — a sticky
+// offset has to be a constant, and rem (not px) survives the app's zoom
+// control, which scales via a CSS `zoom` var rather than the root font-size.
+const FROZEN_JOBID_W = "w-[4.5rem] min-w-[4.5rem] max-w-[4.5rem]";
+const FROZEN_PROJECT_LEFT = "left-[4.5rem]";
+const FROZEN_PROJECT_W = "w-[13rem] min-w-[13rem] max-w-[13rem]";
 
 function num(n: number): string {
   return Math.round(n).toLocaleString();
@@ -30,28 +38,23 @@ function fmtDate(s: string | null): string {
   return d.toLocaleDateString(undefined, { month: "short", day: "numeric" });
 }
 
-const BAND_DOT: Record<ReadinessBand, string> = {
-  green: "bg-sdc-green",
-  yellow: "bg-sdc-yellow",
-  red: "bg-sdc-red",
-  grey: "bg-sdc-gray-300",
-};
-const BAND_TEXT: Record<ReadinessBand, string> = {
-  green: "text-sdc-green-text",
-  yellow: "text-sdc-yellow-text",
-  red: "text-sdc-red-text",
-  grey: "text-sdc-gray-400",
-};
-
-function ReadinessDot({ band }: { band: ReadinessBand }) {
-  return <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${BAND_DOT[band]}`} aria-hidden />;
-}
-
-function KpiCard({ label, value, tone, hint }: { label: string; value: string; tone?: "danger" | "warn"; hint?: string }) {
+// ── Unified KPI strip — one bordered card, gap-px dividers ───────────────────
+//
+// Replaces 10 individually-bordered tiles (one shadow/border each) with the
+// same "one outer border, tone via left-accent + tint" treatment
+// EtcMonthKpiCards.tsx's MetricBlock uses, at a tile layout instead of
+// MetricBlock's stacked rows — these 10 KPIs are label+value only, no second
+// line, so a row-per-metric layout would waste height for no benefit.
+function KpiTile({ label, value, tone, hint }: { label: string; value: string; tone?: "danger" | "warn"; hint?: string }) {
   const toneCls = tone === "danger" ? "text-sdc-red-text" : tone === "warn" ? "text-sdc-yellow-text" : "text-sdc-navy";
   return (
-    <div className="flex min-w-[130px] flex-1 flex-col gap-0.5 rounded-lg border border-sdc-border bg-white px-3 py-2 shadow-sm" title={hint}>
-      <span className="text-label font-semibold uppercase tracking-wide text-sdc-gray-400">{label}</span>
+    <div
+      className={`flex min-w-0 flex-col justify-center gap-0.5 border-l-4 px-3 py-2.5 ${
+        tone === "danger" ? "border-l-sdc-red bg-sdc-red-bg/70" : tone === "warn" ? "border-l-sdc-yellow bg-sdc-yellow-bg/70" : "border-l-transparent bg-white"
+      }`}
+      title={hint}
+    >
+      <span className="truncate text-label font-semibold uppercase tracking-wide text-sdc-muted">{label}</span>
       <span className={`text-lg font-bold tabular-nums ${toneCls}`}>{value}</span>
     </div>
   );
@@ -159,110 +162,105 @@ export function BuildReadinessDashboard({
 
   const drillJob = drillJobId ? jobs.find((j) => j.jobId === drillJobId) ?? null : null;
 
-  const statusLine = (() => {
-    const m = data.meta;
-    if (m.status === "running") return `Live — refreshing ${m.jobsDone} of ${m.jobsTotal} projects…`;
-    if (!m.completedAt) return "Not refreshed yet.";
-    const secs = m.durationMs ? Math.round(m.durationMs / 1000) : null;
-    const failedNote = m.jobsFailed > 0 ? ` (${m.jobsFailed} project${m.jobsFailed === 1 ? "" : "s"} failed)` : "";
-    return `Live as of ${new Date(m.completedAt).toLocaleTimeString()}${secs != null ? ` — completed in ${secs}s` : ""}${failedNote}`;
-  })();
+  // Group-boundary + hairline vertical separators, shared by every non-frozen
+  // header/body cell so the two stay in lockstep (spec: subtle column
+  // separators, stronger between logical groups — Project | Readiness |
+  // Supply Risk | Financial).
+  const V = "border-l border-sdc-border-soft";
+  const VG = "border-l-2 border-sdc-border"; // group boundary
 
   return (
     <div className="flex flex-col gap-4">
-      <BuildReadinessFilterBar filters={filters} setFilters={setFilters} jobs={jobs} initialViews={initialViews} />
+      <BuildReadinessFilterBar
+        filters={filters}
+        setFilters={setFilters}
+        jobs={jobs}
+        initialViews={initialViews}
+        meta={data.meta}
+        onRefresh={handleRefreshNow}
+      />
 
-      {/* Live status + refresh */}
-      <div className="flex items-center justify-between gap-3 rounded-lg border border-sdc-border bg-white px-4 py-2 shadow-sm">
-        <span className="flex items-center gap-2 text-note text-sdc-gray-600">
-          {data.meta.status === "running" && <span className="h-2 w-2 animate-pulse rounded-full bg-sdc-blue" aria-hidden />}
-          {statusLine}
-        </span>
-        <button
-          type="button"
-          onClick={handleRefreshNow}
-          disabled={data.meta.status === "running"}
-          className="rounded-md border border-sdc-border bg-white px-3 py-1 text-xs font-semibold text-sdc-navy hover:bg-sdc-blue-light disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          Refresh now
-        </button>
-      </div>
-
-      {/* KPI strip */}
-      <div className="flex flex-wrap gap-2">
-        <KpiCard label="Active Projects" value={num(kpis.activeProjects)} />
-        <KpiCard label="Overall Readiness" value={`${kpis.overallPct}%`} />
-        <KpiCard label="Ready Now" value={num(kpis.assembliesReady)} />
-        <KpiCard label="Partially Ready" value={num(kpis.assembliesPartial)} tone={kpis.assembliesPartial > 0 ? "warn" : undefined} />
-        <KpiCard label="Blocked" value={num(kpis.assembliesBlocked)} tone={kpis.assembliesBlocked > 0 ? "danger" : undefined} />
-        <KpiCard label="Missing / Uncovered" value={num(kpis.partsUncovered)} tone={kpis.partsUncovered > 0 ? "danger" : undefined} />
-        <KpiCard label="Parts On Order" value={num(kpis.partsOnOrder)} />
-        <KpiCard label="Past Due Parts" value={num(kpis.partsPastDue)} tone={kpis.partsPastDue > 0 ? "danger" : undefined} />
-        <KpiCard label="Due ≤ 7 Days" value={num(kpis.partsDueSoon7d)} />
-        <KpiCard label="Material $ At Risk" value={usd(kpis.materialValueAtRisk)} tone={kpis.materialValueAtRisk > 0 ? "danger" : undefined} />
+      {/* KPI strip — one card, gap-px dividers, tone via left-accent + tint */}
+      <div className="overflow-hidden rounded-xl border border-sdc-border bg-sdc-border-soft shadow-sm">
+        <div className="grid grid-cols-[repeat(auto-fit,minmax(150px,1fr))] gap-px">
+          <KpiTile label="Active Projects" value={num(kpis.activeProjects)} />
+          <KpiTile label="Overall Readiness" value={`${kpis.overallPct}%`} />
+          <KpiTile label="Ready Now" value={num(kpis.assembliesReady)} />
+          <KpiTile label="Partially Ready" value={num(kpis.assembliesPartial)} tone={kpis.assembliesPartial > 0 ? "warn" : undefined} />
+          <KpiTile label="Blocked" value={num(kpis.assembliesBlocked)} tone={kpis.assembliesBlocked > 0 ? "danger" : undefined} />
+          <KpiTile label="Missing / Uncovered" value={num(kpis.partsUncovered)} tone={kpis.partsUncovered > 0 ? "danger" : undefined} />
+          <KpiTile label="Parts On Order" value={num(kpis.partsOnOrder)} />
+          <KpiTile label="Past Due Parts" value={num(kpis.partsPastDue)} tone={kpis.partsPastDue > 0 ? "danger" : undefined} />
+          <KpiTile label="Due ≤ 7 Days" value={num(kpis.partsDueSoon7d)} />
+          <KpiTile label="Material $ At Risk" value={usd(kpis.materialValueAtRisk)} tone={kpis.materialValueAtRisk > 0 ? "danger" : undefined} />
+        </div>
       </div>
 
       {/* Project Readiness table */}
       <div className="overflow-auto rounded-xl border border-sdc-border bg-white shadow-sm">
-        <table className="w-full min-w-[1100px] border-collapse text-left">
-          <thead className="sticky top-0 z-[1]">
-            <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
-              <SortableTh label="Job ID" sortKey="jobId" type="id" sort={sort.sort} onSort={sort.onSort} className="px-3 py-2" />
-              <SortableTh label="Project" sortKey="project" type="text" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Customer" sortKey="customer" type="text" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Readiness %" sortKey="readiness" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Assemblies" sortKey="assemblies" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Ready" sortKey="ready" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Partial" sortKey="partial" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Blocked" sortKey="blocked" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Missing" sortKey="missing" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="On Order" sortKey="onOrder" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Past Due" sortKey="pastDue" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Due ≤7d" sortKey="dueSoon" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Material $" sortKey="material" type="currency" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Next Unlock" sortKey="nextUnlock" type="date" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {sortedJobs.map((j) => {
-              const band = readinessBand(j);
-              return (
-                <tr
-                  key={j.jobId}
-                  onClick={() => setDrillJobId(j.jobId === drillJobId ? null : j.jobId)}
-                  className={`cursor-pointer border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/30 ${drillJobId === j.jobId ? "bg-sdc-blue-light/40" : ""}`}
-                >
-                  <td className="px-3 py-1.5 font-mono text-note font-semibold text-sdc-blue">{j.jobId}</td>
-                  <td className="px-2 py-1.5 text-note text-sdc-navy">{j.jobName}</td>
-                  <td className="px-2 py-1.5 text-note text-sdc-gray-600">{j.customer ?? "—"}</td>
-                  <td className="px-2 py-1.5">
-                    <span className="inline-flex items-center gap-1.5 font-mono text-note font-semibold tabular-nums">
-                      <ReadinessDot band={band} />
-                      <span className={BAND_TEXT[band]}>{j.status === "ok" ? `${j.overallReadinessPct}%` : j.status === "empty" ? "No BOM" : "Failed"}</span>
-                    </span>
-                  </td>
-                  <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600">{num(j.assembliesTotal)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-green-text">{num(j.assembliesReady)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-yellow-text">{num(j.assembliesPartial)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text">{num(j.assembliesBlocked)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600">{num(j.partsUncovered)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600">{num(j.partsOnOrder)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600">{num(j.partsPastDue)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600">{num(j.partsDueSoon7d)}</td>
-                  <td className="px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums text-sdc-navy">{usd(j.materialValueTotal)}</td>
-                  <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(j.nextUnlockDate)}</td>
-                </tr>
-              );
-            })}
-            {sortedJobs.length === 0 && (
-              <tr>
-                <td colSpan={14} className="px-4 py-8 text-center text-sm text-sdc-gray-400">
-                  No active projects match the current filters.
-                </td>
+        {sortedJobs.length === 0 ? (
+          <EmptyState
+            title="No projects match the current filters."
+            message="Try widening a filter, or clear them from the toolbar above."
+          />
+        ) : (
+          <table className="w-full min-w-[1100px] border-separate border-spacing-0 text-left">
+            <thead>
+              <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
+                <SortableTh label="Job ID" sortKey="jobId" type="id" sort={sort.sort} onSort={sort.onSort} className={`frozen-col sticky left-0 top-0 z-[3] ${FROZEN_JOBID_W} bg-sdc-navy px-3 py-2`} />
+                <SortableTh label="Project" sortKey="project" type="text" sort={sort.sort} onSort={sort.onSort} className={`frozen-col frozen-col-last sticky top-0 z-[3] ${FROZEN_PROJECT_LEFT} ${FROZEN_PROJECT_W} bg-sdc-navy px-2 py-2`} />
+                <SortableTh label="Customer" sortKey="customer" type="text" sort={sort.sort} onSort={sort.onSort} className={`sticky top-0 z-[2] bg-sdc-navy px-2 py-2 ${V}`} />
+                <SortableTh label="Readiness %" sortKey="readiness" type="number" sort={sort.sort} onSort={sort.onSort} className={`sticky top-0 z-[2] bg-sdc-navy px-2 py-2 ${VG}`} />
+                <SortableTh label="Assemblies" sortKey="assemblies" type="number" sort={sort.sort} onSort={sort.onSort} className={`sticky top-0 z-[2] bg-sdc-navy px-2 py-2 ${V}`} />
+                <SortableTh label="Ready" sortKey="ready" type="number" sort={sort.sort} onSort={sort.onSort} className={`sticky top-0 z-[2] bg-sdc-navy px-2 py-2 ${V}`} />
+                <SortableTh label="Partial" sortKey="partial" type="number" sort={sort.sort} onSort={sort.onSort} className={`sticky top-0 z-[2] bg-sdc-navy px-2 py-2 ${V}`} />
+                <SortableTh label="Blocked" sortKey="blocked" type="number" sort={sort.sort} onSort={sort.onSort} className={`sticky top-0 z-[2] bg-sdc-navy px-2 py-2 ${V}`} />
+                <SortableTh label="Missing" sortKey="missing" type="number" sort={sort.sort} onSort={sort.onSort} className={`sticky top-0 z-[2] bg-sdc-navy px-2 py-2 ${VG}`} />
+                <SortableTh label="On Order" sortKey="onOrder" type="number" sort={sort.sort} onSort={sort.onSort} className={`sticky top-0 z-[2] bg-sdc-navy px-2 py-2 ${V}`} />
+                <SortableTh label="Past Due" sortKey="pastDue" type="number" sort={sort.sort} onSort={sort.onSort} className={`sticky top-0 z-[2] bg-sdc-navy px-2 py-2 ${V}`} />
+                <SortableTh label="Due ≤7d" sortKey="dueSoon" type="number" sort={sort.sort} onSort={sort.onSort} className={`sticky top-0 z-[2] bg-sdc-navy px-2 py-2 ${V}`} />
+                <SortableTh label="Material $" sortKey="material" type="currency" sort={sort.sort} onSort={sort.onSort} className={`sticky top-0 z-[2] bg-sdc-navy px-2 py-2 ${VG}`} />
+                <SortableTh label="Next Unlock" sortKey="nextUnlock" type="date" sort={sort.sort} onSort={sort.onSort} className={`sticky top-0 z-[2] bg-sdc-navy px-2 py-2 ${V}`} />
               </tr>
-            )}
-          </tbody>
-        </table>
+            </thead>
+            <tbody>
+              {sortedJobs.map((j) => {
+                const selected = drillJobId === j.jobId;
+                const frozenBg = selected ? "bg-sdc-blue-light/40" : "bg-white group-hover:bg-sdc-blue-light/30";
+                return (
+                  <tr
+                    key={j.jobId}
+                    onClick={() => setDrillJobId(j.jobId === drillJobId ? null : j.jobId)}
+                    className={`group cursor-pointer hover:bg-sdc-blue-light/30 ${selected ? "bg-sdc-blue-light/40" : ""}`}
+                  >
+                    <td className={`frozen-col sticky left-0 z-[1] ${FROZEN_JOBID_W} ${frozenBg} border-b border-sdc-border-soft/60 px-3 py-1.5 font-mono text-note font-semibold text-sdc-blue ${selected ? "border-l-4 border-l-sdc-blue" : ""}`}>
+                      {j.jobId}
+                    </td>
+                    <td className={`frozen-col frozen-col-last sticky z-[1] ${FROZEN_PROJECT_LEFT} ${FROZEN_PROJECT_W} ${frozenBg} truncate border-b border-sdc-border-soft/60 px-2 py-1.5 text-note text-sdc-navy`} title={j.jobName}>
+                      {j.jobName}
+                    </td>
+                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-note text-sdc-gray-600 ${V}`}>{j.customer ?? "—"}</td>
+                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right ${VG}`}>
+                      <span className="inline-flex justify-end">
+                        <ReadinessPill pct={j.overallReadinessPct} status={j.status} />
+                      </span>
+                    </td>
+                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600 ${V}`}>{num(j.assembliesTotal)}</td>
+                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-green-text ${V}`}>{num(j.assembliesReady)}</td>
+                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-yellow-text ${V}`}>{num(j.assembliesPartial)}</td>
+                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text ${V}`}>{num(j.assembliesBlocked)}</td>
+                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600 ${VG}`}>{num(j.partsUncovered)}</td>
+                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600 ${V}`}>{num(j.partsOnOrder)}</td>
+                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600 ${V}`}>{num(j.partsPastDue)}</td>
+                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600 ${V}`}>{num(j.partsDueSoon7d)}</td>
+                    <td className={`border-b border-sdc-border-soft/60 px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums text-sdc-navy ${VG}`}>{usd(j.materialValueTotal)}</td>
+                    <td className={`whitespace-nowrap border-b border-sdc-border-soft/60 px-2 py-1.5 font-mono text-label text-sdc-gray-600 ${V}`}>{fmtDate(j.nextUnlockDate)}</td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
       </div>
 
       {drillJob && (
@@ -304,13 +302,14 @@ const RELEASE_LABEL: Record<AssemblyDetail["release"], string> = {
 function ProjectDrillPanel({ job, onClose, onRefresh, refreshing }: { job: JobSnapshotRow; onClose: () => void; onRefresh: () => void; refreshing: boolean }) {
   const sort = useColumnSort<AsmSortKey>();
   const rows = useMemo(() => sortRows(job.detail.assemblies, sort.sort, ASM_COLUMNS), [job.detail.assemblies, sort.sort]);
+  const v = "border-l border-sdc-border-soft";
 
   return (
     <div className="rounded-xl border border-sdc-border bg-white shadow-sm">
       <div className="flex items-center justify-between gap-3 border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2.5">
         <div>
           <span className="text-sm font-bold text-sdc-navy">{job.jobId} — {job.jobName}</span>
-          <span className="ml-2 text-note text-sdc-gray-500">Computed {new Date(job.computedAt).toLocaleString()}</span>
+          <span className="ml-2 text-note text-sdc-muted">Computed {new Date(job.computedAt).toLocaleString()}</span>
         </div>
         <div className="flex items-center gap-2">
           <button type="button" onClick={onRefresh} disabled={refreshing} className="rounded-md border border-sdc-border bg-white px-2.5 py-1 text-xs font-medium text-sdc-navy hover:bg-sdc-blue-light disabled:cursor-not-allowed disabled:opacity-50">
@@ -321,49 +320,55 @@ function ProjectDrillPanel({ job, onClose, onRefresh, refreshing }: { job: JobSn
           </button>
         </div>
       </div>
-      <div className="max-h-[420px] overflow-auto">
-        <table className="w-full min-w-[1000px] border-collapse text-left">
-          <thead className="sticky top-0 z-[1]">
-            <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
-              <SortableTh label="Assembly" sortKey="assembly" type="text" sort={sort.sort} onSort={sort.onSort} className="px-3 py-2" />
-              <SortableTh label="Release Status" sortKey="release" type="text" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Required Qty" sortKey="required" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Covered Qty" sortKey="covered" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Readiness %" sortKey="readiness" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Buildable Now" sortKey="buildable" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Missing" sortKey="missing" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="On Order" sortKey="onOrder" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Past Due" sortKey="pastDue" type="number" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Next Expected" sortKey="nextDelivery" type="date" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-              <SortableTh label="Est. Buildable" sortKey="estBuildable" type="date" sort={sort.sort} onSort={sort.onSort} className="px-2 py-2" />
-            </tr>
-          </thead>
-          <tbody>
-            {rows.map((a) => (
-              <tr key={a.key} className="border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/20" title={a.limitingParts.length ? `Limiting: ${a.limitingParts.map((lp) => `${lp.pn} (${lp.available}/${lp.required})`).join(", ")}` : undefined}>
-                <td className="px-3 py-1.5 text-note text-sdc-navy">{a.label}</td>
-                <td className="px-2 py-1.5 text-note text-sdc-gray-600">{RELEASE_LABEL[a.release]}</td>
-                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(a.requiredQty)}</td>
-                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(a.coveredQty)}</td>
-                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{a.readinessPct}%</td>
-                <td className={`px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums ${a.buildableQty == null ? "text-sdc-gray-400" : a.buildableQty >= a.requiredQty ? "text-sdc-green-text" : a.buildableQty > 0 ? "text-sdc-yellow-text" : "text-sdc-red-text"}`}>
-                  {a.buildableQty == null ? "—" : `${num(a.buildableQty)} (${a.buildablePct}%)`}
-                </td>
-                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text">{a.missingParts || "—"}</td>
-                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{a.onOrderParts || "—"}</td>
-                <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text">{a.pastDueParts || "—"}</td>
-                <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(a.nextExpectedDelivery)}</td>
-                <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(a.estimatedBuildableDate)}</td>
+      {rows.length === 0 ? (
+        <div className="p-6">
+          <EmptyState title="No released BOM available for this project." />
+        </div>
+      ) : (
+        <div className="max-h-[420px] overflow-auto">
+          <table className="w-full min-w-[1000px] border-collapse text-left">
+            <thead className="sticky top-0 z-[1]">
+              <tr className="bg-sdc-navy text-micro font-bold uppercase tracking-wider text-white">
+                <SortableTh label="Assembly" sortKey="assembly" type="text" sort={sort.sort} onSort={sort.onSort} className="px-3 py-2" />
+                <SortableTh label="Release Status" sortKey="release" type="text" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
+                <SortableTh label="Required Qty" sortKey="required" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
+                <SortableTh label="Covered Qty" sortKey="covered" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
+                <SortableTh label="Readiness %" sortKey="readiness" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
+                <SortableTh label="Buildable Now" sortKey="buildable" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
+                <SortableTh label="Missing" sortKey="missing" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
+                <SortableTh label="On Order" sortKey="onOrder" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
+                <SortableTh label="Past Due" sortKey="pastDue" type="number" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
+                <SortableTh label="Next Expected" sortKey="nextDelivery" type="date" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
+                <SortableTh label="Est. Buildable" sortKey="estBuildable" type="date" sort={sort.sort} onSort={sort.onSort} className={`px-2 py-2 ${v}`} />
               </tr>
-            ))}
-            {rows.length === 0 && (
-              <tr>
-                <td colSpan={11} className="px-4 py-6 text-center text-xs text-sdc-gray-400">No assemblies found for this job.</td>
-              </tr>
-            )}
-          </tbody>
-        </table>
-      </div>
+            </thead>
+            <tbody>
+              {rows.map((a) => (
+                <tr key={a.key} className="border-b border-sdc-border-soft/60 hover:bg-sdc-blue-light/20" title={a.limitingParts.length ? `Limiting: ${a.limitingParts.map((lp) => `${lp.pn} (${lp.available}/${lp.required})`).join(", ")}` : undefined}>
+                  <td className="px-3 py-1.5 text-note text-sdc-navy">{a.label}</td>
+                  <td className={`px-2 py-1.5 text-note text-sdc-gray-600 ${v}`}>{RELEASE_LABEL[a.release]}</td>
+                  <td className={`px-2 py-1.5 text-right font-mono text-note tabular-nums ${v}`}>{num(a.requiredQty)}</td>
+                  <td className={`px-2 py-1.5 text-right font-mono text-note tabular-nums ${v}`}>{num(a.coveredQty)}</td>
+                  <td className={`px-2 py-1.5 text-right ${v}`}>
+                    <span className="inline-flex justify-end">
+                      <ReadinessPill pct={a.readinessPct} />
+                    </span>
+                  </td>
+                  <td className={`px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums ${v} ${a.buildableQty == null ? "text-sdc-gray-400" : a.buildableQty >= a.requiredQty ? "text-sdc-green-text" : a.buildableQty > 0 ? "text-sdc-yellow-text" : "text-sdc-red-text"}`}>
+                    {a.buildableQty == null ? "—" : `${num(a.buildableQty)} (${a.buildablePct}%)`}
+                  </td>
+                  {/* Real counts, never null — a true 0 must print as 0, not "—" (§9). */}
+                  <td className={`px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text ${v}`}>{num(a.missingParts)}</td>
+                  <td className={`px-2 py-1.5 text-right font-mono text-note tabular-nums ${v}`}>{num(a.onOrderParts)}</td>
+                  <td className={`px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text ${v}`}>{num(a.pastDueParts)}</td>
+                  <td className={`whitespace-nowrap px-2 py-1.5 font-mono text-label text-sdc-gray-600 ${v}`}>{fmtDate(a.nextExpectedDelivery)}</td>
+                  <td className={`whitespace-nowrap px-2 py-1.5 font-mono text-label text-sdc-gray-600 ${v}`}>{fmtDate(a.estimatedBuildableDate)}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
     </div>
   );
 }

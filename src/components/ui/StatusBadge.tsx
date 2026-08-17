@@ -9,6 +9,7 @@ const VARIANT_CLASSES = {
   locked: "bg-sdc-gray-100 text-sdc-gray-700",
   notStarted: "bg-sdc-gray-100 text-sdc-gray-600",
   neutral: "bg-sdc-gray-100 text-sdc-gray-600",
+  failed: "bg-sdc-red-bg text-sdc-red-text",
 } as const;
 
 export type StatusVariant = keyof typeof VARIANT_CLASSES;

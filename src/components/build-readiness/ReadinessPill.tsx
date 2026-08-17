@@ -1,0 +1,43 @@
+import { readinessBand, type ReadinessBand } from "@/lib/build-readiness-types";
+import { StatusBadge } from "@/components/ui/StatusBadge";
+
+// One readiness-% visual for the whole Build Readiness tab — a small colored
+// dot plus the number (`● 68%`), or a neutral/red badge for the two states
+// that aren't a percentage at all ("No BOM", "Failed"). Previously this dot
+// was only in the main table; the drill panel and Insights each printed a
+// plain, uncolored `{pct}%` instead, so the same figure read three different
+// ways depending on which table it appeared in.
+
+const BAND_DOT: Record<ReadinessBand, string> = {
+  green: "bg-sdc-green",
+  yellow: "bg-sdc-yellow",
+  red: "bg-sdc-red",
+  grey: "bg-sdc-gray-300",
+};
+const BAND_TEXT: Record<ReadinessBand, string> = {
+  green: "text-sdc-green-text",
+  yellow: "text-sdc-yellow-text",
+  red: "text-sdc-red-text",
+  grey: "text-sdc-gray-400",
+};
+
+export function ReadinessPill({
+  pct,
+  status = "ok",
+}: {
+  pct: number;
+  // Assembly-level readiness (AssemblyDetail) has no status of its own — it is
+  // always a real measured percentage, so callers with no job status default
+  // to "ok" rather than passing one in.
+  status?: "ok" | "failed" | "empty";
+}) {
+  if (status === "empty") return <StatusBadge variant="neutral">No BOM</StatusBadge>;
+  if (status === "failed") return <StatusBadge variant="failed">Failed</StatusBadge>;
+  const band = readinessBand({ status: "ok", overallReadinessPct: pct });
+  return (
+    <span className="inline-flex items-center gap-1.5 font-mono font-semibold tabular-nums">
+      <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${BAND_DOT[band]}`} aria-hidden />
+      <span className={BAND_TEXT[band]}>{pct}%</span>
+    </span>
+  );
+}

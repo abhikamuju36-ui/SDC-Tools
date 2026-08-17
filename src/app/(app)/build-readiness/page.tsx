@@ -20,12 +20,18 @@ export default async function BuildReadinessPage() {
   const [data, views] = await Promise.all([getBuildReadinessData(), listBuildReadinessViews()]);
 
   return (
-    <div className="flex flex-col gap-4">
-      <PageTitle>Build Readiness</PageTitle>
-      <p className="-mt-2 text-sm text-sdc-gray-500">
-        What can be built right now, what&apos;s blocked and why, and what upcoming deliveries unlock next — across every active billable project.
-      </p>
-      <BuildReadinessDashboard initialData={data} initialViews={views} />
+    // `w-full p-8` — the same outer-wrapper padding etc/page.tsx and the other Reports
+    // tabs already carry (see job-cost-explorer/page.tsx's note): AppShell's <main> has
+    // no padding of its own by design, so every page supplies its own breathing room.
+    // This page simply hadn't, which is why it sat flush against the sidebar.
+    <div className="w-full p-8">
+      <div className="flex flex-col gap-4">
+        <PageTitle>Build Readiness</PageTitle>
+        <p className="-mt-2 text-note text-sdc-gray-400">
+          What can be built right now, what&apos;s blocked and why, and what upcoming deliveries unlock next — across every active billable project.
+        </p>
+        <BuildReadinessDashboard initialData={data} initialViews={views} />
+      </div>
     </div>
   );
 }

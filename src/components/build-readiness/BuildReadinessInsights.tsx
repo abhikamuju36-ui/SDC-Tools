@@ -5,6 +5,7 @@ import { usd } from "@/components/ui/format";
 import { useColumnSort } from "@/components/useColumnSort";
 import { SortableTh } from "@/components/ui/SortableHeader";
 import { sortRows, type SortColumns } from "@/lib/table-sort";
+import { ReadinessPill } from "@/components/build-readiness/ReadinessPill";
 import { type JobSnapshotRow, type BlockerReason, type SupplierRiskRow, BLOCKER_REASON_LABEL } from "@/lib/build-readiness-types";
 import { computeUpcomingUnlocks, computeSupplierRisk, computeReadinessForecast } from "@/lib/build-readiness-forecast";
 
@@ -23,7 +24,7 @@ function SectionCard({ title, subtitle, children }: { title: string; subtitle?: 
     <div className="flex flex-col overflow-hidden rounded-xl border border-sdc-border bg-white shadow-sm">
       <div className="border-b border-sdc-border-soft bg-sdc-gray-100 px-4 py-2">
         <span className="text-sm font-bold text-sdc-navy">{title}</span>
-        {subtitle && <span className="ml-2 text-note text-sdc-gray-500">{subtitle}</span>}
+        {subtitle && <span className="ml-2 text-note text-sdc-muted">{subtitle}</span>}
       </div>
       <div className="max-h-[360px] overflow-auto">{children}</div>
     </div>
@@ -91,9 +92,14 @@ function WhatCanWeBuildNow({ jobs }: { jobs: JobSnapshotRow[] }) {
               <td className="px-2 py-1.5 text-note text-sdc-navy">{r.label}</td>
               <td className="px-2 py-1.5 text-right font-mono text-note font-semibold tabular-nums text-sdc-green-text">{num(r.buildableQty)}</td>
               <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-600">{num(r.requiredQty)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{r.readinessPct}%</td>
+              <td className="px-2 py-1.5 text-right">
+                <span className="inline-flex justify-end">
+                  <ReadinessPill pct={r.readinessPct} />
+                </span>
+              </td>
               <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{usd(r.materialValue)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-gray-500">{r.riskCount || "—"}</td>
+              {/* Always a real count, never null — 0 prints as 0 (§9). */}
+              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-muted">{num(r.riskCount)}</td>
             </tr>
           ))}
           {sorted.length === 0 && (
@@ -277,10 +283,10 @@ function SupplierRisk({ jobs }: { jobs: JobSnapshotRow[] }) {
               <td className="px-3 py-1.5 text-note font-semibold text-sdc-navy">{r.supplier}</td>
               <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.openPOs)}</td>
               <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.partsOutstanding)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text">{r.pastDue || "—"}</td>
+              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-red-text">{num(r.pastDue)}</td>
               <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{r.avgDaysLate != null ? `${r.avgDaysLate}d` : "—"}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{r.assembliesBlocked || "—"}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{r.projectsAffected}</td>
+              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.assembliesBlocked)}</td>
+              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(r.projectsAffected)}</td>
               <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{usd(r.materialValue)}</td>
             </tr>
           ))}
@@ -324,8 +330,8 @@ function ReadinessForecast({ jobs, now }: { jobs: JobSnapshotRow[]; now: number 
                 </div>
               </td>
               <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(w.partsArriving)}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-green-text">{w.assembliesUnlocked || "—"}</td>
-              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{w.projectsReaching100 || "—"}</td>
+              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums text-sdc-green-text">{num(w.assembliesUnlocked)}</td>
+              <td className="px-2 py-1.5 text-right font-mono text-note tabular-nums">{num(w.projectsReaching100)}</td>
             </tr>
           ))}
         </tbody>
