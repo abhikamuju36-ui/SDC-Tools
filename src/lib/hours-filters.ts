@@ -1,5 +1,7 @@
 import type { Prisma } from "@prisma/client";
 import type { SortState } from "@/lib/table-sort";
+import { sectionNumberAndName, functionGroupFor, taskFor, codesInSection, codesInFunctionGroup, codesInTask, UNDEFINED_LABEL } from "@/lib/hours-operational-grouping";
+import { reconcileRounding } from "@/lib/rounding";
 
 // ── Filtering/grouping rules for the Hours tab, kept I/O-free ──────────────────
 //
@@ -30,13 +32,28 @@ export type HoursFilters = {
   to?: string; // "YYYY-MM-DD", inclusive
 };
 
-export type HoursGroupBy = "job" | "employee" | "section" | "department" | "date" | "month";
+export type HoursGroupBy = "job" | "employee" | "section" | "department" | "date" | "month" | "sectionName" | "functionGroup" | "taskDescription";
 
-export const HOURS_GROUP_BY_VALUES: readonly HoursGroupBy[] = ["job", "employee", "section", "department", "date", "month"];
+export const HOURS_GROUP_BY_VALUES: readonly HoursGroupBy[] = [
+  "job",
+  "employee",
+  "section",
+  "department",
+  "date",
+  "month",
+  "sectionName",
+  "functionGroup",
+  "taskDescription",
+];
 
 // One label map for all three places that render a dimension name — the field picker,
 // the tree's per-level column header, and (previously duplicated as a page.tsx-local
 // const) the page itself.
+//
+// "Section Name"/"Function Group"/"Task Description" are the standard operational
+// hierarchy (hours-operational-grouping.ts) — deliberately worded differently from
+// "Function / Section" (the raw code, e.g. "10-313 — Software") so the two dimensions
+// are never confused in the Group By menu; picking one doesn't imply the other.
 export const HOURS_GROUP_BY_LABEL: Record<HoursGroupBy, string> = {
   job: "Job",
   employee: "Employee",
@@ -44,6 +61,9 @@ export const HOURS_GROUP_BY_LABEL: Record<HoursGroupBy, string> = {
   department: "Department",
   date: "Date",
   month: "Month",
+  sectionName: "Section Name",
+  functionGroup: "Function Group",
+  taskDescription: "Task Description",
 };
 
 /**
@@ -215,6 +235,14 @@ export function buildHoursWhere(
  * above) — collapsing "month" into a from/to override would let a child's range
  * escape whatever from/to the parent already had.
  */
+/**
+ * The three operational-hierarchy dimensions narrow the same way `section` already
+ * does — by setting `filters.sections` — just expanded to every raw code the picked
+ * label covers (via hours-operational-grouping.ts's reverse lookups) instead of a
+ * single code. That's still a strict subset of whatever the parent's `sections`
+ * constraint already was (an empty/absent constraint included), which is what keeps
+ * a child's total from ever disagreeing with its parent's.
+ */
 export function narrowFiltersForGroupValue(filters: HoursFilters, groupBy: HoursGroupBy, value: string): HoursFilters {
   switch (groupBy) {
     case "job":
@@ -229,6 +257,12 @@ export function narrowFiltersForGroupValue(filters: HoursFilters, groupBy: Hours
       return { ...filters, months: [value] };
     case "date":
       return { ...filters, from: value, to: value };
+    case "sectionName":
+      return { ...filters, sections: codesInSection(value) };
+    case "functionGroup":
+      return { ...filters, sections: codesInFunctionGroup(value) };
+    case "taskDescription":
+      return { ...filters, sections: codesInTask(value) };
   }
 }
 
@@ -250,6 +284,63 @@ export function rollupByDepartment(
     cur.hours += r.hours;
     cur.punchCount += r.punchCount;
     rolled.set(dept, cur);
+  }
+  return [...rolled.values()].sort((a, b) => b.hours - a.hours);
+}
+
+export type OperationalTier = "sectionName" | "functionGroup" | "taskDescription";
+
+/**
+ * Same shape and contract as rollupByDepartment above — section isn't a column that
+ * already carries the operational label, so this groups the per-raw-section
+ * aggregates (from a plain `groupBy: ["section"]` query, the same one the flat
+ * "section" dimension already runs) into whichever tier of hours-operational-
+ * grouping.ts's hierarchy was asked for. A raw code with no entry in that table
+ * rolls up under UNDEFINED_LABEL rather than being dropped — see that module's
+ * header for why that's the required behavior, not a fallback of convenience.
+ */
+// ── Whole-number hours that always sum to their own displayed total (2026-08-17) ─
+//
+// The Hours tab must never show a decimal — every displayed hours figure is
+// Math.round'd — but rounding a set of sibling rows (a Group By level's
+// rows, or the root rows against the Total Hours KPI) INDEPENDENTLY can make
+// their displayed sum disagree with a separately-rounded parent/KPI total by
+// a unit or two, even though the underlying raw hours already sum EXACTLY
+// (every JobHoursDetail.section/jobId/employeeId/etc. grouping column is
+// non-nullable, so partitioning a filtered set by one and summing the parts
+// reproduces the whole — see hours-explorer.ts's queryHoursGrouped). This is
+// the exact "sum of roundings != rounding of the sum" class already fixed
+// for the Parts Cost card (src/lib/rounding.ts) — same fix, reused rather
+// than re-derived.
+//
+// `targetTotal` lets a caller reconcile a set of CHILD rows against their
+// PARENT row's own already-displayed (and possibly ±1-adjusted) number,
+// rather than a fresh rounding of the children's own raw sum — see
+// reconcileRounding's own header for why that distinction matters once more
+// than one level of nesting is involved. Omit it for the root level, which
+// has no parent row to match — it reconciles against its own sum instead,
+// which is also exactly what the Total Hours KPI's own rounding produces.
+//
+// Returns a Map so a caller renders in whatever (sorted) order it likes and
+// still looks a row's reconciled value up by its own stable `key`.
+export function reconcileGroupRowHours(rows: { key: string; hours: number }[], targetTotal?: number): Map<string, number> {
+  const reconciled = reconcileRounding(rows.map((r) => r.hours), targetTotal);
+  return new Map(rows.map((r, i) => [r.key, reconciled[i]]));
+}
+
+export function rollupByOperationalTier(bySection: { section: string; hours: number; punchCount: number }[], tier: OperationalTier): HoursGroupRow[] {
+  const rolled = new Map<string, HoursGroupRow>();
+  for (const r of bySection) {
+    const label =
+      tier === "sectionName" ? sectionNumberAndName(r.section).sectionName : tier === "functionGroup" ? functionGroupFor(r.section) : taskFor(r.section);
+    const key =
+      // sectionNumber, not the display name, is the stable key a child narrowing
+      // relies on — see narrowFiltersForGroupValue's "sectionName" case.
+      tier === "sectionName" ? (label === UNDEFINED_LABEL ? UNDEFINED_LABEL : sectionNumberAndName(r.section).sectionNumber) : label;
+    const cur = rolled.get(key) ?? { key, label, hours: 0, punchCount: 0 };
+    cur.hours += r.hours;
+    cur.punchCount += r.punchCount;
+    rolled.set(key, cur);
   }
   return [...rolled.values()].sort((a, b) => b.hours - a.hours);
 }

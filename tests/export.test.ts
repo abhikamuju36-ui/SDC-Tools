@@ -55,6 +55,54 @@ test("a value starting with = is neutralised", () => {
   assert.equal(csvCell(-5), "-5");
 });
 
+// ── Hours columns are always whole, in every export format (2026-08-17) ─────
+//
+// The XLSX writer already gets this via a "#,##0" cell format applied to any
+// `type: "hours"` column (xlsx.ts) — the value itself stays full precision,
+// Excel just displays it rounded. CSV has no cell-format concept, so the only
+// way to make the two exports show the same figure is to round the VALUE at
+// write time for that one column type.
+
+test("an hours-typed cell rounds to a whole number in CSV", () => {
+  assert.equal(csvCell(23.6, "hours"), "24");
+  assert.equal(csvCell(23.4, "hours"), "23");
+  assert.equal(csvCell(-2.6, "hours"), "-3");
+});
+
+test("a non-hours numeric cell is untouched by the hours rounding rule", () => {
+  assert.equal(csvCell(1234567.5), "1234567.5", "no type given: full precision, unchanged");
+  assert.equal(csvCell(1234567.5, "currency"), "1234567.5", "currency must not be rounded like hours");
+  assert.equal(csvCell(1234567.5, "number"), "1234567.5");
+});
+
+test("csvRow rounds only the columns whose type is hours, positionally", () => {
+  const row = csvRow(["Job 1148", 23.6, 47192.5], ["text", "hours", "currency"]);
+  assert.equal(row, "Job 1148,24,47192.5");
+});
+
+test("a full Hours-shaped sheet exports whole-number hours in both rows and totals", () => {
+  const spec: SheetSpec = {
+    sheetName: "Hours",
+    title: "Hours",
+    subtitle: [],
+    columns: [
+      { header: "Employee", type: "text" },
+      { header: "Hours", type: "hours" },
+    ],
+    rows: [
+      ["Jake Wiegand", 27.4],
+      ["Paul Vinci", 5.6],
+    ],
+    totals: ["TOTAL", 33],
+  };
+  // No subtitle lines in this spec: title, blank, header, two rows, totals.
+  const lines = buildCsv(spec).replace("﻿", "").trim().split("\r\n");
+  assert.equal(lines[2], "Employee,Hours");
+  assert.equal(lines[3], "Jake Wiegand,27");
+  assert.equal(lines[4], "Paul Vinci,6");
+  assert.equal(lines[5], "TOTAL,33");
+});
+
 test("the file is BOM-prefixed and CRLF-delimited, with the totals row last", () => {
   const spec: SheetSpec = {
     sheetName: "Projects",

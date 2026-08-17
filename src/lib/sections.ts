@@ -68,7 +68,63 @@ export const ETC_TRACKED_CODES = new Set(ETC_SECTIONS.map((s) => s.code));
 // Kept OUT of ETC_TRACKED_CODES on purpose, so the Monthly ETC grid, its totals
 // and its KPI cards are untouched — those are the fixed 9-code / 4-code formulas
 // the team confirmed.
-export const HOURS_IMPORT_CODES = new Set([...ETC_TRACKED_CODES, "10-413"]);
+//
+// ── PM (10-111) and Warranty (70-211/70-411) joined 2026-08-17, same reasoning ──
+//
+// These three were the other outstanding gap of the same shape as Manufacturing above:
+// dropped at the door, present only as a company-wide Standard Fees pool figure
+// (poolCategoryForPunch below), invisible to JobHoursDetail/the Hours tab and to
+// JobMonthlyActualHours (Job detail's "Actual Hours by Month", the Job Hour Details
+// dashboard's Engineering/Shop totals, and the Projects grid's PM/Warranty column
+// coloring when unlocked). By explicit request, this mirrors the Manufacturing fix
+// exactly rather than adding new isolation machinery: these three now flow into every
+// place actual hours already show up, the same as 10-413 already does. The pools are
+// unaffected — poolCategoryForPunch is keyed off the raw punch code independently of
+// this set, so PM/Warranty keep being pool-tracked exactly as before, in addition to
+// now also being per-job attributed.
+export const PM_AND_WARRANTY_CODES = new Set(["10-111", "70-211", "70-411"]);
+
+// ── Service (80-*) and Spare Parts (90-*), 2026-08-17 ───────────────────────────
+//
+// The two phases `mapPunchToColumns`'s own comment already named as "phases the app
+// doesn't model" — no SECTIONS entry, no ETC/Quoted column, no pool, nothing. Real
+// codes below are read directly off the live Current_Job_Hours.xlsx (not guessed —
+// guessing risks under- or over-counting real hours), covering every MachineSec-
+// Function combination actually observed under phase 80/90:
+//   80: 112, 211, 311, 313, 411, 412, 414, 516
+//   90: 211, 311, 411, 412, 414
+//
+// Kept OUT of PM_AND_WARRANTY_CODES's "everywhere" treatment on purpose. Unlike PM/
+// Warranty/Manufacturing, these have no existing SECTIONS row, so JobMonthlyActualHours
+// (a raw sum over every captured code) would grow while the Job Hour Details dashboard
+// and Projects grid — which only ever iterate the 17 SECTIONS codes — stayed blind to
+// why, a NEW reconciliation gap this app has no tolerance for. sync-powerbi.ts
+// excludes this exact set from the JobMonthlyActualHours rollup so only JobHoursDetail
+// (and therefore the Hours tab) sees them. No aliasing/folding: each stays its own
+// column here, and hours-operational-grouping.ts is what rolls several of them into
+// one Function Group/Task label for display.
+export const SERVICE_AND_SPARE_PARTS_CODES = new Set([
+  "80-112",
+  "80-211",
+  "80-311",
+  "80-313",
+  "80-411",
+  "80-412",
+  "80-414",
+  "80-516",
+  "90-211",
+  "90-311",
+  "90-411",
+  "90-412",
+  "90-414",
+]);
+
+export const HOURS_IMPORT_CODES = new Set([
+  ...ETC_TRACKED_CODES,
+  "10-413",
+  ...PM_AND_WARRANTY_CODES,
+  ...SERVICE_AND_SPARE_PARTS_CODES,
+]);
 
 // ── Punch code -> app column ────────────────────────────────────────────────
 //
@@ -106,6 +162,11 @@ export const HOURS_IMPORT_CODES = new Set([...ETC_TRACKED_CODES, "10-413"]);
 export const SECTION_ALIASES: Record<string, string> = {
   // Manufacturing: the punch data uses 414, the app's column is 413.
   "10-414": "10-413",
+  // Defensive-only (2026-08-17): no confirmed occurrence of 315 in real data, but the
+  // Database & Device row's own function list (315, 518) named it, so it's aliased here
+  // rather than left to silently drop if it ever does appear — zero cost while it never
+  // occurs, captures it under Database & Device the moment it does.
+  "10-315": "10-518",
   // Engineering functions inside a phase whose engineering column is the -211
   // one. (10-311 is NOT here: it keeps its documented 30/70 split into
   // 10-312/10-313, which exist as their own columns.)

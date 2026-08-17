@@ -2,8 +2,9 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { SECTIONS } from "@/lib/sections";
-import { buildHoursWhere, rollupByDepartment, type HoursFilters, type HoursGroupBy, type HoursGroupRow, type HoursDetailSortKey } from "@/lib/hours-filters";
+import { SECTIONS, HOURS_IMPORT_CODES } from "@/lib/sections";
+import { buildHoursWhere, rollupByDepartment, rollupByOperationalTier, type HoursFilters, type HoursGroupBy, type HoursGroupRow, type HoursDetailSortKey } from "@/lib/hours-filters";
+import { taskFor } from "@/lib/hours-operational-grouping";
 import type { SortState } from "@/lib/table-sort";
 
 export type { HoursFilters, HoursGroupBy, HoursGroupRow };
@@ -21,7 +22,16 @@ export type { HoursFilters, HoursGroupBy, HoursGroupRow };
 // a second computation — the exact bug class §42.14 in this app already fixed once for
 // Undefined Hours.
 
-const SECTION_NAME = new Map(SECTIONS.map((s) => [s.code, s.name]));
+// SECTIONS only names the 17 codes that drive the Quoted/ETC grid columns (see
+// sections.ts's own header). Codes captured since 2026-08-17 that have no such
+// column — Service/Spare Parts never will — still need a real display name here
+// (the flat "Function / Section" dimension and the sections filter menu both read
+// this map), so any code missing from SECTIONS falls back to
+// hours-operational-grouping.ts's task label rather than the bare "80-211" code.
+// HOURS_IMPORT_CODES is every code JobHoursDetail.section can hold, so building
+// the name map from it (rather than from SECTIONS alone) covers every code this
+// map is ever actually queried with.
+const SECTION_NAME = new Map<string, string>([...HOURS_IMPORT_CODES].map((code) => [code, SECTIONS.find((s) => s.code === code)?.name ?? taskFor(code)]));
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 500;
@@ -324,6 +334,18 @@ export async function queryHoursGrouped(filters: HoursFilters, groupBy: HoursGro
     return g
       .map((r) => ({ key: r.section, label: `${r.section} — ${SECTION_NAME.get(r.section) ?? r.section}`, hours: Number(r._sum.hours ?? 0), punchCount: r._count }))
       .sort((a, b) => b.hours - a.hours);
+  }
+
+  if (groupBy === "sectionName" || groupBy === "functionGroup" || groupBy === "taskDescription") {
+    // Same base aggregate the flat "section" dimension above already runs — the
+    // operational hierarchy is a re-labeling of these per-code totals, not a
+    // second query shape, which is what keeps it reconciled to the same total by
+    // construction.
+    const g = await prisma.jobHoursDetail.groupBy({ by: ["section"], where, _sum: { hours: true }, _count: true });
+    return rollupByOperationalTier(
+      g.map((r) => ({ section: r.section, hours: Number(r._sum.hours ?? 0), punchCount: r._count })),
+      groupBy,
+    );
   }
 
   if (groupBy === "month") {

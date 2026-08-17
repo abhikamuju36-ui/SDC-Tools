@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildHoursWhere, rollupByDepartment, narrowFiltersForGroupValue, parseHoursGroupByList } from "../src/lib/hours-filters";
+import { buildHoursWhere, rollupByDepartment, narrowFiltersForGroupValue, parseHoursGroupByList, reconcileGroupRowHours } from "../src/lib/hours-filters";
 
 // hours-filters.ts is the I/O-free half of the Hours tab's query layer (hours-explorer.ts
 // does the actual Prisma calls) — same split as undefined-hours-rules.ts / sections.ts,
@@ -136,6 +136,28 @@ test("narrowing the same dimension twice replaces rather than unions", () => {
   assert.deepEqual(step2.jobIds, ["1150"]);
 });
 
+// ── The operational-hierarchy dimensions narrow by expanding into `sections` ────
+
+test("narrows sectionName by expanding into every raw code that section covers", () => {
+  const narrowed = narrowFiltersForGroupValue({}, "sectionName", "10");
+  assert.ok(narrowed.sections!.includes("10-313"));
+  assert.ok(narrowed.sections!.includes("10-111"));
+  assert.ok(!narrowed.sections!.includes("40-211"));
+});
+
+test("narrows functionGroup by expanding across every section that uses that label", () => {
+  const narrowed = narrowFiltersForGroupValue({}, "functionGroup", "Engineering");
+  assert.ok(narrowed.sections!.includes("40-211"));
+  assert.ok(narrowed.sections!.includes("70-211"));
+  assert.ok(narrowed.sections!.includes("80-211"));
+});
+
+test("narrows taskDescription by expanding into every raw code sharing that task", () => {
+  const narrowed = narrowFiltersForGroupValue({}, "taskDescription", "Manufacturing");
+  assert.ok(narrowed.sections!.includes("10-413"));
+  assert.ok(narrowed.sections!.includes("90-414"));
+});
+
 // ── parseHoursGroupByList ─────────────────────────────────────────────────────
 
 test("parses a comma-joined groupBy param, preserving order", () => {
@@ -222,4 +244,46 @@ test("department rollup sorts biggest first", () => {
   const g = rollupByDepartment(byEmployee, deptById);
   assert.equal(g[0].key, "Big Team");
   assert.equal(g[1].key, "Small Team");
+});
+
+// ── reconcileGroupRowHours — the Hours tab never shows a decimal, and a set
+// of sibling rows always sums to their own displayed total (2026-08-17) ────
+
+test("reconciled group rows sum to exactly the rows' own rounded total when no target is given (the root-level case)", () => {
+  const rows = [
+    { key: "a", hours: 10.4 },
+    { key: "b", hours: 10.4 },
+    { key: "c", hours: 10.4 },
+  ];
+  const reconciled = reconcileGroupRowHours(rows);
+  const sum = [...reconciled.values()].reduce((s, v) => s + v, 0);
+  assert.equal(sum, Math.round(31.2), "31, not the naive 30 from summing three independently-rounded 10.4s");
+  for (const v of reconciled.values()) assert.equal(v, Math.round(v), "every reconciled value must be a whole number");
+});
+
+test("reconciled child rows sum to the PARENT's own displayed figure, not a fresh rounding of their own sum", () => {
+  // The parent's own displayed value (e.g. 12, after ITS OWN sibling
+  // reconciliation bumped it by one) must be exactly what its children add
+  // up to — even though the children's own naive sum would round to 11.
+  const children = [
+    { key: "x", hours: 5.4 },
+    { key: "y", hours: 5.4 },
+  ];
+  const reconciled = reconcileGroupRowHours(children, 12);
+  const sum = [...reconciled.values()].reduce((s, v) => s + v, 0);
+  assert.equal(sum, 12, "must match the parent's own number, not the children's independent rounding");
+});
+
+test("every row is addressable by its own key regardless of input order", () => {
+  const rows = [
+    { key: "job-1148", hours: 3.2 },
+    { key: "job-1150", hours: 7.8 },
+  ];
+  const reconciled = reconcileGroupRowHours(rows);
+  assert.equal(reconciled.get("job-1148"), 3);
+  assert.equal(reconciled.get("job-1150"), 8);
+});
+
+test("an empty set of rows reconciles to an empty map, not an error", () => {
+  assert.equal(reconcileGroupRowHours([]).size, 0);
 });

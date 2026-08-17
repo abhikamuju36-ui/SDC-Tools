@@ -4,6 +4,7 @@ import { card } from "@/components/ui/classnames";
 import { IndicatorCard } from "@/components/charts/IndicatorCard";
 import { ExportMenu } from "@/components/ExportMenu";
 import { EmptyState } from "@/components/ui/EmptyState";
+import { hours, hoursCell, hoursExact } from "@/components/ui/format";
 import { HoursFilterMenu, type HoursFilterSpec } from "@/components/HoursFilterMenu";
 import { HoursDateFilter } from "@/components/HoursDateFilter";
 import { HoursGroupByMenu } from "@/components/HoursGroupByMenu";
@@ -126,7 +127,11 @@ export default async function HoursPage({ searchParams }: { searchParams: Promis
       </div>
 
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <IndicatorCard label="Total Hours" value={summary.totalHours.toLocaleString(undefined, { maximumFractionDigits: 0 })} />
+        {/* `hours()`, not an inline toLocaleString — the one shared whole-hours
+            formatter every screen in the app uses (ui/format.ts), so this KPI
+            can never round differently from the grouped tree's own total or
+            the export's. */}
+        <IndicatorCard label="Total Hours" value={hours(summary.totalHours)} />
         <IndicatorCard label="Jobs" value={summary.jobs.toLocaleString()} />
         <IndicatorCard label="Employees" value={summary.employees.toLocaleString()} />
         <IndicatorCard label="Functions / Sections" value={summary.sections.toLocaleString()} />
@@ -246,7 +251,11 @@ function DetailTable({
               <td className={TD}>
                 {r.section} — {r.sectionName}
               </td>
-              <td className={TD_NUM}>{r.hours.toLocaleString(undefined, { maximumFractionDigits: 2 })}</td>
+              {/* hoursCell(), not a raw toLocaleString — never a decimal, and a real
+                  but sub-half-hour punch reads as "<1" rather than a misleading "0"
+                  (the same convention every other punch-level view in the app uses).
+                  The exact figure is still reachable via the tooltip. */}
+              <td className={TD_NUM} title={hoursExact(r.hours)}>{hoursCell(r.hours)}</td>
             </tr>
           ))}
         </tbody>

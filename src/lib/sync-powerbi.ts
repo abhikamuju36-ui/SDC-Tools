@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { VALID_JOB_TYPES, etcActiveJobFilter } from "@/lib/job-filters";
 import { runDax } from "@/lib/powerbi-client";
-import { ETC_TRACKED_CODES, PARTS_COST_SECTION } from "@/lib/sections";
+import { ETC_TRACKED_CODES, PARTS_COST_SECTION, SERVICE_AND_SPARE_PARTS_CODES } from "@/lib/sections";
 import { calcHoursLeft, round2, isMonthLocked, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, monthWindowUtc } from "@/lib/etc";
 import { getPartsCostBookedByJob } from "@/lib/sync-totaleto";
 import { resolveEtcPeriodName } from "@/lib/etc-period";
@@ -49,9 +49,17 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
   // transaction, which is what makes the KPI and its drill-through reconcile by
   // construction; and it is a stage a manager watching a refresh should see named
   // ("Calculating Undefined Hours…") rather than buried inside "Actual hours".
-  // Sum every tracked section to a per-job, per-month total.
+  // Sum every tracked section to a per-job, per-month total — except Service/Spare
+  // Parts (2026-08-17). Those two were just added to HOURS_IMPORT_CODES so the Hours
+  // tab can see them, but they have no SECTIONS row at all, unlike PM/Warranty/
+  // Manufacturing — so letting them into this sum would grow JobMonthlyActualHours
+  // (Job detail's "Actual Hours by Month") while the Job Hour Details dashboard and
+  // Projects grid, which only ever iterate the 17 SECTIONS codes, stayed blind to
+  // why. Excluding them here keeps every one of those pages byte-identical to
+  // today; JobHoursDetail (below) still gets every row, unfiltered.
   const byJobMonth = new Map<string, number>(); // `${jobId}::${YYYY-MM}` -> hours
   for (const r of rows) {
+    if (SERVICE_AND_SPARE_PARTS_CODES.has(r.section)) continue;
     const monthStr = `${r.year}-${String(r.month).padStart(2, "0")}`;
     const key = `${r.jobId}::${monthStr}`;
     byJobMonth.set(key, (byJobMonth.get(key) ?? 0) + r.hours);

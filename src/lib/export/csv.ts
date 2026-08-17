@@ -1,4 +1,4 @@
-import type { CellValue, SheetSpec } from "@/lib/export/sheet";
+import type { CellValue, ColumnType, SheetSpec } from "@/lib/export/sheet";
 
 // ── CSV, the way Excel actually reads it (§24.6) ─────────────────────────────
 //
@@ -19,14 +19,22 @@ import type { CellValue, SheetSpec } from "@/lib/export/sheet";
 //                  recognises it as a date on import.
 //   * string    -> quoted only when it has to be.
 
-export function csvCell(value: CellValue): string {
+export function csvCell(value: CellValue, type?: ColumnType): string {
   if (value === null || value === undefined) return "";
   if (value instanceof Date) return value.toISOString().slice(0, 10);
   if (typeof value === "number") {
     // NaN/Infinity would land in the file as "NaN" and poison a column's type. A figure
     // that cannot be represented is better shown as blank than as a word.
     if (!Number.isFinite(value)) return "";
-    return String(value);
+    // Hours are ALWAYS whole in this app (ui/format.ts) — the XLSX writer already
+    // gets this via a "#,##0" cell format (xlsx.ts's NUMBER_FORMAT), which rounds
+    // for DISPLAY without touching the stored value. CSV has no cell-format
+    // concept, so the only way to keep the two exports showing the same figure
+    // is to round the value itself, here, at write time — display/export-only;
+    // whatever computed `value` (a live DB aggregate, a punch-level query) still
+    // did its own math in full precision.
+    const display = type === "hours" ? Math.round(value) : value;
+    return String(display);
   }
   const s = String(value);
   // A leading = + - @ makes Excel treat the cell as a formula. Job names and customer
@@ -38,8 +46,8 @@ export function csvCell(value: CellValue): string {
   return /[",\n\r]/.test(escaped) ? `"${escaped.replace(/"/g, '""')}"` : escaped;
 }
 
-export function csvRow(values: CellValue[]): string {
-  return values.map(csvCell).join(",");
+export function csvRow(values: CellValue[], types?: ColumnType[]): string {
+  return values.map((v, i) => csvCell(v, types?.[i])).join(",");
 }
 
 // One section: title, subtitles, blank, header, rows, totals.
@@ -51,8 +59,12 @@ function sectionLines(spec: SheetSpec): string[] {
   for (const line of spec.subtitle) lines.push(csvRow([line]));
   lines.push("");
   lines.push(csvRow(spec.columns.map((c) => (c.group ? `${c.group} - ${c.header}` : c.header))));
-  for (const row of spec.rows) lines.push(csvRow(row));
-  if (spec.totals) lines.push(csvRow(spec.totals));
+  // Column types, positionally aligned with `rows`/`totals` — this is what lets
+  // csvCell round an "hours" column without every OTHER column type (currency,
+  // plain numbers) changing behavior.
+  const types = spec.columns.map((c) => c.type);
+  for (const row of spec.rows) lines.push(csvRow(row, types));
+  if (spec.totals) lines.push(csvRow(spec.totals, types));
   return lines;
 }
 

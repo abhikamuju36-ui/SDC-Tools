@@ -4,11 +4,12 @@ import { useEffect, useRef, useState, useTransition } from "react";
 import { useRealtimeChanges } from "@/components/RealtimeProvider";
 import { sequenced } from "@/lib/request-sequence";
 import { loadHoursGroupChildren, loadHoursDetailRows } from "@/lib/hours-actions";
-import { narrowFiltersForGroupValue, type HoursFilters, type HoursGroupBy } from "@/lib/hours-filters";
+import { narrowFiltersForGroupValue, reconcileGroupRowHours, type HoursFilters, type HoursGroupBy } from "@/lib/hours-filters";
 import type { HoursGroupRow, HoursRow, HoursDrillRows } from "@/lib/hours-explorer";
 import { useColumnSort } from "@/components/useColumnSort";
 import { sortRows, type SortColumns } from "@/lib/table-sort";
 import { SortableTh } from "@/components/ui/SortableHeader";
+import { hours, hoursCell, hoursExact } from "@/components/ui/format";
 
 // A nested, expandable rollup — Excel PivotTable "compact form", not Drill.tsx's flat
 // N-side-by-side-columns shape (that shape assumes every row fills all N dimensions,
@@ -97,10 +98,6 @@ const TD = "border-b border-sdc-border-soft px-3 py-1.5 text-sm text-sdc-navy";
 const TD_NUM = "border-b border-sdc-border-soft px-3 py-1.5 text-right font-mono text-sm tabular-nums text-sdc-navy";
 const DETAIL_TH = "border-b border-sdc-border px-3 py-1.5 text-label font-semibold uppercase tracking-[0.08em] text-sdc-muted";
 
-function fmtHours(n: number): string {
-  return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
-}
-
 function Caret({ open }: { open: boolean }) {
   return (
     <svg
@@ -131,13 +128,18 @@ function Caret({ open }: { open: boolean }) {
 // a leaf this deep is normally tens to a few hundred punches, not thousands) that sum
 // is mathematically the same figure the parent row above it already shows, which is
 // what makes the "detail total equals the group total" requirement visibly true, not
-// just true by construction. When `truncated` IS true, the footer says so instead of
-// printing a sum that would understate the real total — the parent row's own total
-// (still fully correct; it never depended on this fetch) remains the number to trust.
-function DetailBlock({ depth, drill }: { depth: number; drill: HoursDrillRows }) {
+// just true by construction. `parentDisplayHours` — the parent row's OWN already-
+// rounded (and possibly reconciled) figure — is shown here rather than a fresh,
+// independent `hours(shownHours)`, so the footer can never read one unit off from the
+// row directly above it that opened it (2026-08-17). When `truncated` IS true, the
+// footer says so and shows "—" for Hours instead of printing a sum that would
+// UNDERSTATE the real total — the parent row's own total (still fully correct; it
+// never depended on this fetch) remains the number to trust. Printing `shownHours`
+// unconditionally here used to contradict that exact promise the moment a leaf was
+// ever actually truncated.
+function DetailBlock({ depth, drill, parentDisplayHours }: { depth: number; drill: HoursDrillRows; parentDisplayHours: number }) {
   const { sort, onSort } = useColumnSort<DetailSortKey>();
   const sorted = sortRows(drill.rows, sort, DETAIL_SORT_COLUMNS);
-  const shownHours = drill.rows.reduce((s, r) => s + r.hours, 0);
   const pad = 0.75 + depth * 1.25;
   return (
     <div className="styled-scrollbar overflow-x-auto rounded-md border border-sdc-border-soft bg-sdc-gray-50" style={{ marginLeft: `${pad}rem`, marginRight: "0.75rem" }}>
@@ -166,7 +168,10 @@ function DetailBlock({ depth, drill }: { depth: number; drill: HoursDrillRows })
               <td className={TD}>
                 {r.section} — {r.sectionName}
               </td>
-              <td className={TD_NUM}>{fmtHours(r.hours)}</td>
+              {/* hoursCell(), matching every other punch-level view in the app —
+                  never a decimal, and a real sub-half-hour punch reads as "<1"
+                  rather than a misleading "0". */}
+              <td className={TD_NUM} title={hoursExact(r.hours)}>{hoursCell(r.hours)}</td>
             </tr>
           ))}
         </tbody>
@@ -177,7 +182,10 @@ function DetailBlock({ depth, drill }: { depth: number; drill: HoursDrillRows })
                 ? `Showing the first ${drill.rows.length.toLocaleString()} punches — narrow the filters or add another Group By level to see the rest.`
                 : `Total (${drill.rows.length.toLocaleString()} punch${drill.rows.length === 1 ? "" : "es"})`}
             </td>
-            <td className={TD_NUM}>{fmtHours(shownHours)}</td>
+            {/* The parent row's OWN figure, not a fresh sum of these (possibly
+                capped) rows — see this component's own header. Truncated: "—",
+                never a number that would understate the real total. */}
+            <td className={TD_NUM}>{drill.truncated ? "—" : hours(parentDisplayHours)}</td>
           </tr>
         </tfoot>
       </table>
@@ -295,7 +303,7 @@ export function HoursGroupedTree({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [expanded, children, detail]);
 
-  function renderLevel(rows: HoursGroupRow[], path: GroupPath, depth: number): React.ReactNode[] {
+  function renderLevel(rows: HoursGroupRow[], path: GroupPath, depth: number, targetTotal?: number): React.ReactNode[] {
     const levelDim = groupByLevels[depth];
     // Whether there's ANOTHER configured Group By dimension below this one. Every
     // row is expandable regardless — this only decides what expanding it fetches
@@ -303,10 +311,23 @@ export function HoursGroupedTree({
     // the caret/button appears at all.
     const hasNextGroupLevel = depth + 1 < groupByLevels.length;
     const sorted = sortRows(rows, sortState.sort, SORT_COLUMNS);
+    // Whole-number hours for these SIBLINGS that always sum to `targetTotal` (the
+    // parent row's own displayed figure — omitted at the root, where there's no
+    // parent and reconciling against these rows' own sum is also exactly what the
+    // Total Hours KPI's own rounding produces) — see hours-filters.ts's own header
+    // for why independent per-row rounding can't guarantee that on its own.
+    const displayHours = reconcileGroupRowHours(rows, targetTotal);
     return sorted.flatMap((row) => {
       const nodePath = [...path, { groupBy: levelDim, value: row.key }];
       const key = pathKey(nodePath);
       const isOpen = expanded.has(key);
+      // The reconciled figure for THIS row — shown here, and handed down as the
+      // target for whatever this row expands into (another level's siblings, or
+      // a drill's own footer), so a child's displayed total can never disagree
+      // with the row that opened it. The `?? Math.round` fallback only matters
+      // if `row.key` were somehow absent from `rows` itself, which can't happen
+      // (displayHours is built FROM `rows`) — kept as a defensive, not a real path.
+      const rowDisplayHours = displayHours.get(row.key) ?? Math.round(row.hours);
       const out: React.ReactNode[] = [
         <tr key={key} className="hover:bg-sdc-gray-50">
           <td className={TD} style={{ paddingLeft: `${0.75 + depth * 1.25}rem` }}>
@@ -322,7 +343,7 @@ export function HoursGroupedTree({
             </button>
           </td>
           <td className={TD_NUM}>{row.punchCount.toLocaleString()}</td>
-          <td className={TD_NUM}>{fmtHours(row.hours)}</td>
+          <td className={TD_NUM} title={hoursExact(row.hours)}>{hours(rowDisplayHours)}</td>
         </tr>,
       ];
       if (isOpen) {
@@ -351,7 +372,7 @@ export function HoursGroupedTree({
             );
           } else {
             const kids = children.get(key);
-            if (kids) out.push(...renderLevel(kids, nodePath, depth + 1));
+            if (kids) out.push(...renderLevel(kids, nodePath, depth + 1, rowDisplayHours));
           }
         } else {
           // Terminal level: the raw punch records, not another rollup.
@@ -369,7 +390,7 @@ export function HoursGroupedTree({
               out.push(
                 <tr key={`${key}:detail`}>
                   <td colSpan={3} className="py-1.5">
-                    <DetailBlock depth={depth + 1} drill={d} />
+                    <DetailBlock depth={depth + 1} drill={d} parentDisplayHours={rowDisplayHours} />
                   </td>
                 </tr>,
               );
@@ -399,7 +420,10 @@ export function HoursGroupedTree({
           <tr className="font-semibold">
             <td className="px-3 py-1.5 text-sm text-sdc-navy">{`TOTAL (${rootRows.length})`}</td>
             <td className={TD_NUM}>{rootPunches.toLocaleString()}</td>
-            <td className={TD_NUM}>{fmtHours(rootTotal)}</td>
+            {/* hours(), matching the KPI strip above the table — and exactly what
+                the root rows below this reconcile against, since renderLevel's own
+                root call has no parent to target and defaults to this same sum. */}
+            <td className={TD_NUM}>{hours(rootTotal)}</td>
           </tr>
         </tfoot>
       </table>
