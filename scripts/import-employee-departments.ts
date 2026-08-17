@@ -1,14 +1,17 @@
 /**
- * Import departments (and optionally supervisors) for existing employees from
- * Employee_Department_Map.xlsx.
+ * Import departments, position titles (and optionally supervisors) for
+ * existing employees from Employee_Department_Map.xlsx.
  *
  *   npx tsx scripts/import-employee-departments.ts                       # dry run, prints a plan
- *   npx tsx scripts/import-employee-departments.ts --apply               # writes departments
+ *   npx tsx scripts/import-employee-departments.ts --apply               # writes departments + titles
  *   npx tsx scripts/import-employee-departments.ts --apply-supervisors   # also writes the reporting line
  *
  * Supervisors are behind their own flag: the sheet's Supervisor column would
  * rewrite the reporting line for most of the roster, which is a bigger change
- * than a department relabel and worth confirming separately.
+ * than a department/title relabel and worth confirming separately. Position
+ * title is bundled with department under the plain --apply flag — like
+ * department, it's purely descriptive and has no downstream logic keyed off
+ * it (unlike supervisorId, which drives the reporting-line relation).
  *
  * The workbook has one sheet with First Name / Last Name / Position Title /
  * Supervisor / Department / Function.
@@ -79,7 +82,7 @@ async function main() {
   const rows = XLSX.utils.sheet_to_json<SheetRow>(wb.Sheets[wb.SheetNames[0]], { defval: null });
 
   const employees = await prisma.employee.findMany({
-    select: { id: true, name: true, department: true, active: true, supervisorId: true },
+    select: { id: true, name: true, department: true, positionTitle: true, active: true, supervisorId: true },
   });
 
   // Name key → employees. A key with >1 row is ambiguous and gets skipped.
@@ -92,11 +95,13 @@ async function main() {
   }
 
   const deptChanges: { id: number; name: string; from: string | null; to: string }[] = [];
+  const titleChanges: { id: number; name: string; from: string | null; to: string }[] = [];
   const supChanges: { id: number; name: string; to: string; toId: number }[] = [];
   const unchanged: string[] = [];
   const ambiguous: string[] = [];
   const sheetOnly: string[] = [];
   const noDept: string[] = [];
+  const noTitle: string[] = [];
   const supUnresolved = new Set<string>();
   const seenKeys = new Set<string>();
 
@@ -104,6 +109,7 @@ async function main() {
     const full = `${(r["First Name"] ?? "").trim()} ${(r["Last Name"] ?? "").trim()}`.trim();
     if (!full) continue;
     const dept = (r["Department / Function"] ?? "").trim();
+    const title = (r["Position Title"] ?? "").trim();
     const key = normalizeName(full);
     seenKeys.add(key);
 
@@ -115,6 +121,9 @@ async function main() {
     if (!dept) { noDept.push(full); }
     else if ((emp.department ?? "") !== dept) deptChanges.push({ id: emp.id, name: emp.name, from: emp.department, to: dept });
     else unchanged.push(full);
+
+    if (!title) { noTitle.push(full); }
+    else if ((emp.positionTitle ?? "") !== title) titleChanges.push({ id: emp.id, name: emp.name, from: emp.positionTitle, to: title });
 
     const supRaw = (r.Supervisor ?? "").trim();
     if (supRaw) {
@@ -140,6 +149,8 @@ async function main() {
 
   console.log(`\nDEPARTMENT CHANGES (${deptChanges.length}):`);
   for (const c of deptChanges) console.log(`  ${c.name}: ${c.from ?? "(none)"} → ${c.to}`);
+  console.log(`\nPOSITION TITLE CHANGES (${titleChanges.length}):`);
+  for (const c of titleChanges) console.log(`  ${c.name}: ${c.from ?? "(none)"} → ${c.to}`);
   console.log(`\nSUPERVISOR CHANGES (${supChanges.length}):`);
   for (const c of supChanges) console.log(`  ${c.name} → ${c.to}`);
   console.log(`\nAlready correct: ${unchanged.length}`);
@@ -147,17 +158,26 @@ async function main() {
   show("AMBIGUOUS — duplicate names in the DB, skipped", ambiguous);
   show("IN SHEET, NOT IN APP — no employee row; add on /employees if they should exist", sheetOnly);
   show("BLANK DEPARTMENT in the sheet, skipped", noDept);
+  show("BLANK POSITION TITLE in the sheet, skipped", noTitle);
   show("SUPERVISOR NOT RESOLVABLE to a single employee, skipped", [...supUnresolved]);
   show("ACTIVE IN APP, NOT IN SHEET — left untouched (NOT deactivated)", dbOnly);
 
   if (!APPLY) {
-    console.log("\nDry run — nothing written. Re-run with --apply (departments) or");
-    console.log("--apply-supervisors (departments + reporting line) to commit.");
+    console.log("\nDry run — nothing written. Re-run with --apply (departments + titles) or");
+    console.log("--apply-supervisors (departments + titles + reporting line) to commit.");
     return;
   }
 
-  for (const c of deptChanges) await prisma.employee.update({ where: { id: c.id }, data: { department: c.to } });
-  console.log(`\nApplied ${deptChanges.length} departments.`);
+  // One update per employee covering whichever of department/title changed
+  // for them, rather than two separate passes touching the same row twice.
+  const byEmployee = new Map<number, { name: string; department?: string; positionTitle?: string }>();
+  for (const c of deptChanges) byEmployee.set(c.id, { ...byEmployee.get(c.id), name: c.name, department: c.to });
+  for (const c of titleChanges) byEmployee.set(c.id, { ...byEmployee.get(c.id), name: c.name, positionTitle: c.to });
+  for (const [id, data] of byEmployee) {
+    const { name: _name, ...fields } = data;
+    await prisma.employee.update({ where: { id }, data: fields });
+  }
+  console.log(`\nApplied ${deptChanges.length} departments and ${titleChanges.length} position titles (${byEmployee.size} employees updated).`);
 
   if (APPLY_SUPERVISORS) {
     for (const c of supChanges) await prisma.employee.update({ where: { id: c.id }, data: { supervisorId: c.toId } });

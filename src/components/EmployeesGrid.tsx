@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { EmployeesTable, DASH, type EmployeeRow } from "@/components/EmployeesTable";
+import { MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
 
 // Toolbar + filtering for the employee roster; EmployeesTable renders the grid.
 //
@@ -11,6 +12,57 @@ import { EmployeesTable, DASH, type EmployeeRow } from "@/components/EmployeesTa
 // of two, and the table's header row goes back to being just headers.
 const SELECT =
   "h-8 rounded-lg border border-sdc-border bg-white px-2 text-xs text-sdc-navy outline-none focus:border-sdc-blue";
+
+// Department needs multiple-at-once (by request, 2026-08-18 — comparing two
+// or three departments side by side in the unified table), unlike Discipline,
+// which stays a plain single-value <select>. Plain client state, not the
+// URL-param-driven pattern HoursFilterMenu/ProjectsFilterMenu use — this
+// whole page is already an in-memory filter over a fully-loaded roster with
+// no server round-trip to save, so a second, heavier apparatus would buy
+// nothing. Reuses MenuCheckbox/MenuBulkActions (MenuStatus.tsx) since those
+// are already plain presentational pieces, not tied to that URL-draft hook.
+function DepartmentMenu({
+  options,
+  selected,
+  onChange,
+}: {
+  options: string[];
+  selected: string[];
+  onChange: (next: string[]) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const label = selected.length === 0 ? "All departments" : selected.length === 1 ? selected[0] : `${selected.length} departments`;
+  const toggle = (d: string) => onChange(selected.includes(d) ? selected.filter((x) => x !== d) : [...selected, d]);
+
+  return (
+    <div className="relative">
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-haspopup="listbox"
+        aria-expanded={open}
+        className={`${SELECT} inline-flex max-w-48 items-center gap-1.5 truncate`}
+      >
+        <span className="truncate">{label}</span>
+        <svg viewBox="0 0 16 16" width="9" height="9" fill="none" stroke="currentColor" strokeWidth="2" className={`shrink-0 opacity-60 motion-interactive ${open ? "rotate-180" : ""}`}>
+          <path d="M3.5 6 L8 10.5 L12.5 6" strokeLinecap="round" strokeLinejoin="round" />
+        </svg>
+      </button>
+      {open && (
+        <>
+          {/* Click-outside to close — a transparent full-screen layer under the panel. */}
+          <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
+          <div className="motion-menu-panel styled-scrollbar absolute left-0 top-full z-30 mt-1 max-h-72 w-64 overflow-y-auto rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
+            <MenuBulkActions onAll={() => onChange(options)} onNone={() => onChange([])} />
+            {options.map((d) => (
+              <MenuCheckbox key={d} label={d} checked={selected.includes(d)} onChange={() => toggle(d)} />
+            ))}
+          </div>
+        </>
+      )}
+    </div>
+  );
+}
 
 // `disciplines` drives the toolbar filter only. The table itself is read-only,
 // so it no longer needs the discipline or supervisor option lists that used to
@@ -25,7 +77,7 @@ export function EmployeesGrid({
   const [q, setQ] = useState("");
   const [showInactive, setShowInactive] = useState(false);
   const [discipline, setDiscipline] = useState("");
-  const [dept, setDept] = useState("");
+  const [dept, setDept] = useState<string[]>([]);
 
   // Departments actually present in the data, so the dropdown can't offer a
   // value that would filter to nothing.
@@ -39,10 +91,10 @@ export function EmployeesGrid({
     return rows.filter((r) => {
       if (!showInactive && !r.active) return false;
       if (discipline && r.discipline !== discipline) return false;
-      if (dept && r.department?.trim() !== dept) return false;
+      if (dept.length > 0 && !dept.includes(r.department?.trim() ?? "")) return false;
       if (!s) return true;
       // Same fields the old grid's quick filter covered.
-      return [r.name, r.discipline, r.supervisor, r.department].some((v) =>
+      return [r.name, r.discipline, r.positionTitle, r.supervisor, r.department].some((v) =>
         String(v ?? "").toLowerCase().includes(s),
       );
     });
@@ -60,7 +112,7 @@ export function EmployeesGrid({
     return rows.filter(
       (r) =>
         !r.active &&
-        [r.name, r.discipline, r.supervisor, r.department].some((v) => String(v ?? "").toLowerCase().includes(s)),
+        [r.name, r.discipline, r.positionTitle, r.supervisor, r.department].some((v) => String(v ?? "").toLowerCase().includes(s)),
     ).length;
   }, [rows, q, showInactive]);
 
@@ -87,14 +139,7 @@ export function EmployeesGrid({
             </option>
           ))}
         </select>
-        <select value={dept} onChange={(e) => setDept(e.target.value)} aria-label="Filter by department" className={SELECT}>
-          <option value="">All departments</option>
-          {departments.map((d) => (
-            <option key={d} value={d}>
-              {d}
-            </option>
-          ))}
-        </select>
+        <DepartmentMenu options={departments} selected={dept} onChange={setDept} />
         <label className="flex items-center gap-2 text-xs font-medium text-sdc-gray-600">
           <input type="checkbox" checked={showInactive} onChange={(e) => setShowInactive(e.target.checked)} className="h-3.5 w-3.5" />
           Show inactive

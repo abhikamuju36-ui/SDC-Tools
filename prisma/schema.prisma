@@ -95,6 +95,11 @@ model Employee {
   paylocityId  String?  @unique
   name         String
   department   String?
+  // Job title, sourced from Employee_Department_Map.xlsx's "Position Title"
+  // column (see scripts/import-employee-departments.ts) — the same sheet that
+  // supplies department/supervisor. No other upstream (Paylocity/Scheduler)
+  // carries a title today, so this is that sheet's own field alone.
+  positionTitle String?
   billingGroup String? // e.g. Engineering / Shop
   // Team grouping, matching the SDC Scheduler app's team_members.discipline
   // categories: "Project Management" | "Mechanical Engineers" | "Controls

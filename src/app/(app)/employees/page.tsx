@@ -33,6 +33,7 @@ export default async function EmployeesPage() {
     id: e.id,
     name: e.name,
     discipline: DISCIPLINES.includes(e.discipline ?? "") ? (e.discipline as string) : DASH,
+    positionTitle: e.positionTitle?.trim() || DASH,
     supervisor: e.supervisorId != null ? (nameById.get(e.supervisorId) ?? DASH) : DASH,
     department: e.department ?? "",
     team: teamById.get(e.id) ?? null,
@@ -47,7 +48,7 @@ export default async function EmployeesPage() {
         <div>
           <PageTitle className="mb-1">Employees</PageTitle>
           <p className="text-sm text-sdc-gray-600">
-            Replaces the Project Planner workbook&apos;s Employees tab. One card per team, in the order the work moves through them. Deactivated employees keep all historical hours. Team grouping is shared live with SDC Scheduler&apos;s board — the roster here is read-only, maintained through the import button and Scheduler&apos;s own board.
+            Replaces the Project Planner workbook&apos;s Employees tab. One table, grouped by department in the order the work moves through them — click a department to collapse it. Deactivated employees keep all historical hours. Team grouping is shared live with SDC Scheduler&apos;s board — the roster here is read-only, maintained through the import button and Scheduler&apos;s own board.
           </p>
         </div>
         <div className="flex items-center gap-2">
