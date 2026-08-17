@@ -49,13 +49,16 @@ export async function buildHoursExport(params: HoursSearchParams, now: Date): Pr
     const groupBy = groupByLevels[0];
     const groups = await queryHoursGrouped(filters, groupBy);
 
+    // No Punches column (2026-08-17, by request) — matches the on-screen
+    // grouped tree (HoursGroupedTree.tsx), which dropped it the same way, so
+    // this export reflects exactly what a grouped view shows. `g.punchCount`
+    // is still computed by queryHoursGrouped; it's just not put in the sheet.
     const columns: SheetColumn[] = [
       { header: HOURS_GROUP_BY_LABEL[groupBy], type: "text", width: 30 },
       { header: "Hours", type: "hours" },
-      { header: "Punches", type: "number", width: 10 },
     ];
-    const body: CellValue[][] = groups.map((g) => [g.label, g.hours, g.punchCount]);
-    const totals: CellValue[] = [`TOTAL (${groups.length} ${HOURS_GROUP_BY_LABEL[groupBy].toLowerCase()}${groups.length === 1 ? "" : "s"})`, summary.totalHours, null];
+    const body: CellValue[][] = groups.map((g) => [g.label, g.hours]);
+    const totals: CellValue[] = [`TOTAL (${groups.length} ${HOURS_GROUP_BY_LABEL[groupBy].toLowerCase()}${groups.length === 1 ? "" : "s"})`, summary.totalHours];
 
     const subtitle = [
       ...subtitleBase,

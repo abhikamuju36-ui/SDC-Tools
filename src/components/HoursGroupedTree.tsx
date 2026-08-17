@@ -14,9 +14,16 @@ import { hours, hoursCell, hoursExact } from "@/components/ui/format";
 // A nested, expandable rollup — Excel PivotTable "compact form", not Drill.tsx's flat
 // N-side-by-side-columns shape (that shape assumes every row fills all N dimensions,
 // which a variable-depth tree never does). One "Group" column (caret + label, indented
-// by depth) + Punches + Hours, rendered as flat sibling <tr>s under one <tbody> — real
+// by depth) + Hours, rendered as flat sibling <tr>s under one <tbody> — real
 // nested <table>s inside cells would work but aren't semantic and complicate styling
 // for no benefit here.
+//
+// No Punches column (2026-08-17, by request): a punch COUNT is a property of
+// the underlying data, not something a grouped rollup needs to show — the
+// backend still computes and returns `HoursGroupRow.punchCount` (nothing
+// about the data changed), this table just no longer renders it. The
+// ungrouped detail table/drill-through rows (each already ONE punch) never
+// had this column to begin with.
 //
 // Every row's numbers come from its OWN independent server aggregate query
 // (queryHoursGrouped, via loadHoursGroupChildren) — never a client-side re-sum of
@@ -36,7 +43,7 @@ import { hours, hoursCell, hoursExact } from "@/components/ui/format";
 // server aggregates over the identical `where`, not one re-summing the other.
 // DetailBlock (below) renders these with their own header/sort/footer, since their
 // column shape (Date/Employee/Job/Section/Hours) has nothing in common with a group
-// row's (Group/Punches/Hours) — a plain text label sharing this table's 3 columns.
+// row's (Group/Hours) — a plain text label sharing this table's 2 columns.
 //
 // ── The realtime-refresh interaction ─────────────────────────────────────────
 //
@@ -64,11 +71,10 @@ function pathKey(path: GroupPath): string {
   return JSON.stringify(path.map((s) => [s.groupBy, s.value]));
 }
 
-type SortKey = "group" | "punches" | "hours";
+type SortKey = "group" | "hours";
 
 const SORT_COLUMNS: SortColumns<HoursGroupRow, SortKey> = {
   group: { type: "text", value: (r) => r.label },
-  punches: { type: "number", value: (r) => r.punchCount },
   hours: { type: "hours", value: (r) => r.hours },
 };
 
@@ -117,7 +123,7 @@ function Caret({ open }: { open: boolean }) {
 
 // The tree's terminal level: the raw punch records behind one leaf group, in their
 // own small sortable table (their column shape has nothing in common with a group
-// row's Group/Punches/Hours, so they get their own <thead> rather than trying to
+// row's Group/Hours, so they get their own <thead> rather than trying to
 // line up under it). A real component, not another branch of renderLevel's plain
 // function, specifically so it can hold ITS OWN sort state via useColumnSort — each
 // expanded leaf sorts independently or a sort applied while browsing one group would
@@ -342,7 +348,6 @@ export function HoursGroupedTree({
               <span>{row.label}</span>
             </button>
           </td>
-          <td className={TD_NUM}>{row.punchCount.toLocaleString()}</td>
           <td className={TD_NUM} title={hoursExact(row.hours)}>{hours(rowDisplayHours)}</td>
         </tr>,
       ];
@@ -350,7 +355,7 @@ export function HoursGroupedTree({
         if (errors.has(key)) {
           out.push(
             <tr key={`${key}:error`}>
-              <td colSpan={3} className="px-3 py-1.5 text-xs" style={{ paddingLeft: `${0.75 + (depth + 1) * 1.25}rem` }}>
+              <td colSpan={2} className="px-3 py-1.5 text-xs" style={{ paddingLeft: `${0.75 + (depth + 1) * 1.25}rem` }}>
                 <span className="font-medium text-sdc-red-text">{errors.get(key)}</span>{" "}
                 <button type="button" onClick={() => void fetchChildren(nodePath, key)} className="font-medium text-sdc-blue hover:underline">
                   Retry
@@ -365,7 +370,7 @@ export function HoursGroupedTree({
             // body for why this is derived rather than a separate `loading` state.
             out.push(
               <tr key={`${key}:loading`}>
-                <td colSpan={3} className="px-3 py-1.5 text-xs text-sdc-muted" style={{ paddingLeft: `${0.75 + (depth + 1) * 1.25}rem` }}>
+                <td colSpan={2} className="px-3 py-1.5 text-xs text-sdc-muted" style={{ paddingLeft: `${0.75 + (depth + 1) * 1.25}rem` }}>
                   Loading…
                 </td>
               </tr>,
@@ -379,7 +384,7 @@ export function HoursGroupedTree({
           if (!detail.has(key)) {
             out.push(
               <tr key={`${key}:loading`}>
-                <td colSpan={3} className="px-3 py-1.5 text-xs text-sdc-muted" style={{ paddingLeft: `${0.75 + (depth + 1) * 1.25}rem` }}>
+                <td colSpan={2} className="px-3 py-1.5 text-xs text-sdc-muted" style={{ paddingLeft: `${0.75 + (depth + 1) * 1.25}rem` }}>
                   Loading…
                 </td>
               </tr>,
@@ -389,7 +394,7 @@ export function HoursGroupedTree({
             if (d) {
               out.push(
                 <tr key={`${key}:detail`}>
-                  <td colSpan={3} className="py-1.5">
+                  <td colSpan={2} className="py-1.5">
                     <DetailBlock depth={depth + 1} drill={d} parentDisplayHours={rowDisplayHours} />
                   </td>
                 </tr>,
@@ -403,7 +408,6 @@ export function HoursGroupedTree({
   }
 
   const rootTotal = rootRows.reduce((s, r) => s + r.hours, 0);
-  const rootPunches = rootRows.reduce((s, r) => s + r.punchCount, 0);
 
   return (
     <div className="styled-scrollbar overflow-x-auto">
@@ -411,7 +415,6 @@ export function HoursGroupedTree({
         <thead>
           <tr>
             <SortableTh label="Group" sortKey="group" type="text" sort={sortState.sort} onSort={sortState.onSort} className="border-b border-sdc-border px-3 py-1.5 text-label font-semibold uppercase tracking-[0.08em] text-sdc-muted" />
-            <SortableTh label="Punches" sortKey="punches" type="number" sort={sortState.sort} onSort={sortState.onSort} className="border-b border-sdc-border px-3 py-1.5 text-label font-semibold uppercase tracking-[0.08em] text-sdc-muted" />
             <SortableTh label="Hours" sortKey="hours" type="hours" sort={sortState.sort} onSort={sortState.onSort} className="border-b border-sdc-border px-3 py-1.5 text-label font-semibold uppercase tracking-[0.08em] text-sdc-muted" />
           </tr>
         </thead>
@@ -419,7 +422,6 @@ export function HoursGroupedTree({
         <tfoot>
           <tr className="font-semibold">
             <td className="px-3 py-1.5 text-sm text-sdc-navy">{`TOTAL (${rootRows.length})`}</td>
-            <td className={TD_NUM}>{rootPunches.toLocaleString()}</td>
             {/* hours(), matching the KPI strip above the table — and exactly what
                 the root rows below this reconcile against, since renderLevel's own
                 root call has no parent to target and defaults to this same sum. */}
