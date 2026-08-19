@@ -10,6 +10,8 @@ import { buildEtcExport } from "@/lib/export/etc-export";
 import { buildHoursExport } from "@/lib/export/hours-export";
 import { buildStandardExportSheets } from "@/lib/export/standard-export";
 import { isStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
+import { requireApiPermission } from "@/lib/require-permission";
+import type { Permission } from "@/lib/permissions";
 
 // ── The export endpoint (§24) ────────────────────────────────────────────────
 //
@@ -70,6 +72,14 @@ export const dynamic = "force-dynamic";
 
 const REPORTS = new Set(["projects", "etc", "hours"]);
 
+// Same permission the corresponding page itself requires (requirePagePermission
+// in each page.tsx) — the export must not be a back door around the page guard.
+const REPORT_PERMISSION: Record<string, Permission> = {
+  projects: "projects:view",
+  etc: "monthly-etc:view",
+  hours: "hours:view",
+};
+
 export async function GET(req: NextRequest, ctx: { params: Promise<{ report: string }> }) {
   const session = await auth();
   if (!session?.user) {
@@ -80,6 +90,9 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ report: str
   if (!REPORTS.has(report)) {
     return new Response(`Unknown report "${report}".`, { status: 404 });
   }
+
+  const permissionDenied = requireApiPermission(session, REPORT_PERMISSION[report]);
+  if (permissionDenied) return permissionDenied;
 
   const { searchParams } = new URL(req.url);
   const format = searchParams.get("format") === "csv" ? "csv" : "xlsx";
