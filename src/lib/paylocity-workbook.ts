@@ -8,6 +8,7 @@ import {
   mapPunchToColumns,
   poolCategoryForPunch,
 } from "@/lib/sections";
+import { normalizeJobNumber as normalizeJobId } from "@/lib/job-filters";
 // The Undefined Hours definition, from the one module that owns it. Imported for use
 // here AND re-exported below, so callers can reach it either way but there is still
 // only one implementation.
@@ -373,9 +374,11 @@ function cellDate(v: ExcelJS.CellValue): Date | null {
 
 // Power BI zero-pads Job Id ("0114") and so does this export; the app stores it
 // unpadded ("114"). Joining raw makes every older job look like it has no hours.
-// Same rule as job-hours-source.normalizePbiJobId, deliberately identical.
+// The rule itself now lives in job-filters.ts, shared with job-hours-source.ts's
+// normalizePbiJobId (this used to be a second, byte-identical copy of the same
+// regex) -- this name is kept as the export every existing caller here uses.
 export function normalizeJobNumber(raw: string): string {
-  return raw.trim().replace(/^0+(?=\d)/, "");
+  return normalizeJobId(raw);
 }
 
 // The reporting month is the WORK DATE's month and nothing else (§42.6). One

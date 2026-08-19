@@ -91,6 +91,20 @@ export function isSdcCustomer(customer: string | null | undefined): boolean {
   return normalized === "SDC" || normalized.startsWith("STEVEN DOUGLAS");
 }
 
+// A Job Id with leading zeros ("00114") from an older export, unpadded to
+// match how the app itself stores the Id ("114") — joining raw makes every
+// older job look like it has no hours/rows. Was two byte-identical copies
+// (job-hours-source.ts's normalizePbiJobId, paylocity-workbook.ts's
+// normalizeJobNumber, the latter's own comment admitting as much); this is
+// the one definition both now import. Deliberately NOT merged with
+// job-cost-inventory-sync.ts's own, differently-named normalizeJobId()
+// — that one takes `unknown`, round-trips through Number(), and returns null
+// for anything non-numeric, which is a real behavioral difference, not just
+// a naming one, so it stays separate rather than being papered over.
+export function normalizeJobNumber(raw: string): string {
+  return raw.trim().replace(/^0+(?=\d)/, "");
+}
+
 // Job Ids are stored as strings but are (almost always) numbers — a plain
 // string sort puts "10000" before "979". Sort numerically like the sheet did,
 // falling back to string comparison for any non-numeric Id.

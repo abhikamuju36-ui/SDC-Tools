@@ -1,5 +1,6 @@
 import { runDax } from "@/lib/powerbi-client";
 import { ETC_TRACKED_CODES, HOURS_IMPORT_CODES, SECTIONS, mapPunchToColumns, poolCategoryForPunch } from "@/lib/sections";
+import { normalizeJobNumber } from "@/lib/job-filters";
 
 // Power BI reader for actual hours worked — NOT the live source since 2026-08-05.
 // The live source today is the OneDrive-synced Paylocity workbook, read via
@@ -94,9 +95,11 @@ export function latestWorkDate(rows: JobHoursRow[]): Date | null {
 }
 
 // Power BI zero-pads Job Id ("0814"); the app stores it unpadded ("814").
-// Joining raw makes every older job look like it has no hours at all.
+// Joining raw makes every older job look like it has no hours at all. The
+// rule itself now lives in job-filters.ts (normalizeJobNumber) -- this name
+// is kept as the export every existing caller here already uses.
 export function normalizePbiJobId(raw: string): string {
-  return raw.trim().replace(/^0+(?=\d)/, "");
+  return normalizeJobNumber(raw);
 }
 
 type PbiRow = {

@@ -94,6 +94,11 @@ export async function getHoursFilterOptions(): Promise<HoursFilterOptions> {
 
   const employeeById = new Map(employees.map((e) => [e.paylocityId!, e]));
 
+  // Deliberately NOT job-filters.ts's compareJobIds(): that falls back to a
+  // plain (non-numeric) string compare the moment EITHER side fails Number()
+  // parsing, which sorts "SVC-10" before "SVC-9" -- wrong once a non-numeric
+  // job id's suffix reaches double digits. localeCompare's own numeric mode
+  // gets that case right for both plain numeric AND SVC-style ids alike.
   const jobs = jobRows
     .map((r) => ({ jobId: r.job.jobId, jobName: r.job.jobName }))
     .sort((a, b) => a.jobId.localeCompare(b.jobId, undefined, { numeric: true }));

@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { SECTIONS, PHASE_GROUPS, PARTS_COST_SECTION } from "@/lib/sections";
 import { suggestNewEtc } from "@/lib/etc";
-import { validJobTypeFilter } from "@/lib/job-filters";
+import { validJobTypeFilter, compareJobIds } from "@/lib/job-filters";
 import { loadActualHoursBySection, loadMonthlyWorkedBySection } from "@/lib/actual-hours";
 
 // Data layer for the "Job Hour Details" dashboard — a web recreation of the
@@ -69,11 +69,7 @@ export async function listDashboardJobs(): Promise<{ id: number; jobId: string; 
     where: { ...validJobTypeFilter },
     select: { id: true, jobId: true, jobName: true, status: true },
   });
-  return jobs.sort((a, b) => {
-    const na = Number(a.jobId), nb = Number(b.jobId);
-    if (Number.isFinite(na) && Number.isFinite(nb)) return na - nb; // Job Id ascending
-    return a.jobId.localeCompare(b.jobId);
-  });
+  return jobs.sort((a, b) => compareJobIds(a.jobId, b.jobId));
 }
 
 // Pick a sensible default job for first load: the one with the most worked
@@ -103,10 +99,7 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
     select: { id: true, jobId: true, jobName: true, customer: true, status: true },
   });
   if (jobs.length === 0) return null;
-  jobs.sort((a, b) => {
-    const na = Number(a.jobId), nb = Number(b.jobId);
-    return Number.isFinite(na) && Number.isFinite(nb) ? na - nb : a.jobId.localeCompare(b.jobId);
-  });
+  jobs.sort((a, b) => compareJobIds(a.jobId, b.jobId));
   const jobIds = jobs.map((j) => j.id);
 
   const [estimated, entries, actualBySection, monthlyBySection, freshness, latestEntry] = await Promise.all([
