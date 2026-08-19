@@ -8,6 +8,7 @@ import { recentRefreshRuns } from "@/lib/refresh-service";
 import { validJobTypeFilter } from "@/lib/job-filters";
 import { PageTitle, SectionTitle } from "@/components/ui/Typography";
 import { card, BUTTON_PRIMARY } from "@/components/ui/classnames";
+import { requirePagePermission } from "@/lib/require-permission";
 
 function currentMonth() {
   const d = new Date();
@@ -42,6 +43,7 @@ export default async function Home({
 }: {
   searchParams: Promise<{ tab?: string; dqFrom?: string; dqTo?: string; dqEmp?: string; dqFn?: string; dqMtd?: string }>;
 }) {
+  await requirePagePermission("dashboard:view");
   const sp = await searchParams;
   // The Data Quality explorer classifies every punch in the window, so it runs
   // only when that tab is actually open. The dashboard's landing view must not

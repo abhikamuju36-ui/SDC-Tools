@@ -56,7 +56,7 @@ export async function setDepartmentCompletion(
   completed: boolean,
 ): Promise<SetCompletionResult> {
   const session = await auth();
-  const user = session?.user as { id?: string; name?: string | null; email?: string | null } | undefined;
+  const user = session?.user;
   if (!user) return { ok: false, reason: "auth", message: "You need to be signed in to change this." };
 
   if (!isValidMonth(month)) return { ok: false, reason: "month", message: `"${month}" is not a valid month.` };
@@ -65,8 +65,7 @@ export async function setDepartmentCompletion(
   if (!dept) return { ok: false, reason: "department", message: `"${department}" is not a department on this checklist.` };
 
   const owners = parseDepartmentOwners(process.env[DEPARTMENT_OWNERS_ENV]);
-  const role = (session?.user as { role?: string } | undefined)?.role ?? null;
-  if (!canManageDepartment({ email: user.email ?? null, role }, dept.code, owners)) {
+  if (!canManageDepartment({ email: user.email ?? null, role: user.role }, dept.code, owners)) {
     return {
       ok: false,
       reason: "permission",

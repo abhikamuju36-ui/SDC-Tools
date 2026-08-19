@@ -1,3 +1,5 @@
+import type { Permission } from "@/lib/permissions";
+
 // Fixed section-code column order and names, confirmed directly against the
 // "Estimated Hours" tab of Project Planner Data Control.xlsx (rows 2-7: phase,
 // section id, Function Group, Function Name, function id, full code). `group`
@@ -246,15 +248,38 @@ export const POOL_QUOTED_SECTION: Record<PoolCategory, string> = {
   SHOP_WARRANTY: "70-411",
 };
 
-// The sections the Projects grid hides behind its password gate (see
-// projects-gate.ts): PM, Manufacturing, Warranty Engineering and Warranty
-// Shop. Locked, they appear neither as columns nor in the Sections picker.
+// The sections the Projects grid hides from anyone without the matching
+// Standard Fees permission: PM, Manufacturing, Warranty Engineering and
+// Warranty Shop. They appear neither as columns nor in the Sections picker
+// for a role that lacks them.
 //
 // DERIVED from POOL_QUOTED_SECTION rather than listed again, because these are
 // the same four sections that drive the Standard Fees pools — that is precisely
 // why they're restricted, and a second hand-written list of the same codes is
 // one that eventually disagrees with the first.
 export const RESTRICTED_SECTION_CODES: ReadonlySet<string> = new Set(Object.values(POOL_QUOTED_SECTION));
+
+// Which permission (lib/permissions.ts) governs a restricted pool's columns.
+// Engineering Warranty and Shop Warranty share one permission — the spec
+// names exactly three category grants (PM, Mfg, Warranty), not four — while
+// PM and Manufacturing each get their own, so a future role could be given
+// one without the others.
+export const POOL_PERMISSION: Record<PoolCategory, Permission> = {
+  ENGINEERING_PM: "standards:pm",
+  SHOP_MANUFACTURING: "standards:mfg",
+  ENGINEERING_WARRANTY: "standards:warranty",
+  SHOP_WARRANTY: "standards:warranty",
+};
+
+const CATEGORY_BY_SECTION_CODE = new Map<string, PoolCategory>(
+  Object.entries(POOL_QUOTED_SECTION).map(([category, code]) => [code, category as PoolCategory]),
+);
+
+/** The permission that gates a restricted section code, or null for a code that isn't restricted. */
+export function restrictedSectionPermission(code: string): Permission | null {
+  const category = CATEGORY_BY_SECTION_CODE.get(code);
+  return category ? POOL_PERMISSION[category] : null;
+}
 
 // Which pool a raw punch belongs to, by MachineSec (phase) + Function.
 //

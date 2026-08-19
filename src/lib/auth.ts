@@ -114,7 +114,7 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
         // `authorize()` returns one), which also means a version bumped
         // between "authorize() approved this sign-in" and "the jwt callback
         // ran" is still honoured correctly rather than baked in stale.
-        token.role = (user as { role: string }).role;
+        token.role = user.role;
         token.tokenVersion = (await currentTokenVersion(Number(user.id))) ?? 0;
         const viaSso = account?.provider === "scheduler-sso";
         await logAuditFor(Number(user.id), user.email ?? null, {
@@ -146,11 +146,16 @@ export const { handlers, signIn, signOut, auth } = NextAuth({
     },
     session: async ({ session, token }) => {
       if (session.user) {
-        (session.user as { role?: string }).role = token.role as string;
-        (session.user as { id?: string }).id = token.sub;
+        session.user.role = token.role ?? "ALL";
+        if (token.sub) session.user.id = token.sub;
       }
       return session;
     },
-    authorized: async ({ auth }) => !!auth?.user,
+    // No `authorized` callback here any more — proxy.ts now passes auth() a
+    // custom handler function instead of relying on this callback, and
+    // next-auth's own middleware wrapper (lib/index.js's handleAuth) skips
+    // `authorized` entirely whenever a custom handler is present. Both the
+    // "must be signed in" check and the new permission check live in
+    // proxy.ts, in one place, together.
   },
 });

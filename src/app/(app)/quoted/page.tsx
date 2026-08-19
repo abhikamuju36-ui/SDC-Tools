@@ -2,8 +2,8 @@ import { Fragment } from "react";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { validJobTypeFilter, VALID_JOB_TYPES, JOB_STATUSES, DEFAULT_VISIBLE_STATUSES, compareJobIds, isSdcCustomer } from "@/lib/job-filters";
-import { SECTIONS, PHASE_GROUPS, RESTRICTED_SECTION_CODES } from "@/lib/sections";
-import { isProjectsUnlocked } from "@/lib/projects-gate";
+import { SECTIONS, PHASE_GROUPS, RESTRICTED_SECTION_CODES, restrictedSectionPermission } from "@/lib/sections";
+import { hasPermission } from "@/lib/permissions";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
 import { PageTitle } from "@/components/ui/Typography";
@@ -42,6 +42,7 @@ import {
   WhenEditing,
 } from "@/components/ProjectsEditMode";
 import { getProjectsEditState } from "@/lib/projects-edit-mode";
+import { requirePagePermission } from "@/lib/require-permission";
 
 // Header banding, matching the real "Estimated Hours" tab's column colors
 // exactly (extracted from its theme + explicit fills) — phase row, then a
@@ -277,6 +278,7 @@ export default async function QuotedPage({
     to?: string;
   }>;
 }) {
+  const pageSession = await requirePagePermission("projects:view");
   const sp = await searchParams;
   const { cols, sort, dir, customers, types, statuses, billables, hide } = sp;
   // Actual hours in the cells. A view param rather than a client-side flag, so
@@ -301,10 +303,7 @@ export default async function QuotedPage({
   // Nothing below reads one of these before the batch resolves, so the only
   // thing the sequence ever bought was the order they appear in the file.
   const [
-    { editing: initialEditing, mayEdit: signedIn },
-    // The password gate (projects-gate.ts). It governs BOTH editing and whether
-    // the four restricted sections exist on this page at all.
-    projectsUnlocked,
+    { editing: initialEditing, mayEdit },
     // Saved/published grid views ("Views ▾") — loaded for everyone; the team
     // default + shared list come from the DB, personal views live in the browser.
     { default: teamDefault, shared: sharedViews },
@@ -317,7 +316,6 @@ export default async function QuotedPage({
     { baseUrl: schedulerBaseUrl, jobNumbers: schedulerJobNumbers, ssoEmail: schedulerSsoEmail },
   ] = await Promise.all([
     getProjectsEditState(),
-    isProjectsUnlocked(),
     listSharedViews(),
     // Real job types are a fixed, known set (job-filters.ts) — no query needed.
     // Customers are open-ended, so pull the distinct list actually in use.
@@ -325,23 +323,22 @@ export default async function QuotedPage({
     prisma.job.findMany({ where: validJobTypeFilter, distinct: ["status"], select: { status: true } }),
     getSchedulerLinkContext(),
   ]);
-  // Being signed in is no longer sufficient to edit — the gate is the boundary.
-  // assertProjectsEditable() re-checks the same thing on every write, so this
-  // is only what the toolbar renders.
-  const mayEdit = signedIn && projectsUnlocked;
-  // The server's view of Edit Mode. The switch itself is client state (see
-  // ProjectsEditMode.tsx), but the cookie behind it is what decides whether the
-  // restricted sections are RENDERED — and that has to be decided here, because
-  // hiding them in the browser would still ship the hours in the HTML.
-  const editingNow = initialEditing && mayEdit;
-  // PM / Manufacturing / Warranty Engineering / Warranty Shop, shown only while
-  // actually editing — not merely while unlocked. Read-only is the state most
-  // visits sit in, and "unlocked but not editing" showed these hours to anyone
-  // who had ever typed the password this session.
+  // PM / Manufacturing / Warranty Engineering / Warranty Shop, shown only to a
+  // role with the matching Standard Fees permission (lib/sections.ts's
+  // POOL_PERMISSION) — independent of Edit Mode entirely as of 2026-08-18.
+  // Standard Fees viewing and Projects editing are separate grants now (Sales
+  // and ELT happen to hold both, but nothing here assumes that stays true),
+  // and this can be decided once, from the role already resolved above by
+  // requirePagePermission — no cookie, no server round trip when the toggle
+  // flips.
   //
   // Filtered out of the columns, the phase pickers and the "Show all" switch,
   // so a hand-typed ?cols=10-111 has nothing to turn on either.
-  const sectionAllowed = (code: string) => editingNow || !RESTRICTED_SECTION_CODES.has(code);
+  const role = pageSession.user.role;
+  const sectionAllowed = (code: string) => {
+    const permission = restrictedSectionPermission(code);
+    return permission === null || hasPermission(role, permission);
+  };
   const visibleSections = SECTIONS.filter((s) => sectionAllowed(s.code));
   // Column show/hide — `hide` is a comma-separated list of hidden column
   // keys (absent = all shown). Drives the "Columns" dropdown.
@@ -363,9 +360,9 @@ export default async function QuotedPage({
   // picked some via the phase pickers (which still list all sections).
   // Hidden by default: 10-111 (PM), 10-413 (Manufacturing), and the two
   // Warranty codes (70-211/70-411). A manager can re-enable any of them.
-  // Same four codes as RESTRICTED_SECTION_CODES — while locked they're gone
-  // entirely (sectionAllowed, above); once unlocked they're merely off by
-  // default, and a manager can turn any of them on from the Sections picker.
+  // Same four codes as RESTRICTED_SECTION_CODES — a role without the matching
+  // permission never sees them at all (sectionAllowed, above); a role that
+  // does have it starts with them off by default, from the Sections picker.
   const DEFAULT_HIDDEN_CODES = RESTRICTED_SECTION_CODES;
   const visibleCodes = (
     cols === undefined
@@ -373,15 +370,6 @@ export default async function QuotedPage({
       : decodeParamList(cols)
   ).filter(sectionAllowed); // a saved view or hand-typed ?cols= can't reopen them
   const visibleSet = new Set(visibleCodes);
-  // Does flipping Edit Mode actually CHANGE the rendered columns?
-  //
-  // Only if the user has explicitly asked for a restricted section via ?cols=.
-  // With no cols param — the default, and how most visits look — the four
-  // restricted codes are excluded anyway (DEFAULT_HIDDEN_CODES), so the toggle
-  // adds and removes nothing and the router.refresh() it used to fire
-  // unconditionally re-rendered all 233 rows to produce identical markup. That
-  // refresh is what "updating columns…" was waiting on.
-  const restrictedInCols = cols !== undefined && decodeParamList(cols).some((c) => RESTRICTED_SECTION_CODES.has(c));
 
   const sortKey: SortKey = SORT_KEYS.includes(sort as SortKey) ? (sort as SortKey) : "jobId";
   const sortDir = dir === "desc" ? "desc" : "asc";
@@ -536,12 +524,7 @@ export default async function QuotedPage({
       {/* Wraps the toolbar AND the grid: the switch, the Add/Save buttons and
           the fieldset that locks the cells all read the same client state, so
           they can never show three different opinions about the mode. */}
-      <ProjectsEditModeProvider
-        initialEditing={initialEditing}
-        signedIn={signedIn}
-        initiallyUnlocked={projectsUnlocked}
-        columnsDependOnMode={restrictedInCols}
-      >
+      <ProjectsEditModeProvider initialEditing={initialEditing} mayEdit={mayEdit}>
       <div className="mb-1 flex items-end justify-between gap-4">
         <PageTitle>Projects</PageTitle>
         <WhenEditing>
@@ -577,9 +560,10 @@ export default async function QuotedPage({
       <div className="mb-5 flex flex-wrap gap-2.5">
         {/* First in the row: whether the grid is live is the one thing a user
             shouldn't have to discover by typing into it. */}
-        {/* One control for the whole thing: Read-only <-> Editing, password
-            asked for on the way in. It also governs whether the four
-            restricted sections exist — see `editingNow` above. */}
+        {/* One control: Read-only <-> Editing, gated on the projects:edit
+            permission (Sales/ELT) — no password. The Standard Fees columns'
+            visibility is a separate, independent permission check above
+            (sectionAllowed) and does not move with this switch. */}
         <ProjectsEditModeToggle />
         <ProjectsFilterMenu
           filters={[

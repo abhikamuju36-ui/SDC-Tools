@@ -234,7 +234,11 @@ export function PartsCostSummary({
   // numbers that surfaced it.
   //
   // The bar now stacks exactly what Projection sums: Invoiced (GL-posted,
-  // most certain) then the remaining ETC forecast on top. "Left to be
+  // most certain) then the remaining residual on top — usually the ETC
+  // forecast, but as of 2026-08-19 (job 1119, Karl Storz — Projection reading
+  // BELOW Total Parts Cost Spent) it floors at "Left to be invoiced" whenever
+  // ETC hasn't caught up to it, so this second segment can be either term
+  // depending on which is larger (see projIncrement below). "Left to be
   // invoiced" is still shown — just as an informational side figure below,
   // not a segment of this bar — because it answers a real question ("how
   // much of ETC is already spoken for by an open PO") that showing only two
@@ -245,9 +249,19 @@ export function PartsCostSummary({
   // high against the job ledger people check this card against.
   const invoiced = financials.invoiced; // base segment — "Invoiced"
   const spent = financials.totalSpent; // Invoiced + Left to be invoiced — NOT the bar's total (see below)
-  const projTotal = financials.projection; // = invoiced + etc — the bar's own total height
-  const leftToInvoiceAmount = financials.leftToInvoice; // informational only — "Left to be invoiced", included in ETC
-  const projIncrement = financials.etc ?? 0; // "ETC" — the bar's second (and last) segment
+  const projTotal = financials.projection; // = invoiced + max(leftToInvoice, etc) as of 2026-08-19 — the bar's own total height
+  const leftToInvoiceAmount = financials.leftToInvoice; // informational only — "Left to be invoiced", included in ETC (or the floor, when ETC hasn't caught up — see below)
+  // "ETC" — the bar's second (and last) segment. Deliberately the RESIDUAL
+  // (projTotal - invoiced), not `financials.etc` directly (2026-08-19): since
+  // the fix for job 1119 (Karl Storz), `projTotal` can be `invoiced +
+  // leftToInvoice` rather than `invoiced + etc` whenever a stale/small ETC
+  // hasn't caught up to an open commitment — see
+  // parts-budget-projection.ts's `projectionResidual`. Reading it as a
+  // residual keeps this segment's rendered HEIGHT consistent with the total
+  // no matter which of the two terms actually won; reading `financials.etc`
+  // directly would draw a shorter segment than the bar's own total implies
+  // in exactly that case.
+  const projIncrement = hasProjection ? Math.max(0, projTotal - invoiced) : 0;
 
   // ── Rounding that can't visibly contradict itself (audit finding) ─────────
   //

@@ -80,6 +80,13 @@ export const SYNC_SOURCES = [
   // which triggers this exact sync. Two names for one feed is precisely the
   // confusion this list exists to prevent.
   { source: "totaleto_jobs", label: "Jobs from TotalETO", monthScoped: false },
+  // Cash Flow Forecast's immutable history (2026-08-19) — the one place a new
+  // snapshot gets captured, so "every refresh preserves a version" holds for
+  // BOTH the hourly schedule and a manual Refresh Data click, with no second
+  // pipeline. Not month-scoped: it always captures the live Total ETO
+  // forecast regardless of the ETC month's lock state — a locked ETC month
+  // has nothing to do with whether AR/AP/PO due dates moved today.
+  { source: "cash_flow_snapshot", label: "Cash Flow Forecast (TotalETO)", monthScoped: false },
 ] as const;
 
 function labelFor(source: string): string {
@@ -331,6 +338,17 @@ export async function runAllSyncs(
   await step("totaleto_jobs", labelFor("totaleto_jobs"), true, async () => {
     const r = await syncFromTotalEto();
     return `${r.jobsUpdated} jobs updated, ${r.skippedNoType} skipped (not app-tracked)`;
+  });
+
+  // Cash Flow Forecast snapshot — see cash-flow-capture.ts's own header for
+  // the full extraction->normalize->dedup->store chain. `userName` (a manual
+  // click's display name) or "system@auto-sync" (the scheduled tick) is
+  // recorded as the snapshot's createdBy, matching logAudit()'s own
+  // "system@auto-sync" convention for unattended runs.
+  await step("cash_flow_snapshot", labelFor("cash_flow_snapshot"), true, async () => {
+    const { captureCashFlowSnapshot } = await import("@/lib/cash-flow-capture");
+    const r = await captureCashFlowSnapshot(userName ?? "system@auto-sync");
+    return r.captured ? `snapshot #${r.snapshotId} captured, ${r.lineCount} lines (${r.reason})` : `no new snapshot — ${r.reason}`;
   });
 
   // The Scheduler roster's discipline grouping used to be pulled here every

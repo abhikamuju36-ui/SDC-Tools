@@ -108,10 +108,12 @@ export function incompleteDepartmentLabels(statuses: Iterable<DepartmentCompleti
 //
 // ── The honest state of this app's permission model ─────────────────────────
 //
-// There are two tiers today and no third: signed in, and ADMIN. ADMIN gates exactly one
-// thing (the audit log page). Everything else — every ETC cell, the Projects grid, the
-// month submission — is `!!session?.user`, deliberately: §32's note records that
-// requiring ADMIN for month corrections "just meant corrections didn't happen".
+// A real role hierarchy exists now (see lib/permissions.ts) for the named tabs/features it
+// covers, but department sign-off predates it and stays on its own narrower rule: ELT may
+// toggle any department (the old ADMIN escape hatch, renamed), everything else is governed
+// by ETC_DEPARTMENT_OWNERS below. §32's note records that requiring ADMIN for EVERY month
+// correction "just meant corrections didn't happen" — that's still why an unconfigured
+// department stays open to any signed-in user rather than defaulting to ELT-only.
 //
 // There is also no link from a User to an Employee. User has {email, name, role};
 // Employee has {name, department} and no email. So the app cannot currently answer
@@ -173,7 +175,7 @@ export function canManageDepartment(actor: DepartmentActor, code: string, owners
   // Signing in is the floor, in both tiers. Everything below assumes it.
   if (!actor.email) return false;
   if (!departmentByCode(code)) return false;
-  if (actor.role === "ADMIN") return true;
+  if (actor.role === "ELT") return true;
   const list = owners.get(code);
   if (!list || list.size === 0) return true; // unconfigured — the app's existing grain
   return list.has(actor.email.trim().toLowerCase());

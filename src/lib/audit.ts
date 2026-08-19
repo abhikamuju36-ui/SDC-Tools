@@ -55,7 +55,7 @@ export async function logAudit(entry: AuditEntry): Promise<void> {
   let userEmail: string | null = null;
   try {
     const session = await auth();
-    userId = (session?.user as { id?: string } | undefined)?.id;
+    userId = session?.user?.id;
     userEmail = session?.user?.email ?? null;
   } catch {
     // No request scope (scheduled/background work). Attributed to the system

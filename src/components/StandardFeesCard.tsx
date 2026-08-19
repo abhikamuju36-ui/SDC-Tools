@@ -5,31 +5,24 @@ import { StandardPoolPanel } from "@/components/StandardPoolPanel";
 import { getStandardFeesCard, type StandardFeesCardData } from "@/lib/standard-fees-card";
 import { readStandardsState, serverStandardsState, subscribeStandards } from "@/lib/standards-reveal";
 
-// The Standard Fees card, revealed from client state (§48).
+// The Standard Fees card (§48, §76).
 //
 // ── The shape of the fix ────────────────────────────────────────────────────
 //
-// Visibility is local (`unlocked` in lib/standards-reveal.ts) and the data comes from one
-// server action that reads nothing but this card's own inputs
-// (lib/standard-fees-card.ts). So a successful password reveals the card on the same
-// frame, and if the figures are not in hand yet the SHELL appears immediately with a
-// small indicator inside it — §48's "reveal the Standard Fees panel immediately, show a
-// small loading indicator inside the panel only, keep the Monthly ETC table and
-// navigation usable".
+// Visibility is a role check now (standard-sheet-gate.ts, decided server-side and handed
+// down as `initialData`) rather than a client-side password unlock — a role doesn't change
+// mid-session, so unlike the old password gate there is no event that could reveal this
+// card without a page load. The only thing left as client state is `hidden` (§76): an
+// authorized user collapsing the section to reduce clutter, with no re-fetch either way.
 //
 // Nothing here asks the page to re-render. The grid, the KPI card, the filters, the
 // focused cell and any unsaved edit are untouched because they are never involved.
 export function StandardFeesCard({
   month,
   /**
-   * The card, already computed, when the request that rendered the page carried the
-   * unlock cookie. This is §48's "reuse the existing Standard Fees data when it is still
-   * current": an already-unlocked visitor pays nothing at all — no action call, no
-   * spinner — because the server sent the figures with the page.
-   *
-   * Null for a locked visitor, which is deliberate. Sending them anyway so the reveal
-   * could be instant would hand the confidential figures to precisely the person the
-   * gate exists to keep them from.
+   * The card, already computed, when the signed-in user's role grants standards:view.
+   * Null otherwise — never fetched client-side, so nobody without the permission can
+   * reach the confidential figures by any client-side event.
    */
   initialData,
   savePoolsAction,
@@ -38,7 +31,7 @@ export function StandardFeesCard({
   initialData: StandardFeesCardData | null;
   savePoolsAction: (formData: FormData) => Promise<void>;
 }) {
-  const { unlocked, hidden } = useSyncExternalStore(subscribeStandards, readStandardsState, serverStandardsState);
+  const { hidden } = useSyncExternalStore(subscribeStandards, readStandardsState, serverStandardsState);
   const [data, setData] = useState<StandardFeesCardData | null>(initialData);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,12 +47,12 @@ export function StandardFeesCard({
 
   // ── Hidden is a separate, later veto (§76) ──────────────────────────────────
   //
-  // `unlocked || initialData != null` answers "is this tab authorized"; `hidden` answers
-  // "has the user collapsed it anyway", and it must be checked LAST — an authorized-but-
-  // hidden card must not show, and toggling `hidden` back off must not have to re-answer
-  // the authorization question (it doesn't: `data` below is never cleared by hiding, so
+  // `initialData != null` answers "is this tab authorized"; `hidden` answers "has the
+  // user collapsed it anyway", and it must be checked LAST — an authorized-but-hidden
+  // card must not show, and toggling `hidden` back off must not have to re-answer the
+  // authorization question (it doesn't: `data` below is never cleared by hiding, so
   // showing again is instant and re-uses whatever this card already fetched).
-  const show = (unlocked || initialData != null) && !hidden;
+  const show = initialData != null && !hidden;
 
   useEffect(() => {
     // Nothing to do unless the card is on screen and its figures are missing.

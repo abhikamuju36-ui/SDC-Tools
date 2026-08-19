@@ -46,6 +46,17 @@ const STALE_BUNDLE_SIGNS: readonly string[] = [
   "error loading dynamically imported module", // native ESM, alternate wording
   "importing a module script failed", // Safari
   "unable to preload css", // Next/Vite stylesheet preload
+  // 2026-08-19: a Server Action is a different kind of "stale tab" than a
+  // missing chunk, but the same root cause — a tab open across a dev-server
+  // recompile (or a prod deploy) holds an action reference ID the server no
+  // longer registers, and calling it throws this exact wording rather than a
+  // chunk-load failure. Reported live: T&M's "Detail" drill-throughs (whose
+  // server actions had just been edited repeatedly this session) crashing the
+  // whole page instead of showing the drill-scoped error they should. Same
+  // fix as a stale chunk: only a reload re-fetches a build that HAS the
+  // action registered — reset() calls the identical stale reference again.
+  "failed to find server action",
+  "this request might be from an older or newer deployment",
 ];
 
 /** `ChunkLoadError` is webpack's own error NAME, which survives message rewording. */

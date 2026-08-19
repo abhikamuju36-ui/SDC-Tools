@@ -86,10 +86,14 @@ test("the projection is based on Parts Actual, not on the committed total", () =
 // until that PO is actually invoiced. Summing it in on top of `actual` counted
 // it twice.
 
-test("computePartsBudgetProjection's total is actual + estimateToPurchase, NOT + committedNotPosted", () => {
+test("computePartsBudgetProjection's total is actual + projectionResidual(...), NOT actual + committedNotPosted + estimateToPurchase", () => {
   const proj = code("src", "lib", "parts-budget-projection.ts");
   const fn = functionSpan(proj, "computePartsBudgetProjection");
-  assert.match(fn, /total:\s*actual\s*\+\s*estimateToPurchase/, "the double-count fix: committedNotPosted must not be added into total");
+  assert.match(
+    fn,
+    /total:\s*actual\s*\+\s*projectionResidual\(committedNotPosted,\s*estimateToPurchase\)/,
+    "total must route through the one shared residual helper, not re-sum the two terms inline",
+  );
   assert.doesNotMatch(
     fn,
     /total:\s*actual\s*\+\s*committedNotPosted\s*\+\s*estimateToPurchase/,
@@ -97,10 +101,42 @@ test("computePartsBudgetProjection's total is actual + estimateToPurchase, NOT +
   );
 });
 
-test("the audit script's own defining identity checks invoiced+etc, not invoiced+leftToInvoice+etc", () => {
+// ── 2026-08-19: Projection must never fall below Total Parts Cost Spent ────
+//
+// Reported live on job 1119 (Karl Storz Stamping Machine): Total Parts Cost
+// Spent $133,428 (Invoiced $124,581 + Left to be invoiced $8,847) read GREATER
+// than Actual/Projection $127,219 (Invoiced $124,581 + ETC $2,638) — the job's
+// ETC hadn't caught up to its own open PO balance. See
+// tests/parts-cost-projection-invariant.test.ts for the numeric proof (real
+// arithmetic, not a source-pattern match) that projectionResidual fixes this
+// for every combination of committed/ETC, including that exact job's figures.
+
+test("projectionResidual takes the LARGER of committedNotPosted/estimateToPurchase, never their sum", () => {
+  // Lives in parts-cost-financials-shared.ts, not parts-budget-projection.ts
+  // (which has `import "server-only"`) — see that file's own header for why:
+  // it has to be value-importable from a plain node:test file with no live
+  // database, same reason reconcilePartsCostRounding/sharedBarMax live there.
+  const shared = code("src", "lib", "parts-cost-financials-shared.ts");
+  const start = shared.indexOf("export function projectionResidual");
+  assert.ok(start >= 0, "projectionResidual must exist in parts-cost-financials-shared.ts");
+  const fn = shared.slice(start, shared.indexOf("\n}", start) + 2);
+  assert.match(fn, /Math\.max\(committedNotPosted,\s*estimateToPurchase\)/, "must be a max, not a sum — summing both is the 2026-08-17 double-count returning");
+});
+
+test("the audit script's own defining identity checks invoiced+max(leftToInvoice,etc), not invoiced+etc alone", () => {
   const audit = code("scripts", "parts-cost-projection-audit.ts");
-  assert.match(audit, /const expectedProjection = invoiced \+ \(etc \?\? 0\)/, "the audit's PROJECTION FORMULA MISMATCH check must match the fixed formula");
-  assert.doesNotMatch(audit, /invoiced \+ leftToInvoice \+ \(etc \?\? 0\)/, "the audit must not silently re-assert the pre-fix formula");
+  assert.match(
+    audit,
+    /const expectedProjection = invoiced \+ Math\.max\(leftToInvoice,\s*etc \?\? 0\)/,
+    "the audit's PROJECTION FORMULA MISMATCH check must match the 2026-08-19 fix",
+  );
+  assert.doesNotMatch(audit, /invoiced \+ leftToInvoice \+ \(etc \?\? 0\)/, "the audit must not silently re-assert the original (pre-2026-08-17) formula");
+});
+
+test("the audit script flags a projection that reads below total spent", () => {
+  const audit = code("scripts", "parts-cost-projection-audit.ts");
+  assert.match(audit, /projectionTotal < totalSpent - CENT/, "the audit must independently assert the business rule (projection >= total spent)");
+  assert.match(audit, /PROJECTION BELOW SPENT/, "the check must be a named, reportable flag, not a silent condition");
 });
 
 test("the Parts Cost card's bar stacks exactly two segments — Invoiced and ETC — never Left to be invoiced", () => {

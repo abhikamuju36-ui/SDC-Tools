@@ -13,7 +13,9 @@ import { APP_VERSION, appVersionLabel } from "../src/lib/app-version";
 // The phrase itself is deliberately NOT hardcoded here. A test that spells it out is
 // one more place to update, and it would put the phrase in a file that ships to
 // nobody but is read by everybody.
-const GATES: ButtonGate[] = ["submit", "confirm", "projects", "standardSheet", "auditLog"];
+// Projects, Standard Sheet and Audit Log were retired from this list 2026-08-18
+// — those three are role checks now (lib/permissions.ts), not a shared phrase.
+const GATES: ButtonGate[] = ["submit", "confirm"];
 
 // Read once from the module rather than restated — this is the value under test.
 const PHRASE = expectedButtonPassword("submit");
@@ -43,7 +45,7 @@ test("a wrong phrase is rejected everywhere", () => {
   }
 });
 
-test("all five gates resolve to the same phrase unless overridden", () => {
+test("both gates resolve to the same phrase unless overridden", () => {
   // No per-gate env override is set in the test environment, so they must agree.
   // If one of these ever diverges silently, this is what catches it.
   const distinct = new Set(GATES.map((g) => expectedButtonPassword(g)));

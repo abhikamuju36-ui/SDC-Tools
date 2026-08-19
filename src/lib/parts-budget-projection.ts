@@ -1,11 +1,19 @@
 import "server-only";
 import { runDax } from "@/lib/powerbi-client";
 import { getExecutionEtcByJob } from "@/lib/execution-etc";
+import { projectionResidual } from "@/lib/parts-cost-financials-shared";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
 
 // "Part Cost Budget Projection" — where a job lands by the time it's finished.
 //
-//   projection = invoiced (Parts Actual, GL-posted) + estimate to purchase (ETC)
+//   projection = invoiced (Parts Actual, GL-posted)
+//              + max(committedNotPosted, estimateToPurchase)   [2026-08-19]
+//
+// The 2026-08-19 fix (see below, and projectionResidual's own comment) never
+// sums BOTH remaining terms — only ever one, whichever is larger — so this is
+// still the "no double-count" shape the 2026-08-17 fix established, with one
+// added floor: projection can never land below `invoiced + committedNotPosted`
+// (= Total Parts Cost Spent).
 //
 // ── 2026-08-17 fix: this used to be `purchased + estimateToPurchase`, which
 // double-counts committed-but-unposted spend ───────────────────────────────
@@ -83,13 +91,43 @@ import type { PartsCostLine } from "@/lib/sync-totaleto";
 //
 // The claim in this paragraph ("projection >= purchased ALWAYS, by
 // construction") was true of the OLD `purchased + estimateToPurchase` formula
-// this section is defending, and is no longer true of the 2026-08-17 fix above
-// it — `invoiced + estimateToPurchase` can land below `purchased` whenever ETC
-// hasn't (yet) caught up to an open PO's full amount, which is the honest
-// answer: a manager's estimate can legitimately be revised, or lag, behind what
-// TotalETO already shows committed. That is a real, visible signal now (a small
-// or zero ETC beside a large "Left to be invoiced" says the estimate needs a
-// look), not something the formula should paper over by adding Purchased back in.
+// this section is defending, and had been treated as ACCEPTABLY false under the
+// 2026-08-17 fix above it: `invoiced + estimateToPurchase` can land below
+// `purchased` whenever ETC hasn't (yet) caught up to an open PO's full amount,
+// which was reasoned to be an honest answer — a manager's estimate can
+// legitimately lag behind what TotalETO already shows committed, and a small or
+// zero ETC beside a large "Left to be invoiced" is a visible signal worth
+// surfacing rather than papering over.
+//
+// ── 2026-08-19: that tradeoff is no longer acceptable, by explicit business
+// rule ────────────────────────────────────────────────────────────────────────
+// Reported live on job 1119 (Karl Storz Stamping Machine): Total Parts Cost
+// Spent $133,428 (Invoiced $124,581 + Left to be invoiced $8,847) showing
+// GREATER than Actual/Projection $127,219 (Invoiced $124,581 + ETC $2,638) —
+// a projected FINAL cost reading below money already spent or committed, which
+// is not a number anyone can act on. The mechanism is exactly what the
+// paragraph above already named: this job's Parts New ETC ($2,638) hadn't
+// caught up to its own open PO balance ($8,847).
+//
+// The fix keeps the double-count fix's own reasoning (never sum
+// `committedNotPosted` AND `estimateToPurchase` — see below) while adding the
+// one guarantee the business now requires: Projection must never fall below
+// `actual + committedNotPosted` (= Total Parts Cost Spent). Instead of adding
+// both terms, `total` takes `actual` plus WHICHEVER of the two remaining terms
+// is larger — `committedNotPosted` (money already on an open PO, which WILL be
+// invoiced) or `estimateToPurchase` (the manager's forward estimate). This is
+// the same "no double-count" property (still only ever one term riding on top
+// of `actual`, never both), plus the new floor: whichever term is smaller can
+// never drag the total below what the other alone already guarantees.
+//
+// When a manager's ETC is current (the common, healthy case — ETC already
+// meets or exceeds the open commitment), nothing changes: `total` is still
+// exactly `actual + estimateToPurchase`, byte-identical to the 2026-08-17
+// formula. The fix only changes the answer in the specific case that was
+// reported — a stale/small ETC beside a real open commitment — where it now
+// floors at the committed amount instead of dipping below it. A small ETC next
+// to a large "Left to be invoiced" is still visible on screen (that chip is
+// unchanged) — it just no longer ALSO understates Projection.
 //
 // Also not the report's [Budget Projection] measure, which is
 //   invoiced-before-this-month + estimate-to-complete
@@ -170,23 +208,25 @@ FILTER(
   return out;
 }
 
-// Returns `committedNotPosted` alongside the total for display only (the
-// card's "Left to be invoiced") — it no longer feeds `total` (2026-08-17, see
-// the header). `actual + committedNotPosted` is still the old `purchased`
-// figure, kept available to callers that want it, but the projection itself
-// does not sum it.
+// Returns `committedNotPosted` alongside the total for display (the card's
+// "Left to be invoiced") — it is never SUMMED with `estimateToPurchase` into
+// `total` (that's the 2026-08-17 double-count fix), but as of 2026-08-19 it
+// does act as a FLOOR on `total` via projectionResidual: whichever of the two
+// is larger is what rides on top of `actual`. `actual + committedNotPosted`
+// is still the old `purchased` figure, kept available to callers that want it.
 export type PartsBudgetProjection = {
   /** Parts Actual — GL-posted spend. The projection's base (2026-08-10). */
   actual: number;
   /**
    * Committed but not on the ledger: open PO balance plus anything billed on an
-   * invoice that never posts to the GL. Informational only as of 2026-08-17 —
-   * shown on the card as "Left to be invoiced, included in ETC" — because a
-   * manager's `estimateToPurchase` (Parts New ETC) already has to account for
-   * whatever is presently on order to be a real estimate of what's left to
-   * finish the job; summing this back in double-counts it. actual +
-   * committedNotPosted is still the old `purchased` figure, for callers that
-   * want it.
+   * invoice that never posts to the GL. Shown on the card as "Left to be
+   * invoiced" — because a manager's `estimateToPurchase` (Parts New ETC)
+   * SHOULD already account for whatever is presently on order, summing this
+   * alongside `estimateToPurchase` double-counts the common case (2026-08-17
+   * fix) — but when the ETC estimate hasn't caught up to it yet,
+   * `committedNotPosted` is what floors `total` instead (2026-08-19 fix,
+   * projectionResidual). actual + committedNotPosted is still the old
+   * `purchased` figure, kept available to callers that want it.
    */
   committedNotPosted: number;
   estimateToPurchase: number;
@@ -216,17 +256,18 @@ export async function computePartsBudgetProjection(
   // already spent — the exact defect the report measure has.
   estimateToPurchase = Math.max(0, estimateToPurchase);
   // Base = GL-posted actual. `committedNotPosted` is computed and returned for
-  // display ("Left to be invoiced") but — 2026-08-17 — is NOT part of `total`
-  // any more: `estimateToPurchase` (ETC) is drawn down by GL-posted spend only
-  // (see the header), never by an open PO's balance, so it still contains
-  // whatever `committedNotPosted` represents until that PO is actually
-  // invoiced. Adding both to `actual` counted that money twice.
+  // display ("Left to be invoiced") but — 2026-08-17 — is NOT summed into
+  // `total` alongside `estimateToPurchase`: `estimateToPurchase` (ETC) is drawn
+  // down by GL-posted spend only (see the header), never by an open PO's
+  // balance, so it still contains whatever `committedNotPosted` represents
+  // until that PO is actually invoiced. Adding both to `actual` counts that
+  // money twice.
   const actual = actualTotal(lines);
   const committedNotPosted = Math.max(0, purchasedTotal(lines) - actual);
   return {
     actual,
     committedNotPosted,
     estimateToPurchase,
-    total: actual + estimateToPurchase,
+    total: actual + projectionResidual(committedNotPosted, estimateToPurchase),
   };
 }

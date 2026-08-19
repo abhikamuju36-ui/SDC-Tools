@@ -3,6 +3,7 @@ import { loadJobCostRows } from "@/lib/job-cost-source";
 import { loadCostRates, loadHourAllocations } from "@/lib/job-cost-actions";
 import { JobCostExplorer } from "@/components/JobCostExplorer";
 import { SuppressToasts } from "@/components/ui/Toast";
+import { requirePagePermission } from "@/lib/require-permission";
 
 // "Job Cost Explorer" — integrated from the standalone app at
 // D:\AI Projects\new app. Per-job profit/margin, reusing this app's own job,
@@ -16,6 +17,7 @@ import { SuppressToasts } from "@/components/ui/Toast";
 // inventory) as of that month-end. See lib/job-cost-source.ts's
 // loadJobCostRows for the resolution rules.
 export default async function JobCostExplorerPage({ searchParams }: { searchParams: Promise<{ asOf?: string }> }) {
+  await requirePagePermission("profitability:view");
   const { asOf: asOfParam } = await searchParams;
   const asOf = asOfParam && asOfParam !== "current" ? asOfParam : null;
 

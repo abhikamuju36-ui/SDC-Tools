@@ -13,6 +13,7 @@ import { withTimeoutOrNull, UPSTREAM_BUDGET_MS } from "@/lib/with-timeout";
 import { JobProcurement } from "@/components/JobProcurement";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ScrollIntoView } from "@/components/ScrollIntoView";
+import { requirePagePermission } from "@/lib/require-permission";
 
 // No-job-selected placeholder, so the dashboard's prop stays non-nullable and
 // the panel has one shape to render.
@@ -30,6 +31,7 @@ export default async function JobHoursPage({
   // Procurement block once that data is on screen.
   searchParams: Promise<{ jobs?: string; job?: string; section?: string }>;
 }) {
+  await requirePagePermission("job-hour-details:view");
   const { jobs: jobsParam, job: legacyJobParam, section } = await searchParams;
   const jobs = await listDashboardJobs();
   const idByJobId = new Map(jobs.map((j) => [j.jobId, j.id]));

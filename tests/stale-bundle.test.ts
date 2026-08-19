@@ -53,6 +53,23 @@ test("every bundler and browser wording is recognised", () => {
   }
 });
 
+// ── A stale Server Action reference is the same class of problem (2026-08-19) ─
+//
+// Reported live: T&M's KPI "Detail" drill-throughs — whose server actions had
+// just been edited repeatedly in the same dev session — crashed the whole
+// page with the GENERIC error card instead of the stale-bundle one. A tab
+// open across the recompile holds an action reference ID the server no
+// longer registers; calling it throws this wording, not a chunk-load
+// failure, but reset() is equally useless (it re-sends the identical stale
+// reference), so it needs the same "reload" treatment, not the same
+// detection string.
+test("a stale Server Action reference is recognised — Next's exact wording", () => {
+  assert.equal(
+    isStaleBundleError(new Error('Failed to find Server Action "60f0648c50f0a1234567890abcdef1234567890". This request might be from an older or newer deployment.')),
+    true,
+  );
+});
+
 test("webpack's ChunkLoadError is caught by NAME, whatever its message says", () => {
   const e = new Error("something entirely reworded by a future release");
   e.name = "ChunkLoadError";

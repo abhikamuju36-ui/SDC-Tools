@@ -245,9 +245,20 @@ export function RealtimeProvider() {
           const data = JSON.parse(ev.data) as
             | { type: "presence"; entries: PresenceEntry[] }
             | { type: "changes"; events: ChangeEvent[] }
-            | { type: "hello"; sessionId: string };
+            | { type: "hello"; sessionId: string }
+            | { type: "permissions" };
           if (data.type === "presence") setPresence(data.entries);
-          else if (data.type === "changes") {
+          else if (data.type === "permissions") {
+            // The Role Permissions matrix changed — no cell to patch, no diff to
+            // apply client-side (unlike a "changes" event): every page under
+            // this layout re-checks its OWN permission fresh on the next
+            // server render, so a plain refresh is what makes the sidebar and
+            // any now-unauthorized open page update themselves, with no new
+            // client-side permission logic at all. Unconditional, not
+            // throttled — this fires only when an ELT user deliberately saves
+            // a change, never in a burst.
+            requestLiveRefresh();
+          } else if (data.type === "changes") {
             pushChanges(data.events);
             // ── Incremental first, refetch only if we must (2026-08-04) ────────
             //

@@ -15,14 +15,7 @@ import {
 import { appVersionLabel } from "@/lib/app-version";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isEtcDirty } from "@/lib/etc-dirty-tracker";
-import { noteEtcClick } from "@/lib/standards-reveal";
-import {
-  noteOtherNavClick,
-  noteProjectsClick,
-  readProfitabilityRevealed,
-  serverProfitabilityRevealed,
-  subscribeProfitabilityReveal,
-} from "@/lib/profitability-reveal";
+import type { AppRole } from "@/lib/permissions";
 import { RefreshDataButton } from "@/components/RefreshDataButton";
 import { AppZoom } from "@/components/AppZoom";
 import {
@@ -108,9 +101,10 @@ function NavPendingHint() {
   );
 }
 
-// Hidden by default (§84) — see lib/profitability-reveal.ts. Named here so the
-// item's own `href` below and the reveal-gated filter that hides it can never
-// name two different routes by accident.
+// Named here so the item's own `href` below and route-permissions.ts's map
+// (which decides whether the SERVER lets a direct visit through, and what
+// permission gates it in the nav filter below) can never name two different
+// routes by accident.
 const PROFITABILITY_HREF = "/job-cost-explorer";
 
 const GROUPS: NavGroup[] = [
@@ -211,6 +205,17 @@ const GROUPS: NavGroup[] = [
         ),
       },
       {
+        href: "/tm",
+        label: "T&M",
+        isActive: (p) => p === "/tm",
+        icon: (
+          <Icon>
+            <path d="M2 4.5 H14 M4.5 4.5 V2.5 H11.5 V4.5" strokeLinecap="round" strokeLinejoin="round" />
+            <path d="M4.5 4.5 L5 13.5 H11 L11.5 4.5" strokeLinecap="round" strokeLinejoin="round" />
+          </Icon>
+        ),
+      },
+      {
         href: "/build-readiness",
         label: "Build Readiness",
         isActive: (p) => p === "/build-readiness",
@@ -218,6 +223,19 @@ const GROUPS: NavGroup[] = [
           <Icon>
             <path d="M8 1.5 L14 4.5 V11.5 L8 14.5 L2 11.5 V4.5 Z" strokeLinejoin="round" />
             <path d="M2 4.5 L8 7.5 L14 4.5 M8 7.5 V14.5" strokeLinecap="round" strokeLinejoin="round" />
+          </Icon>
+        ),
+      },
+      {
+        // ELT-only (cash-flow-access.ts) — not permission-based like every
+        // other link here, so layout.tsx pushes this href onto visibleHrefs
+        // directly off `role === "ELT"` rather than off ROUTE_PERMISSIONS.
+        href: "/cash-flow",
+        label: "Cash Flow Forecast",
+        isActive: (p) => p === "/cash-flow",
+        icon: (
+          <Icon>
+            <path d="M2 8 H14 M9.5 4.5 L14 8 L9.5 11.5" strokeLinecap="round" strokeLinejoin="round" />
           </Icon>
         ),
       },
@@ -241,17 +259,49 @@ const ADMIN_GROUP: NavGroup = {
         </Icon>
       ),
     },
+    {
+      href: "/admin/users",
+      label: "Users & Roles",
+      isActive: (p) => p === "/admin/users",
+      icon: (
+        <Icon>
+          <circle cx="6" cy="5.5" r="2.5" />
+          <path d="M1.5 13.5 C1.5 10.5 3.5 9.5 6 9.5 C8.5 9.5 10.5 10.5 10.5 13.5" strokeLinecap="round" />
+          <circle cx="11.5" cy="6" r="2" />
+          <path d="M12 9.5 C13.8 9.8 14.8 11 14.8 13" strokeLinecap="round" />
+        </Icon>
+      ),
+    },
+    {
+      href: "/admin/permissions",
+      label: "Role Permissions",
+      isActive: (p) => p === "/admin/permissions",
+      icon: (
+        <Icon>
+          <rect x="3.5" y="7" width="9" height="6.5" rx="1.2" />
+          <path d="M5.75 7V5.25a2.25 2.25 0 0 1 4.5 0V7" strokeLinecap="round" />
+        </Icon>
+      ),
+    },
   ],
 };
 
 export default function Sidebar({
   userEmail,
+  role,
+  visibleHrefs,
   signOutAction,
   schedulerProjectsUrl,
   initial = DEFAULT_PREFS,
 }: {
   userEmail?: string | null;
-  // No `role` prop any more — nothing in the sidebar is role-gated.
+  role: AppRole;
+  // Computed server-side (the (app) layout) from the live Role Permissions
+  // matrix — see that file's own note on why this can't be decided here with
+  // hasPermission() directly: a client bundle's copy of that check is a
+  // frozen build-time snapshot, and a DB-backed permission change needs to
+  // reach this list on every server re-render, not just at build time.
+  visibleHrefs: string[];
   signOutAction: () => Promise<void>;
   // Absolute URL of the SDC Scheduler's Projects page, resolved server-side in
   // the layout (SCHEDULER_BASE_URL). Undefined hides the link rather than
@@ -264,23 +314,15 @@ export default function Sidebar({
 }) {
   const pathname = usePathname();
   const router = useRouter();
-  // The Admin group is shown to everyone. Its pages gate themselves with a
-  // password (audit-log-gate.ts), and hiding the link as WELL meant that gate
-  // could never be reached by anyone it was written for. Role-based hiding was
-  // dropped app-wide on 2026-08-02 — this app has one shared team password,
-  // not a role hierarchy.
-  const baseGroups = [...GROUPS, ADMIN_GROUP];
-
-  // Profitability stays out of the array entirely until revealed (§84) — not
-  // rendered-then-hidden with CSS, so it never exists in the DOM (or the reorder
-  // machinery below) for a normal visitor to find by inspecting the page. The
-  // server snapshot is always `false`, so SSR and the pre-gesture client render
-  // agree and nothing flashes into view on load; a real reveal only ever happens
-  // after hydration, from noteProjectsClick below.
-  const profitabilityRevealed = useSyncExternalStore(subscribeProfitabilityReveal, readProfitabilityRevealed, serverProfitabilityRevealed);
-  const visibleGroups = profitabilityRevealed
-    ? baseGroups
-    : baseGroups.map((g) => ({ ...g, items: g.items.filter((i) => i.href !== PROFITABILITY_HREF) }));
+  // Every item is filtered against visibleHrefs — computed server-side from
+  // the SAME map proxy.ts uses to decide whether a direct URL visit is let
+  // through (route-permissions.ts), so a link can never be visible here and
+  // refused there, or the reverse. An item whose href isn't in that map at
+  // all (there are none today) would show unconditionally; every current nav
+  // item has an entry.
+  const visibleGroups = [...GROUPS, ADMIN_GROUP]
+    .map((g) => ({ ...g, items: g.items.filter((i) => visibleHrefs.includes(i.href)) }))
+    .filter((g) => g.items.length > 0);
 
   // User-chosen link order (localStorage, per browser). useSyncExternalStore
   // rather than reading storage in render — that would hydrate differently from
@@ -335,53 +377,15 @@ export default function Sidebar({
     return () => window.removeEventListener("keydown", onKey);
   }, []);
 
-  // ── The hidden Standard Fees entry point (§48) ──────────────────────────────
-  //
-  // Still undiscoverable — a double-click on the "Monthly ETC" item opens a password box
-  // that only a few people are meant to know exists — but it no longer goes anywhere to
-  // do it.
-  //
-  // It used to count three clicks and then `router.push("/etc?standards=1")`, and the
-  // item is a <Link href="/etc">, so all three counting clicks NAVIGATED. Measured before
-  // this change: 6,077ms and 8 requests from the first click to the box appearing, four
-  // full renders of the heaviest page in the app to show a text input.
-  //
-  // Now the gesture sets a boolean (lib/standards-reveal.ts) that the ETC toolbar's gate
-  // reads, and `preventDefault` stops the click navigating at all. Already on /etc there
-  // is no request whatsoever; arriving from elsewhere costs the one navigation the click
-  // was always going to make.
-  function handleEtcClick(e: React.MouseEvent) {
-    // Suppress the navigation FIRST, before the streak is even consulted. A click on the
-    // item you are already on is a wasted round trip whatever the streak does with it,
-    // and it is what made the old window too short to complete.
-    const onEtc = pathname === "/etc";
-    if (onEtc) e.preventDefault();
-    if (noteEtcClick()) {
-      // Gesture complete. The box is already open (the store is synchronous); all that
-      // is left is getting to the page it lives on, if we are not there.
-      e.preventDefault();
-      if (!onEtc) router.push("/etc");
-    }
-  }
-
   // Leaving /etc with unsaved New ETC values (typing alone doesn't autosave —
   // see EtcSectionCells/EtcAutosave) is a plain client-side route
   // change, so it never fires the browser's native beforeunload warning.
   // This is the sidebar's equivalent of that warning; every nav item runs it
-  // before whatever else it does (like the /etc triple-click above).
-  function handleNavClick(e: React.MouseEvent, href: string) {
+  // before navigating.
+  function handleNavClick(e: React.MouseEvent) {
     if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Leave this page anyway?")) {
       e.preventDefault();
-      return;
     }
-    if (href === "/etc") handleEtcClick(e);
-    // The Profitability reveal gesture (§84) — three consecutive clicks on
-    // Projects. Never suppresses navigation (contrast handleEtcClick above): every
-    // one of the three clicks, and every click that doesn't complete the gesture,
-    // must still go to Projects exactly like clicking it normally would. Any OTHER
-    // nav item breaks the streak, so "consecutive" means what it says.
-    if (href === "/quoted") noteProjectsClick();
-    else noteOtherNavClick();
   }
 
   // Global Back — returns to the exact previous view (its URL preserves the
@@ -638,7 +642,7 @@ export default function Sidebar({
                   <Link
                     key={item.href}
                     href={item.href}
-                    onClick={(e) => handleNavClick(e, item.href)}
+                    onClick={handleNavClick}
                     title={collapsed ? item.label : `${item.label} — drag to reorder, or Alt+↑/↓`}
                     // Reorderable by drag, and by Alt+Arrow for anyone not using a
                     // mouse. Only within this group: the headings above say what

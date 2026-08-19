@@ -7,6 +7,8 @@ import { RealtimeProvider } from "@/components/RealtimeProvider";
 import { InteractionMetrics } from "@/components/InteractionMetrics";
 import { getSchedulerBaseUrl, revokeSchedulerSession } from "@/lib/scheduler-link";
 import { withSchedulerSso } from "@/lib/scheduler-sso";
+import { hasPermission } from "@/lib/permissions";
+import { ROUTE_PERMISSIONS } from "@/lib/route-permissions";
 
 // NOTE for anyone tempted to cache this layout or lift the auth() call out of it:
 // `await auth()` reads cookies, and that is what makes EVERY page under (app)
@@ -29,6 +31,22 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
   const jar = await cookies();
   const sidebar = parseSidebarPrefs(jar.get(COLLAPSED_COOKIE)?.value, jar.get(WIDTH_COOKIE)?.value);
 
+  // Which nav hrefs this role may see, computed HERE rather than inside
+  // Sidebar (a "use client" component) — the Role Permissions matrix
+  // (2026-08-18) is DB-backed and lives only in this server process's memory
+  // (lib/permissions.ts), so a client bundle's own copy of hasPermission()
+  // would be a frozen build-time snapshot no live change could ever reach.
+  // Sidebar just filters against this list; every "live" permission update
+  // reaches it because router.refresh() re-runs this layout, which reads
+  // hasPermission() fresh every time.
+  const role = session?.user?.role ?? "ALL";
+  const visibleHrefs = ROUTE_PERMISSIONS.filter((r) => hasPermission(role, r.permission)).map((r) => r.path);
+  if (hasPermission(role, "dashboard:view")) visibleHrefs.push("/");
+  // Cash Flow Forecast is ELT-only by explicit request, never a togglable
+  // Permission — see cash-flow-access.ts's own header for why this checks
+  // the role directly instead of going through ROUTE_PERMISSIONS.
+  if (role === "ELT") visibleHrefs.push("/cash-flow");
+
   async function handleSignOut() {
     "use server";
     // Invalidate any Scheduler session for the same person too — read
@@ -46,6 +64,8 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
     // there. `/?view=projects` lands on the Scheduler's Projects page.
     <AppShell
       userEmail={session?.user?.email}
+      role={role}
+      visibleHrefs={visibleHrefs}
       signOutAction={handleSignOut}
       // What the server rendered with. The client store reads the same two cookies, so
       // the value React hydrates with is the value already on screen.

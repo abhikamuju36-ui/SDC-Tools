@@ -3,26 +3,21 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 
-// ── Projects Edit Mode: unlocking must always expose the restricted section
-// columns, not only when Select All (or some other unrelated click) happens
-// to trigger a server refresh ────────────────────────────────────────────────
+// ── Projects Edit Mode: Standard Fees column visibility is a role check now
+// (2026-08-18), not tied to the Edit Mode toggle at all ──────────────────────
 //
-// Reported bug: after entering the edit password, the Sections dropdown did
-// not immediately list PM/Manufacturing/Warranty as options. ProjectsEditMode's
-// enable() only refreshed the route (the one thing that can update the
-// picker's available columns — see quoted/page.tsx's `visibleSections`) when
-// `columnsDependOnMode` was true, which is false on a normal first unlock.
-// ProjectsSectionsMenu.tsx compensated with its own untracked, unindicated
-// `router.refresh()` fired when the menu was opened while editing — which
-// raced with the ALREADY-tracked navigation `useDraftParamsMenu` fires when
-// the user ticks a checkbox or clicks Select All in whatever section WAS
-// available, making it look like that click revealed unrelated columns in
-// another section.
+// Before this date, the four restricted columns (PM/Manufacturing/Warranty)
+// followed a shared password AND the Edit Mode toggle together, which is what
+// produced the bug this file used to pin: unlocking didn't always refresh the
+// Sections picker's available columns, because the refresh was conditional on
+// what was already selected.
 //
-// Fix: enable() refreshes unconditionally, and the compensating fetch-on-open
-// in ProjectsSectionsMenu.tsx is gone. No React test renderer exists in this
-// repo (see job-procurement-collapse.test.ts and friends) — this pins down
-// the source shape so neither half of the old pattern comes back.
+// That whole class of bug is gone by construction now: `sectionAllowed` in
+// quoted/page.tsx reads the signed-in user's Standard Fees permissions
+// directly (lib/sections.ts's POOL_PERMISSION), computed once per render, with
+// no cookie and no dependency on the Edit Mode switch. Flipping Edit Mode
+// on/off changes nothing about which columns are rendered, so there is no
+// router.refresh() left anywhere in ProjectsEditMode.tsx to get wrong.
 
 const SRC = join(import.meta.dirname, "..", "src");
 
@@ -37,40 +32,29 @@ function code(path: string): string {
 
 const EDIT_MODE = code(join(SRC, "components", "ProjectsEditMode.tsx"));
 const SECTIONS_MENU = code(join(SRC, "components", "ProjectsSectionsMenu.tsx"));
+const QUOTED_PAGE = code(join(SRC, "app", "(app)", "quoted", "page.tsx"));
 
-test("enable() refreshes unconditionally — column availability can't depend on what's already selected", () => {
-  const enableFn = EDIT_MODE.slice(EDIT_MODE.indexOf("function enable()"), EDIT_MODE.indexOf("async function disable()"));
-  assert.match(enableFn, /startTransition\(\(\) => router\.refresh\(\)\);/, "enable() must call router.refresh() every time, not conditionally");
-  assert.doesNotMatch(
-    enableFn,
-    /if\s*\(\s*columnsDependOnMode\s*\)/,
-    "enable() must not gate its refresh on columnsDependOnMode — that's exactly what let a fresh unlock skip refreshing the Sections picker's available columns",
-  );
+test("Edit Mode never triggers a server refresh — nothing rendered depends on it any more", () => {
+  assert.doesNotMatch(EDIT_MODE, /router\.refresh\(\)/, "toggling Edit Mode must not re-render the route");
+  assert.doesNotMatch(EDIT_MODE, /from ["']next\/navigation["']/, "no reason left to import useRouter here");
 });
 
-test("disable() may still skip its refresh when nothing rendered actually depends on the mode", () => {
-  const disableFn = EDIT_MODE.slice(EDIT_MODE.indexOf("async function disable()"));
+test("restricted-column visibility reads role permissions, not Edit Mode state", () => {
   assert.match(
-    disableFn,
-    /if\s*\(\s*columnsDependOnMode\s*\)\s*startTransition\(\(\) => router\.refresh\(\)\);/,
-    "disable() intentionally keeps the conditional refresh — turning editing off only needs a server round trip if a restricted column is actually on screen to remove",
+    QUOTED_PAGE,
+    /const sectionAllowed = \(code: string\) => \{/,
+    "sectionAllowed must be a real function body, not a one-line `editingNow ||` shortcut",
   );
+  assert.match(QUOTED_PAGE, /restrictedSectionPermission\(code\)/, "must resolve a code's specific Standard Fees permission");
+  assert.match(QUOTED_PAGE, /hasPermission\(role, permission\)/, "must check the resolved permission against the signed-in role");
+  assert.doesNotMatch(QUOTED_PAGE, /\beditingNow\b/, "column visibility must not reference the retired Edit Mode-derived flag");
 });
 
-test("ProjectsSectionsMenu no longer fires its own router.refresh() on open", () => {
+test("ProjectsSectionsMenu no longer reads anything from ProjectsEditMode", () => {
   assert.doesNotMatch(
     SECTIONS_MENU,
-    /router\.refresh\(\)/,
-    "the menu must not compensate for a missed refresh itself — that untracked call is what raced with Select All's own navigation and looked like it revealed unrelated columns",
-  );
-  assert.doesNotMatch(SECTIONS_MENU, /from ["']next\/navigation["']/, "no reason left to import useRouter here once the fetch-on-open is gone");
-});
-
-test("the Sections button reflects edit-mode's own pending state, not only its own draft-apply pending", () => {
-  assert.match(
-    SECTIONS_MENU,
-    /useProjectsEditMode\(\)/,
-    "must read ProjectsEditMode's pending so the button visibly shows \"still catching up\" right after unlocking, not just after its own cols/hide ticks",
+    /useProjectsEditMode/,
+    "the menu's available columns come from `phases`, computed once from role — it has no reason to read the edit-mode toggle",
   );
 });
 

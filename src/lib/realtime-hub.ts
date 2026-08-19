@@ -8,7 +8,7 @@
 // A runtime throw rather than `import "server-only"`, deliberately. That import is
 // a Next build-time alias with no installed package behind it, so any module using
 // it cannot be unit-tested with the repo's plain `tsx --test` runner — which is why
-// projects-gate.ts has no tests. This check is strictly
+// e.g. standard-sheet-gate.ts has no tests of its own. This check is strictly
 // stronger for our purposes: it fails just as loudly if the module is ever bundled
 // to the browser, AND it lets the concurrency tests below exist.
 if (typeof window !== "undefined") {
@@ -88,7 +88,8 @@ export type ChangeEvent = {
 type Envelope =
   | { type: "presence"; entries: Omit<PresenceEntry, "lastSeen">[] }
   | { type: "changes"; events: ChangeEvent[] }
-  | { type: "hello"; sessionId: string };
+  | { type: "hello"; sessionId: string }
+  | { type: "permissions" };
 
 // How long a presence entry survives without a heartbeat. The client beats every
 // 10s (see useRealtime), so 30s tolerates two missed beats before an editor
@@ -260,6 +261,16 @@ export function publishChanges(events: ChangeEvent[]): void {
   // being able to read straight out of the PM2 log rather than re-deducing.
   console.log(`[realtime] publishing ${events.length} change event(s) to ${subscribers.size} connected session(s)`);
   broadcast({ type: "changes", events });
+}
+
+// Announce that the Role Permissions matrix changed — no payload, since every
+// browser needs to re-run its OWN role's check server-side (router.refresh(),
+// see RealtimeProvider.tsx) rather than trust a client-computed diff. Same
+// broadcast-to-everyone shape as publishChanges: every connected session,
+// including the ELT admin's own other tabs, needs to see the new state.
+export function publishPermissionsChanged(): void {
+  console.log(`[realtime] publishing permissions:updated to ${subscribers.size} connected session(s)`);
+  broadcast({ type: "permissions" });
 }
 
 export function connectedSessionCount(): number {

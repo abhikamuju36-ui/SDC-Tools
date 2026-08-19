@@ -7,9 +7,15 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
+// All < Manager < Sales < ELT (see src/lib/permissions.ts for what each tier
+// actually grants — this enum is just the stored value). ADMIN was retired
+// 2026-08-18: every ADMIN row became ELT in the same migration that added
+// SALES/ELT (20260818150000_add_sales_elt_roles).
 enum Role {
+  ALL
   MANAGER
-  ADMIN
+  SALES
+  ELT
 }
 
 // Auth: credentials (email/password) for now — swap for Microsoft/Azure AD SSO
@@ -19,7 +25,7 @@ model User {
   email        String   @unique
   name         String
   passwordHash String
-  role         Role     @default(MANAGER)
+  role         Role     @default(ALL)
   createdAt    DateTime @default(now())
   // Bumped to invalidate every previously-issued session for this user —
   // the server-side half of "sign out", and what a Scheduler-side logout
@@ -708,6 +714,34 @@ model DepartmentEtcCompletion {
   @@index([year, monthNumber])
 }
 
+// ── The live-editable role/permission matrix (2026-08-18) ───────────────────
+//
+// One row per (role, permission) pair — the ELT-editable source of truth
+// lib/permissions.ts's in-memory cache is loaded from at boot and refreshed
+// from on every save (see lib/role-permissions-store.ts). Seeded to match
+// permissions.ts's own DEFAULT_OWN_PERMISSIONS exactly, so turning this
+// feature on changes nobody's access on day one.
+//
+// `permission` is a plain string, not an enum: it mirrors the `Permission`
+// TS union in lib/permissions.ts, which is expected to grow over time, and a
+// MySQL enum column would need the same widen-then-narrow migration dance as
+// `Role` every time it does.
+//
+// Accessed by raw SQL for the same reason as DepartmentEtcCompletion and
+// MonthlyReportSubmission above: `prisma generate` cannot run while a server
+// process holds node_modules/.prisma open, so a new table must not need a
+// deploy window to become usable.
+model RolePermission {
+  id             Int      @id @default(autoincrement())
+  role           Role
+  permission     String   @db.VarChar(64)
+  enabled        Boolean  @default(false)
+  updatedAt      DateTime @updatedAt
+  updatedByEmail String?  @db.VarChar(191)
+
+  @@unique([role, permission])
+}
+
 // ── One row per application-wide refresh, manual or scheduled (§25.11) ───────
 //
 // Written by lib/refresh-service.ts around every call to runAllSyncs, so "when was
@@ -939,4 +973,195 @@ model BuildReadinessSavedView {
   updatedAt DateTime @updatedAt
 
   @@unique([scope, name])
+}
+
+// ── Employees tab: Hiring Positions (2026-08-19) ────────────────────────────
+//
+// The open-positions WORKBOOK (Job.xlsx, a Paylocity Recruiting export read
+// straight off disk — see lib/hiring-workbook.ts) stays the source for the
+// position itself: title, status, dates, whoever posted it. It is never
+// copied into this table. What lives here is the one thing the workbook has
+// no concept of — which of THIS app's workforce group/department a position
+// has been assigned to — keyed on the workbook's own "Job ID" (stable across
+// refreshes) so a manual assignment survives the file being replaced, and a
+// position that disappears from the file (filled/withdrawn) leaves its
+// history here rather than being deleted, per the task's own "preserve
+// historical hiring assignment/audit information" requirement.
+//
+// A row existing at all (however NULL its two fields) means a person made a
+// choice: `workforceGroup`/`department` both NULL is a deliberate "moved back
+// to Unassigned", not "never touched" — a position with NO row here has
+// genuinely never been assigned, and falls back to
+// hiring-position-classify.ts's best-effort guess instead. That distinction
+// is why this is a real table rather than two columns on nothing — "assign"
+// and "clear" are both writes, "never assigned" is the absence of one.
+//
+// Raw-SQL accessed (`$queryRaw`/`$executeRaw`), same reason as
+// RolePermission/BuildReadinessSavedView above: `prisma generate` is blocked
+// on this box while a server process holds node_modules/.prisma open.
+model HiringPositionAssignment {
+  id               Int      @id @default(autoincrement())
+  // The workbook's own "Job ID" column — stable across every refresh/replace
+  // of Job.xlsx, unlike a row number or a title (titles repeat and get
+  // re-worded on the same requisition).
+  positionSourceId String   @unique @db.VarChar(64)
+  workforceGroup   String?  @db.VarChar(32) // "engineering" | "shop" | "pm" | "other" | NULL (unassigned)
+  department       String?  @db.VarChar(64) // a DepartmentCard key (e.g. "mech", "controls", "build") | NULL
+  updatedByEmail   String?  @db.VarChar(191)
+  updatedAt        DateTime @updatedAt
+  createdAt        DateTime @default(now())
+}
+
+// ── Employees tab: positions created directly in SDC Reports (2026-08-19) ───
+//
+// Job.xlsx (above) is a Paylocity-generated recruiting export — confirmed
+// live (2026-08-19) to carry the automation's own bookkeeping columns ("Job
+// Created by Username", "Job Modified by..."), so it is refreshed by that
+// external process, not something this app can safely open and add a row
+// to: a manually-inserted row would either be silently dropped on the next
+// refresh or collide with a real Paylocity Job ID. So a position created
+// from the "+ Create Position" drawer lives HERE instead — its own
+// authoritative row, never copied into or reconciled against the workbook —
+// while still being merged into the exact same `HiringPosition` list the
+// workbook's rows populate (hiring-positions.ts) so the two sources are
+// indistinguishable in the UI. Its id is exposed as the position's sourceId
+// in the form `manual-<id>`, parallel to the workbook's own "Job ID".
+//
+// Unlike HiringPositionAssignment (an overlay that never touches the
+// workbook's own title/status), this table owns ALL of a manual position's
+// fields outright — there is no external system of record for it to defer
+// to — so editing title/status/group/department all write directly to this
+// same row, with the previous/next values audited via the existing AuditLog
+// (see hiring-actions.ts).
+//
+// Raw-SQL accessed (`$queryRaw`/`$executeRaw`), same reason as
+// HiringPositionAssignment above.
+model HiringPositionCreated {
+  id                 Int      @id @default(autoincrement())
+  title              String   @db.VarChar(191)
+  // One of hiring-position-status.ts's MANUAL_JOB_STATUSES — free enough to
+  // read/filter alongside the workbook's own Job Status text, but validated
+  // against a fixed vocabulary at write time since (unlike the workbook)
+  // nothing external is dictating these values.
+  jobStatus          String   @db.VarChar(32)
+  workforceGroup     String   @db.VarChar(32) // "engineering" | "shop" | "pm" — required at creation, never "other"
+  department         String   @db.VarChar(64) // a DepartmentCard key (e.g. "mech", "controls", "build")
+  workLocDescription String?  @db.VarChar(191)
+  remote             Boolean  @default(false)
+  internal           Boolean  @default(false)
+  createdByEmail     String?  @db.VarChar(191)
+  updatedByEmail     String?  @db.VarChar(191)
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+}
+
+// ── Cash Flow Forecast — immutable historical snapshots (2026-08-19) ────────
+//
+// Total ETO's own "Project Cash Flow Forecast" report has NO underlying table
+// of its own (confirmed live: no table/view anywhere in the TotalETO database
+// named anything like CashFlow or Forecast) — it is built, the same way this
+// feature is, from `tblARSalesTerms` (the full AR milestone schedule, both
+// already-invoiced and still-pending), `tblAPBatchDocument.APDocDueDate`, PO
+// commitments, and `vwProjectEstimate`. Total ETO only ever shows what those
+// tables say RIGHT NOW — there is no "what did this look like last month" in
+// TotalETO at all, which is the whole reason this table exists: every
+// refresh/scheduled capture normalizes that live query into rows here, and
+// those rows are never touched again. "Current" in the UI is always a LIVE
+// TotalETO query (so it can never disagree with Total ETO's own report at the
+// moment someone looks); only a past "As Of" date reads from here.
+//
+// Raw-SQL accessed (`$queryRaw`/`$executeRaw`), same reason as
+// RolePermission/HiringPositionAssignment above.
+model CashFlowSnapshot {
+  id                     Int      @id @default(autoincrement())
+  // When this row was written.
+  snapshotTimestamp      DateTime @default(now())
+  // The calendar date this snapshot REPRESENTS — usually the same day as
+  // snapshotTimestamp, but kept as its own column (not just a DATE() on the
+  // timestamp) so "prior month-end snapshot" can be a plain indexed lookup
+  // rather than a derived expression on every query.
+  snapshotDate           DateTime @db.Date
+  // When the TotalETO extraction this snapshot is built from was actually
+  // read — distinct from snapshotTimestamp because dedup (below) can mean a
+  // scheduled refresh writes NO new row; recording the source read time here
+  // even on a would-be-duplicate matters for "how stale is 'Current'".
+  sourceRefreshTimestamp DateTime
+  createdBy              String?  @db.VarChar(191) // an email, or "system@auto-sync"
+  // sha256 of the normalized line set (sorted, so row order can't change it)
+  // — the dedup key. A scheduled refresh whose forecast hasn't moved at all
+  // since the last snapshot writes NO new row, matching the task's own "do
+  // not create duplicate snapshots if nothing has changed" — checked against
+  // the single most recent row's hash, never against the whole history.
+  contentHash            String   @db.VarChar(64)
+  lineCount              Int
+
+  @@index([snapshotDate])
+  @@index([snapshotTimestamp])
+}
+
+model CashFlowSnapshotLine {
+  id            Int      @id @default(autoincrement())
+  snapshotId    Int
+  // This app's own Job.jobId string (e.g. "1081") — the same key every other
+  // TotalETO-sourced feature in this app already uses, not TotalETO's own
+  // internal integer ProjectID, so a snapshot line joins straight onto Job
+  // without a second id to carry.
+  projectId     String   @db.VarChar(20)
+  customer      String?  @db.VarChar(191)
+  // "2026-08", or the literal string "UNKNOWN" for a line with no due/
+  // scheduled date at all — the task's own explicit "preserve that
+  // distinction instead of silently assigning it to a month". Text, not a
+  // DATE column and not one column per month — this is the whole point:
+  // unlimited history and future months without a schema change.
+  forecastMonth String   @db.VarChar(7)
+  flowType      String   @db.VarChar(8) // "incoming" | "outgoing"
+  category      String   @db.VarChar(8) // "AR" | "AP" | "PO" | "ETC"
+  amount        Decimal  @db.Decimal(14, 2)
+
+  @@index([snapshotId, projectId])
+  @@index([snapshotId, forecastMonth])
+}
+
+// PM-entered distribution of a project's remaining TotalETO cost estimate
+// (vwProjectActualsVSEstimates_LaborAndMaterials: TotalBudget - ActTotalCost)
+// across future months — Total ETO has no monthly ETC concept at all, so
+// this is a pure SDC Reports extension, never a TotalETO mirror. Unique on
+// (projectId, forecastMonth): setting the same month again REPLACES the
+// figure (audited via AuditLog — see cash-flow-actions.ts), it does not add
+// a second row. The one column no snapshot line carries a value for equal to
+// "ETC" without a matching row here: getOpenHiringPositions-style, an
+// allocation with no row for a project simply hasn't been distributed yet.
+model CashFlowEtcAllocation {
+  id            Int      @id @default(autoincrement())
+  projectId     String   @db.VarChar(20)
+  forecastMonth String   @db.VarChar(7) // never "UNKNOWN" — a PM chose a month by entering this row at all
+  amount        Decimal  @db.Decimal(14, 2)
+  note          String?  @db.VarChar(500)
+  updatedByEmail String? @db.VarChar(191)
+  updatedAt     DateTime @updatedAt
+  createdAt     DateTime @default(now())
+
+  @@unique([projectId, forecastMonth])
+}
+
+// A PM's manual correction to the AR forecast — "System Actual / Committed"
+// (tblARSalesTerms, read-only) vs "PM Forecast" (this table) stay two
+// different concepts on purpose, per the task's own explicit rule: this NEVER
+// writes back to TotalETO, and reading the current forecast means "an
+// override row wins over the live TotalETO figure for this exact project +
+// month, nothing more" — it replaces one cell, not the whole AR picture.
+// Every write is audited via the existing AuditLog (logAudit), not a second
+// audit table — see cash-flow-actions.ts.
+model CashFlowForecastOverride {
+  id             Int      @id @default(autoincrement())
+  projectId      String   @db.VarChar(20)
+  category       String   @db.VarChar(8) // "AR" today — the one category a PM can move without touching ERP data
+  forecastMonth  String   @db.VarChar(7)
+  amount         Decimal  @db.Decimal(14, 2)
+  note           String?  @db.VarChar(500)
+  updatedByEmail String?  @db.VarChar(191)
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+
+  @@unique([projectId, category, forecastMonth])
 }

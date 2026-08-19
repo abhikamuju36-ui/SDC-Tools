@@ -6,6 +6,9 @@ import { logAudit } from "@/lib/audit";
 import { recordChanges, classifyChange } from "@/lib/change-log";
 import { reconcileSchedulerRoster, type RosterReconciliation } from "@/lib/sync-scheduler-team";
 import { parseSupervisorExport, applySupervisorImport, type SupervisorImportResult } from "@/lib/import-employee-supervisors";
+import { assertActionPermission } from "@/lib/require-permission";
+import { DISCIPLINE_LABEL } from "@/lib/disciplines";
+import { pushTeamMemberToScheduler } from "@/lib/scheduler-push";
 
 // Employees are NEVER hard-deleted — departed people keep their historical
 // hours (Dan's requirement). Deactivate/reactivate only.
@@ -31,6 +34,7 @@ function readEmployeeForm(formData: FormData) {
 }
 
 export async function createEmployee(formData: FormData) {
+  await assertActionPermission("employees:edit");
   const data = readEmployeeForm(formData);
 
   if (data.paylocityId) {
@@ -52,6 +56,7 @@ export async function createEmployee(formData: FormData) {
 }
 
 export async function updateEmployee(id: number, formData: FormData) {
+  await assertActionPermission("employees:edit");
   const data = readEmployeeForm(formData);
 
   if (data.paylocityId) {
@@ -130,6 +135,7 @@ export async function reconcileSchedulerRosterAction(): Promise<RosterReconcilia
 // "Supervisor [Id]" column), matched by Emp Id == paylocityId. Returns a report
 // for the UI. Same apply logic a future SharePoint auto-pull would reuse.
 export async function importSupervisorsAction(formData: FormData): Promise<SupervisorImportResult> {
+  await assertActionPermission("employees:edit");
   const file = formData.get("file");
   if (!(file instanceof File) || file.size === 0) {
     return { ok: false, reason: "No file uploaded.", updated: [], clearedCount: 0, unchanged: 0, notInEtc: 0, supervisorNotInEtc: [] };
@@ -147,6 +153,7 @@ export async function importSupervisorsAction(formData: FormData): Promise<Super
 
 // Soft-delete / restore. Historical ActualHours rows stay linked either way.
 export async function setEmployeeActive(id: number, active: boolean, _formData: FormData) {
+  await assertActionPermission("employees:edit");
   const employee = await prisma.employee.update({ where: { id }, data: { active } });
   await logAudit({
     action: active ? "employee.reactivate" : "employee.deactivate",
@@ -174,4 +181,39 @@ export async function setEmployeeActive(id: number, active: boolean, _formData: 
     { action: active ? "employee.reactivate" : "employee.deactivate" },
   );
   revalidatePath("/employees");
+}
+
+export type AddTeamMemberResult = { ok: true; schedulerSynced: boolean; schedulerReason?: string } | { ok: false; error: string };
+
+// "Add member" from a department card — the write half of matching the
+// Scheduler board exactly. Two phases, deliberately in this order: the LOCAL
+// Reports Employee row first (this is the record that matters if the second
+// phase fails), then a best-effort push to Scheduler's own team_members table
+// so the person shows up there too (see scheduler-push.ts's own header for
+// why this can't just be a direct DB write). A push failure does not roll
+// back the local row — a half-added person who exists in Reports but not yet
+// on the Scheduler board is recoverable with "Reconcile with Scheduler"
+// later; losing the row entirely because a network call to another app
+// timed out would not be.
+export async function addTeamMember(disciplineCode: string, name: string): Promise<AddTeamMemberResult> {
+  await assertActionPermission("employees:edit");
+
+  const trimmedName = name.trim();
+  if (!trimmedName) return { ok: false, error: "Name is required." };
+
+  const label = DISCIPLINE_LABEL[disciplineCode];
+  if (!label) return { ok: false, error: `"${disciplineCode}" is not a department this can add to.` };
+
+  const employee = await prisma.employee.create({ data: { name: trimmedName, discipline: label } });
+  await logAudit({
+    action: "employee.create",
+    entityType: "Employee",
+    entityId: employee.id,
+    summary: `Added ${employee.name} to ${label} (from the Employees card)`,
+    metadata: { name: trimmedName, discipline: label },
+  });
+
+  const push = await pushTeamMemberToScheduler(employee.id, trimmedName, disciplineCode);
+  revalidatePath("/employees");
+  return { ok: true, schedulerSynced: push.ok, schedulerReason: push.ok ? undefined : push.reason };
 }

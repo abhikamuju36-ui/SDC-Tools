@@ -11,6 +11,19 @@ export async function register() {
   if (g.__sdcAutoSyncStarted) return; // guard against HMR / repeated registration
   g.__sdcAutoSyncStarted = true;
 
+  // The Role Permissions matrix (2026-08-18): load the DB-backed state into
+  // lib/permissions.ts's in-memory cache before anything else runs, so the
+  // very first request sees the ELT-configured matrix rather than the
+  // hardcoded fallback. A failure here is not fatal — hasPermission() falls
+  // back to DEFAULT_OWN_PERMISSIONS (today's shipped values) until a save or
+  // a restart succeeds in loading the real thing.
+  try {
+    const { loadRolePermissionsFromDb } = await import("@/lib/role-permissions-store");
+    await loadRolePermissionsFromDb();
+  } catch (err) {
+    console.error("[permissions] could not load Role Permissions from the database at boot:", err);
+  }
+
   const { SYNC_INTERVAL_MS } = await import("@/lib/auto-sync");
   // Through the SHARED service, not runAllSyncs directly (§25.5): the scheduled pass and
   // the `Refresh Data` button must be the same work, under the same lock, writing the

@@ -151,8 +151,8 @@ test("the issue column matches the one the audit log writes", () => {
 test("nobody signed in may tick anything", () => {
   const owners = parseDepartmentOwners(undefined);
   assert.equal(canManageDepartment({ email: null }, "pm", owners), false);
-  // Not even an ADMIN with no session — role without an identity is not an identity.
-  assert.equal(canManageDepartment({ email: null, role: "ADMIN" }, "pm", owners), false);
+  // Not even an ELT role with no session — role without an identity is not an identity.
+  assert.equal(canManageDepartment({ email: null, role: "ELT" }, "pm", owners), false);
 });
 
 test("with no owners configured, any signed-in user may tick — the app's existing grain", () => {
@@ -174,17 +174,17 @@ test("a configured department is restricted to its owners", () => {
   assert.equal(canManageDepartment({ email: "nobody@sdc.com" }, "pm", owners), true);
 });
 
-test("an ADMIN may tick a department they do not own", () => {
+test("an ELT user may tick a department they do not own", () => {
   const owners = parseDepartmentOwners("ce:dan@sdc.com");
-  assert.equal(canManageDepartment({ email: "abhi@sdc.com", role: "ADMIN" }, "ce", owners), true);
+  assert.equal(canManageDepartment({ email: "abhi@sdc.com", role: "ELT" }, "ce", owners), true);
 });
 
-test("an unknown department is refused, however the actor is privileged", () => {
+test("an unknown department is refused, however privileged the actor", () => {
   // The action would otherwise create a row for a department the checklist never shows —
   // invisible, and permanently blocking submission if the gate counted it.
   const owners = parseDepartmentOwners(undefined);
-  assert.equal(canManageDepartment({ email: "abhi@sdc.com", role: "ADMIN" }, "wire", owners), false);
-  assert.equal(canManageDepartment({ email: "abhi@sdc.com", role: "ADMIN" }, "", owners), false);
+  assert.equal(canManageDepartment({ email: "abhi@sdc.com", role: "ELT" }, "wire", owners), false);
+  assert.equal(canManageDepartment({ email: "abhi@sdc.com", role: "ELT" }, "", owners), false);
 });
 
 test("a malformed owners string does not lock everybody out", () => {

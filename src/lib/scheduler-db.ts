@@ -73,6 +73,35 @@ export async function fetchSchedulerTeam(includeInactive = false): Promise<Sched
   }));
 }
 
+export type SchedulerPlaceholder = { discipline: string; name: string };
+
+// Placeholders — Scheduler's own staffing stand-ins for an unfilled seat
+// ("ME Placeholder", "Build Placeholder", …). Not a separate table or flag on
+// the Scheduler side: a placeholder IS a team_members row, identified purely
+// by its name matching "%Placeholder%" (same convention Scheduler's own
+// public/app.js uses client-side via isPlaceholder(m.name), and the inverse
+// of fetchSchedulerTeam's exclusion filter above). No employee_id — a
+// placeholder isn't a real person, so there's nothing in Reports to join it
+// to.
+//
+// Fail-soft like fetchSchedulerProjectJobNumbers: an unreachable Scheduler DB
+// degrades to "no placeholders shown", not a broken page.
+export async function fetchSchedulerPlaceholders(): Promise<SchedulerPlaceholder[]> {
+  if (!isSchedulerDbConfigured()) return [];
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT discipline, name
+         FROM team_members
+        WHERE name LIKE '%Placeholder%'
+        ORDER BY discipline, sort_order, name`,
+    );
+    return rows.map((r) => ({ discipline: String(r.discipline), name: String(r.name) }));
+  } catch {
+    return [];
+  }
+}
+
 // Set of ETC job numbers that already have a project in the Scheduler
 // (projects.job_number is stamped with the ETC jobId when a schedule is
 // created from an ETC job — see SDC_Scheduler routes/projects.js). Used by the

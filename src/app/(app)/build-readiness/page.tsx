@@ -2,6 +2,7 @@ import { PageTitle } from "@/components/ui/Typography";
 import { getBuildReadinessData, triggerBuildReadinessRefresh } from "@/lib/build-readiness-actions";
 import { listBuildReadinessViews } from "@/lib/build-readiness-views-actions";
 import { BuildReadinessDashboard } from "@/components/build-readiness/BuildReadinessDashboard";
+import { requirePagePermission } from "@/lib/require-permission";
 
 // "Build Readiness" — cross-project view of what can actually be built right
 // now, across every active billable job, backed by the exact same
@@ -16,6 +17,7 @@ import { BuildReadinessDashboard } from "@/components/build-readiness/BuildReadi
 // client then polls for progress. This starts it BEFORE the first paint so a
 // cold cache doesn't wait an extra client round-trip to begin.
 export default async function BuildReadinessPage() {
+  await requirePagePermission("build-readiness:view");
   await triggerBuildReadinessRefresh(false);
   const [data, views] = await Promise.all([getBuildReadinessData(), listBuildReadinessViews()]);
 

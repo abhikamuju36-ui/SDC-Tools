@@ -1,9 +1,12 @@
 "use client";
 
-import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore, useTransition } from "react";
 import { usd, hours as fmtHours } from "@/components/ui/format";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 import { UndefinedHoursPanel } from "@/components/UndefinedHoursPanel";
+// The KPI row itself — extracted (unchanged) so the T&M tab's own summary can use the
+// identical row instead of a second, driftable copy. See that file's header note.
+import { MemoKpiRow } from "@/components/ui/KpiRow";
 // The drill card's height ceiling and its one scrolling region (§49). The two panels
 // below are hand-rolled rather than DrillPanel, so they read the same two classes the
 // shared panel does — the alternative is four opinions about how tall a drill may be.
@@ -50,7 +53,6 @@ import { reconcileEtcKpis, rollupLiveTotals } from "@/lib/etc-kpi-live";
 // A completed refresh publishes through this feed, which is how the drill caches below
 // learn that their sources have moved — including when somebody else started it.
 import { useRealtimeChanges } from "@/components/RealtimeProvider";
-import { useValueFlash } from "@/components/useMotion";
 
 // Section code -> billing group, so the drill can be narrowed to the card that
 // opened it. Same mapping the grid's column bands and the KPI totals use, from
@@ -713,7 +715,7 @@ export function EtcMonthKpiCards({
             and across the off-grid block appearing or disappearing, so React updates a
             block in place rather than remounting the ones after it (§37.11). */}
         {blocks.map((block) => (
-          <MetricBlock
+          <MemoKpiRow
             key={block.id}
             {...block}
             drillOpen={block.drill != null && drill === block.drill}
@@ -1173,217 +1175,6 @@ export function EtcMonthKpiCards({
   );
 }
 
-// ── One metric block inside the unified card (§37.1) ─────────────────────────
-//
-// The six separate Card / GroupCard / Variance / Unplanned components this replaced are
-// gone, along with the two places a card decided its own content. A block renders a
-// KpiBlock and nothing else: no arithmetic, no formatting, and no choice about which
-// vintage of a figure to read (see lib/etc-kpi-strip.ts).
-//
-// ── Why memo, and why the props are flat (§37.4, §37.11) ────────────────────
-//
-// This component re-renders on EVERY keystroke anywhere in the grid — that is what
-// makes the variances live. Before consolidation, six cards re-rendered with it each
-// time, and after consolidation a single monolithic card would have been worse: one
-// component whose whole subtree repaints because one of six figures moved is exactly
-// what §37.11 forbids.
-//
-// memo + primitive props gives the opposite behaviour: React's shallow comparison sees
-// that Engineering's label, value, status and tone are unchanged and skips it entirely,
-// so typing in a Shop cell updates the Shop block alone. It only works because every
-// field of KpiBlock is a primitive and both callbacks are stable — a nested `status`
-// object or an inline arrow would compare unequal every render and silently restore the
-// old all-six behaviour while looking optimised.
-const MetricBlock = memo(function MetricBlock({
-  id,
-  label,
-  value,
-  hint,
-  tone,
-  toneLabel,
-  drill,
-  statusKind,
-  statusArrow,
-  statusText,
-  statusSign,
-  statusTitle,
-  countLabel,
-  drillOpen,
-  detailState,
-  onDrill,
-  onRetry,
-}: KpiBlock & {
-  // Whether THIS block's panel is the one currently open, so its link can say so
-  // instead of reading "Detail" while the detail is already on screen.
-  drillOpen: boolean;
-  // This block's own fetch state (§37.9). At most one block is ever non-idle, because
-  // only an OPEN drill fetches anything — so a slow Parts query cannot put the other
-  // five blocks into a loading state, and a failed one is named rather than hidden.
-  detailState: "idle" | "loading" | "error";
-  onDrill: (scope: DrillScope) => void;
-  onRetry: (scope: DrillScope) => void;
-}) {
-  // ── The block updates; it does not re-arrive (§36.8) ───────────────────────
-  //
-  // Keyed on the FORMATTED value, not the raw number: the strip prints whole hours and
-  // whole dollars, so a change of 0.4h that rounds to the same string is not a change
-  // anybody can see, and flashing for it would be the block crying wolf.
-  //
-  // The highlight is an inset outline, which costs no layout at all, and the block's
-  // element is never keyed or replaced — §36.8 forbids remounting a card to show that
-  // its figure moved, and §37.4 forbids reloading the unified card to update one block.
-  const changed = useValueFlash(value);
-  const labelId = `kpi-${id}-label`;
-  return (
-    <div
-      // No border and no shadow of its own: the unified card owns both, and the 1px
-      // gaps between blocks are the dividers (§37.7 — "do not create nested heavy card
-      // borders"). A tone tints the block's background instead of bordering it, which
-      // reads as a section of one card rather than a card inside a card.
-      //
-      // min-h on the value line and the status line below, not on the block: the status
-      // swaps between a variance, an unplanned figure and a neutral note as cells are
-      // filled in, and without a floor the block changed height mid-typing and took the
-      // whole card (and the grid below it) with it (§36.14, §37.7).
-      // A ROW now, not a column (2026-08-05, by request). Label and status on the left,
-      // figure and Detail right-aligned — so the figures line up down the card, which is
-      // the one thing six side-by-side columns could never do.
-      //
-      // `items-center` with no reserved heights: a row is as tall as its tallest line and
-      // every line here is a single line, so the status swapping between a variance and a
-      // note cannot change the row's height. The three min-h floors the column layout
-      // needed (§36.14) are gone with it.
-      className={`motion-interactive flex min-w-0 items-center gap-3 px-3 py-2 ${changed ? "motion-flash" : ""} ${
-        // A tone tints the row and adds a left accent — the accent is what makes a toned
-        // row findable when the card is scanned quickly, and unlike a full border it
-        // cannot double up against the gap-px dividers above and below.
-        tone === "danger"
-          ? "border-l-4 border-l-sdc-red bg-sdc-red-bg/70"
-          : tone === "warn"
-            ? "border-l-4 border-l-sdc-yellow bg-sdc-yellow-bg/70"
-            : "border-l-4 border-l-transparent bg-white"
-      }`}
-      title={hint ?? undefined}
-      // A group per KPI, named by its own label, so a screen reader announces
-      // "Engineering hours" before the figure and its status rather than reading six
-      // numbers out of one region (§37.10).
-      role="group"
-      aria-labelledby={labelId}
-    >
-      {/* The label gets the block's whole width. Sharing the top line with the Detail
-          link left it 94px of 169px, which truncated "Engineering hours" and both toned
-          labels — measured live, and §37.7 asks for every label to stay readable. The
-          link moved down beside the status instead, where the two together still fit
-          with room to spare. `truncate` stays as the graceful fallback if the strip is
-          ever asked to hold more blocks than this. */}
-      <p id={labelId} className="min-w-0 flex-1 truncate text-label font-semibold uppercase tracking-wide text-sdc-muted">
-        {/* The tone, said in something other than colour (§37.10). The glyph is
-            decorative — the sr-only words here and the status line below are what
-            carry the meaning. */}
-        {toneLabel && (
-          <>
-            <span aria-hidden="true" className={`mr-1 ${tone === "danger" ? "text-sdc-red-text" : "text-sdc-yellow-text"}`}>
-              ⚠
-            </span>
-            <span className="sr-only">{toneLabel}: </span>
-          </>
-        )}
-        {label}
-      </p>
-      {/* The value on its own line, so it can never compete with anything for width.
-          Side by side with the status — as the separate cards had them — there is no room
-          at six blocks across: "$1,432,857" beside "▼ $1,084,643 over" needs ~180px and
-          gets ~155px on a 1280px screen, so one of the two had to clip, and §37.7/§37.8
-          forbid clipping either. The reserved heights keep every block the same size
-          whatever its figures do. */}
-      {/* Status BEFORE the figure and to its left, so the column of figures on the right
-          stays unbroken. It gets no reserved width: in a row there is space for it, and
-          the whole reason the column layout hid things was that there wasn't.
-          `flex-wrap` (§64): with the count label added, a narrow card wraps the status
-          and count onto their own line rather than clipping either — the figure and
-          Detail, ordered last, stay together on the line they wrap to.
-          NOT `shrink-0` — that was measured to backfire here: it stops this group from
-          ever being narrower than its own content, so the ROW overflows sideways
-          instead of this group wrapping internally. The label's own `flex-1 truncate`
-          already absorbs ordinary space pressure first (its content is prose, safe to
-          ellipsise); this group only shrinks — and then wraps — once even a fully
-          truncated label leaves no room, which is the narrow-screen case wrapping is
-          for. */}
-      <div className="flex min-w-0 flex-wrap items-baseline justify-end gap-3">
-        <p
-          className={`min-w-0 truncate text-note font-semibold tabular-nums ${
-            statusKind === "unplanned"
-              ? // Neutral amber rather than the green/red of a variance: unplanned work is
-                // not good news or bad news, it is unfinished input. Painting it green
-                // (which a positive Diff would have done) actively told managers the
-                // opposite of what the number meant.
-                "text-sdc-yellow-text"
-              : statusKind === "text" || statusSign === 0
-                ? "text-sdc-gray-400"
-                : statusSign > 0
-                  ? "text-sdc-green-text"
-                  : "text-sdc-red-text"
-          }`}
-          title={statusTitle}
-        >
-          {/* Direction is in the words too ("under" / "over"), so the arrow is decorative
-              and the meaning survives without colour or glyph (§37.10). */}
-          {statusArrow && (
-            <span aria-hidden="true" className="mr-0.5">
-              {statusArrow}
-            </span>
-          )}
-          {statusText}
-        </p>
-        {/* The headcount that used to be its own "People booked" block (§64) — between
-            the status and the figure, exactly where the ticket asks for it. Muted like
-            the status beside it (it's a fact, not a variance) and truncating rather
-            than pushing the figure/Detail out of reserved width if it is ever long. */}
-        {countLabel && <p className="min-w-0 shrink truncate text-note font-medium text-sdc-muted">{countLabel}</p>}
-        {/* The figure. Right-aligned in a reserved width so every value on the card lines
-            up on the same edge regardless of how long the label beside it is — the
-            comparison this card exists for. Larger than it was, because a row has the
-            room the columns did not. */}
-        <p className="font-heading min-w-[5.5rem] text-right text-lg leading-tight font-bold tabular-nums text-sdc-navy">
-          {value}
-        </p>
-        {drill != null && (
-          <button
-            type="button"
-            // Retry replaces Detail only while THIS block's fetch has failed, and it
-            // clears just this lane before the effect refetches — the drill stays open
-            // throughout, so the panel below is never yanked out from under the click
-            // (§37.9: "provide a retry option through the approved refresh or detail
-            // workflow").
-            onClick={() => (detailState === "error" ? onRetry(drill) : onDrill(drill))}
-            aria-expanded={drillOpen}
-            // The accessible name carries the KPI; the visible text stays "Detail".
-            // Six buttons all named "Detail" is unusable from a screen reader's element
-            // list, and §37.10 requires each Detail action to be associated with the
-            // right KPI.
-            aria-label={
-              detailState === "error"
-                ? `Retry loading the ${label} detail`
-                : drillOpen
-                  ? `Hide the ${label} detail`
-                  : `Show the ${label} detail`
-            }
-            title={drillOpen ? "Hide the punch detail" : "Show every booked punch behind this figure"}
-            // min-w, because "Detail", "Hide", "Loading…" and "Retry" are different
-            // widths and this control sits at the block's right edge — swapping them
-            // used to nudge the label beside it (§36.8, §36.14: reserve the space).
-            className={`motion-interactive shrink-0 text-right text-label font-medium underline decoration-dotted underline-offset-2 min-w-[3.2rem] ${
-              detailState === "error"
-                ? "text-sdc-red-text"
-                : drillOpen
-                  ? "text-sdc-navy"
-                  : "text-sdc-blue hover:text-sdc-blue-dark"
-            }`}
-          >
-            {detailState === "error" ? "Retry" : detailState === "loading" ? "Loading…" : drillOpen ? "Hide" : "Detail"}
-          </button>
-        )}
-      </div>
-    </div>
-  );
-});
+// The row itself (formerly this file's own `MetricBlock`) now lives in
+// components/ui/KpiRow.tsx as `KpiRow`/`MemoKpiRow` — extracted so the T&M tab's
+// summary can render the identical row instead of a second, driftable copy.

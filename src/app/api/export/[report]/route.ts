@@ -39,14 +39,13 @@ import { isStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
 // ── The Standards exception ──────────────────────────────────────────────────
 //
 // The sentence above stops being true for the Standard Sheet and Standard Fees figures:
-// those are NOT data every signed-in user can already see. They sit behind the Standard
-// Sheet password, so the export has to make the same decision the page makes, and make it
-// the same way.
+// those are NOT data every signed-in user can already see. They're gated by the
+// standards:view permission (Sales/ELT only), so the export has to make the same
+// decision the page makes, and make it the same way.
 //
-// The authority is `isStandardSheetUnlocked()` — the httpOnly, HMAC-signed cookie set by
-// verifyStandardSheetPassword, the identical check etc/page.tsx uses to decide whether to
-// render the figures at all and that every Standard Sheet mutation asserts. Being a
-// same-origin fetch, the browser attaches that cookie to this request on its own.
+// The authority is `isStandardSheetUnlocked()` — the same role check etc/page.tsx uses to
+// decide whether to render the figures at all and that every Standard Sheet mutation
+// asserts. It reads the signed-in session, so there is nothing the caller needs to attach.
 //
 // Three things this deliberately does NOT do:
 //   * It does not accept an "include standards" parameter. A caller-supplied flag would

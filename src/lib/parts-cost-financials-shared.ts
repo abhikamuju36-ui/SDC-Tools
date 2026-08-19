@@ -7,10 +7,17 @@ import { reconcileRounding } from "@/lib/rounding";
 // `reconcilePartsCostRounding`, a plain runtime function with no server
 // dependency at all — pulls the whole module (Prisma, the live TotalETO
 // query) into the client bundle and trips Next's server-only guard. This
-// file holds exactly the two things safe for either side to import: the
-// shape of the reconciliation, and the pure rounding fix. The async
-// `getPartsCostFinancials` that actually PRODUCES a `PartsCostFinancials`
-// stays server-only, in parts-cost-financials.ts.
+// file holds exactly the things safe for either side to import: the shape of
+// the reconciliation, and the pure arithmetic (rounding fix, bar-scale math,
+// and — 2026-08-19 — `projectionResidual`). The async `getPartsCostFinancials`
+// that actually PRODUCES a `PartsCostFinancials` stays server-only, in
+// parts-cost-financials.ts; `computePartsBudgetProjection` similarly stays in
+// parts-budget-projection.ts (its own `import "server-only"`, since it calls
+// getExecutionEtcByJob), importing `projectionResidual` from here rather than
+// defining it there — the same reason `projectionResidual` also needs to be
+// importable from a plain node:test file with no live database (a value
+// import of anything with `import "server-only"` throws unconditionally under
+// this project's test runner — the module has to not have it at all).
 
 export type PartsCostFinancials = {
   /** Job.costQuoted, summed across the requested jobs. Null when none has a quote on file. */
@@ -28,7 +35,13 @@ export type PartsCostFinancials = {
   etc: number | null;
   /** invoiced + leftToInvoice — "how much has actually been committed to date" (= Purchased). */
   totalSpent: number;
-  /** invoiced + leftToInvoice + (etc ?? 0) — where this job is projected to land. */
+  /**
+   * invoiced + max(leftToInvoice, etc ?? 0) — where this job is projected to
+   * land (2026-08-19). Never below `totalSpent` (invoiced + leftToInvoice):
+   * whichever of leftToInvoice/etc is larger is the one added, never both
+   * (that would double-count — the 2026-08-17 fix) and never neither's floor
+   * (a stale/small etc can't drag this below totalSpent — the 2026-08-19 fix).
+   */
   projection: number;
   /** projection − budget. Null when budget is null. */
   variance: number | null;
@@ -45,6 +58,24 @@ export type PartsCostFinancials = {
    */
   lines: PartsCostLine[];
 };
+
+// ── The one arithmetic step the 2026-08-19 fix is ───────────────────────────
+//
+// Reported live on job 1119 (Karl Storz Stamping Machine): Total Parts Cost
+// Spent $133,428 (invoiced + committedNotPosted) read GREATER than
+// Actual/Projection $127,219 (invoiced + estimateToPurchase) — that job's ETC
+// hadn't caught up to its own open PO balance. `committedNotPosted` and
+// `estimateToPurchase` are never BOTH added on top of `actual` (that's the
+// 2026-08-17 double-count fix — see parts-budget-projection.ts's header) —
+// only ever the LARGER of the two rides on top, which keeps that same "one
+// term, not two" shape while adding the floor this fix requires: whichever
+// term is smaller can never drag the total below what the other alone
+// already guarantees. When `estimateToPurchase` is current (>=
+// committedNotPosted, the common/healthy case), this returns
+// `estimateToPurchase` unchanged — byte-identical to the 2026-08-17 formula.
+export function projectionResidual(committedNotPosted: number, estimateToPurchase: number): number {
+  return Math.max(committedNotPosted, estimateToPurchase);
+}
 
 // ── Rounding that can't visibly contradict itself ────────────────────────────
 //

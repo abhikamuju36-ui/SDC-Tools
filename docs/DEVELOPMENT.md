@@ -27,7 +27,7 @@ Local setup and day-to-day workflows. For production deployment, see
 | `SCHEDULER_DATABASE_URL` | Read-only MySQL into the sibling Scheduler app's database |
 | `SCHEDULER_SHARED_TOKEN` | Bearer token for the two apps' server-to-server integration routes |
 | `SCHEDULER_BASE_URL` | Where to send a user for the Scheduler-SSO handoff |
-| `CONFIRM_PASSWORD`, `PROJECTS_PASSWORD`, `STANDARD_SHEET_PASSWORD`, `AUDIT_LOG_PASSWORD` | Per-gate overrides of the shared "button password" (each falls back to a shared default if unset) |
+| `CONFIRM_PASSWORD` | Per-gate override of the shared "button password" for Reopen Month (falls back to a shared default if unset) — Projects/Standard Sheet/Audit Log access is a role check now (`src/lib/permissions.ts`), not a password |
 | `ETC_DEPARTMENT_OWNERS` | Configures which signed-in users may tick off which department's ETC sign-off |
 | `NEXT_PUBLIC_APP_VERSION` | Displayed in the sidebar |
 

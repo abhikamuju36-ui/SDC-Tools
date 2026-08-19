@@ -14,6 +14,7 @@ import { getHoursFilterOptions, queryHoursGrouped, queryHoursRows, queryHoursSum
 import { parseHoursFilters, parseHoursGroupByList, parseHoursSort, type HoursDetailSortKey } from "@/lib/hours-filters";
 import { cycleSortState, type SortState } from "@/lib/table-sort";
 import { listSharedHoursViews } from "@/lib/hours-saved-views-actions";
+import { requirePagePermission } from "@/lib/require-permission";
 
 // ── The Hours tab — a filterable, paginated view over JobHoursDetail ────────
 //
@@ -47,6 +48,7 @@ type HoursPageSearchParams = {
 };
 
 export default async function HoursPage({ searchParams }: { searchParams: Promise<HoursPageSearchParams> }) {
+  await requirePagePermission("hours:view");
   const sp = await searchParams;
   const filters = parseHoursFilters(sp);
   const groupByLevels = parseHoursGroupByList(sp.groupBy);

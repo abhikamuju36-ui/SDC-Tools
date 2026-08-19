@@ -41,7 +41,9 @@ export async function registerUser(input: {
 
   const passwordHash = await bcrypt.hash(password, 10);
   const user = await prisma.user.create({
-    data: { name, email, passwordHash, role: "MANAGER" },
+    // Least-privilege default — an ELT user promotes them from /admin/users
+    // once they actually need Manager-tier access or above.
+    data: { name, email, passwordHash, role: "ALL" },
   });
 
   await logAuditFor(user.id, user.email, {

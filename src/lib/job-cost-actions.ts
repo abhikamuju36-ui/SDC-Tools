@@ -5,6 +5,7 @@ import { auth } from "@/lib/auth";
 import { recordChanges } from "@/lib/change-log";
 import { revalidatePath } from "next/cache";
 import { DEFAULT_RATES, type CostRates, type HourAllocationEntry, type JobHourAllocation, type YearRateOverrides } from "@/lib/job-cost";
+import { assertActionPermission } from "@/lib/require-permission";
 
 // ── Shared Rate Matrix / Hour Allocation storage ────────────────────────────
 //
@@ -76,6 +77,7 @@ export async function loadCostRates(): Promise<{ defaults: CostRates; overrides:
 }
 
 export async function saveDefaultRate(formData: FormData): Promise<void> {
+  await assertActionPermission("profitability:view");
   const engRate = toNullableNumber(formData.get("engRate")) ?? DEFAULT_RATES.engRate;
   const shopRate = toNullableNumber(formData.get("shopRate")) ?? DEFAULT_RATES.shopRate;
   const pmPct = toNullableNumber(formData.get("pmPct")) ?? DEFAULT_RATES.pmPct;
@@ -94,6 +96,7 @@ export async function saveDefaultRate(formData: FormData): Promise<void> {
 }
 
 export async function saveYearRateOverride(formData: FormData): Promise<void> {
+  await assertActionPermission("profitability:view");
   const year = String(formData.get("year") ?? "").trim();
   if (!/^\d{4}$/.test(year)) return;
   const engRate = toNullableNumber(formData.get("engRate"));
@@ -121,6 +124,7 @@ export async function saveYearRateOverride(formData: FormData): Promise<void> {
 }
 
 export async function clearAllYearRateOverrides(): Promise<void> {
+  await assertActionPermission("profitability:view");
   await prisma.$executeRaw`DELETE FROM JobCostYearRate`;
   await recordChanges([
     { tab: TAB, rowRef: "All years", columnName: "Rate Matrix", previousValue: null, newValue: "cleared", changeType: "removed" },
@@ -143,6 +147,7 @@ export async function loadHourAllocations(): Promise<Map<string, JobHourAllocati
 
 /** Replaces a job's whole allocation (both eng and shop) in one transaction. */
 export async function saveJobHourAllocation(jobId: string, eng: HourAllocationEntry[], shop: HourAllocationEntry[]): Promise<void> {
+  await assertActionPermission("profitability:view");
   const updatedById = await actorId();
   const rows = [
     ...eng.filter((r) => r.hours > 0 && r.year).map((r) => ({ ...r, type: "eng" as const })),
@@ -165,6 +170,7 @@ export async function saveJobHourAllocation(jobId: string, eng: HourAllocationEn
 }
 
 export async function clearJobHourAllocation(jobId: string): Promise<void> {
+  await assertActionPermission("profitability:view");
   await prisma.$executeRaw`DELETE FROM JobCostHourAllocation WHERE jobId = ${jobId}`;
   await recordChanges([
     { tab: TAB, rowRef: `Job ${jobId}`, columnName: "Hour Allocation", previousValue: null, newValue: "cleared", changeType: "removed" },

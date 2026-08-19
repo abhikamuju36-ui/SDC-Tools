@@ -45,11 +45,21 @@ import type { PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
 //   Total Parts Cost Spent = invoiced + leftToInvoice   (unchanged — this is
 //                                                         real money moved or
 //                                                         committed to date)
-//   Projection             = invoiced + etc             (fixed 2026-08-17)
+//   Projection             = invoiced + max(leftToInvoice, etc ?? 0)
+//                                                        (2026-08-17, floored 2026-08-19)
 //
 // `leftToInvoice` stays a real, displayed figure — "how much of ETC is
 // already spoken for by an open PO" is worth knowing — it is just never
-// summed into `projection` again.
+// SUMMED alongside `etc` into `projection` (that would double-count, the
+// 2026-08-17 fix). As of 2026-08-19 it also acts as a floor: reported live on
+// job 1119 (Karl Storz), Projection ($127,219 = invoiced + etc) read BELOW
+// Total Parts Cost Spent ($133,428 = invoiced + leftToInvoice) because that
+// job's ETC hadn't caught up to its own open PO balance — a projected FINAL
+// cost below money already spent/committed, which the business requires
+// never happen. `computePartsBudgetProjection`'s `projectionResidual` now
+// takes whichever of leftToInvoice/etc is larger, so Projection can never
+// fall below Total Parts Cost Spent again, while staying byte-identical to
+// the 2026-08-17 formula whenever ETC is current (the common case).
 //
 // This reads `computePartsBudgetProjection` — the one function every "ETC"
 // figure on this card traces back to — relabeled to the vocabulary the audit

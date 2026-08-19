@@ -45,8 +45,11 @@ const NICKNAMES: Record<string, string> = {
 };
 
 // Whitespace-insensitive, case-insensitive, punctuation-stripped, nickname-
-// expanded match key.
-function normalizeName(name: string): string {
+// expanded match key. Exported for employee-scheduler-overlay.ts, which needs
+// the SAME key this file's own reconciliation uses — a second, slightly
+// different normalizer would silently disagree with "Reconcile with
+// Scheduler" about who matches whom.
+export function normalizeName(name: string): string {
   const parts = name
     .toLowerCase()
     .normalize("NFKD")

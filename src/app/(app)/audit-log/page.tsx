@@ -1,24 +1,24 @@
 import { prisma } from "@/lib/prisma";
 import { PageTitle } from "@/components/ui/Typography";
 import { AuditLogGrid } from "@/components/AuditLogGrid";
+import { requirePagePermission } from "@/lib/require-permission";
 
 // How many recent entries to load into the grid (AG Grid then sorts/filters/
 // paginates them client-side).
 const LOAD_LIMIT = 1000;
 
-// Password-protected view of AuditLog — every logged data-changing action. AG
-// Grid (Community) provides sort / column filters / resize / pagination
+// ELT-only view of AuditLog — every logged data-changing action. AG Grid
+// (Community) provides sort / column filters / resize / pagination
 // client-side.
 //
-// The gate is layout.tsx's PasswordGate (audit-log-gate.ts), which renders in
-// front of this page and is the real boundary. There used to be a
-// `role !== "ADMIN" -> redirect("/")` here as well, and between it and the
-// sidebar hiding the link, the password gate was unreachable for anyone who
-// wasn't already an admin — belt and braces where the braces made the belt
-// pointless. Dropped 2026-08-02 along with the app's other role gates: this
-// app has one shared team password, not a role hierarchy, and gates that
-// nobody can reach are how corrections stop happening.
+// A role check WAS dropped from here 2026-08-02 in favor of a shared
+// password (audit-log-gate.ts), on the reasoning that a gate nobody could
+// reach never gets corrected. That's why this one is reachable now: the real
+// 2026-08-18 role system (lib/permissions.ts) is actually maintained and
+// tested, unlike the ad hoc `role !== "ADMIN"` this replaces — the password
+// gate is retired, not layered on top.
 export default async function AuditLogPage() {
+  await requirePagePermission("audit-log:view");
   const [logs, total] = await Promise.all([
     prisma.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: LOAD_LIMIT }),
     prisma.auditLog.count(),

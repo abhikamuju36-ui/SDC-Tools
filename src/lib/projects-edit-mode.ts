@@ -2,8 +2,8 @@
 
 import { cookies } from "next/headers";
 import { auth } from "@/lib/auth";
+import { hasPermission } from "@/lib/permissions";
 import { PROJECTS_EDIT_COOKIE as COOKIE_NAME } from "@/lib/projects-edit-cookie";
-import { isProjectsUnlocked } from "@/lib/projects-gate";
 
 // The Projects grid (/quoted) is a REPORT first and an editor second: most
 // visits are someone reading quoted-vs-actual hours, yet every cell in it used
@@ -11,10 +11,12 @@ import { isProjectsUnlocked } from "@/lib/projects-gate";
 // keystroke was a silent edit to production data.
 //
 // So the page now opens read-only and editing is an explicit, deliberate gesture
-// — the same shape as the Monthly ETC grid's unlock (etc-edit-gate.ts), minus
-// the password: this isn't a second access boundary, it's a mode switch. The
-// boundary is the sign-in the whole app already sits behind (src/proxy.ts), and
-// that is what assertProjectsEditable() re-checks on every write.
+// — the same shape as the Monthly ETC grid's unlock (etc-edit-gate.ts). The
+// boundary is the ROLE the signed-in user holds (projects:edit — Sales/ELT
+// only, see lib/permissions.ts), re-checked on every write by
+// assertProjectsEditable() below; the toggle is a mode switch on TOP of that
+// boundary, not a second one — anyone with the permission can flip it without
+// a password, and anyone without it never sees a usable switch at all.
 //
 // The mode lives in a session cookie rather than the URL, deliberately. The URL
 // on this page is the shareable view (filters, columns, sort — see
@@ -25,18 +27,10 @@ import { isProjectsUnlocked } from "@/lib/projects-gate";
 //
 // ── The browser writes this cookie, not a server action ─────────────────────
 // It's deliberately NOT httpOnly, and there is no setProjectsEditMode() here.
-// Flipping the switch through a server action made it feel broken: Next
-// re-renders the current route after EVERY server action, so the click didn't
-// settle until the whole page — every job with its hours, the shared views, the
-// Scheduler lookup — had re-rendered on the server, producing byte-identical
-// HTML. Dropping revalidatePath() removed the cache invalidation but not that
-// round trip. The switch now writes document.cookie directly and is instant.
-//
-// Nothing is given away by letting the browser write it. This cookie was never
-// an access boundary — assertProjectsEditable() below demands a real SESSION as
-// well, and the cookie only says "this browser is in edit mode", which any
-// signed-in user gets by clicking the switch once. Forging it grants nothing a
-// click wouldn't.
+// Nothing is given away by letting the browser write it: assertProjectsEditable()
+// below demands the real ROLE as well, and the cookie only says "this browser is
+// in edit mode", which anyone with projects:edit gets by clicking the switch
+// once. Forging it grants nothing a click wouldn't.
 // The name itself lives in projects-edit-cookie.ts — a "use server" module may
 // only export async functions, so it can't be shared from here.
 
@@ -45,7 +39,7 @@ import { isProjectsUnlocked } from "@/lib/projects-gate";
 // all") and pay for the session lookup twice on every render.
 export async function getProjectsEditState(): Promise<{ editing: boolean; mayEdit: boolean }> {
   const session = await auth();
-  const mayEdit = !!session?.user;
+  const mayEdit = hasPermission(session?.user?.role, "projects:edit");
   if (!mayEdit) return { editing: false, mayEdit: false };
   const cookieStore = await cookies();
   return { editing: cookieStore.get(COOKIE_NAME)?.value === "1", mayEdit: true };
@@ -63,16 +57,7 @@ export async function getProjectsEditState(): Promise<{ editing: boolean; mayEdi
 export async function assertProjectsEditable(): Promise<void> {
   const session = await auth();
   if (!session?.user) throw new Error("You need to be signed in to change anything here.");
-  // The password gate, checked BEFORE the mode cookie. Edit Mode is a mode
-  // switch and its cookie is browser-writable by design (see above); the gate
-  // is the actual boundary, and it is unforgeable — an HMAC keyed by the
-  // password. Checking it here means a crafted FormData can't write to this
-  // page just because the attacker set projects-edit-mode=1 themselves.
-  if (!(await isProjectsUnlocked())) {
-    throw new Error("Projects is locked — enter the password in the toolbar before editing.");
-  }
-  const cookieStore = await cookies();
-  if (cookieStore.get(COOKIE_NAME)?.value !== "1") {
-    throw new Error("Projects is in read-only mode — turn on Edit Mode in the toolbar first.");
+  if (!hasPermission(session.user.role, "projects:edit")) {
+    throw new Error("You don't have permission to edit Projects.");
   }
 }

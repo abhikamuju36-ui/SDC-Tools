@@ -11,6 +11,7 @@ import { getEtcMonthJobWhere } from "@/lib/etc-month-jobs";
 import { getEtcMonthKpis } from "@/lib/etc-month-kpis";
 import { EtcMonthKpiCards } from "@/components/EtcMonthKpiCards";
 import { auth } from "@/lib/auth";
+import { requirePagePermission } from "@/lib/require-permission";
 import { DepartmentEtcChecklist } from "@/components/DepartmentEtcChecklist";
 import { readDepartmentCompletions } from "@/lib/etc-department-status";
 import { manageableDepartments, parseDepartmentOwners, DEPARTMENT_OWNERS_ENV } from "@/lib/etc-departments";
@@ -29,7 +30,7 @@ import {
 } from "@/components/EtcStandardColumns";
 import type { StandardJobBase, StandardRates, FrozenStandardRow, PoolRowInput } from "@/components/EtcStandardColumns";
 import { EtcRatesButton } from "@/components/EtcRatesButton";
-import { StandardsGate, StandardsVisibilityToggle } from "@/components/StandardsGate";
+import { StandardsVisibilityToggle } from "@/components/StandardsGate";
 import { StandardFeesCard } from "@/components/StandardFeesCard";
 import { SuppressToasts } from "@/components/ui/Toast";
 import { POOL_PANEL_META } from "@/lib/pool-panel-meta";
@@ -43,7 +44,7 @@ import { calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, r
 import { ReopenMonthButton } from "@/components/ReopenMonthButton";
 import { EtcAutosave } from "@/components/EtcAutosave";
 import { EtcLiveTotals } from "@/components/EtcLiveTotals";
-import { isStandardSheetUnlocked, hadWrongPassword, unlockStandardSheet, lockStandardSheet } from "@/lib/standard-sheet-gate";
+import { isStandardSheetUnlocked, lockStandardSheet } from "@/lib/standard-sheet-gate";
 import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/execution-etc";
 import { PageTitle } from "@/components/ui/Typography";
 import { StatusBadge } from "@/components/ui/StatusBadge";
@@ -392,9 +393,10 @@ function currentMonth() {
 export default async function MonthlyEtcPage({
   searchParams,
 }: {
-  searchParams: Promise<{ month?: string; dept?: string; standards?: string; jobname?: string; billables?: string }>;
+  searchParams: Promise<{ month?: string; dept?: string; jobname?: string; billables?: string }>;
 }) {
-  const { month: monthParam, dept: deptParam, standards: standardsParam, jobname: jobnameParam, billables: billablesParam } = await searchParams;
+  await requirePagePermission("monthly-etc:view");
+  const { month: monthParam, dept: deptParam, jobname: jobnameParam, billables: billablesParam } = await searchParams;
 
   // Billable / Non-Billable row filter (same pattern as the Projects tab).
   // Absent => both shown. SDC's own projects read as Non-Billable regardless of
@@ -413,11 +415,6 @@ export default async function MonthlyEtcPage({
   // so a reload and a shared link still show what the URL asks for. See
   // lib/grid-view.ts and GridViewProvider.
   const showJobName = jobnameParam !== "0";
-  // The Standard Sheet entry point is hidden by design (only a few people know
-  // it exists). The password box renders only when this secret flag is present
-  // — reached by right-clicking the "Monthly ETC" sidebar item. It never shows
-  // on the plain /etc URL, so it's not discoverable by browsing the page.
-  const standardsRevealRequested = standardsParam === "1";
 
   // Engineering / Shop column filter. Empty or absent => show both (the full
   // grid); the grid can never collapse to zero section columns.
@@ -777,12 +774,6 @@ export default async function MonthlyEtcPage({
   const monthKpis = await getEtcMonthKpis(month, visibleJobs);
   const detailJobIds = visibleJobs.map((j) => j.id);
 
-  // Both moved into the single wave above (schedulerBaseUrl / showStandards).
-  //
-  // The wrong-password flag stays separate and sequential on purpose: it is only read
-  // when the gate is LOCKED, so folding it into the wave would turn a conditional
-  // cookie read into an unconditional one on every render of the page.
-  const standardWrongPassword = showStandards ? false : await hadWrongPassword();
   // Rates are shared with /standard-sheet's own ExecutionRate rows — once
   // that tab has submitted+frozen this month's snapshot, rates must stop
   // changing here too (matches that tab's own editable/frozen rule).
@@ -932,7 +923,7 @@ export default async function MonthlyEtcPage({
   const manageableDepts = manageableDepartments(
     {
       email: deptSession?.user?.email ?? null,
-      role: (deptSession?.user as { role?: string } | undefined)?.role ?? null,
+      role: deptSession?.user?.role ?? null,
     },
     parseDepartmentOwners(process.env[DEPARTMENT_OWNERS_ENV]),
   );
@@ -1089,33 +1080,23 @@ export default async function MonthlyEtcPage({
             Lock; the check itself is server-side in reopenMonth. */}
         {locked && <ReopenMonthButton action={reopenMonthlyReport.bind(null, month)} month={month} className={BUTTON_SECONDARY} />}
         {/* Sync History now lives inside the merged "Sync Data" menu above. */}
-        {/* Password-gated Standard Sheet columns (Dan/Lisa only) — same
-            unlock cookie as the /standard-sheet tab. */}
+        {/* Standard Sheet columns — visible only to a role with standards:view
+            (Sales/ELT), enforced by isStandardSheetUnlocked() now reading role
+            instead of a shared password. Nothing renders here at all for
+            anyone else — no password box, no entry point to find. */}
         {/* SuppressToasts: the "Standard Sheet" area's own controls (ETC Rates, the
-            reveal gate) have no toast() calls today, but are wrapped so a future one
-            added here is silenced by default rather than leaking a global toast from
-            an area the task names explicitly. */}
-        <SuppressToasts>
-        {showStandards ? (
-          <>
+            visibility toggle) have no toast() calls today, but are wrapped so a future
+            one added here is silenced by default rather than leaking a global toast
+            from an area the task names explicitly. */}
+        {showStandards && (
+          <SuppressToasts>
             {/* ── "Standards", not "Hide Standards" (2026-08-05) ─────────────
                 The label names the thing; the ACTIVE colour says it is on, which is
                 exactly how View reports being filtered two controls to the left, and
                 how ProjectsShowActualsSwitch reports its state ("a switch already says
                 which way it is set — so the label can just name the thing it
-                controls").
-                It is also what makes the row fit on one line when Standards is
-                unlocked: "Hide Standards" needs 131px against a 98px floor, and it was
-                the single control keeping the toolbar 25px over budget.
-
-                ── Why this is StandardsVisibilityToggle, not the button directly (§76) ──
-                The button used to submit straight to lockStandardSheet — clear the
-                cookie, revalidate the whole page. That hid the grid's columns (they are
-                server JSX, gone the moment the render lacks the cookie) but never told
-                StandardFeesCard, which decides its OWN visibility from client state, so
-                the card kept showing stale figures. The toggle component flips one
-                shared flag instead; see its own note for why hiding does not also
-                relock. */}
+                controls"). This is a display collapse only, not a re-lock — see
+                lockStandardSheet's own comment. */}
             <StandardsVisibilityToggle lockAction={lockStandardSheet} />
             <EtcRatesButton
               engrRate={standardRates.engrRate}
@@ -1124,37 +1105,8 @@ export default async function MonthlyEtcPage({
               contingencyRate={contingencyRate}
               disabled={standardSheetSubmitted}
             />
-          </>
-        ) : (
-          <>
-            {/* ── The no-JavaScript path, and only that (§48) ───────────────────
-                The `?standards=1` URL still renders a real <form action>, because behind
-                this control sits a whole page of confidential figures and losing the way
-                in to a bundle that failed to load would be a poor trade. It keeps the
-                error cookie and the revalidate, since without JavaScript there is nothing
-                else to carry either.
-
-                Nothing reaches it by gesture any more — see StandardsGate. */}
-            {standardsRevealRequested && (
-              <form action={unlockStandardSheet} className="flex items-center gap-2">
-                <input
-                  type="password"
-                  name="password"
-                  placeholder="Password"
-                  aria-label="Standard Sheet password"
-                  className="w-32 rounded-md border border-sdc-border px-2 py-1.5 text-sm outline-none focus:border-sdc-blue"
-                />
-                <button type="submit" className={`${BUTTON_SECONDARY} ${TOOLBAR_MIN_W} justify-center`} title="Show the Standard Sheet columns for this month (requires password).">
-                  Show Standards
-                </button>
-                {standardWrongPassword && <span className="text-note text-sdc-red-text">Wrong password</span>}
-              </form>
-            )}
-            {/* The fast path: local state, no route render to open and none to submit. */}
-            <StandardsGate initiallyUnlocked={false} />
-          </>
+          </SuppressToasts>
         )}
-        </SuppressToasts>
 
         {/* ── The sign-off checklist, on the controls row (§50, moved here) ────
             It had a row to itself, which was the third line. It belongs here: five

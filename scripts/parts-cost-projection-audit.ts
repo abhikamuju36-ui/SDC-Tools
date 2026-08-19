@@ -13,12 +13,16 @@ import { writeFileSync } from "node:fs";
 
 // ── Audit: Parts Cost Projection Formula Across All Projects (2026-08-15) ────
 //
-// Live, per-job reconciliation of Projection = Invoiced + ETC, against Budget
-// (Job.costQuoted), for every TotalETO-tracked job. Left to be Invoiced is
-// checked and reported too, but is NOT part of Projection — see the
-// 2026-08-17 fix in parts-budget-projection.ts's header for why summing it in
-// (this audit's own original formula, until this date) double-counts money
-// already sitting, undrawn-down, inside ETC.
+// Live, per-job reconciliation of
+//   Projection = Invoiced + max(Left to be Invoiced, ETC)
+// against Budget (Job.costQuoted), for every TotalETO-tracked job. Left to be
+// Invoiced and ETC are never BOTH summed on top of Invoiced — see the
+// 2026-08-17 fix in parts-budget-projection.ts's header for why summing both
+// (this audit's own original formula, until that date) double-counts money
+// already sitting, undrawn-down, inside ETC — but as of 2026-08-19, whichever
+// of the two is LARGER is what's used, so Projection can never read below
+// Total Parts Cost Spent (Invoiced + Left to be Invoiced) the way it did on
+// job 1119 (Karl Storz) when ETC hadn't caught up to an open PO.
 // Re-derives each job through getPartsCostFinancials's own building blocks
 // (not the aggregate function itself, so this stays an independent check
 // rather than a test that a function agrees with itself) and cross-checks
@@ -165,11 +169,20 @@ async function main() {
     }
 
     // ── PROJECTION FORMULA MISMATCH — the defining identity itself ────────
-    // Left to be Invoiced deliberately excluded (2026-08-17 fix) — see the
-    // file header.
-    const expectedProjection = invoiced + (etc ?? 0);
+    // Left to be Invoiced and ETC are never BOTH summed on top of Invoiced
+    // (2026-08-17 fix) — but as of 2026-08-19, whichever of the two is LARGER
+    // is what rides on top, not always `etc` — see parts-budget-projection.ts's
+    // `projectionResidual` and its header.
+    const expectedProjection = invoiced + Math.max(leftToInvoice, etc ?? 0);
     if (Math.abs(projectionTotal - expectedProjection) > CENT) {
-      flags.push(`PROJECTION FORMULA MISMATCH — projection ${money(projectionTotal)} != invoiced+etc ${money(expectedProjection)}`);
+      flags.push(`PROJECTION FORMULA MISMATCH — projection ${money(projectionTotal)} != invoiced+max(leftToInvoice,etc) ${money(expectedProjection)}`);
+    }
+
+    // ── PROJECTION BELOW SPENT — the business rule this audit exists to
+    // guarantee (2026-08-19, job 1119 Karl Storz): a projected FINAL cost may
+    // never read below money already spent or committed for the same scope.
+    if (projectionTotal < totalSpent - CENT) {
+      flags.push(`PROJECTION BELOW SPENT — projection ${money(projectionTotal)} < total spent ${money(totalSpent)}`);
     }
 
     // ── ROUNDING DIFFERENCE — same check the UI now fixes with
@@ -191,14 +204,15 @@ async function main() {
       flags.push(`SOURCE MISMATCH — Purchased ${money(purchased)} vs getPartsCostSpentByJob ${money(srcPurchased)}`);
     }
 
-    // ── STALE ETC DRAWDOWN SUSPECTED — a NARROWER, residual risk, now that
-    // Projection = Invoiced + ETC no longer sums Left to be Invoiced on top of
-    // it (2026-08-17 fix). The main double-count is gone by construction; what
-    // remains is that ETC itself can still lag: if the EtcEntry row's STORED
-    // hoursWorked (this month's booked-AP drawdown, which is what shrinks
-    // ETC) is stale against a FRESH re-query of the same month, ETC hasn't
-    // drawn down by what was actually booked yet — an outdated New ETC, not a
-    // formula bug, but still worth a manager's look when flagged. ──────────
+    // ── STALE ETC DRAWDOWN SUSPECTED — an ESTIMATE-FRESHNESS signal, not a
+    // projection defect (2026-08-19: PROJECTION BELOW SPENT above now
+    // guarantees the defect itself can't happen — ETC lagging can no longer
+    // drag Projection below Total Parts Cost Spent, see projectionResidual).
+    // What this still catches: if the EtcEntry row's STORED hoursWorked (this
+    // month's booked-AP drawdown, which is what shrinks ETC) is stale against
+    // a FRESH re-query of the same month, ETC hasn't drawn down by what was
+    // actually booked yet — an outdated New ETC worth a manager's look, even
+    // though it can no longer corrupt the Projection figure itself. ────────
     if (month) {
       const stored = partsEntryByJobMonth.get(`${j.id}::${month}`);
       const fresh = freshBookedByMonth.get(month)?.get(j.jobId) ?? 0;

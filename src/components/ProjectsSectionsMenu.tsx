@@ -4,7 +4,6 @@ import { TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_BTN_NEUTRAL } from "@/componen
 import { useDraftParamsMenu } from "@/components/useDraftParamMenu";
 import { encodeParamList } from "@/lib/quoted-display-prefs";
 import { MenuStatus, MenuApplyHint, MenuGroup, MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
-import { useProjectsEditMode } from "@/components/ProjectsEditMode";
 import { useGridView } from "@/components/GridViewProvider";
 
 // "Sections ▾" — which columns the grid shows: the four phase pickers plus the
@@ -63,15 +62,10 @@ export function ProjectsSectionsMenu({
   // The info columns' half: instant, no request, no pending state to show.
   const { hidden: hiddenSet, toggle: toggleInfo, setHidden: setHiddenInfo } = useGridView();
 
-  // `phases` (this menu's available options) always includes PM/Manufacturing/
-  // Warranty by the time editing is genuinely on — ProjectsEditMode's enable()
-  // refreshes unconditionally now, precisely so this menu never has to fetch
-  // anything itself on open. Reading `pending` from the SAME source (rather
-  // than this hook's own, unrelated draftParams pending) means the button
-  // reflects "still catching up right after unlocking" too, not only "still
-  // applying my last cols/hide tick".
-  const { pending: editModePending } = useProjectsEditMode();
-
+  // `phases` (this menu's available options) reflects the signed-in user's
+  // Standard Fees permissions directly (quoted/page.tsx's `sectionAllowed`) —
+  // unlike before 2026-08-18, it does not depend on Edit Mode, so this menu
+  // never needs to know anything about that toggle's own state.
   const cols = draft.cols ?? [];
   // Read from the instant store, not a draft — this moves on the click's own frame.
   const hidden = infoColumns.filter((c) => hiddenSet.has(c.key)).map((c) => c.key);
@@ -89,11 +83,11 @@ export function ProjectsSectionsMenu({
   return (
     <details ref={detailsRef} {...detailsProps} className="group relative inline-block">
       <summary
-        className={`${TOOLBAR_BTN} ${allShown ? TOOLBAR_BTN_NEUTRAL : TOOLBAR_BTN_ACTIVE} ${pending || editModePending ? "opacity-60" : ""}`}
+        className={`${TOOLBAR_BTN} ${allShown ? TOOLBAR_BTN_NEUTRAL : TOOLBAR_BTN_ACTIVE} ${pending ? "opacity-60" : ""}`}
       >
         Sections
         {` (${shownCount}/${allSections.length})`}
-        <MenuStatus pending={pending || editModePending} />
+        <MenuStatus pending={pending} />
       </summary>
       <div className="motion-menu-panel styled-scrollbar absolute left-0 top-full z-30 mt-2 max-h-[calc(var(--app-vh)_*_0.7)] w-72 overflow-y-auto rounded-lg border border-sdc-border bg-white p-2 shadow-lg">
         {phases.map((p) => {
