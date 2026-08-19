@@ -39,7 +39,6 @@ why every page below it is dynamically rendered. `login/` sits outside that grou
 | `/jobs/[id]` | `(app)/jobs/[id]/page.tsx` | Single job: ETC suggestion, tasks, project release panel |
 | `/jobs/new` | `(app)/jobs/new/page.tsx` | Redirects to `/quoted` (standalone form retired) |
 | `/quoted` | `(app)/quoted/page.tsx` | Projects grid — quoted vs. actual, gated Standard Sheet columns |
-| `/quoted/new` | `(app)/quoted/new/page.tsx` | Legacy standalone new-project form |
 | `/employees` | `(app)/employees/page.tsx` | Read-only roster grid |
 | `/audit-log` | `(app)/audit-log/page.tsx` + `layout.tsx` | Password-gated audit trail (AG Grid) |
 | `/login` | `login/page.tsx` + `LoginForm.tsx` + `actions.ts` | Sign-in / self-service sign-up |
