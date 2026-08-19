@@ -3,6 +3,7 @@ import { APP_VERSION } from "@/lib/app-version";
 import { createHash, randomUUID } from "crypto";
 import { calcHoursLeft, isMonthLocked, isValidMonth, newEtcSeedText, round2, suggestNewEtc, type NewEtcCellState } from "@/lib/etc";
 import { PARTS_COST_SECTION, SECTIONS } from "@/lib/sections";
+import { usd } from "@/components/ui/format";
 import { getEtcMonthJobWhere } from "@/lib/etc-month-jobs";
 import { etcEligibleJobFilter } from "@/lib/job-filters";
 import { getExecutionEtcByJob, isInStandardFeesAllocation } from "@/lib/execution-etc";
@@ -159,7 +160,7 @@ export async function validateMonthlyReport(month: string): Promise<MonthlyRepor
         reason:
           e.newEtcClearedAt != null
             ? `Cleared and not re-entered. ${e.section === PARTS_COST_SECTION ? "Money was spent" : "Hours were booked"} here this month, so a New ETC figure is required.`
-            : `No New ETC entered. ${e.section === PARTS_COST_SECTION ? `$${Math.round(Number(e.hoursWorked)).toLocaleString()} was spent` : `${Math.round(worked)} hours were booked`} here this month, so a figure is required.`,
+            : `No New ETC entered. ${e.section === PARTS_COST_SECTION ? `${usd(Number(e.hoursWorked))} was spent` : `${Math.round(worked)} hours were booked`} here this month, so a figure is required.`,
       });
     }
   }
