@@ -14,7 +14,7 @@ Next.js 16 (App Router, Turbopack) · React 19 · Prisma / MySQL · NextAuth v5 
 
 ```bash
 npm install
-# create .env with DATABASE_URL and the other variables listed in docs/DEVELOPMENT.md
+cp .env.example .env   # fill in real values — see docs/DEVELOPMENT.md
 npx prisma migrate deploy
 npm run dev          # http://localhost:3010
 ```

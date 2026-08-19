@@ -7,8 +7,8 @@ Local setup and day-to-day workflows. For production deployment, see
 ## Local setup
 
 1. Install dependencies: `npm install`
-2. Copy/create a local `.env` with the variables listed below (ask a teammate for values — none
-   are documented here on purpose).
+2. `cp .env.example .env` and fill in real values (ask a teammate — none are documented here on
+   purpose).
 3. Point `DATABASE_URL` at a MySQL instance and run the Prisma migrations (see below).
 4. `npm run dev` — starts on **port 3010**.
 
@@ -33,7 +33,8 @@ Local setup and day-to-day workflows. For production deployment, see
 | `ETC_DEPARTMENT_OWNERS` | Configures which signed-in users may tick off which department's ETC sign-off |
 | `NEXT_PUBLIC_APP_VERSION` | Displayed in the sidebar |
 
-No `.env.example` currently exists in the repo — this table is the closest thing to one.
+[`.env.example`](../.env.example) at the repo root has every one of these as an empty
+key -- copy it to `.env` and fill in real values (ask a teammate).
 **Never commit real values for any of these.**
 
 ## Install / start / build
