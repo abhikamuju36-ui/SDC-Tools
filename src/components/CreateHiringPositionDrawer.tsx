@@ -37,6 +37,7 @@ export function CreateHiringPositionDrawer({
   const [workforceGroup, setWorkforceGroup] = useState<WorkforceGroupKey>("engineering");
   const [department, setDepartment] = useState<string>("");
   const [workLocDescription, setWorkLocDescription] = useState("");
+  const [expectedStartDate, setExpectedStartDate] = useState("");
   const [remote, setRemote] = useState(false);
   const [internal, setInternal] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -59,6 +60,7 @@ export function CreateHiringPositionDrawer({
       return;
     }
     startTransition(async () => {
+      const startDate = expectedStartDate ? new Date(expectedStartDate) : null;
       const result = await createHiringPosition({
         title,
         jobStatus,
@@ -67,6 +69,7 @@ export function CreateHiringPositionDrawer({
         workLocDescription: workLocDescription || null,
         remote,
         internal,
+        expectedStartDate: startDate,
       });
       if (!result.ok) {
         setError(result.error);
@@ -82,6 +85,7 @@ export function CreateHiringPositionDrawer({
         workforceGroup,
         department: selectedDepartment,
         isManuallyAssigned: true,
+        expectedStartDate: startDate,
         functionDescription: null,
         sectionDescription: null,
         workLocDescription: workLocDescription || null,
@@ -153,6 +157,19 @@ export function CreateHiringPositionDrawer({
         <label className="flex flex-col gap-1">
           <span className={LABEL}>Work Location</span>
           <input value={workLocDescription} onChange={(e) => setWorkLocDescription(e.target.value)} placeholder="Optional" className={INPUT} />
+        </label>
+
+        <label className="flex flex-col gap-1">
+          <span className={LABEL}>Expected Start Date</span>
+          <input
+            type="date"
+            value={expectedStartDate}
+            onChange={(e) => setExpectedStartDate(e.target.value)}
+            className={INPUT}
+          />
+          <span className="text-note text-sdc-muted">
+            Optional — prorates this position&apos;s Hiring Capacity hours by when it&apos;s expected to actually start. Left blank, it counts as full-year capacity.
+          </span>
         </label>
 
         <div className="flex items-center gap-5">

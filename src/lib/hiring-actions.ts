@@ -1,7 +1,12 @@
 "use server";
 
 import { assertActionPermission } from "@/lib/require-permission";
-import { setHiringAssignment, insertCreatedHiringPosition, updateCreatedHiringPosition as updateCreatedHiringPositionRow } from "@/lib/hiring-positions-store";
+import {
+  setHiringAssignment,
+  setHiringExpectedStartDate,
+  insertCreatedHiringPosition,
+  updateCreatedHiringPosition as updateCreatedHiringPositionRow,
+} from "@/lib/hiring-positions-store";
 import { getHiringPositionById } from "@/lib/hiring-positions";
 import { logAudit } from "@/lib/audit";
 import { EMPLOYEE_TEAMS } from "@/lib/employee-teams";
@@ -74,6 +79,41 @@ export async function assignHiringPosition(
   return { ok: true };
 }
 
+export type SetHiringExpectedStartDateResult = { ok: true } | { ok: false; error: string };
+
+/**
+ * Workbook-sourced positions ONLY, same reason as assignHiringPosition above
+ * — a manual position's expected start date lives directly on its own
+ * HiringPositionCreated row, edited via updateHiringPosition instead. `date:
+ * null` explicitly clears it back to "unknown" (full-year, not zero — see
+ * workforce-capacity.ts's isStartedByMonth).
+ */
+export async function setHiringPositionExpectedStartDate(positionSourceId: string, date: Date | null): Promise<SetHiringExpectedStartDateResult> {
+  const session = await assertActionPermission("employees:hiring:assign");
+  if (!positionSourceId) return { ok: false, error: "Missing position." };
+  if (positionSourceId.startsWith("manual-")) return { ok: false, error: "This position was created in SDC Reports — edit it directly instead." };
+
+  const before = await getHiringPositionById(positionSourceId);
+  if (!before) return { ok: false, error: "This position is no longer open — it may have been filled or removed from the workbook." };
+
+  await setHiringExpectedStartDate(positionSourceId, date, session.user.email ?? null);
+
+  await logAudit({
+    action: "hiring.expectedStartDateSet",
+    entityType: "HiringPositionAssignment",
+    entityId: positionSourceId,
+    summary: `${before.title}: expected start ${before.expectedStartDate?.toLocaleDateString("en-US") ?? "—"} → ${date?.toLocaleDateString("en-US") ?? "—"} (by ${session.user.email ?? "unknown"})`,
+    metadata: {
+      positionSourceId,
+      title: before.title,
+      previousExpectedStartDate: before.expectedStartDate,
+      newExpectedStartDate: date,
+    },
+  });
+
+  return { ok: true };
+}
+
 export type HiringPositionFormInput = {
   title: string;
   jobStatus: string;
@@ -82,6 +122,7 @@ export type HiringPositionFormInput = {
   workLocDescription?: string | null;
   remote?: boolean;
   internal?: boolean;
+  expectedStartDate?: Date | null;
 };
 
 export type HiringPositionActionResult = { ok: true; sourceId: string } | { ok: false; error: string };
@@ -114,6 +155,7 @@ export async function createHiringPosition(input: HiringPositionFormInput): Prom
     workLocDescription: input.workLocDescription?.trim() || null,
     remote: !!input.remote,
     internal: !!input.internal,
+    expectedStartDate: input.expectedStartDate ?? null,
     actorEmail: session.user.email ?? null,
   });
 
@@ -154,6 +196,7 @@ export async function updateHiringPosition(sourceId: string, input: HiringPositi
     jobStatus,
     workforceGroup: input.workforceGroup,
     department: input.department,
+    expectedStartDate: input.expectedStartDate ?? null,
     actorEmail: session.user.email ?? null,
   });
 

@@ -3,6 +3,7 @@
 import { useState, useTransition } from "react";
 import { BuildReadinessDrawer } from "@/components/build-readiness/BuildReadinessDrawer";
 import { HiringMoveToControl } from "@/components/HiringMoveToControl";
+import { HiringExpectedStartDateControl } from "@/components/HiringExpectedStartDateControl";
 import { workforceGroupForCardKey, workforceGroupTitle, WORKFORCE_GROUPS, type WorkforceGroupKey } from "@/lib/employee-workforce-groups";
 import { EMPLOYEE_TEAMS } from "@/lib/employee-teams";
 import { updateHiringPosition } from "@/lib/hiring-actions";
@@ -49,6 +50,7 @@ function ManualEditForm({
   const [jobStatus, setJobStatus] = useState(position.status);
   const [workforceGroup, setWorkforceGroup] = useState<WorkforceGroupKey>(position.workforceGroup ?? "engineering");
   const [department, setDepartment] = useState(position.department ?? "");
+  const [expectedStartDate, setExpectedStartDate] = useState(position.expectedStartDate ? position.expectedStartDate.toISOString().slice(0, 10) : "");
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
@@ -62,11 +64,13 @@ function ManualEditForm({
       return;
     }
     startTransition(async () => {
+      const startDate = expectedStartDate ? new Date(expectedStartDate) : null;
       const result = await updateHiringPosition(position.sourceId, {
         title,
         jobStatus,
         workforceGroup,
         department: selectedDepartment,
+        expectedStartDate: startDate,
       });
       if (!result.ok) {
         setError(result.error);
@@ -78,6 +82,7 @@ function ManualEditForm({
         isOpen: jobStatus === "Open",
         workforceGroup,
         department: selectedDepartment,
+        expectedStartDate: startDate,
       });
       onClose();
     });
@@ -126,6 +131,10 @@ function ManualEditForm({
             </option>
           ))}
         </select>
+      </label>
+      <label className="flex flex-col gap-1">
+        <span className={LABEL}>Expected Start Date</span>
+        <input type="date" value={expectedStartDate} onChange={(e) => setExpectedStartDate(e.target.value)} className={INPUT} />
       </label>
       {error && (
         <p className="text-note text-sdc-red-text" role="alert">
@@ -190,6 +199,17 @@ export function HiringPositionDetailDrawer({
               </span>
             )}
           </div>
+          {position.source === "workbook" && (
+            <div className="flex items-center justify-between gap-3 border-b border-sdc-border-soft px-4 py-2.5">
+              <span className="text-xs font-semibold uppercase tracking-wide text-sdc-muted">Expected Start Date</span>
+              <HiringExpectedStartDateControl
+                positionSourceId={position.sourceId}
+                expectedStartDate={position.expectedStartDate}
+                canAssign={canAssign}
+                onSaved={(sourceId, date) => onUpdated(sourceId, { expectedStartDate: date })}
+              />
+            </div>
+          )}
           <Field label="Job Status" value={position.subStatus && position.subStatus !== "None" ? `${position.status} · ${position.subStatus}` : position.status} />
           {position.functionDescription && <Field label="Function" value={position.functionDescription} />}
           {position.sectionDescription && <Field label="Section" value={position.sectionDescription} />}

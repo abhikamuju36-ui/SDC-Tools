@@ -1007,6 +1007,12 @@ model HiringPositionAssignment {
   positionSourceId String   @unique @db.VarChar(64)
   workforceGroup   String?  @db.VarChar(32) // "engineering" | "shop" | "pm" | "other" | NULL (unassigned)
   department       String?  @db.VarChar(64) // a DepartmentCard key (e.g. "mech", "controls", "build") | NULL
+  // Prorates this position's Hiring Capacity hours (workforce-capacity.ts) --
+  // NULL means "unknown", which counts as full-year, not zero (see that
+  // file's isStartedByMonth). Written independently of workforceGroup/
+  // department -- see setHiringExpectedStartDate's own comment on why its
+  // upsert must not touch those two columns.
+  expectedStartDate DateTime? @db.Date
   updatedByEmail   String?  @db.VarChar(191)
   updatedAt        DateTime @updatedAt
   createdAt        DateTime @default(now())
@@ -1049,6 +1055,9 @@ model HiringPositionCreated {
   workLocDescription String?  @db.VarChar(191)
   remote             Boolean  @default(false)
   internal           Boolean  @default(false)
+  // Prorates this position's Hiring Capacity hours (workforce-capacity.ts) --
+  // NULL means "unknown", which counts as full-year, not zero.
+  expectedStartDate  DateTime? @db.Date
   createdByEmail     String?  @db.VarChar(191)
   updatedByEmail     String?  @db.VarChar(191)
   createdAt          DateTime @default(now())

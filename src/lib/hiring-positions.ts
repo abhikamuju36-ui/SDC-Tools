@@ -36,6 +36,8 @@ export type HiringPosition = {
   department: string | null;
   /** True if a person has explicitly assigned/moved this position — false means workforceGroup/department (if any) are only the classifier's best-effort guess. Always true for a manually-created position (it was assigned outright at creation). */
   isManuallyAssigned: boolean;
+  /** Prorates this position's Hiring Capacity hours (workforce-capacity.ts) — null means "unknown," which counts as full-year, not zero. */
+  expectedStartDate: Date | null;
   functionDescription: string | null;
   sectionDescription: string | null;
   workLocDescription: string | null;
@@ -66,6 +68,7 @@ function toWorkbookPosition(row: HiringPositionSourceRow, manual: HiringAssignme
     workforceGroup,
     department,
     isManuallyAssigned: !!manual,
+    expectedStartDate: manual?.expectedStartDate ?? null,
     functionDescription: row.functionDescription,
     sectionDescription: row.sectionDescription,
     workLocDescription: row.workLocDescription,
@@ -88,6 +91,7 @@ function toManualPosition(row: CreatedHiringPositionRow): HiringPosition {
     workforceGroup: row.workforceGroup as WorkforceGroupKey,
     department: row.department,
     isManuallyAssigned: true,
+    expectedStartDate: row.expectedStartDate,
     functionDescription: null,
     sectionDescription: null,
     workLocDescription: row.workLocDescription,
