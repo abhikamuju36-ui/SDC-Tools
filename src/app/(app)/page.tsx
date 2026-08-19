@@ -9,11 +9,7 @@ import { validJobTypeFilter } from "@/lib/job-filters";
 import { PageTitle, SectionTitle } from "@/components/ui/Typography";
 import { card, BUTTON_PRIMARY } from "@/components/ui/classnames";
 import { requirePagePermission } from "@/lib/require-permission";
-
-function currentMonth() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
+import { currentMonth } from "@/lib/etc";
 
 // Relative "…ago" instead of a raw UTC timestamp — the old ISO string read as
 // the viewer's local time and could misjudge freshness by hours.

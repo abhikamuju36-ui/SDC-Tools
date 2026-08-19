@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { suggestNewEtc, calcHoursLeft } from "@/lib/etc";
+import { suggestNewEtc, calcHoursLeft, currentMonth } from "@/lib/etc";
 import { SECTIONS } from "@/lib/sections";
 import { revalidatePath } from "next/cache";
 import { notFound } from "next/navigation";
@@ -24,11 +24,6 @@ const TABS = [
   { key: "assign", label: "Assignments" },
 ] as const;
 type TabKey = (typeof TABS)[number]["key"];
-
-function currentMonth() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
 
 export default async function JobDetailPage({
   params,

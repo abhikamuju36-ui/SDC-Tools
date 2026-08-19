@@ -1,5 +1,6 @@
 import { UNKNOWN_MONTH, type CashFlowLine, type CashFlowCategory } from "@/lib/cash-flow-normalize";
 import type { ProjectEstimate } from "@/lib/cash-flow";
+import { currentMonth } from "@/lib/etc";
 
 // ── Pure view-model shaping for the Cash Flow tab (2026-08-19) ──────────────
 //
@@ -38,8 +39,12 @@ export function distinctMonths(lines: readonly CashFlowLine[]): string[] {
   return [...new Set(lines.map((l) => l.forecastMonth).filter((m) => m !== UNKNOWN_MONTH))].sort();
 }
 
+// Was UTC (toISOString().slice(0,7)) -- the one function in this app's
+// "current month" family that disagreed with the other three, which all use
+// local server time. See lib/etc.ts's currentMonth() for why that's now the
+// one definition.
 export function currentMonthKey(today: Date): string {
-  return today.toISOString().slice(0, 7);
+  return currentMonth(today);
 }
 
 /** "2026-08" -> "Aug 2026" — the one place a month key becomes display text, so a column header and a KPI label never word it differently. */

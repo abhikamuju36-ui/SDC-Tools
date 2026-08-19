@@ -2,7 +2,7 @@ import { prisma } from "@/lib/prisma";
 import { VALID_JOB_TYPES, etcActiveJobFilter } from "@/lib/job-filters";
 import { runDax } from "@/lib/powerbi-client";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION, SERVICE_AND_SPARE_PARTS_CODES } from "@/lib/sections";
-import { calcHoursLeft, round2, isMonthLocked, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, monthWindowUtc } from "@/lib/etc";
+import { calcHoursLeft, round2, isMonthLocked, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, monthWindowUtc, prevMonth } from "@/lib/etc";
 import { getPartsCostBookedByJob } from "@/lib/sync-totaleto";
 import { resolveEtcPeriodName } from "@/lib/etc-period";
 import {
@@ -268,7 +268,7 @@ export async function syncHoursWorked(
       }
 
       const priorEntry = await prisma.etcEntry.findUnique({
-        where: { jobId_section_month: { jobId: job.id, section, month: previousMonth(month) } },
+        where: { jobId_section_month: { jobId: job.id, section, month: prevMonth(month) } },
         select: { newEtc: true },
       });
       const priorEtc = priorEntry ? Number(priorEntry.newEtc) : 0;
@@ -554,11 +554,6 @@ const POOL_CATEGORY: Record<string, "ENGINEERING_PM" | "ENGINEERING_WARRANTY" | 
   "Shop|Warranty": "SHOP_WARRANTY",
 };
 
-function previousMonth(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  const d = new Date(y, m - 2, 1);
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
 // NOTE: this function is no longer on any automatic path. The 6-hour pass and
 // the panel's Refresh button both compute the pools from app data now — see
 // standard-pool-local.ts. It is kept for comparison against upstream and for
@@ -620,7 +615,7 @@ export async function syncCategoryPoolsFromPowerBi(
   // nothing" case distinguishable from "wrote nothing because nothing moved".
   if (rows.length === 0) return { poolsUpserted: 0, periodFound: false };
 
-  const priorPools = await prisma.categoryPool.findMany({ where: { month: previousMonth(month) } });
+  const priorPools = await prisma.categoryPool.findMany({ where: { month: prevMonth(month) } });
   const priorByCategory = new Map(priorPools.map((p) => [p.category, p]));
 
   let poolsUpserted = 0;

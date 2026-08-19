@@ -5,6 +5,7 @@ import {
   suggestNewEtc,
   round2,
   isMonthLocked,
+  currentMonth,
   prevMonth,
   nextMonth,
   isValidMonth,
@@ -49,6 +50,18 @@ test("prevMonth/nextMonth: adjacent months incl. year rollover", () => {
   assert.equal(nextMonth("2026-06"), "2026-07");
   assert.equal(nextMonth("2026-12"), "2027-01");
   assert.equal(nextMonth(prevMonth("2026-01")), "2026-01"); // round-trip
+});
+
+// currentMonth() is the app's one "what month is it right now" definition —
+// three page-level call sites and cash-flow-view.ts's currentMonthKey all
+// used to compute this independently, one of them (currentMonthKey) via UTC
+// instead of local time, which could name a different month than the other
+// three for the same instant near a month boundary. Pinned here so a future
+// caller can't reintroduce a second, timezone-inconsistent copy.
+test("currentMonth: local server time, not UTC", () => {
+  assert.equal(currentMonth(new Date(2026, 7, 19, 23, 30)), "2026-08"); // Aug 19, 11:30pm local
+  assert.equal(currentMonth(new Date(2026, 0, 1, 0, 0)), "2026-01"); // Jan 1, midnight local
+  assert.equal(currentMonth(new Date(2025, 11, 31, 23, 59)), "2025-12"); // Dec 31, 11:59pm local
 });
 
 test("isValidMonth: accepts YYYY-MM, rejects garbage", () => {

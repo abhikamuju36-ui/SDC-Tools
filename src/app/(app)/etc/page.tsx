@@ -40,7 +40,7 @@ import { savePools } from "@/lib/standard-sheet-actions";
 // ONE submission and ONE reopen for the whole month — see lib/monthly-report.ts.
 import { reopenMonthlyReport, checkMonthlyReport } from "@/lib/monthly-report-actions";
 import { ETC_SECTIONS, PARTS_COST_SECTION } from "@/lib/sections";
-import { calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, round2, workingDaysInMonth, effectiveNewEtc, newEtcDiff, newEtcSeedText, isNewEtcCellDecided, rollupNewEtc, type NewEtcCellState, type NewEtcRollupCell } from "@/lib/etc";
+import { calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, currentMonth, round2, workingDaysInMonth, effectiveNewEtc, newEtcDiff, newEtcSeedText, isNewEtcCellDecided, rollupNewEtc, type NewEtcCellState, type NewEtcRollupCell } from "@/lib/etc";
 import { ReopenMonthButton } from "@/components/ReopenMonthButton";
 import { EtcAutosave } from "@/components/EtcAutosave";
 import { EtcLiveTotals } from "@/components/EtcLiveTotals";
@@ -384,11 +384,6 @@ const SUBGROUP_EDGE = "border-l-8! border-l-[#808080]!";
 const CELL_PADDING =
   "[&_tbody_td]:py-[0.2667rem] [&_tbody_td]:leading-none [&_td_input]:py-[0.2667rem] [&_td_input]:leading-none [&_td:not([class*='sticky'])]:px-[0.2667rem] [&_th:not([class*='sticky'])]:px-[0.2667rem] [&_td_input:not([class*='sticky'])]:px-[0.2667rem]";
 
-
-function currentMonth() {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
-}
 
 export default async function MonthlyEtcPage({
   searchParams,

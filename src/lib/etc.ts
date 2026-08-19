@@ -465,6 +465,18 @@ export function isStaleDraftWrite(opts: {
   return at(believed) !== at(storedDraft);
 }
 
+// "YYYY-MM" for the given instant, local server time — the app's one definition
+// of "what month is it right now." Three call sites each declared this same
+// six-line function against local `new Date()`, while cash-flow-view.ts's own
+// copy read `toISOString()` (UTC) instead — harmless most days, but the two
+// conventions can name a DIFFERENT month for the same instant near a month
+// boundary, depending on the server's UTC offset direction. This is the one
+// version now; takes an explicit date so callers that need purity/testability
+// (no I/O) can inject one, defaulting to "right now" for page-level callers.
+export function currentMonth(now: Date = new Date()): string {
+  return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
+}
+
 // "YYYY-MM" month arithmetic, shared by seeding (carry-forward source), the
 // in-order start guard, and the month picker's "next startable month" option.
 export function prevMonth(month: string): string {
