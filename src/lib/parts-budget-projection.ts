@@ -1,5 +1,4 @@
 import "server-only";
-import { runDax } from "@/lib/powerbi-client";
 import { getExecutionEtcByJob } from "@/lib/execution-etc";
 import { projectionResidual } from "@/lib/parts-cost-financials-shared";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
@@ -185,27 +184,6 @@ export function invoicedBeforeCurrentMonth(lines: PartsCostLine[], now: Date): n
     total += l.invoicedAmount;
   }
   return total;
-}
-
-// [Part Cost Estimated To Complete] per job id, straight from the semantic
-// model. No longer feeds the projection (see the header) — kept for reconciling
-// against the Power BI report, which still uses it.
-export async function fetchPartsEstimatedToComplete(jobIds: string[]): Promise<Map<string, number>> {
-  const out = new Map<string, number>();
-  if (jobIds.length === 0) return out;
-  const list = jobIds.map((id) => `"${id.replace(/"/g, "")}"`).join(", ");
-  const rows = (await runDax(`
-EVALUATE
-FILTER(
-  SUMMARIZECOLUMNS('Job'[Job Id], "EstToComplete", [Part Cost Estimated To Complete]),
-  'Job'[Job Id] IN { ${list} }
-)
-`)) as { "Job[Job Id]": string | null; EstToComplete: number | null }[];
-  for (const r of rows) {
-    const id = r["Job[Job Id]"];
-    if (id != null && r.EstToComplete != null) out.set(String(id), r.EstToComplete);
-  }
-  return out;
 }
 
 // Returns `committedNotPosted` alongside the total for display (the card's
