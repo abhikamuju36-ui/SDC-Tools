@@ -10,6 +10,7 @@ import { ReadinessPill } from "@/components/build-readiness/ReadinessPill";
 import { computeUpcomingUnlocks } from "@/lib/build-readiness-forecast";
 import type { AssemblyDetail, JobSnapshotRow, BlockerEntry, BlockerReason, UpcomingDeliveryEntry } from "@/lib/build-readiness-types";
 import type { DrillFrame } from "./useDrillStack";
+import { useStableNow } from "@/lib/use-stable-now";
 
 // ── Small, table-shaped drilldowns — everything except the PO drawer (reused
 // as-is), the live assembly-part-list fetch (BuildReadinessAssemblyDetail.tsx)
@@ -274,6 +275,11 @@ export function UpcomingRowsTable({ rows, push, showJobColumn }: { rows: Upcomin
 // ── Missing / Past Due / Due≤7d / On Order (job-scoped) ──────────────────────
 
 export function PartsDrillView({ job, filter, push }: { job: JobSnapshotRow; filter: "missing" | "pastDue" | "dueSoon" | "onOrder"; push: (f: DrillFrame) => void }) {
+  // Called unconditionally, before the early return below, per the Rules of
+  // Hooks -- unused by the missing/pastDue branch, but still one frozen
+  // value for the component's lifetime rather than a fresh Date.now() read
+  // on every render.
+  const now = useStableNow();
   if (filter === "missing" || filter === "pastDue") {
     const rows = job.detail.blockers.filter((b) => (filter === "missing" ? b.reason === "no_po" : b.reason === "past_due" || b.reason === "supplier_delay"));
     return (
@@ -282,7 +288,6 @@ export function PartsDrillView({ job, filter, push }: { job: JobSnapshotRow; fil
       </div>
     );
   }
-  const now = Date.now();
   const weekEnd = now + 7 * 86_400_000;
   const rows = job.detail.upcoming.filter((u) => {
     if (filter === "onOrder") return u.onOrder;

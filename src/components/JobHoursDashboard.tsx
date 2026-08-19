@@ -594,6 +594,12 @@ function SectionHierarchyChart({
   // Two rAFs so the 0-height paints first.
   const [grown, setGrown] = useState(false);
   useEffect(() => {
+    // The entrance-animation trigger itself, not state derived from
+    // anything React already knows: forces a 0-height paint (synchronous
+    // setState back to false) before the double rAF flips it to true so the
+    // browser has something to transition FROM. There's no way to get this
+    // timing without an effect.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setGrown(false);
     const id = requestAnimationFrame(() => requestAnimationFrame(() => setGrown(true)));
     return () => cancelAnimationFrame(id);

@@ -64,7 +64,6 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
     // there. `/?view=projects` lands on the Scheduler's Projects page.
     <AppShell
       userEmail={session?.user?.email}
-      role={role}
       visibleHrefs={visibleHrefs}
       signOutAction={handleSignOut}
       // What the server rendered with. The client store reads the same two cookies, so

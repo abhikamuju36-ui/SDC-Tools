@@ -15,7 +15,6 @@ import {
 import { appVersionLabel } from "@/lib/app-version";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isEtcDirty } from "@/lib/etc-dirty-tracker";
-import type { AppRole } from "@/lib/permissions";
 import { RefreshDataButton } from "@/components/RefreshDataButton";
 import { AppZoom } from "@/components/AppZoom";
 import {
@@ -288,14 +287,12 @@ const ADMIN_GROUP: NavGroup = {
 
 export default function Sidebar({
   userEmail,
-  role,
   visibleHrefs,
   signOutAction,
   schedulerProjectsUrl,
   initial = DEFAULT_PREFS,
 }: {
   userEmail?: string | null;
-  role: AppRole;
   // Computed server-side (the (app) layout) from the live Role Permissions
   // matrix — see that file's own note on why this can't be decided here with
   // hasPermission() directly: a client bundle's copy of that check is a
@@ -395,6 +392,10 @@ export default function Sidebar({
   // guarded by the same unsaved-New-ETC check as the nav items.
   const [canGoBack, setCanGoBack] = useState(false);
   useEffect(() => {
+    // window.history isn't available during the server render; deferring to
+    // an effect keeps the hydration render matched to the server's, same
+    // reason as ProjectViewsMenu.tsx's readMyViews().
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setCanGoBack(window.history.length > 1);
   }, [pathname]);
   function handleBack() {

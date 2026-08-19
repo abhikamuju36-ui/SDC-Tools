@@ -28,7 +28,7 @@ if (!Number.isInteger(port) || port <= 0 || port > 65535) {
 }
 
 /** PIDs LISTENING on `port`, from netstat. Windows-only, which is this app's deploy target. */
-function listenersOn(p) {
+function listenersOn() {
   let out = "";
   try {
     out = execFileSync("netstat", ["-ano"], { encoding: "utf8" });
@@ -51,7 +51,7 @@ function listenersOn(p) {
   return [...pids];
 }
 
-const pids = listenersOn(port);
+const pids = listenersOn();
 if (pids.length === 0) {
   console.log(`free-port: nothing listening on ${port} — nothing to do.`);
   process.exit(0);

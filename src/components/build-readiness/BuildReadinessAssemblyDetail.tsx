@@ -51,6 +51,11 @@ export function AssemblyDetailDrillView({
   const [state, setState] = useState<"loading" | AssemblyPartsResult>("loading");
 
   useEffect(() => {
+    // Reset to "loading" synchronously so switching to a new assembly (a
+    // dependency change, not just mount) doesn't briefly show the PREVIOUS
+    // assembly's parts while the new fetch is in flight -- can't be a lazy
+    // initializer since this needs to re-fire on every keySignature change.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setState("loading");
     sequenced("build-readiness-assembly-parts", `${job.jobId}::${keySignature}`, () => loadAssemblyPartsForJob(job.jobId, assemblyKeys)).then((out) => {
       if (out.ok) setState(out.value);
@@ -77,7 +82,7 @@ export function AssemblyDetailDrillView({
     <div className="flex flex-col gap-4 p-4">
       {instances.length > 1 && (
         <p className="rounded-lg border border-sdc-blue-light bg-sdc-blue-light/40 px-3 py-2 text-note text-sdc-blue-dark">
-          This assembly is used in {instances.length} places in this job's BOM — the figures below are combined across all of them.
+          This assembly is used in {instances.length} places in this job&apos;s BOM — the figures below are combined across all of them.
         </p>
       )}
       <div className="grid grid-cols-2 gap-3 rounded-lg border border-sdc-border bg-sdc-gray-50 p-3 sm:grid-cols-3">

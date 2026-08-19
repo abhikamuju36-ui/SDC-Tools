@@ -150,6 +150,7 @@ function ViewsMenu({
   // no way to include them in `initialViews`, so this is the one piece that
   // still needs a mount effect (matching ProjectViewsMenu.tsx's own pattern).
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMine(readMyViews());
   }, []);
 

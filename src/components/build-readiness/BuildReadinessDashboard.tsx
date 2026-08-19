@@ -123,8 +123,12 @@ export function BuildReadinessDashboard({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [data.meta.status]);
 
-  // Re-fetch (no new trigger) whenever a filter changes.
+  // Re-fetch (no new trigger) whenever a filter changes -- the setState
+  // reload() eventually calls happens after its own await, not synchronously
+  // here, but the linter traces through the call. This is the standard
+  // "fetch when a dependency changes" effect shape.
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     void reload(filters);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [filters]);

@@ -13,7 +13,7 @@ export default async function AdminUsersPage() {
     <div className="w-full p-8">
       <PageTitle className="mb-1">Users &amp; Roles</PageTitle>
       <p className="mb-6 text-sm text-sdc-gray-600">
-        Assign each account's permission tier. Higher tiers inherit everything below them: All &lt; Managers &lt; Sales &lt; ELT.
+        Assign each account&apos;s permission tier. Higher tiers inherit everything below them: All &lt; Managers &lt; Sales &lt; ELT.
       </p>
       <table className="w-full max-w-3xl border-collapse text-sm">
         <thead>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PoPanel } from "@/components/procurement/PoDetailPanel";
 import { loadPoDetailForJob, type PoDetailResult } from "@/lib/build-readiness-po-actions";
@@ -19,6 +19,7 @@ import {
 import { AssemblyDetailDrillView } from "./BuildReadinessAssemblyDetail";
 import { SupplierDrillView } from "./BuildReadinessSupplierDrill";
 import { frameJobId, type DrillFrame, type DrillStack } from "./useDrillStack";
+import { useStableNow } from "@/lib/use-stable-now";
 
 const PARTS_FILTER_LABEL: Record<Extract<DrillFrame, { kind: "parts" }>["filter"], string> = {
   missing: "Missing",
@@ -80,7 +81,7 @@ export function DrillContent({
   onRefreshProject: (jobId: string) => void;
   refreshingProjectId: string | null;
 }) {
-  const now = useMemo(() => Date.now(), []);
+  const now = useStableNow();
   const { stack, top, push, popTo } = drill;
   const closeOneLevel = () => popTo(stack.length - 2);
 
@@ -89,15 +90,24 @@ export function DrillContent({
 
   useEffect(() => {
     if (!poFrame) {
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       setPoState(null);
       return;
     }
+    // Reset to "loading" synchronously so switching to a different PO frame
+    // doesn't briefly show the PREVIOUS one's detail while the new fetch is
+    // in flight -- can't be a lazy initializer since this needs to re-fire
+    // on every poFrame change, same reasoning as
+    // BuildReadinessAssemblyDetail.tsx's identical pattern.
     setPoState("loading");
     sequenced("build-readiness-po-detail", `${poFrame.jobId}::${poFrame.poNumber}`, () => loadPoDetailForJob(poFrame.jobId, poFrame.supplier, poFrame.poNumber)).then((out) => {
       if (out.ok) setPoState(out.value);
       else if (out.reason === "error") setPoState({ ok: false, reason: "unavailable" });
       // reason: "stale" — a newer PO was opened before this one resolved; leave it alone.
     });
+    // poFrame's primitive fields, not the object itself -- a new but
+    // equivalent `top` from the parent must not re-trigger this fetch.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [poFrame?.jobId, poFrame?.poNumber, poFrame?.supplier]);
 
   if (!top) return null;

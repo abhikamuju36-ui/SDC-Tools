@@ -25,10 +25,11 @@ export function useAnchoredPosition(
   const [pos, setPos] = useState<AnchoredPosition | null>(null);
 
   useLayoutEffect(() => {
-    if (!open) {
-      setPos(null);
-      return;
-    }
+    // Nothing to (re)measure while closed — the stale `pos` from the last
+    // time this was open is left in state rather than reset here (no
+    // setState needed to "clear" it), because the return statement below
+    // masks it with null whenever `open` is false regardless.
+    if (!open) return;
     const trigger = triggerRef.current;
     const panel = panelRef.current;
     if (!trigger || !panel) return;
@@ -45,5 +46,5 @@ export function useAnchoredPosition(
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, side, align, sideOffset, pad]);
 
-  return pos;
+  return open ? pos : null;
 }

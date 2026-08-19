@@ -6,6 +6,7 @@ import { usd } from "@/components/ui/format";
 import { useColumnSort } from "@/components/useColumnSort";
 import { SortableTh } from "@/components/ui/SortableHeader";
 import { sortRows, type SortColumns } from "@/lib/table-sort";
+import { useStableNow } from "@/lib/use-stable-now";
 import {
   DAY,
   STATUS_PILL,
@@ -415,7 +416,7 @@ export function PoPanel({
   onPartClick: (p: DrillablePart) => void;
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
 }) {
-  const nowMs = useMemo(() => Date.now(), []);
+  const nowMs = useStableNow();
   const cols = useMemo(() => ALL_COLS.filter((c) => PO_PANEL_COL_KEYS.includes(c.key)), []);
   const sortColumns = useMemo(() => partsListSortColumns(nowMs), [nowMs]);
   const lineSort = useColumnSort<ColKey>();

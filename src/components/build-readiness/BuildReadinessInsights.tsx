@@ -10,6 +10,7 @@ import { Stat } from "@/components/procurement/PoDetailPanel";
 import { type JobSnapshotRow, type BlockerReason, type SupplierRiskRow, BLOCKER_REASON_LABEL } from "@/lib/build-readiness-types";
 import { computeUpcomingUnlocks, computeSupplierRisk, computeReadinessForecast, mergeAssemblyInstances } from "@/lib/build-readiness-forecast";
 import type { DrillFrame } from "@/components/build-readiness/useDrillStack";
+import { useStableNow } from "@/lib/use-stable-now";
 
 function num(n: number): string {
   return Math.round(n).toLocaleString();
@@ -540,7 +541,7 @@ function ReadinessForecast({ jobs, now, stack, push }: { jobs: JobSnapshotRow[];
 }
 
 export function BuildReadinessInsights({ jobs, push, stack }: { jobs: JobSnapshotRow[]; push: (f: DrillFrame) => void; stack: DrillFrame[] }) {
-  const now = useMemo(() => Date.now(), []);
+  const now = useStableNow();
   return (
     <div className="flex flex-col gap-4">
       {/* Row 1 — What Can We Build Now / Top Blockers. Upcoming Unlocks moved

@@ -13,6 +13,7 @@ import { sequenced } from "@/lib/request-sequence";
 import { useColumnSort } from "@/components/useColumnSort";
 import { SortableTh, SortableColumnHeader } from "@/components/ui/SortableHeader";
 import { sortRows, type SortColumns } from "@/lib/table-sort";
+import { useStableNow } from "@/lib/use-stable-now";
 import {
   DAY,
   STATUS_ROW_BG,
@@ -531,7 +532,7 @@ function TabChip({ active, onClick, label, count }: { active: boolean; onClick: 
 const ASM_GRID = "minmax(200px,max-content) minmax(260px,3fr) 92px 72px 108px 150px";
 
 function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClick: (p: DrillablePart) => void; onOpenPo: (supplier: string | null, poNumber: string | null) => void }) {
-  const now = useMemo(() => Date.now(), []);
+  const now = useStableNow();
   // Every assembly node key — for Expand/Collapse All + collapsed-by-default.
   //
   // ── The section's own loose parts get a key too ─────────────────────────
@@ -1089,7 +1090,7 @@ function PartsListTab({
 }) {
   const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, upcomingWeek, setUpcomingWeek, colWidths, setColWidths, clearFilters } = state;
   const { toast } = useToast();
-  const now = useMemo(() => Date.now(), []);
+  const now = useStableNow();
   // "Active" for status means the selection differs from the default (every
   // status except On Hold) — the same "not the neutral view" test every other
   // filter here already applies against its own "all" baseline.
@@ -1395,7 +1396,13 @@ function PartsTableView({
       document.body.style.cursor = "";
       document.body.style.userSelect = "";
     };
+    // Plain imperative DOM mutation inside a mousedown handler -- not render,
+    // not an effect, so "consider using an effect" doesn't apply here; this
+    // is the standard vanilla drag-resize pattern (global cursor + disabled
+    // text-selection for the duration of the drag, restored in onUp above).
+    // eslint-disable-next-line react-hooks/immutability
     document.body.style.cursor = "col-resize";
+    // eslint-disable-next-line react-hooks/immutability
     document.body.style.userSelect = "none";
     document.addEventListener("mousemove", onMove);
     document.addEventListener("mouseup", onUp);

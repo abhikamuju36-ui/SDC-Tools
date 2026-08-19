@@ -147,7 +147,8 @@ export function KpiRow<TDrill extends string>({
               // without this, a click on Detail while rowOpensDetail is set would
               // fire both handlers and toggle the drill open then immediately shut.
               e.stopPropagation();
-              detailState === "error" ? onRetry(drill) : onDrill(drill);
+              if (detailState === "error") onRetry(drill);
+              else onDrill(drill);
             }}
             aria-expanded={drillOpen}
             aria-label={

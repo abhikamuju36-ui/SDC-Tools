@@ -31,7 +31,6 @@ import {
   offGridTotalHours,
   KPI_GRID_CLASS,
   type DrillScope,
-  type KpiBlock,
 } from "@/lib/etc-kpi-strip";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
 import type { UnattributedDetail } from "@/lib/unattributed-hours";

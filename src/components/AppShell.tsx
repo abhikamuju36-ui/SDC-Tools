@@ -3,12 +3,10 @@ import ExcelCellFocus from "@/components/ExcelCellFocus";
 import ColumnResize from "@/components/ColumnResize";
 import { ToastProvider } from "@/components/ui/Toast";
 import { DEFAULT_PREFS, sidebarWidthCss, type SidebarPrefs } from "@/lib/sidebar-prefs";
-import type { AppRole } from "@/lib/permissions";
 
 export default function AppShell({
   children,
   userEmail,
-  role,
   visibleHrefs,
   signOutAction,
   schedulerProjectsUrl,
@@ -16,7 +14,6 @@ export default function AppShell({
 }: {
   children: React.ReactNode;
   userEmail?: string | null;
-  role: AppRole;
   /** Which nav hrefs this role may see, computed server-side in the (app) layout — see its own note on why this can't be decided inside Sidebar itself. */
   visibleHrefs: string[];
   signOutAction: () => Promise<void>;
@@ -73,7 +70,7 @@ export default function AppShell({
         >
           Skip to content
         </a>
-        <Sidebar userEmail={userEmail} role={role} visibleHrefs={visibleHrefs} signOutAction={signOutAction} schedulerProjectsUrl={schedulerProjectsUrl} initial={sidebar} />
+        <Sidebar userEmail={userEmail} visibleHrefs={visibleHrefs} signOutAction={signOutAction} schedulerProjectsUrl={schedulerProjectsUrl} initial={sidebar} />
         <main id="main-content" className="min-w-0 flex-1 bg-background">
           {children}
         </main>

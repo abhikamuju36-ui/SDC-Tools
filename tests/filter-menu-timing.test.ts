@@ -70,9 +70,7 @@ test("a burst is collapsed but never dropped", () => {
 test("a slow, deliberate sequence applies every tick at once", () => {
   // Someone ticking a box, reading the grid, then ticking another is NOT a burst
   // and must not be treated as one — each selection is a separate decision.
-  let lastNavAt = 0;
   for (const gap of [400, 900, 1500]) {
-    lastNavAt += gap;
     assert.equal(applyDelayMs(gap, false, WINDOW), 0, `a tick ${gap}ms later is immediate`);
   }
 });

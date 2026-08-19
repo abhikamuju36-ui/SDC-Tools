@@ -12,6 +12,10 @@
 // This is scoped to exactly one bare specifier — redirecting "server-only" to its own
 // already-published no-op (node_modules/server-only/empty.js) — so nothing else about
 // module resolution changes.
+// require(), not import: this file is a Node `-r`/`--require` PRELOAD hook
+// (see the tsx -r invocation above), which only works as CommonJS -- that's
+// also why it's a .cjs file rather than .ts. Not an oversight to migrate.
+/* eslint-disable @typescript-eslint/no-require-imports */
 const Module = require("module");
 const path = require("path");
 

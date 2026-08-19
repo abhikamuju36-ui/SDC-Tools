@@ -270,8 +270,15 @@ export function JobCostExplorer({
 
   const [hiddenCols, setHiddenCols] = useState<Set<ColKey>>(new Set());
   useEffect(() => {
+    // Deliberately an effect, not a lazy useState initializer: localStorage
+    // isn't available during the server render, and reading it in the
+    // initializer would make the client's first (hydration) render disagree
+    // with the server's, which React flags as a hydration mismatch. This way
+    // hydration always matches (both start from the same empty Set), and the
+    // real value applies in the one harmless re-render right after.
     try {
       const saved = JSON.parse(localStorage.getItem(HIDDEN_COLS_KEY) || "[]");
+      // eslint-disable-next-line react-hooks/set-state-in-effect
       if (Array.isArray(saved)) setHiddenCols(new Set(saved));
     } catch {
       // localStorage unavailable or corrupt — start with every column shown.

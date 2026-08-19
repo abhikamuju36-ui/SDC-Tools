@@ -100,6 +100,13 @@ export function ProjectViewsMenu({
   const activeName = searchParams.get("view");
 
   useEffect(() => {
+    // Deliberately an effect, not a lazy useState initializer: readMyViews()
+    // reads window.localStorage, unavailable during the server render.
+    // Reading it in the initializer would make the client's hydration
+    // render disagree with the server's; deferring to an effect keeps
+    // hydration matched and applies the real value in the harmless
+    // re-render right after.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setMine(readMyViews());
   }, []);
 
