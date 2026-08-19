@@ -19,7 +19,7 @@ function parseNum(s: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-const text = fs.readFileSync("D:\\AI Projects\\sdc-etc-planner\\scripts\\_1116_dump_Job_Ledger.tsv", "utf-8");
+const text = fs.readFileSync("D:\\AI Projects\\sdc-etc-planner\\scripts\\archive\\_1116_dump_Job_Ledger.tsv", "utf-8");
 const lines = text.split("\n").slice(2); // skip sheet-name line + column-header line
 
 const rows: Row[] = [];

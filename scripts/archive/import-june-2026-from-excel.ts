@@ -7,8 +7,8 @@
 // remains PBI-owned and still rebuilds automatically once the "Jun 2026"
 // archive publishes.
 import * as fs from "fs";
-import { prisma } from "../src/lib/prisma";
-import { round2, calcHoursLeft } from "../src/lib/etc";
+import { prisma } from "@/lib/prisma";
+import { round2, calcHoursLeft } from "@/lib/etc";
 
 type Row = { jobId: string; name: string; sections: Record<string, [number, number, number | null]> };
 
@@ -16,7 +16,8 @@ async function main() {
   const data: Row[] = JSON.parse(fs.readFileSync("june numbers/_extracted.json", "utf-8"));
   const month = "2026-06";
 
-  let updated = 0, created = 0, missingJobs: string[] = [];
+  let updated = 0, created = 0;
+  const missingJobs: string[] = [];
   for (const row of data) {
     const job = await prisma.job.findUnique({ where: { jobId: row.jobId }, select: { id: true } });
     if (!job) { missingJobs.push(row.jobId); continue; }

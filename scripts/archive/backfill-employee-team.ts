@@ -32,7 +32,7 @@
  * query-engine DLL (see src/lib/employee-team-field.ts's own comment).
  */
 import { PrismaClient } from "@prisma/client";
-import { teamFor } from "../src/lib/employee-teams";
+import { teamFor } from "@/lib/employee-teams";
 
 const APPLY = process.argv.includes("--apply");
 const prisma = new PrismaClient();

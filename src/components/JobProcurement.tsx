@@ -2077,7 +2077,7 @@ function RiskCards({
           swaps each card's rows between one-per-PO (opens the drawer) and
           one-per-part (no drawer) and the header count that goes with it. */}
       <div className="flex items-center gap-2 self-start">
-        <span className="text-xs font-semibold uppercase tracking-wide text-sdc-gray-500">Group By</span>
+        <span className="text-xs font-semibold uppercase tracking-wide text-sdc-muted">Group By</span>
         <Segmented
           value={groupBy}
           onChange={setGroupBy}

@@ -17,7 +17,7 @@
 // Dry run (default):  npx tsx scripts/deactivate-non-project-departments.ts
 // Apply:              npx tsx scripts/deactivate-non-project-departments.ts --apply
 import "dotenv/config";
-import { prisma } from "../src/lib/prisma";
+import { prisma } from "@/lib/prisma";
 
 // Matched case-insensitively and whitespace-insensitively around the slash:
 // the roster carries "Growth / Business Development" with spaces, which an

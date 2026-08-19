@@ -33,7 +33,7 @@ import { PrismaClient } from "@prisma/client";
 import fs from "fs";
 import * as XLSX from "xlsx";
 
-const FILE = "Employee_Department_Map.xlsx";
+const FILE = "scripts/data/Employee_Department_Map.xlsx";
 const APPLY_SUPERVISORS = process.argv.includes("--apply-supervisors");
 const APPLY = process.argv.includes("--apply") || APPLY_SUPERVISORS;
 

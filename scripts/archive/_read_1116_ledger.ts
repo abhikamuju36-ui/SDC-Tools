@@ -3,7 +3,7 @@ import fs from "fs";
 
 async function main() {
   const wb = new ExcelJS.Workbook();
-  await wb.xlsx.readFile("D:\\AI Projects\\sdc-etc-planner\\1116 Molex as of 7.31.26.xlsx");
+  await wb.xlsx.readFile("D:\\AI Projects\\sdc-etc-planner\\scripts\\archive\\1116 Molex as of 7.31.26.xlsx");
   for (const ws of wb.worksheets) {
     const out: string[] = [];
     out.push(`=== Sheet: ${ws.name} (${ws.rowCount} rows x ${ws.columnCount} cols) ===`);
@@ -19,7 +19,7 @@ async function main() {
       }
       out.push(`${r}\t${vals.join("\t")}`);
     }
-    fs.writeFileSync(`D:\\AI Projects\\sdc-etc-planner\\scripts\\_1116_dump_${ws.name.replace(/[^a-z0-9]/gi, "_")}.tsv`, out.join("\n"));
+    fs.writeFileSync(`D:\\AI Projects\\sdc-etc-planner\\scripts\\archive\\_1116_dump_${ws.name.replace(/[^a-z0-9]/gi, "_")}.tsv`, out.join("\n"));
     console.log(`wrote ${out.length} lines for sheet ${ws.name}`);
   }
 }

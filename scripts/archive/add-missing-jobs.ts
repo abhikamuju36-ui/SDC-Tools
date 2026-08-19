@@ -3,8 +3,8 @@
 // scripts/verify-quoted-hours.ts's reverse-direction check). Run once,
 // then delete or leave as a record of what was added — same convention as
 // the other one-time scripts in this folder.
-import { prisma } from "../src/lib/prisma";
-import { isSdcCustomer } from "../src/lib/job-filters";
+import { prisma } from "@/lib/prisma";
+import { isSdcCustomer } from "@/lib/job-filters";
 
 async function main() {
   // Job 1163 (Top Coil Assembly Machine) was already created by an earlier

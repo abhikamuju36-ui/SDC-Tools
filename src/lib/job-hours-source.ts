@@ -1,23 +1,31 @@
 import { runDax } from "@/lib/powerbi-client";
 import { ETC_TRACKED_CODES, HOURS_IMPORT_CODES, SECTIONS, mapPunchToColumns, poolCategoryForPunch } from "@/lib/sections";
 
-// THE source of actual hours worked: Power BI's `Hours Actual` table, which is
-// the Paylocity feed the whole company's hours reporting is built on.
+// Power BI reader for actual hours worked — NOT the live source since 2026-08-05.
+// The live source today is the OneDrive-synced Paylocity workbook, read via
+// paylocity-workbook.ts and reached through hours-feed.ts's readHoursFeed(),
+// which is the one entry point every hours consumer actually goes through.
 //
-// ── Why this replaced the SharePoint reader (2026-08-03, by request) ────────
-// Hours used to be read straight from the OneDrive-synced copy of Paylocity's
-// Current_Job_Hours.xlsx (sharepoint-hours.ts, deleted in the same change). That
-// path worked but carried real operational cost: it needed the OneDrive folder
-// pinned "Always keep on this device", it fell back to Microsoft Graph with a
-// delegated token cache that doesn't survive session 0, and it was a second auth
-// path to keep alive next to the Power BI one.
+// What's still live from THIS file on every hours read: buildColumnResolver()
+// below, which reads only Power BI's `Function Hierarchy` table (metadata — what
+// a punch code MEANS, not hours worked) and falls back to the hand-written
+// SECTION_ALIASES if Power BI is unreachable, so an outage here never costs a
+// single hour of data.
 //
-// The two were proven to be the SAME DATA before anything was switched. For
-// 2026-01..2026-07, with this module's own section rules applied to both sides:
-// 1,127 of 1,127 job x section x month cells agreed within half an hour — zero
-// cells differing, zero hours on either side. The model refreshes daily (06:02)
-// and reaches the same last work date as the file. So this is one auth path and
-// one reader for no loss of fidelity.
+// fetchJobHoursRowsWithIssues()/fetchJobHoursRows()/hoursByJobSection() below —
+// the actual hours-from-PBI path — are reached only via hours-feed.ts's
+// readFromPowerBi(): explicit opt-in (HOURS_SOURCE=power_bi) or the historical-
+// backfill scripts that legitimately need months older than the workbook covers.
+// They are not on the default path.
+//
+// ── Why hours moved OFF Power BI onto the workbook (2026-08-05) ─────────────
+// This file's reader briefly replaced an OneDrive-synced Paylocity workbook
+// reader (sharepoint-hours.ts, deleted 2026-08-03) on the strength of a
+// measurement that the two were the SAME DATA: for 2026-01..2026-07, 1,127 of
+// 1,127 job x section x month cells agreed. Two days later the PBI model was
+// found running days behind the workbook (July short 150.53h, August entirely
+// absent) — so paylocity-workbook.ts + hours-feed.ts took over as the live
+// source, and this file's row-level reader became the fallback described above.
 //
 // An earlier measurement appeared to show the export running ~9,600h AHEAD of the
 // model. That was an artefact of comparing against Power BI's RAW function codes
@@ -25,9 +33,10 @@ import { ETC_TRACKED_CODES, HOURS_IMPORT_CODES, SECTIONS, mapPunchToColumns, poo
 // before anyone "fixes" a gap by that method again.
 //
 // ── Contract ────────────────────────────────────────────────────────────────
-// Deliberately the same shape the SharePoint reader returned, because five
-// callers depend on it (auto-sync, etc-actions, standard-pool-local, sync-powerbi,
-// unattributed-hours) and none of them should care where hours come from.
+// Deliberately the same row shape the old SharePoint reader returned, because
+// several callers still depend on it via readFromPowerBi() (sync-powerbi,
+// standard-pool-local's opt-in path) and none of them should care where hours
+// come from.
 
 // Company-wide hours worked per Standard Fees pool, keyed `${YYYY-MM}::${category}`.
 //

@@ -26,9 +26,9 @@
 //
 // Idempotent and safe to re-run: dry-run unless --apply, and it skips any cell whose
 // draft is no longer 0, so a value entered since is never overwritten.
-import { prisma } from "../src/lib/prisma";
-import { round2, suggestNewEtc } from "../src/lib/etc";
-import { PARTS_COST_SECTION } from "../src/lib/sections";
+import { prisma } from "@/lib/prisma";
+import { round2, suggestNewEtc } from "@/lib/etc";
+import { PARTS_COST_SECTION } from "@/lib/sections";
 
 const BATCH_AT = "2026-08-03T11:02:44.537Z";
 const MONTH = "2026-07";

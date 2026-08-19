@@ -20,11 +20,11 @@
 // the current file always wins for any date it covers, per the ticket's own instruction.
 import "dotenv/config";
 import path from "path";
-import { readPaylocityWorkbook, workbookPath, type WorkbookHoursRow } from "../src/lib/paylocity-workbook";
-import { buildColumnResolver } from "../src/lib/job-hours-source";
-import { syncJobHoursDetail } from "../src/lib/sync-powerbi";
-import { prisma } from "../src/lib/prisma";
-import { logAuditFor } from "../src/lib/audit";
+import { readPaylocityWorkbook, workbookPath, type WorkbookHoursRow } from "@/lib/paylocity-workbook";
+import { buildColumnResolver } from "@/lib/job-hours-source";
+import { syncJobHoursDetail } from "@/lib/sync-powerbi";
+import { prisma } from "@/lib/prisma";
+import { logAuditFor } from "@/lib/audit";
 
 const HIST_FILE_NAME = "Job_Hours_2025.xlsx";
 const SOURCE_TAG = "paylocity_2025_export";

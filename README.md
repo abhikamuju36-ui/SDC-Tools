@@ -28,7 +28,7 @@ npm run dev          # dev server, port 3010
 npm run build        # production build
 npm start            # run the production build
 npm run deploy       # build + free port 3010 + pm2 restart (production deploy)
-npm test             # run the test suite (57 files, tsx --test)
+npm test             # run the test suite (99 files, tsx --test)
 npm run lint         # eslint
 ```
 
@@ -45,6 +45,8 @@ Everything beyond this quick start lives in [`docs/`](docs/):
 | [INTEGRATIONS.md](docs/INTEGRATIONS.md) | Paylocity, Total ETO, Power BI, auth, the sibling Scheduler app |
 | [REALTIME-SYNC.md](docs/REALTIME-SYNC.md) | Live cell edits, presence, conflict handling |
 | [REFRESH-PIPELINE.md](docs/REFRESH-PIPELINE.md) | The scheduled + manual data-refresh pipeline |
+| [SEMANTIC-MODEL-MAP.md](docs/SEMANTIC-MODEL-MAP.md) | How app concepts map onto the Power BI semantic model |
+| [UNMAPPED-HOURS.md](docs/UNMAPPED-HOURS.md) | Auto-generated — punch codes with no section mapping (`scripts/report-unmapped-hours.ts`) |
 | [DEVELOPMENT.md](docs/DEVELOPMENT.md) | Local setup, env vars, Prisma workflow |
 | [DEPLOYMENT.md](docs/DEPLOYMENT.md) | Build/deploy process, the PM2-on-Windows gotcha, rollback |
 | [TESTING.md](docs/TESTING.md) | Test structure and what must pass before deploying |
