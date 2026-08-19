@@ -26,7 +26,7 @@ import { SortableTh } from "@/components/ui/SortableHeader";
 import { sortRows, type SortColumns } from "@/lib/table-sort";
 import type { JobHoursDetail } from "@/lib/job-hours-detail";
 // The two canonical orders the grid itself reads in — see the note on groupHoursRows.
-import { EMPLOYEE_TEAMS, teamFor } from "@/lib/employee-teams";
+import { departmentFilterRank } from "@/lib/hours-filters";
 import { SECTIONS } from "@/lib/sections";
 
 // The dimensions the punch list can be rolled up by. Exported because the Undefined
@@ -125,7 +125,7 @@ export function groupHoursRows(
   // left on hours-descending: "Department › Employee" has no grid equivalent, and
   // ordering the outer level while the inner one stayed by size would read as neither.
   if (groupBy.length === 1 && (groupBy[0] === "department" || groupBy[0] === "section")) {
-    const rank = groupBy[0] === "department" ? departmentRank : sectionRank;
+    const rank = groupBy[0] === "department" ? departmentFilterRank : sectionRank;
     return groups.sort((a, b) => {
       const ra = rank(a.values[0]);
       const rb = rank(b.values[0]);
@@ -140,16 +140,13 @@ export function groupHoursRows(
   return groups.sort((a, b) => b.hours - a.hours || a.key.localeCompare(b.key));
 }
 
-// Position of a department in the grid's reading order, via the canonical team table.
 // UNRANKED (not -1) for anything unmapped, so it sorts last rather than first.
+// Department ranking itself now comes from hours-filters.ts's
+// departmentFilterRank -- this file used to have its own copy, which
+// collapsed "no department" and "a real but unmapped department" (e.g.
+// Finance, Sales, a typo) to the same rank instead of ordering the blank
+// strictly after the others the way departmentFilterRank does.
 const UNRANKED = Number.MAX_SAFE_INTEGER;
-
-export function departmentRank(label: string): number {
-  const team = teamFor({ department: label });
-  if (!team) return UNRANKED;
-  const i = EMPLOYEE_TEAMS.indexOf(team);
-  return i === -1 ? UNRANKED : i;
-}
 
 // Sections are grouped as "code — name" (see groupValue), so the code is read off the
 // front rather than the whole label being matched.

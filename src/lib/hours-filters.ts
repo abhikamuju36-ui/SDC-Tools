@@ -45,13 +45,16 @@ export type HoursFilters = {
 // The Department FILTER's own display order (2026-08-17, by request — "match
 // the order used in Monthly ETC"), for the raw HR strings `HoursFilters.
 // departments` holds. Business order, not alphabetical: the same
-// delivery-team sequence employee-teams.ts already defines and
-// HoursDetailPanel.tsx's own departmentRank() already uses for exactly this
-// reason — reused, not re-derived. A raw HR string that resolves to one of
-// the 7 teams (via that file's own alias table, e.g. "Mechanical Build /
-// Manufacturing" -> Build) ranks by that team's position; anything else
-// (Finance, Sales, a typo, a since-renamed department) sorts alphabetically
-// after every ranked team; the blank "—" bucket always sorts last of all.
+// delivery-team sequence employee-teams.ts already defines. Also the
+// canonical department rank for the Hours tab's "Group By Department" sort
+// (HoursDetailPanel.tsx imports this directly, rather than keeping its own
+// copy — a since-removed local copy collapsed the blank "—" bucket and a
+// real-but-unmapped department to the same rank; see below for why they must
+// not tie). A raw HR string that resolves to one of the 7 teams (via that
+// file's own alias table, e.g. "Mechanical Build / Manufacturing" -> Build)
+// ranks by that team's position; anything else (Finance, Sales, a typo, a
+// since-renamed department) sorts alphabetically after every ranked team;
+// the blank "—" bucket always sorts last of all.
 // This is the FILTER's own order — see `departmentOrderRank` in
 // hours-operational-grouping.ts for the unrelated Group By dimension's order,
 // which is Section+Function-derived and has no reason to share a function
