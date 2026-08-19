@@ -10,6 +10,7 @@ import { RESTRICTED_SECTION_CODES } from "@/lib/sections";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 import { PartsCostSummary } from "@/components/PartsCostSummary";
 import type { PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
+import { hours as fmtHours } from "@/components/ui/format";
 
 // The Parts Cost bullet bar (§52) joins the two hours charts in one row, so
 // its inputs travel as one prop rather than a second top-level component the
@@ -54,7 +55,7 @@ const TOTAL_SERIES = {
   actual: "#2b2b2b", // dark grey — Engineering/Shop Total, Actual
 } as const;
 
-const fmt = (n: number) => Math.round(n).toLocaleString();
+const fmt = fmtHours;
 
 // ── Value-label collision avoidance for SectionHierarchyChart ───────────────
 //

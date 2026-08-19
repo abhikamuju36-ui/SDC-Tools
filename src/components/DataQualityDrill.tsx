@@ -8,6 +8,7 @@ import type { PunchIssue } from "@/lib/data-quality";
 import { useColumnSort } from "@/components/useColumnSort";
 import { SortableTh } from "@/components/ui/SortableHeader";
 import { sortRows, type SortColumns } from "@/lib/table-sort";
+import { hours as fmtHours } from "@/components/ui/format";
 
 // Drill-through for the Data Quality findings, following what the Power BI
 // report actually offers rather than inventing new destinations. Its pages drill
@@ -199,7 +200,7 @@ export function EmployeeIdDrill({ ids }: { ids: EmployeeIdRow[] }) {
               >
                 <td className={`${TD} font-mono`}>#{r.employeeId}</td>
                 <td className={`${TD} text-right tabular-nums`}>{r.rows.toLocaleString()}</td>
-                <td className={`${TD} text-right tabular-nums`}>{Math.round(r.hours).toLocaleString()}h</td>
+                <td className={`${TD} text-right tabular-nums`}>{fmtHours(r.hours)}h</td>
               </tr>
             ))}
           </tbody>
@@ -234,7 +235,7 @@ function EmployeePanel({ detail, onClose }: { detail: EmployeePunchDetail; onClo
             {detail.department && <span className="ml-2 text-xs font-normal text-sdc-muted">{detail.department}</span>}
           </p>
           <p className="text-note text-sdc-muted">
-            {detail.rows.length.toLocaleString()} punches · {Math.round(detail.total).toLocaleString()}h
+            {detail.rows.length.toLocaleString()} punches · {fmtHours(detail.total)}h
             {detail.truncated && " (most recent 500)"}
             {/* An unresolved ID is the finding itself, so name it here too rather
                 than leaving the reader to notice the heading is a number. */}

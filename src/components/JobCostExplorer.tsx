@@ -24,7 +24,7 @@ import {
   GRID_SCROLLER,
   busySlot,
 } from "@/components/ui/classnames";
-import { usd } from "@/components/ui/format";
+import { usd, hours } from "@/components/ui/format";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { useToast } from "@/components/ui/Toast";
 import { MenuStatus, MenuGroup, MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
@@ -146,7 +146,7 @@ const HIDDEN_COLS_KEY = "job-cost-explorer-hidden-cols";
 // after these three, rather than being silently omitted.
 const STATUS_ORDER = ["Active", "HeadStart", "Complete"];
 
-const fmtNum = (n: number | null) => (n == null ? "—" : Math.round(n).toLocaleString());
+const fmtNum = (n: number | null) => (n == null ? "—" : hours(n));
 // usd() places the sign before the symbol ("-$5,000"); the hand-rolled version
 // this replaced built "$" + a signed number string, so a loss rendered "$-5,000"
 // — right figure, wrong reading order. Same numbers, corrected punctuation.

@@ -8,6 +8,7 @@ import { DataQualityDrill, EmployeeIdDrill } from "@/components/DataQualityDrill
 import { useColumnSort } from "@/components/useColumnSort";
 import { SortableTh } from "@/components/ui/SortableHeader";
 import { sortRows, type SortColumns } from "@/lib/table-sort";
+import { hours as fmtHours } from "@/components/ui/format";
 
 // The Power BI report's "Data Quality" page. Its rules — which punches count as
 // invalid, and why — are reproduced in lib/data-quality.ts, where each one is
@@ -18,7 +19,7 @@ import { sortRows, type SortColumns } from "@/lib/table-sort";
 // manager opens to be told whether there's anything to hunt for. Each check
 // states its rule, its size, and the rows behind it.
 
-const fmtH = (n: number) => `${Math.round(n).toLocaleString()}h`;
+const fmtH = (n: number) => `${fmtHours(n)}h`;
 
 function Finding({
   title,

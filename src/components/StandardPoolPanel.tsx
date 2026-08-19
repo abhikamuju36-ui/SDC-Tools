@@ -16,7 +16,7 @@
 // formulas.
 
 import { useState } from "react";
-import { usd as currency, usdExact as currencyExact } from "@/components/ui/format";
+import { usd as currency, usdExact as currencyExact, hours as fmtHours } from "@/components/ui/format";
 import { useStandardPoolCell, useStandardPoolTotals, useStandardPoolDirty } from "@/components/EtcStandardColumns";
 import { PoolAutosave } from "@/components/PoolAutosave";
 import { SubmitReportAction } from "@/components/SubmitReportAction";
@@ -72,9 +72,7 @@ const POOL_ORDER = POOL_COLUMNS.map((c) => c.category);
 // group rather than as a stray label.
 const groupEdge = (c: PoolColumn) => (c.category === WAR_COLUMNS[0]?.category ? "border-l border-sdc-border" : "");
 
-function whole(n: number): string {
-  return Math.round(n).toLocaleString();
-}
+const whole = fmtHours;
 // Money formatting comes from ui/format (§39.13): `usd` for whole dollars and
 // `usdExact` for the cents-precision figure behind it. These were two local copies
 // of both — three files had the identical pair, under the identical names.

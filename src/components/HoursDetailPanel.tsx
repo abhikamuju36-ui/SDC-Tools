@@ -357,7 +357,7 @@ export function HoursDetailPanel({
         options: detail.sections.map((s) => ({
           value: s.code,
           label: `${s.code} — ${s.name}`,
-          suffix: Math.round(s.hours).toLocaleString(),
+          suffix: fmtHours(s.hours),
         })),
         searchable: true,
       },

@@ -173,7 +173,7 @@ export function UndefinedHoursPanel({
         options: detail.sections.map((s) => ({
           value: s.code,
           label: s.name === s.code ? s.code : `${s.code} — ${s.name}`,
-          suffix: Math.round(s.hours).toLocaleString(),
+          suffix: fmtHours(s.hours),
         })),
         searchable: true,
       },

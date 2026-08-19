@@ -10,6 +10,7 @@ import type { PunchExplorer, PunchRow } from "@/lib/data-quality";
 import { useColumnSort } from "@/components/useColumnSort";
 import { SortableTh } from "@/components/ui/SortableHeader";
 import { sortRows, type SortColumns } from "@/lib/table-sort";
+import { hours as fmtHours } from "@/components/ui/format";
 
 // The Power BI Data Quality page's own layout: three header cards, its four
 // slicers, the punch table with Is Punch Valid, and the stacked hours-by-
@@ -99,7 +100,7 @@ export function DataQualityExplorer({ data }: { data: PunchExplorer }) {
     const names = [...new Set(depts.flatMap((d) => d.employees.map((e) => e.name)))];
     return {
       grid: { left: 8, right: 8, top: 24, bottom: 8, containLabel: true },
-      tooltip: { trigger: "item", valueFormatter: (v: unknown) => `${Math.round(Number(v)).toLocaleString()}h` },
+      tooltip: { trigger: "item", valueFormatter: (v: unknown) => `${fmtHours(Number(v))}h` },
       xAxis: {
         type: "category",
         data: depts.map((d) => d.department),
@@ -129,7 +130,7 @@ export function DataQualityExplorer({ data }: { data: PunchExplorer }) {
         <Kpi label="Hours refreshed thru" value={data.kpis.refreshedThrough ?? "—"} />
         <Kpi
           label="Total hours actual"
-          value={Math.round(data.kpis.totalHours).toLocaleString()}
+          value={fmtHours(data.kpis.totalHours)}
           sub={`${data.kpis.totalPunches.toLocaleString()} punches`}
         />
         <Kpi label="Invalid punches" value={data.invalidCount.toLocaleString()} sub="in this selection" />
