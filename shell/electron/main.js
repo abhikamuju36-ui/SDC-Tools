@@ -150,6 +150,12 @@ function _rebuildTrayMenu() {
 let isQuitting = false;
 let pendingUpdate = false;   // true after update is downloaded & user confirmed install
 let _lastUpdateStatus = null; // cached for newly-opened app windows
+// One notification per distinct version, not one per 2-minute check —
+// checkForUpdates() keeps re-reporting the SAME available/downloaded version
+// on every poll until it's actually installed, and neither event is a
+// one-time "just happened" signal on its own.
+let _lastNotifiedAvailableVersion = null;
+let _lastNotifiedDownloadedVersion = null;
 
 async function performQuit() {
   if (isQuitting) return;
@@ -396,11 +402,14 @@ app.whenReady().then(() => {
     autoUpdater.on('update-available', (info) => {
       mainWindow?.webContents.send('update-status', { phase: 'available', version: info.version });
       // autoDownload=true means the download starts automatically — no user action needed
-      pushNotification({
-        source: 'shell', type: 'update', icon: '🆕',
-        title:  `🆕 SDC Tools v${info.version} available`,
-        body:   'Downloading update in the background…',
-      });
+      if (_lastNotifiedAvailableVersion !== info.version) {
+        _lastNotifiedAvailableVersion = info.version;
+        pushNotification({
+          source: 'shell', type: 'update', icon: '🆕',
+          title:  `🆕 SDC Tools v${info.version} available`,
+          body:   'Downloading update in the background…',
+        });
+      }
     });
 
     autoUpdater.on('update-not-available', () => {
@@ -420,11 +429,14 @@ app.whenReady().then(() => {
       mainWindow?.webContents.send('update-status', payload);
       _broadcastToAppWindows('app-update-status', 'restarting');
       // Notify the user — install happens when they click "Restart" or naturally quit
-      pushNotification({
-        source: 'shell', type: 'update', icon: '✅',
-        title:  `✅ SDC Tools v${info.version} ready`,
-        body:   'Update downloaded. Click "Restart & Install" in the launcher.',
-      });
+      if (_lastNotifiedDownloadedVersion !== info.version) {
+        _lastNotifiedDownloadedVersion = info.version;
+        pushNotification({
+          source: 'shell', type: 'update', icon: '✅',
+          title:  `✅ SDC Tools v${info.version} ready`,
+          body:   'Update downloaded. Click "Restart & Install" in the launcher.',
+        });
+      }
     });
 
     autoUpdater.on('error', (err) => {
