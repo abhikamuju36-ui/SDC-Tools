@@ -14,7 +14,7 @@
  *        d. git reset --soft origin/master  — advances HEAD, leaves per-app dirs intact
  *        e. npm install  (only if package.json changed)
  *        f. Build Assemblies Library frontend  (only if its files changed)
- *        g. pm2 restart sdc-assemblies sdc-readiness sdc-calendar sdc-vendor
+ *        g. pm2 restart sdc-assemblies sdc-readiness sdc-calendar
  *
  * Protected paths — never overwritten (managed by per-app updaters):
  *   SDC_Scheduler/public/, db.js, .gitignore, ARROW_ROUTING_RULES.md
@@ -183,9 +183,9 @@ async function checkAndUpdate() {
 
     // 8. Restart only the apps this updater owns.
     //    sdc-scheduler and sdc-statelogic have their own per-app updaters.
-    log('Restarting owned apps (assemblies, readiness, calendar, vendor)…');
+    log('Restarting owned apps (assemblies, readiness, calendar)…');
     execSync(
-      'pm2 restart sdc-assemblies sdc-readiness sdc-calendar sdc-vendor --update-env',
+      'pm2 restart sdc-assemblies sdc-readiness sdc-calendar --update-env',
       { cwd: REPO_DIR, stdio: 'inherit' }
     );
 
@@ -218,11 +218,18 @@ async function main() {
   log('SDC Tools monorepo server updater started (v2 — selective checkout)');
   log(`Watching: https://github.com/${GITHUB_OWNER}/${GITHUB_REPO}/tree/${GITHUB_BRANCH}`);
   log(`Check interval: ${CHECK_INTERVAL_MS / 60000} min`);
-  log('Owns: assemblies (4001)  readiness (4002)  calendar (4005)  vendor (4006)');
+  log('Owns: assemblies (4001)  readiness (4002)  calendar (4005)');
   log('Per-app updaters: sdc-scheduler-updater → 4003 | sdc-statelogic-updater → 4004');
 
   await checkAndUpdate();
   setInterval(checkAndUpdate, CHECK_INTERVAL_MS);
 }
 
-main().catch(e => { log(`Fatal: ${e.message}`); process.exit(1); });
+// When required by the updater hub (multiple updaters sharing one process),
+// a fatal error here must not process.exit() — that would kill the other
+// updaters too. Standalone (`node sdc-main-updater.js`), keep exiting so PM2
+// can restart just this one.
+main().catch(e => {
+  log(`Fatal: ${e.message}`);
+  if (require.main === module) process.exit(1);
+});

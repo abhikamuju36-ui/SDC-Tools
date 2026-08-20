@@ -292,41 +292,6 @@ function iconSDCTools() {
 </svg>`;
 }
 
-/* ── ICON 6 — Vendor Tracker ─────────────────────────────────────────────── */
-function iconVendor() {
-  const floor = 270;
-  const bars = [
-    { x: 118, h: 126, fill: P.blue,      op: '' },
-    { x: 205, h: 88,  fill: P.lightBlue, op: '' },
-    { x: 292, h: 110, fill: P.navy,      op: '' },
-    { x: 379, h: 72,  fill: P.blue,      op: 'opacity="0.6"' },
-  ];
-  const barsSvg = bars.map(b =>
-    `<rect x="${b.x}" y="${floor - b.h}" width="58" height="${b.h}" rx="8" fill="${b.fill}" ${b.op}/>`
-  ).join('\n  ');
-  const trendPts = bars.map((b, i) => `${b.x + 29},${floor - b.h}`).join(' ');
-  const trendDots = bars.map(b =>
-    `<circle cx="${b.x + 29}" cy="${floor - b.h}" r="5" fill="${P.green}"/>`
-  ).join('\n  ');
-  return frame('vendor', `
-  <line x1="96" y1="${floor}" x2="416" y2="${floor}" stroke="${P.navy}" stroke-width="2" opacity="0.15"/>
-  ${barsSvg}
-  <polyline points="${trendPts}" fill="none" stroke="${P.green}" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
-  ${trendDots}
-  <rect x="88" y="284" width="336" height="44" rx="10" fill="#f4f8fc" stroke="${P.lightBlue}" stroke-width="1.5"/>
-  <circle cx="113" cy="306" r="9" fill="${P.blue}"/>
-  <rect x="133" y="298" width="186" height="7" rx="3.5" fill="${P.blue}" opacity="0.85"/>
-  <rect x="133" y="311" width="104" height="5" rx="2.5" fill="${P.lightBlue}"/>
-  <rect x="88" y="340" width="336" height="44" rx="10" fill="#f4f8fc" stroke="${P.lightBlue}" stroke-width="1.5"/>
-  <circle cx="113" cy="362" r="9" fill="${P.green}"/>
-  <rect x="133" y="354" width="148" height="7" rx="3.5" fill="${P.green}" opacity="0.85"/>
-  <rect x="133" y="367" width="82" height="5" rx="2.5" fill="${P.lightBlue}"/>
-  <rect x="88" y="396" width="336" height="44" rx="10" fill="#f4f8fc" stroke="${P.lightBlue}" stroke-width="1.5"/>
-  <circle cx="113" cy="418" r="9" fill="${P.yellow}"/>
-  <rect x="133" y="410" width="110" height="7" rx="3.5" fill="${P.yellow}" opacity="0.9"/>
-  <rect x="133" y="423" width="60" height="5" rx="2.5" fill="${P.lightBlue}"/>`);
-}
-
 /* ── Build ICO (PNG-in-ICO, Vista+) ─────────────────────────────────────── */
 async function buildIco(sharp, pngPath, icoPath) {
   const sizes   = [16, 32, 48, 256];
@@ -363,7 +328,6 @@ const subIcons = {
   scheduler:  iconScheduler(),
   statelogic: iconStateLogic(),
   calendar:   iconCalendar(),
-  vendor:     iconVendor(),
 };
 
 async function main() {

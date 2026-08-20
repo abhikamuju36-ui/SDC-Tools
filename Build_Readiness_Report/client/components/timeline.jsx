@@ -191,7 +191,7 @@ function TimelineDrawer({ marker, buildStart, onClose, onDrillDown }) {
   );
 }
 
-function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
+function TimelineRibbon({ job, poActions, onDrillDown }) {
   const [viewMode, setViewMode] = useState('ribbon'); // 'ribbon' or 'gantt'
   const [hoveredItem, setHoveredItem] = useState(null);
   const [drawerMarker, setDrawerMarker] = useState(null);
@@ -211,16 +211,6 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
   const ship = job.shipDate ? new Date(job.shipDate) : null;
 
   const displayMilestones = useMemo(() => {
-    if (smartsheet?.milestones?.length > 0) {
-      return smartsheet.milestones.map((m, i) => {
-        const h = String(m.health || 'green').toLowerCase();
-        return {
-          id: `ss-${i}`, label: m.name,
-          color: h === 'red' ? 'threat' : h === 'yellow' ? 'pending' : 'ready',
-          actualDate: m.finish ? new Date(m.finish) : null,
-        };
-      });
-    }
     return [
       { id: 'all',      label: 'All Parts',   color: 'ready',   offset: -20 },
       { id: 'panel',    label: 'Panel Build',  color: 'blue',    offset: -15 },
@@ -228,7 +218,7 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
       { id: 'complete', label: 'Complete',     color: 'ready',   offset: 20  },
       { id: 'power',    label: 'Power Up',     color: 'ready',   offset: 25  },
     ].map(m => { const d = new Date(buildStart); d.setDate(d.getDate() + m.offset); return { ...m, actualDate: d }; });
-  }, [smartsheet, buildStart]);
+  }, [buildStart]);
 
   // ── Classified markers (all POs grouped by due date) ──────────────────
   const classifiedMarkers = useMemo(() => {
@@ -259,9 +249,8 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
     return buckets;
   }, [poActions]);
 
-  // ── Gantt tasks: Smartsheet tasks OR fallback from PO data ────────────
+  // ── Gantt tasks: derived from PO data ──────────────────────────────────
   const ganttTasks = useMemo(() => {
-    if (smartsheet?.tasks?.length > 0) return smartsheet.tasks;
     const now = new Date();
     const allEntries = [
       ...(poActions?.critical || []),
@@ -290,7 +279,7 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
         };
       })
       .sort((a, b) => new Date(a.finish) - new Date(b.finish));
-  }, [smartsheet, poActions]);
+  }, [poActions]);
 
   // ── Swimlane: group entries by vendor, worst-status first ─────────────
   const swimlaneVendors = useMemo(() => {
@@ -389,24 +378,11 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
     .sort((a, b) => +a.actualDate - +b.actualDate)
     .map((m, i) => ({ ...m, row: i % 2 }));
 
-  // ── Combined Gantt rows: milestone diamonds + task/summary bars ────────
-  const ganttRows = viewMode === 'gantt' ? (
-    smartsheet?.tasks?.length > 0
-      // Smartsheet connected: use tasks directly, type from flags
-      ? ganttTasks.map(t => ({
-          ...t,
-          type: t.isMilestone ? 'milestone' : t.isSummary ? 'summary' : 'task',
-          label: t.name,
-          date: (t.isMilestone && (t.finish || t.start)) ? new Date(t.finish || t.start) : null,
-          colorKey: (t.health || '').toLowerCase().includes('red') ? 'threat'
-                  : (t.health || '').toLowerCase().includes('yellow') ? 'pending' : 'ready',
-        }))
-      // No Smartsheet tasks: fallback milestones + PO bars
-      : [
-          ...milestones.map(m => ({ type: 'milestone', id: m.id, label: m.label, date: m.actualDate, colorKey: m.color })),
-          ...ganttTasks.map(t => ({ type: 'po', ...t })),
-        ]
-  ) : [];
+  // ── Combined Gantt rows: milestone diamonds + PO bars ──────────────────
+  const ganttRows = viewMode === 'gantt' ? [
+    ...milestones.map(m => ({ type: 'milestone', id: m.id, label: m.label, date: m.actualDate, colorKey: m.color })),
+    ...ganttTasks.map(t => ({ type: 'po', ...t })),
+  ] : [];
 
   const TY = 160;
   const SWIM_MS_H  = 76;  // swimlane milestone lane height
@@ -468,7 +444,7 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
           </div>
         </div>
 
-        {/* Right: gauge + date stack + Smartsheet */}
+        {/* Right: gauge + date stack */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
           <div style={{ width: GS, height: GS, position: 'relative', flexShrink: 0 }}>
             <svg width={GS} height={GS}>
@@ -492,12 +468,6 @@ function TimelineRibbon({ job, poActions, smartsheet, onDrillDown }) {
               </div>
             ))}
           </div>
-          {smartsheet?.permalink && (
-            <a href={smartsheet.permalink} target="_blank" style={{ display: 'inline-flex', alignItems: 'center', gap: 7, padding: '7px 12px', background: 'var(--sdc-blue-soft)', color: 'var(--sdc-blue-ink)', border: '1px solid var(--border)', borderRadius: 6, fontSize: 11.5, fontWeight: 600, textDecoration: 'none', flexShrink: 0 }}>
-              <span style={{ width: 12, height: 12, background: 'var(--sdc-blue)', borderRadius: 2, flexShrink: 0 }} />
-              Open Schedule <span style={{ fontSize: 10, opacity: 0.7 }}>↗</span>
-            </a>
-          )}
         </div>
       </div>
 

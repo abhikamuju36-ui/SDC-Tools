@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const eto = require('../services/eto');
 const demo = require('../services/demoData');
-const { getBuildDates } = require('../services/smartsheet');
+const scheduler = require('../services/scheduler');
 const { buildTree, buildReadinessSummary, buildPoActionList, buildPoIndex, findNoPoParts } = require('../lib/bomTree');
 
 function db() { return demo.isDemoMode() ? demo : eto; }
@@ -13,13 +13,13 @@ router.get('/:projectId', async (req, res) => {
     const projectId = parseInt(req.params.projectId);
     const src = db();
 
-    const [project, specs, poRows, buildDates, projectCosting, specCosting] = await Promise.all([
+    const [project, specs, poRows, projectCosting, specCosting, buildDates] = await Promise.all([
       src.getProjectInfo(projectId),
       src.getSpecs(projectId),
       src.getPoDetails(projectId),
-      getBuildDates(projectId).catch(() => ({ buildStart: null, buildComplete: null })),
       src.getProjectCosting(projectId).catch(() => null),
       src.getSpecCosting(projectId).catch(() => []),
+      scheduler.getProjectDates(projectId).catch(() => null),
     ]);
 
     if (!specs || specs.length === 0) {
@@ -80,9 +80,9 @@ router.get('/:projectId', async (req, res) => {
       project,
       specs: specReports,
       poActions,
-      buildDates,
       projectCosting,
       specCosting,
+      buildDates,
       demoMode: demo.isDemoMode(),
       generatedAt: new Date().toISOString(),
     });

@@ -51,8 +51,8 @@ function frontendMap(raw) {
     job: {
       id: raw.project.ProjectID,
       name: raw.project.ProjectName,
-      buildStart: raw.buildDates?.buildStart || null,
-      shipDate: raw.buildDates?.buildComplete || null,
+      buildStart: null,
+      shipDate: null,
       kpis: { assemblies: 0, ready: 0, close: 0, blocked: 0, noPO: 0 },
       actMat: raw.projectCosting?.ActMaterials || 0,
       estMat: (raw.projectCosting?.EstMaterials > 1000) ? raw.projectCosting.EstMaterials : null,
@@ -157,254 +157,15 @@ async function runPipeline(projectId, allBomData, allPoRows) {
 
   return {
     project, specs: filtered, poActions,
-    buildDates: { buildStart: null, buildComplete: null },
     projectCosting, specCosting, demoMode: true,
   };
 }
 
-// ─── Smartsheet service unit tests ───────────────────────────────────────────
-function runSmartsheetUnitTests() {
-  section('11 · Smartsheet service — column detection and task logic');
-
-  // ── Helper: simulate the column detection logic ──
-  function detectColumns(columns) {
-    const cols = {};
-    columns.forEach(c => {
-      const name = (c.title || '').toLowerCase().trim();
-      const type = (c.type || '').toUpperCase();
-      if (!cols.taskName && (name === 'task name' || name === 'name' || name === 'task')) cols.taskName = c.id;
-      if (!cols.start && name.includes('start') && !name.includes('baseline')) cols.start = c.id;
-      if (!cols.finish && (name.includes('finish') || name.includes('end')) && !name.includes('baseline')) cols.finish = c.id;
-      if (!cols.percent && (name.includes('% complete') || name.includes('complete') || type === 'PERCENT_COMPLETE')) cols.percent = c.id;
-      if (!cols.health && (name.includes('health') || name.includes('status') || name.includes('flag'))) cols.health = c.id;
-      if (!cols.predecessor && (type === 'PREDECESSOR' || name.includes('predecessor'))) cols.predecessor = c.id;
-      if (!cols.duration && (type === 'DURATION' || name === 'duration')) cols.duration = c.id;
-      if (!cols.assignee && (type === 'CONTACT_LIST' || type === 'MULTI_CONTACT_LIST' || name.includes('assign') || name.includes('owner'))) cols.assignee = c.id;
-    });
-    return cols;
-  }
-
-  test('colDetect: finds taskName by title "Task Name"', () => {
-    const cols = detectColumns([{ id: 1, title: 'Task Name', type: 'TEXT_NUMBER' }]);
-    eq(cols.taskName, 1, 'taskName not detected');
-  });
-
-  test('colDetect: finds start by "Start Date" (not baseline)', () => {
-    const cols = detectColumns([
-      { id: 1, title: 'Baseline Start', type: 'DATE' },
-      { id: 2, title: 'Start Date', type: 'DATE' },
-    ]);
-    eq(cols.start, 2, 'should pick Start Date, not Baseline Start');
-  });
-
-  test('colDetect: finds finish by "Finish" title', () => {
-    const cols = detectColumns([{ id: 5, title: 'Finish', type: 'DATE' }]);
-    eq(cols.finish, 5, 'finish not detected by title');
-  });
-
-  test('colDetect: finds finish by "End Date" title', () => {
-    const cols = detectColumns([{ id: 6, title: 'End Date', type: 'DATE' }]);
-    eq(cols.finish, 6, 'finish not detected from "End Date"');
-  });
-
-  test('colDetect: ignores "Baseline Finish"', () => {
-    const cols = detectColumns([
-      { id: 7, title: 'Baseline Finish', type: 'DATE' },
-      { id: 8, title: 'Finish', type: 'DATE' },
-    ]);
-    eq(cols.finish, 8, 'should skip Baseline Finish');
-  });
-
-  test('colDetect: finds percent by PERCENT_COMPLETE type', () => {
-    const cols = detectColumns([{ id: 10, title: 'Pct', type: 'PERCENT_COMPLETE' }]);
-    eq(cols.percent, 10, 'percent not detected by type');
-  });
-
-  test('colDetect: finds predecessor by PREDECESSOR type', () => {
-    const cols = detectColumns([{ id: 11, title: 'Depends On', type: 'PREDECESSOR' }]);
-    eq(cols.predecessor, 11, 'predecessor not detected by type');
-  });
-
-  test('colDetect: finds assignee by CONTACT_LIST type', () => {
-    const cols = detectColumns([{ id: 12, title: 'Owner', type: 'CONTACT_LIST' }]);
-    eq(cols.assignee, 12, 'assignee not detected by CONTACT_LIST type');
-  });
-
-  test('colDetect: finds assignee by "Assigned To" title', () => {
-    const cols = detectColumns([{ id: 13, title: 'Assigned To', type: 'TEXT_NUMBER' }]);
-    eq(cols.assignee, 13, 'assignee not detected by title');
-  });
-
-  test('colDetect: first match wins (no overwrite)', () => {
-    const cols = detectColumns([
-      { id: 20, title: 'Task Name', type: 'TEXT_NUMBER' },
-      { id: 21, title: 'Name', type: 'TEXT_NUMBER' },
-    ]);
-    eq(cols.taskName, 20, 'first taskName column should win');
-  });
-
-  // ── Milestone detection ──
-  function isMilestone(dur, startVal, finishVal) {
-    const d = dur !== null && dur !== undefined ? parseFloat(dur) : null;
-    return d === 0 || (startVal && finishVal && startVal === finishVal);
-  }
-
-  test('milestone: duration=0 is a milestone', () => {
-    ok(isMilestone(0, '2025-01-01', '2025-01-05'), 'dur=0 should be milestone');
-  });
-
-  test('milestone: start===finish is a milestone', () => {
-    ok(isMilestone(1, '2025-06-15', '2025-06-15'), 'same start/finish should be milestone');
-  });
-
-  test('milestone: different start/finish with dur>0 is NOT a milestone', () => {
-    notOk(isMilestone(3, '2025-01-01', '2025-01-04'), 'dur>0 with different dates should not be milestone');
-  });
-
-  test('milestone: null duration with different dates is NOT a milestone', () => {
-    notOk(isMilestone(null, '2025-01-01', '2025-01-10'), 'null dur, different dates → not milestone');
-  });
-
-  // ── Indent level computation ──
-  function getIndentLevel(rowId, rowMap) {
-    let level = 0, cur = rowMap[rowId];
-    const seen = new Set();
-    while (cur && cur.parentId && rowMap[cur.parentId] && !seen.has(cur.id)) {
-      seen.add(cur.id); level++; cur = rowMap[cur.parentId];
-    }
-    return level;
-  }
-
-  test('indentLevel: root row (no parentId) has level 0', () => {
-    const rowMap = { 100: { id: 100, parentId: null } };
-    eq(getIndentLevel(100, rowMap), 0, 'root should be level 0');
-  });
-
-  test('indentLevel: one-deep child has level 1', () => {
-    const rowMap = {
-      100: { id: 100, parentId: null },
-      101: { id: 101, parentId: 100 },
-    };
-    eq(getIndentLevel(101, rowMap), 1, 'direct child should be level 1');
-  });
-
-  test('indentLevel: two-deep child has level 2', () => {
-    const rowMap = {
-      100: { id: 100, parentId: null },
-      101: { id: 101, parentId: 100 },
-      102: { id: 102, parentId: 101 },
-    };
-    eq(getIndentLevel(102, rowMap), 2, 'grandchild should be level 2');
-  });
-
-  // ── Summary row detection ──
-  test('summaryRow: row whose id appears as parentId of any row is a summary', () => {
-    const rows = [
-      { id: 10, parentId: null },
-      { id: 11, parentId: 10 },
-      { id: 12, parentId: 10 },
-    ];
-    const parentIdSet = new Set(rows.map(r => r.parentId).filter(Boolean));
-    ok(parentIdSet.has(10), 'row 10 should be a summary (it is a parent)');
-    notOk(parentIdSet.has(11), 'row 11 should not be a summary');
-    notOk(parentIdSet.has(12), 'row 12 should not be a summary');
-  });
-
-  // ── Critical path BFS ──
-  function computeCriticalPath(tasks) {
-    const taskById = {};
-    tasks.forEach(t => { taskById[t.id] = t; t.onCritical = false; });
-    const leaves = tasks.filter(t => !t.isSummary && t.finish);
-    if (leaves.length === 0) return tasks;
-    const sink = leaves.reduce((a, b) => new Date(a.finish) >= new Date(b.finish) ? a : b);
-    const visited = new Set();
-    const queue = [sink.id];
-    while (queue.length > 0) {
-      const id = queue.pop();
-      if (visited.has(id)) continue;
-      visited.add(id);
-      const t = taskById[id];
-      if (!t) continue;
-      t.onCritical = true;
-      (t.predecessorIds || []).forEach(pid => queue.push(pid));
-    }
-    return tasks;
-  }
-
-  test('criticalPath: latest-finish leaf always marked onCritical', () => {
-    const tasks = [
-      { id: 1, name: 'A', start: '2025-01-01', finish: '2025-01-10', isSummary: false, predecessorIds: [] },
-      { id: 2, name: 'B', start: '2025-01-05', finish: '2025-01-20', isSummary: false, predecessorIds: [1] },
-      { id: 3, name: 'C', start: '2025-01-01', finish: '2025-01-08', isSummary: false, predecessorIds: [] },
-    ];
-    computeCriticalPath(tasks);
-    ok(tasks.find(t => t.id === 2).onCritical, 'task B (latest finish) should be on critical path');
-  });
-
-  test('criticalPath: predecessor of latest leaf is also marked', () => {
-    const tasks = [
-      { id: 1, name: 'A', start: '2025-01-01', finish: '2025-01-10', isSummary: false, predecessorIds: [] },
-      { id: 2, name: 'B', start: '2025-01-10', finish: '2025-01-20', isSummary: false, predecessorIds: [1] },
-    ];
-    computeCriticalPath(tasks);
-    ok(tasks.find(t => t.id === 1).onCritical, 'task A (predecessor of B) should be on critical path');
-  });
-
-  test('criticalPath: non-predecessor leaf NOT on critical path', () => {
-    const tasks = [
-      { id: 1, name: 'A', start: '2025-01-01', finish: '2025-01-10', isSummary: false, predecessorIds: [] },
-      { id: 2, name: 'B', start: '2025-01-10', finish: '2025-01-20', isSummary: false, predecessorIds: [1] },
-      { id: 3, name: 'C', start: '2025-01-01', finish: '2025-01-05', isSummary: false, predecessorIds: [] },
-    ];
-    computeCriticalPath(tasks);
-    notOk(tasks.find(t => t.id === 3).onCritical, 'task C is not a predecessor of the sink, should not be critical');
-  });
-
-  test('criticalPath: summary rows excluded from sink candidates', () => {
-    const tasks = [
-      { id: 1, name: 'Summary', start: '2025-01-01', finish: '2025-02-01', isSummary: true, predecessorIds: [] },
-      { id: 2, name: 'Leaf', start: '2025-01-01', finish: '2025-01-20', isSummary: false, predecessorIds: [] },
-    ];
-    computeCriticalPath(tasks);
-    ok(tasks.find(t => t.id === 2).onCritical, 'leaf task should be on critical path, not summary');
-    notOk(tasks.find(t => t.id === 1).onCritical, 'summary row should not be selected as sink');
-  });
-
-  test('criticalPath: no tasks → nothing marked critical', () => {
-    const tasks = [];
-    computeCriticalPath(tasks);
-    eq(tasks.length, 0, 'empty task list should produce no results');
-  });
-
-  test('criticalPath: no infinite loop on circular predecessor refs', () => {
-    // Row A predecessor B, Row B predecessor A — BFS visited set prevents infinite loop
-    const tasks = [
-      { id: 1, name: 'A', start: '2025-01-01', finish: '2025-01-10', isSummary: false, predecessorIds: [2] },
-      { id: 2, name: 'B', start: '2025-01-05', finish: '2025-01-20', isSummary: false, predecessorIds: [1] },
-    ];
-    // Should complete without hanging
-    computeCriticalPath(tasks);
-    ok(true, 'No infinite loop');
-  });
-}
-
 // ─── Gantt / Timeline mapping tests ──────────────────────────────────────────
 function runGanttMappingTests(poRows1083, poActions1083) {
-  section('12 · Gantt row type assignment — frontend timeline mapping');
+  section('11 · Gantt PO-fallback tasks — frontend timeline mapping');
 
-  // Simulate ganttRows logic from timeline.jsx (Smartsheet tasks path)
-  function mapToGanttRows(tasks) {
-    return tasks.map(t => ({
-      ...t,
-      type: t.isMilestone ? 'milestone' : t.isSummary ? 'summary' : 'task',
-      label: t.name,
-      date: (t.isMilestone && (t.finish || t.start)) ? new Date(t.finish || t.start) : null,
-      colorKey: (t.health || '').toLowerCase().includes('red') ? 'threat'
-              : (t.health || '').toLowerCase().includes('yellow') ? 'pending' : 'ready',
-    }));
-  }
-
-  // Simulate ganttTasks PO fallback from timeline.jsx
+  // Simulate ganttTasks PO-derived task list from timeline.jsx
   function buildPoFallbackTasks(allEntries) {
     const today = new Date();
     return allEntries
@@ -446,64 +207,6 @@ function runGanttMappingTests(poRows1083, poActions1083) {
   ];
 
   const poFallback = buildPoFallbackTasks(allEntries1083);
-
-  test('ganttRows: milestone isMilestone=true maps to type="milestone"', () => {
-    const rows = mapToGanttRows([
-      { id: 1, name: 'Ship Machine', isMilestone: true, isSummary: false, finish: '2025-06-01', start: '2025-06-01', health: 'Green', onCritical: false },
-    ]);
-    eq(rows[0].type, 'milestone', 'isMilestone should map to type=milestone');
-  });
-
-  test('ganttRows: summary row maps to type="summary"', () => {
-    const rows = mapToGanttRows([
-      { id: 2, name: 'Phase 1', isMilestone: false, isSummary: true, finish: '2025-07-01', start: '2025-01-01', health: 'Green', onCritical: false },
-    ]);
-    eq(rows[0].type, 'summary', 'isSummary should map to type=summary');
-  });
-
-  test('ganttRows: regular task maps to type="task"', () => {
-    const rows = mapToGanttRows([
-      { id: 3, name: 'Weld Frame', isMilestone: false, isSummary: false, finish: '2025-05-01', start: '2025-04-01', health: 'Green', onCritical: false },
-    ]);
-    eq(rows[0].type, 'task', 'non-milestone non-summary should map to type=task');
-  });
-
-  test('ganttRows: Red health → colorKey="threat"', () => {
-    const rows = mapToGanttRows([
-      { id: 4, name: 'Late Task', isMilestone: false, isSummary: false, finish: '2025-05-01', start: '2025-04-01', health: 'Red', onCritical: false },
-    ]);
-    eq(rows[0].colorKey, 'threat', 'Red health should be threat');
-  });
-
-  test('ganttRows: Yellow health → colorKey="pending"', () => {
-    const rows = mapToGanttRows([
-      { id: 5, name: 'Warning Task', isMilestone: false, isSummary: false, finish: '2025-05-01', start: '2025-04-01', health: 'Yellow', onCritical: false },
-    ]);
-    eq(rows[0].colorKey, 'pending', 'Yellow health should be pending');
-  });
-
-  test('ganttRows: Green health → colorKey="ready"', () => {
-    const rows = mapToGanttRows([
-      { id: 6, name: 'On Track', isMilestone: false, isSummary: false, finish: '2025-05-01', start: '2025-04-01', health: 'Green', onCritical: false },
-    ]);
-    eq(rows[0].colorKey, 'ready', 'Green health should be ready');
-  });
-
-  test('ganttRows: milestone date=finish when finish present', () => {
-    const finish = '2025-06-15';
-    const rows = mapToGanttRows([
-      { id: 7, name: 'Done', isMilestone: true, isSummary: false, finish, start: finish, health: 'Green', onCritical: false },
-    ]);
-    ok(rows[0].date instanceof Date, 'milestone should have a Date object');
-    eq(rows[0].date.toISOString().slice(0, 10), finish, 'milestone date should match finish');
-  });
-
-  test('ganttRows: non-milestone has date=null', () => {
-    const rows = mapToGanttRows([
-      { id: 8, name: 'Task', isMilestone: false, isSummary: false, finish: '2025-05-01', start: '2025-04-01', health: 'Green', onCritical: false },
-    ]);
-    eq(rows[0].date, null, 'non-milestone should have null date');
-  });
 
   test('poFallback: only entries with dueDate are included', () => {
     for (const t of poFallback) {
@@ -1313,9 +1016,8 @@ function runGanttMappingTests(poRows1083, poActions1083) {
     });
 
     // ═══════════════════════════════════════════════════════════════════════
-    //  SECTIONS 11 & 12 — Smartsheet + Gantt (pure-logic, no async needed)
+    //  SECTION 11 — Gantt PO-fallback tasks (pure-logic, no async needed)
     // ═══════════════════════════════════════════════════════════════════════
-    runSmartsheetUnitTests();
     runGanttMappingTests(poRows1083, poActions1083);
 
   } catch (err) {

@@ -236,7 +236,11 @@ async function main() {
   setInterval(checkAndUpdate, CHECK_INTERVAL_MS);
 }
 
-main().catch(e => { log(`Fatal: ${e.message}`); process.exit(1); });
+// See sdc-main-updater.js for why this exit is conditional (shared-process hub).
+main().catch(e => {
+  log(`Fatal: ${e.message}`);
+  if (require.main === module) process.exit(1);
+});
 
 // ─── manual trigger server ────────────────────────────────────────────────────
 // POST http://<host>:4012/trigger  →  runs checkAndUpdate() immediately

@@ -608,8 +608,6 @@ const APPS = [
     desc: 'Author PLC state machines and export Allen-Bradley L5X for ControlLogix.' },
   { id: 'calendar',   name: 'Calendar',                        port: 4005, url: 'http://localhost:4005', color: '#74C415', updatable: false,
     desc: 'Company-wide calendar — events, birthdays, paydays, Scheduler sync.' },
-  { id: 'vendor',     name: 'Vendor Tracker',                  port: 4006, url: 'http://localhost:4006', color: '#1574C4', updatable: false,
-    desc: 'Procurement analytics — vendor scorecards, PO ledger & spend tracking.' },
   { id: 'reports',    name: 'SDC Projects Reports',            port: 3010, url: 'http://localhost:3010', color: '#0f5a95', updatable: false,
     desc: '' },
 ];
@@ -774,27 +772,6 @@ const LOGOS = {
         <path d="M 394 122 A 26 26 0 1 1 368 148"/><path d="M 361 141 L 368 148 L 375 141"/>
       </g>`);
   },
-  vendor: sz => {
-    const floor=270, bars=[{x:118,h:126,fill:'#1574C4'},{x:205,h:88,fill:'#AACEE8'},{x:292,h:110,fill:'#061D39'},{x:379,h:72,fill:'#1574C4',op:'0.6'}];
-    const cx=bars.map(b=>b.x+29), cy=bars.map(b=>floor-b.h), pts=cx.map((x,i)=>x+','+cy[i]).join(' ');
-    return svgWrap('vd',sz,`
-      <line x1="96" y1="${floor}" x2="416" y2="${floor}" stroke="#061D39" stroke-width="2" opacity="0.15"/>
-      ${bars.map(b=>`<rect x="${b.x}" y="${floor-b.h}" width="58" height="${b.h}" rx="8" fill="${b.fill}"${b.op?` opacity="${b.op}"`:''}/>`).join('')}
-      <polyline points="${pts}" fill="none" stroke="#74C415" stroke-width="4.5" stroke-linecap="round" stroke-linejoin="round"/>
-      ${cx.map((x,i)=>`<circle cx="${x}" cy="${cy[i]}" r="5" fill="#74C415"/>`).join('')}
-      <rect x="88" y="284" width="336" height="44" rx="10" fill="#f4f8fc" stroke="#AACEE8" stroke-width="1.5"/>
-      <circle cx="113" cy="306" r="9" fill="#1574C4"/>
-      <rect x="133" y="298" width="186" height="7" rx="3.5" fill="#1574C4" opacity="0.85"/>
-      <rect x="133" y="311" width="104" height="5" rx="2.5" fill="#AACEE8"/>
-      <rect x="88" y="340" width="336" height="44" rx="10" fill="#f4f8fc" stroke="#AACEE8" stroke-width="1.5"/>
-      <circle cx="113" cy="362" r="9" fill="#74C415"/>
-      <rect x="133" y="354" width="148" height="7" rx="3.5" fill="#74C415" opacity="0.85"/>
-      <rect x="133" y="367" width="82" height="5" rx="2.5" fill="#AACEE8"/>
-      <rect x="88" y="396" width="336" height="44" rx="10" fill="#f4f8fc" stroke="#AACEE8" stroke-width="1.5"/>
-      <circle cx="113" cy="418" r="9" fill="#FFDE51"/>
-      <rect x="133" y="410" width="110" height="7" rx="3.5" fill="#FFDE51" opacity="0.9"/>
-      <rect x="133" y="423" width="60" height="5" rx="2.5" fill="#AACEE8"/>`);
-  }
 };
 
 /* Render */

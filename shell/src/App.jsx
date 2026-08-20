@@ -9,7 +9,7 @@ import RecentActivity from './components/RecentActivity'
 import WindowChrome from './components/WindowChrome'
 import LoginScreen from './screens/LoginScreen'
 
-const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'calendar', 'vendor', 'reports'].map(id => ({
+const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'calendar', 'reports'].map(id => ({
   id,
   name: {
     assemblies: 'Assemblies Library',
@@ -17,7 +17,6 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
     scheduler:  'Project Planner',
     statelogic: 'State Logic Builder',
     calendar:   'Calendar',
-    vendor:     'Vendor Tracker',
     reports:    'SDC Projects Reports',
   }[id],
   description: {
@@ -26,7 +25,6 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
     scheduler:  'Gantt views, resource load, and two-way Smartsheet sync for active projects.',
     statelogic: 'Author PLC state machines and export Allen-Bradley L5X for ControlLogix.',
     calendar:   'Company-wide calendar — events, birthdays, paydays, Scheduler sync.',
-    vendor:     'Procurement analytics — vendor scorecards, PO ledger & spend tracking.',
     reports:    '',
   }[id],
   status: 'starting',
@@ -36,7 +34,6 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
     scheduler:  '#FFDE51',
     statelogic: '#ea580c',
     calendar:   '#74C415',
-    vendor:     '#1574C4',
     reports:    '#0f5a95',
   }[id],
   url: '',

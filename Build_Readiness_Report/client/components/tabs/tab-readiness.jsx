@@ -297,7 +297,7 @@ function ReadinessTab({ data, onDrillDown, highlightPoIds = [], onClearHighlight
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
-      <TimelineRibbon job={job} poActions={data.poActions} smartsheet={data.buildDates} onDrillDown={onDrillDown} />
+      <TimelineRibbon job={job} poActions={data.poActions} onDrillDown={onDrillDown} />
 
       <RiskPartsPanel nopo={data.nopo} poActions={data.poActions} />
 

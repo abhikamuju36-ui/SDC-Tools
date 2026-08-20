@@ -20,13 +20,13 @@
  *   pm2 restart sdc-scheduler   → restart one app
  *
  * ── Deploy an update ─────────────────────────────────────────────────────────
- *   Automatic: sdc-updater polls GitHub every 5 min — no manual steps needed.
+ *   Automatic: sdc-updater-hub polls GitHub every 2-5 min — no manual steps needed.
  *   Manual:    git pull && npm run deploy
  *   Shell app: electron-updater checks GitHub Releases every 30 min (OTA).
  *
  * ── Environment ──────────────────────────────────────────────────────────────
  *   Each app loads its own .env file via dotenv (from its cwd).
- *   Copy .env.example → each app's folder and fill in AZURE_SQL_* creds.
+ *   Copy .env.example → each app's folder and fill in ETO SQL / MySQL creds.
  *   Shell-launcher specific: .env at repo root (SDC_SERVER_HOST, AZURE_*).
  *
  * ── Ports ────────────────────────────────────────────────────────────────────
@@ -40,16 +40,17 @@
 module.exports = {
   apps: [
 
-    // ── SDC Tools Server Auto-Updater ───────────────────────────────────────
-    // Polls GitHub every 5 min for new commits on master.
-    // On change: selectively checkouts only monorepo-owned files (skips
-    // SDC_Scheduler/ and state_logic_builder/ — managed by per-app updaters),
-    // then restarts: assemblies, readiness, calendar, vendor.
+    // ── SDC Updater Hub ──────────────────────────────────────────────────────
+    // Runs all 4 auto-updaters (monorepo, BRR, scheduler, statelogic) in one
+    // process — see scripts/sdc-updater-hub.js for why this is safe (each
+    // updater's own error handling is unchanged; only merged the OS process).
+    // Replaces the old separate sdc-updater / sdc-brr-updater /
+    // sdc-scheduler-updater / sdc-statelogic-updater PM2 apps.
     // Electron shell gets OTA updates separately via electron-updater + release.yml.
     {
-      name:          'sdc-updater',
-      script:        'scripts/sdc-main-updater.js',
-      cwd:           '.',
+      name:          'sdc-updater-hub',
+      script:        'scripts/sdc-updater-hub.js',
+      cwd:           'D:\\AI Projects\\Centrailized library',
       env: {
         NODE_ENV:         'production',
         NODE_NO_WARNINGS: '1',
@@ -57,6 +58,7 @@ module.exports = {
       watch:         false,
       max_restarts:  5,
       restart_delay: 60000,
+      max_memory_restart: '350M',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs:    true,
     },
@@ -79,30 +81,13 @@ module.exports = {
       watch:         false,
       max_restarts:  10,
       restart_delay: 3000,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      merge_logs:    true,
-    },
-
-    // ── Build Readiness Report — Auto-Updater ──────────────────────────────
-    // Polls abhikamuju36-ui/Build_Readiness_Report every 2 min for new commits.
-    // Replaces client/, server/routes/, server/services/, server/lib/ and restarts sdc-readiness.
-    // Preserves server/index.js (health endpoint, startServer export) and server/cache/.
-    {
-      name:          'sdc-brr-updater',
-      script:        'scripts/sdc-brr-updater.js',
-      cwd:           './Build_Readiness_Report',
-      env: {
-        NODE_ENV:         'production',
-        NODE_NO_WARNINGS: '1',
-      },
-      watch:         false,
-      max_restarts:  5,
-      restart_delay: 60000,
+      max_memory_restart: '300M',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs:    true,
     },
 
     // ── Build Readiness Report ───────────────────────────────────────────────
+    // (its auto-updater now runs inside sdc-updater-hub, not as a separate app)
     {
       name:          'sdc-readiness',
       script:        'server/index.js',
@@ -113,39 +98,22 @@ module.exports = {
         NODE_NO_WARNINGS: '1',
         ETO_HOST:         'SERVER-APP1.stevendouglas.local',
         ETO_DATABASE:     'SDC',
-        ETO_USER:         'akamuju',
-        ETO_PASSWORD:     'Voltages84gilds$',
         ETO_DOMAIN:       'stevendouglas',
         ETO_PORT:         '1433',
-        SMARTSHEET_API_KEY: 'pcqWtWqlXGJfagKlXBaTCDiWMCgMAdFP0i7TA',
+        // ETO_USER / ETO_PASSWORD: load from this app's own .env (cwd) via
+        // dotenv — kept out of this git-tracked file. See .env.example.
+        // (Smartsheet integration removed — superseded by SDC Scheduler.)
       },
       watch:         false,
       max_restarts:  10,
       restart_delay: 3000,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      merge_logs:    true,
-    },
-
-    // ── SDC Scheduler — Auto-Updater ────────────────────────────────────────
-    // Polls danbelliveau2/SDC_Scheduler every 5 min for new commits.
-    // Replaces public/, db.js and restarts sdc-scheduler.
-    // Preserves server.js (compression, azureSync, /health), azureDb.js, *.db files.
-    {
-      name:          'sdc-scheduler-updater',
-      script:        'scripts/server-auto-update.js',
-      cwd:           './SDC_Scheduler',
-      env: {
-        NODE_ENV:         'production',
-        NODE_NO_WARNINGS: '1',
-      },
-      watch:         false,
-      max_restarts:  5,
-      restart_delay: 60000,
+      max_memory_restart: '300M',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs:    true,
     },
 
     // ── SDC Scheduler ───────────────────────────────────────────────────────
+    // (its auto-updater now runs inside sdc-updater-hub, not as a separate app)
     {
       name:          'sdc-scheduler',
       script:        'server.js',
@@ -154,13 +122,11 @@ module.exports = {
         PORT:             '4003',
         NODE_ENV:         'production',
         NODE_NO_WARNINGS: '1',
-        // ── Total ETO bridge ──
+        // ── Total ETO bridge ── (ETO_USER/ETO_PASSWORD load from this app's own .env)
         ETO_HOST:         'SERVER-APP1.stevendouglas.local',
         ETO_DATABASE:     'SDC',
         ETO_PORT:         '1433',
         ETO_DOMAIN:       'stevendouglas',
-        ETO_USER:         'akamuju',
-        ETO_PASSWORD:     'Voltages84gilds$',
         // ── Anthropic Claude assistant ──
         ANTHROPIC_API_KEY:    process.env.ANTHROPIC_API_KEY || '',
         ANTHROPIC_MODEL:      'claude-sonnet-4-6',
@@ -171,6 +137,7 @@ module.exports = {
       watch:         false,
       max_restarts:  10,
       restart_delay: 3000,
+      max_memory_restart: '400M',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs:    true,
     },
@@ -186,62 +153,18 @@ module.exports = {
         NODE_NO_WARNINGS: '1',
         // UNC path so PM2 Windows Service can reach the share without N: drive mapped
         STANDARDS_DIR:    '\\\\stevendouglas.local\\dfs\\Company\\Job Folder\\AI Folder\\State Logic Diagrams\\standards',
-        // Azure SQL — same instance used by all SDC services
-        AZURE_SQL_SERVER:   'sdc-automation.database.windows.net',
-        AZURE_SQL_DATABASE: 'free-sql-db-7038618',
-        AZURE_SQL_USER:     'sdcadmin',
-        AZURE_SQL_PASSWORD: 'Voltages84gilds$',
+        // DB: MySQL via mysqlDb.js (replaced the old Azure SQL path — see mysqlDb.js header)
       },
       watch:         false,
       max_restarts:  10,
       restart_delay: 3000,
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      merge_logs:    true,
-    },
-
-    // ── State Logic Builder — Auto-Updater ─────────────────────────────────
-    // Mirrors electron-updater: checks Dan's GitHub releases every 5 min,
-    // pulls src/ + public/ + index.html, rebuilds, and restarts statelogic.
-    {
-      name:          'sdc-statelogic-updater',
-      script:        'scripts/server-auto-update.js',
-      cwd:           './state_logic_builder',
-      env: {
-        NODE_ENV:         'production',
-        NODE_NO_WARNINGS: '1',
-      },
-      watch:         false,
-      max_restarts:  5,
-      restart_delay: 60000,   // wait 1 min before restarting on crash
-      log_date_format: 'YYYY-MM-DD HH:mm:ss',
-      merge_logs:    true,
-    },
-
-    // ── Vendor Tracker ──────────────────────────────────────────────────────
-    {
-      name:          'sdc-vendor',
-      script:        'server/server.js',
-      cwd:           './Vendors tracking dashboard',
-      env: {
-        PORT:             '4006',
-        NODE_ENV:         'production',
-        NODE_NO_WARNINGS: '1',
-        ETO_HOST:         'SERVER-APP1.stevendouglas.local',
-        ETO_DATABASE:     'SDC',
-        ETO_USER:         'akamuju',
-        ETO_PASSWORD:     'Voltages84gilds$',
-        ETO_DOMAIN:       'stevendouglas',
-        ETO_PORT:         '1433',
-        SMARTSHEET_API_KEY: 'pcqWtWqlXGJfagKlXBaTCDiWMCgMAdFP0i7TA',
-      },
-      watch:         false,
-      max_restarts:  10,
-      restart_delay: 3000,
+      max_memory_restart: '300M',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs:    true,
     },
 
     // ── SDC Calendar ────────────────────────────────────────────────────────
+    // (state_logic_builder's auto-updater now runs inside sdc-updater-hub too)
     {
       name:          'sdc-calendar',
       script:        'server/server.js',
@@ -258,6 +181,7 @@ module.exports = {
       watch:         false,
       max_restarts:  10,
       restart_delay: 3000,
+      max_memory_restart: '300M',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs:    true,
     },

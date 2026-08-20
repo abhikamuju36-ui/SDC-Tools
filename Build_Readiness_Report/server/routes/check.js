@@ -2,7 +2,6 @@ const express = require('express');
 const router = express.Router();
 const eto = require('../services/eto');
 const demo = require('../services/demoData');
-const { findScheduleSheet } = require('../services/smartsheet');
 
 function db() { return demo.isDemoMode() ? demo : eto; }
 
@@ -11,19 +10,17 @@ router.get('/:projectId', async (req, res) => {
   const projectId = parseInt(req.params.projectId);
   if (isNaN(projectId)) {
     return res.json({
-      totalEto:   { found: false, projectName: null },
-      smartsheet: { found: false, sheetName: null },
+      totalEto: { found: false, projectName: null },
     });
   }
 
-  const [etoResult, ssResult] = await Promise.allSettled([
-    db().getProjectInfo(projectId),
-    findScheduleSheet(projectId),
-  ]);
-
-  const project  = etoResult.status === 'fulfilled' ? etoResult.value : null;
-  const etoError = etoResult.status === 'rejected'  ? etoResult.reason?.message : null;
-  const sheet    = ssResult.status  === 'fulfilled' ? ssResult.value  : null;
+  let project = null;
+  let etoError = null;
+  try {
+    project = await db().getProjectInfo(projectId);
+  } catch (err) {
+    etoError = err?.message || null;
+  }
 
   if (etoError) console.error(`[check] ETO error for project ${projectId}:`, etoError);
 
@@ -32,10 +29,6 @@ router.get('/:projectId', async (req, res) => {
       found:       !!project,
       projectName: project?.ProjectName || null,
       error:       etoError || null,
-    },
-    smartsheet: {
-      found:     !!sheet,
-      sheetName: sheet?.name || null,
     },
   });
 });

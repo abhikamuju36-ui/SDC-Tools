@@ -157,7 +157,7 @@ function JobLandingScreen({ onLoad }) {
     try {
       const res  = await fetch(`/api/check/${id}`);
       if (!res.ok) {
-        setCheckData({ totalEto: { found: false, dbError: true }, smartsheet: { found: false } });
+        setCheckData({ totalEto: { found: false, dbError: true } });
         setPhase('notfound');
         return;
       }
@@ -171,7 +171,7 @@ function JobLandingScreen({ onLoad }) {
       }
     } catch {
       // Network error — BRR server is unreachable
-      setCheckData({ totalEto: { found: false, dbError: true }, smartsheet: { found: false } });
+      setCheckData({ totalEto: { found: false, dbError: true } });
       setPhase('notfound');
     }
   };
@@ -188,8 +188,6 @@ function JobLandingScreen({ onLoad }) {
       : checkData?.totalEto?.found    ? 'found'
       : checkData?.totalEto?.dbError  ? 'error'
       : 'missing';
-    const ssStatus  = phase === 'checking' ? 'loading'
-      : checkData?.smartsheet?.found  ? 'found' : 'na';
 
     return (
       <LandingPage>
@@ -221,13 +219,6 @@ function JobLandingScreen({ onLoad }) {
               subtitle="ERP — jobs, specs, BOM & purchase orders"
               status={etoStatus}
               detail={checkData?.totalEto?.projectName}
-            />
-            <SystemRow
-              badge="SS" badgeBg="#1a7040"
-              name="Smartsheets"
-              subtitle="Project schedule, milestones & Gantt"
-              status={ssStatus}
-              detail={checkData?.smartsheet?.sheetName}
             />
           </div>
 
@@ -319,7 +310,7 @@ function JobLandingScreen({ onLoad }) {
             </button>
           </div>
           <div style={{ fontSize: 11, color: 'var(--ink-4)' }}>
-            Press <span style={{ fontFamily: 'var(--font-mono)', background: 'var(--bg-sunken)', padding: '1px 5px', borderRadius: 3, border: '1px solid var(--border)' }}>Enter</span> to check · verifies TotalETO &amp; Smartsheets
+            Press <span style={{ fontFamily: 'var(--font-mono)', background: 'var(--bg-sunken)', padding: '1px 5px', borderRadius: 3, border: '1px solid var(--border)' }}>Enter</span> to check · verifies TotalETO
           </div>
         </div>
 
@@ -391,7 +382,7 @@ function App() {
             id: raw.project.ProjectID,
             name: raw.project.ProjectName,
             buildStart: raw.buildDates?.buildStart || null,
-            shipDate: raw.buildDates?.buildComplete || null,
+            shipDate: raw.buildDates?.shipDate || null,
             kpis: { assemblies: 0, ready: 0, close: 0, blocked: 0, noPO: 0 },
             actMat: raw.projectCosting?.ActMaterials || 0,
             // treat $0/$1000 or missing as "no budget" — ETO project may lack budget data
@@ -444,7 +435,6 @@ function App() {
             ...p,
             parent: (p.parentPN ? `${p.parentPN} ` : '') + (p.parentDesc || p.parentPN || 'Loose Parts'),
           }))),
-          buildDates: raw.buildDates,
         };
 
         mapped.readiness.forEach(s => {

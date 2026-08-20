@@ -96,17 +96,6 @@ class ProcessManager extends EventEmitter {
         emoji:       '📆',
         windowSize:  { width: 1440, height: 900 },
       },
-      vendor: {
-        id:          'vendor',
-        name:        'Vendor Tracker',
-        description: 'Procurement analytics — vendor scorecards, PO ledger & spend tracking',
-        port:        4006,
-        url:         url(4006),
-        healthPath:  '/health',
-        color:       '#1574C4',
-        emoji:       '📦',
-        windowSize:  { width: 1440, height: 900 },
-      },
       reports: {
         id:          'reports',
         name:        'SDC Projects Reports',

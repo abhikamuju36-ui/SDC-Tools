@@ -6,7 +6,6 @@ const APP_COLOR = {
   scheduler:  '#FFDE51',
   statelogic: '#ea580c',
   calendar:   '#74C415',
-  vendor:     '#1574C4',
 }
 
 // Determine icon color class based on app color
@@ -76,7 +75,6 @@ const SEED_ACTIVITY = [
   { id: 's1', type: 'open',   appId: 'assemblies', appName: 'Assemblies Library',    label: 'Opened Assemblies Library',    ts: Date.now() - 5  * 60000 },
   { id: 's2', type: 'sync',   appId: 'scheduler',  appName: 'Project Scheduler',         label: 'Smartsheet sync completed',    ts: Date.now() - 22 * 60000 },
   { id: 's3', type: 'done',   appId: 'readiness',  appName: 'Build Readiness Report', label: 'Report generated — P-48291',  ts: Date.now() - 48 * 60000 },
-  { id: 's4', type: 'open',   appId: 'vendor',     appName: 'Vendor Tracker',         label: 'Opened Vendor Tracker',       ts: Date.now() - 2  * 3600000 },
   { id: 's5', type: 'export', appId: 'statelogic', appName: 'State Logic Builder',    label: 'Exported L5X — PUMP_CTRL',    ts: Date.now() - 5  * 3600000 },
 ]
 
