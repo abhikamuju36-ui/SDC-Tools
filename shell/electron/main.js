@@ -219,15 +219,30 @@ async function openAppWindow(appId) {
   // cookie — it has its own separate NextAuth login. It already has a
   // purpose-built bridge FROM Scheduler for exactly this (its own
   // "open this job in Reports" links use it); drive that same bridge here
-  // instead of building new cross-app trust. A 2s cap on the mint call keeps
-  // a slow/unreachable Scheduler from stalling the window — on any failure
-  // this just falls back to the bare URL, i.e. Reports' own login form,
-  // never worse than before this existed.
+  // instead of building new cross-app trust. A cap on the mint call keeps a
+  // genuinely unreachable Scheduler from stalling the window — on any
+  // failure this just falls back to the bare URL, i.e. Reports' own login
+  // form, never worse than before this existed. 6s (was 2s) — a real LAN
+  // round trip to a Scheduler that's mid-restart or briefly busy shouldn't
+  // read as "unreachable" and silently drop back to a separate login.
+  // Guarantee the suite session exists and is written against THIS app's exact
+  // origin before the window loads — rather than trusting that the
+  // fire-and-forget startup establish already ran. This is what makes
+  // "restart SDC Tools, open an app" not ask for a second login.
+  await sdcSession.ensureSession();
+  await sdcSession.applySessionCookies(appInfo.url);
+
   let targetUrl = appInfo.url;
   if (appId === 'reports') {
     const hop = await Promise.race([
       sdcSession.mintEtcSsoHopToken(),
-      new Promise(resolve => setTimeout(() => resolve(null), 2000)),
+      // 12s: mintEtcSsoHopToken may now do TWO round trips (establish the
+      // Scheduler session on demand, then mint the hop token) when the
+      // fire-and-forget startup establish hasn't landed yet.
+      new Promise(resolve => setTimeout(() => {
+        console.warn('[main] mint-etc-sso timed out after 12s — opening Reports\' own login instead.');
+        resolve(null);
+      }, 12000)),
     ]).catch(() => null);
     if (hop) targetUrl = `${appInfo.url}/api/auth/sso?token=${encodeURIComponent(hop)}&next=/`;
   }
