@@ -7,6 +7,9 @@ import { WORKFORCE_GROUPS, workforceGroupForCardKey, type WorkforceGroupKey } fr
 import type { EmployeeRow } from "@/lib/employee-row";
 import type { SchedulerPlaceholder } from "@/lib/scheduler-db";
 import type { HiringPosition } from "@/lib/hiring-positions";
+import { employeeCapacityHours, hiringCapacityHours } from "@/lib/workforce-capacity";
+import { hasYearPolicy } from "@/lib/workforce-capacity-policy";
+import { hours as fmtHours } from "@/components/ui/format";
 
 // Level 1 of the Employees tab (2026-08-19, by request): three big workforce
 // entry points — Engineering / Shop / PM — plus a fourth "Other" catch-all
@@ -43,6 +46,8 @@ function StatChip({ children }: { children: ReactNode }) {
   return <span>{children}</span>;
 }
 
+export type CapacityDrillTarget = { title: string; subtitle?: string; employees: EmployeeRow[]; hiringPositions: HiringPosition[] };
+
 export function WorkforceSummaryCards({
   rows,
   placeholders,
@@ -50,6 +55,8 @@ export function WorkforceSummaryCards({
   onSelectGroup,
   onSelectDepartment,
   onSelectHiring,
+  year,
+  onSelectCapacity,
 }: {
   rows: EmployeeRow[];
   placeholders: SchedulerPlaceholder[];
@@ -61,6 +68,10 @@ export function WorkforceSummaryCards({
   onSelectDepartment: (groupKey: WorkforceGroupKey, card: DepartmentCard) => void;
   /** Drills into the Hiring Positions list (Level 2 equivalent for that card). */
   onSelectHiring: () => void;
+  /** For workforce-capacity-policy.ts/workforce-capacity.ts. */
+  year: number;
+  /** Opens the "how was this total built" drill (Level 3, a different question from onSelectGroup/onSelectDepartment's "who"). */
+  onSelectCapacity: (target: CapacityDrillTarget) => void;
 }) {
   const summaries = useMemo<WorkforceSummary[]>(() => {
     const cards = buildDepartmentCards(rows, placeholders);
@@ -113,6 +124,17 @@ export function WorkforceSummaryCards({
     return <EmptyState title="No employees match" message="Try clearing a filter or search term." />;
   }
 
+  // Capacity hours (2026-08-19) — a SEPARATE figure from headcount above,
+  // always labeled and never blended into it. Company-wide Current/Hiring
+  // both include EVERY active employee/open position across every group, so
+  // the drill-through for the header strip hands over the full flat lists,
+  // not one card's.
+  const hasCapacityPolicy = hasYearPolicy(year);
+  const allActivePeople = summaries.flatMap((g) => g.cards.flatMap((c) => c.people.filter((p) => p.active)));
+  const currentCapacityHours = hasCapacityPolicy ? employeeCapacityHours(activeHeadcount, year) : 0;
+  const hiringCapacityHoursTotal = hasCapacityPolicy ? hiringCapacityHours(hiringPositions, year) : 0;
+  const plannedCapacityHours = currentCapacityHours + hiringCapacityHoursTotal;
+
   return (
     <div className="flex flex-col gap-4">
       {/* Workforce-planning summary strip — company-wide, not affected by the
@@ -136,6 +158,33 @@ export function WorkforceSummaryCards({
             <span className="text-sdc-muted">Unassigned Openings</span>
           </span>
         )}
+        {hasCapacityPolicy && (
+          <button
+            type="button"
+            onClick={() =>
+              onSelectCapacity({
+                title: "Company-Wide Capacity",
+                employees: allActivePeople,
+                hiringPositions,
+              })
+            }
+            title="See how this capacity total was built, by employee and open position"
+            className="flex items-baseline gap-x-2 rounded-md px-1 -mx-1 hover:bg-white"
+          >
+            <span className="font-bold tabular-nums text-sdc-navy">{fmtHours(currentCapacityHours)}</span>{" "}
+            <span className="text-sdc-muted">current hrs/yr</span>
+            {hiringCapacityHoursTotal > 0 && (
+              <>
+                <span className="text-sdc-gray-400">·</span>
+                <span className="font-bold tabular-nums text-sdc-green-text">+{fmtHours(hiringCapacityHoursTotal)}</span>{" "}
+                <span className="text-sdc-muted">hiring hrs/yr</span>
+                <span className="text-sdc-gray-400">·</span>
+                <span className="font-bold tabular-nums text-sdc-navy">{fmtHours(plannedCapacityHours)}</span>{" "}
+                <span className="text-sdc-muted">planned hrs/yr</span>
+              </>
+            )}
+          </button>
+        )}
       </div>
 
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
@@ -146,6 +195,11 @@ export function WorkforceSummaryCards({
           const leadsCount = group.cards.reduce((s, c) => s + c.people.filter((p) => p.isLead).length, 0);
           const hiringCount = hiringByGroup.get(group.key) ?? 0;
           const plannedCount = activeCount + hiringCount;
+          const groupPeople = group.cards.flatMap((c) => c.people.filter((p) => p.active));
+          const groupHiring = hiringPositions.filter((p) => p.workforceGroup === group.key);
+          const groupCurrentHours = hasCapacityPolicy ? employeeCapacityHours(activeCount, year) : 0;
+          const groupHiringHours = hasCapacityPolicy ? hiringCapacityHours(groupHiring, year) : 0;
+          const groupPlannedHours = groupCurrentHours + groupHiringHours;
           return (
             <section key={group.key} className="flex flex-col overflow-hidden rounded-xl border border-sdc-border bg-white shadow-sm">
               <button
@@ -177,6 +231,33 @@ export function WorkforceSummaryCards({
                   {inactiveCount > 0 && <StatChip>{inactiveCount} inactive</StatChip>}
                 </div>
               </button>
+              {hasCapacityPolicy && (
+                <button
+                  type="button"
+                  onClick={() =>
+                    onSelectCapacity({
+                      title: `${group.title} — Capacity`,
+                      employees: groupPeople,
+                      hiringPositions: groupHiring,
+                    })
+                  }
+                  title="See how this capacity total was built, by employee and open position"
+                  className="flex items-baseline gap-1.5 border-b border-sdc-border-soft bg-sdc-gray-50 px-4 py-1.5 text-left text-xs text-sdc-muted hover:bg-sdc-blue-light/30"
+                >
+                  <span className="font-bold tabular-nums text-sdc-navy">{fmtHours(groupCurrentHours)}</span>
+                  <span>current hrs/yr</span>
+                  {groupHiringHours > 0 && (
+                    <>
+                      <span className="text-sdc-gray-400">·</span>
+                      <span className="font-bold tabular-nums text-sdc-green-text">+{fmtHours(groupHiringHours)}</span>
+                      <span>hiring</span>
+                      <span className="text-sdc-gray-400">·</span>
+                      <span className="font-bold tabular-nums text-sdc-navy">{fmtHours(groupPlannedHours)}</span>
+                      <span>planned</span>
+                    </>
+                  )}
+                </button>
+              )}
               <ul className="flex-1 p-1.5">
                 {group.cards.map((card) => {
                   const cardActive = card.people.filter((p) => p.active).length;
@@ -216,6 +297,17 @@ export function WorkforceSummaryCards({
                 <span>open</span>
               </div>
             </button>
+            {hasCapacityPolicy && (
+              <button
+                type="button"
+                onClick={() => onSelectCapacity({ title: "Hiring Positions — Capacity", employees: [], hiringPositions })}
+                title="See how this capacity total was built, by open position"
+                className="flex items-baseline gap-1.5 border-b border-sdc-border-soft bg-sdc-gray-50 px-4 py-1.5 text-left text-xs text-sdc-muted hover:bg-sdc-blue-light/30"
+              >
+                <span className="font-bold tabular-nums text-sdc-green-text">+{fmtHours(hiringCapacityHoursTotal)}</span>
+                <span>hiring hrs/yr</span>
+              </button>
+            )}
             <ul className="flex-1 p-1.5">
               {WORKFORCE_GROUPS.filter((g) => g.key !== "other").map((g) => {
                 const count = hiringByGroup.get(g.key) ?? 0;

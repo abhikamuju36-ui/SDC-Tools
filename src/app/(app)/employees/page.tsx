@@ -66,6 +66,11 @@ export default async function EmployeesPage() {
 
   const canAddEmployees = hasPermission(session.user.role, "employees:edit");
   const canAssignHiring = hasPermission(session.user.role, "employees:hiring:assign");
+  // Plain server-computed year, threaded down as a prop -- keeps
+  // workforce-capacity-policy.ts/workforce-capacity.ts pure and testable
+  // independent of the system clock, and leaves a clean seam for a future
+  // year-selector.
+  const year = new Date().getFullYear();
 
   return (
     <div className="w-full px-8 py-10 md:px-13 md:py-11">
@@ -94,6 +99,7 @@ export default async function EmployeesPage() {
           hiringPositions={hiring.positions}
           hiringError={hiring.error}
           canAssignHiring={canAssignHiring}
+          year={year}
         />
       </div>
     </div>

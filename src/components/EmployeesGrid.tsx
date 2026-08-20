@@ -7,6 +7,7 @@ import { EmployeeDetailDrawer } from "@/components/EmployeeDetailDrawer";
 import { HiringPositionsList } from "@/components/HiringPositionsList";
 import { HiringPositionDetailDrawer } from "@/components/HiringPositionDetailDrawer";
 import { CreateHiringPositionDrawer } from "@/components/CreateHiringPositionDrawer";
+import { CapacityDrillDrawer } from "@/components/CapacityDrillDrawer";
 import { DASH, type EmployeeRow } from "@/lib/employee-row";
 import { resolveEmployeeGroup } from "@/lib/employee-card-theme";
 import { resolvePlaceholderGroup, type DepartmentCard } from "@/lib/employee-department-cards";
@@ -126,6 +127,7 @@ export function EmployeesGrid({
   hiringPositions,
   hiringError,
   canAssignHiring,
+  year,
 }: {
   rows: EmployeeRow[];
   disciplines: string[];
@@ -134,6 +136,8 @@ export function EmployeesGrid({
   hiringPositions: HiringPosition[];
   hiringError: string | null;
   canAssignHiring: boolean;
+  /** For workforce-capacity-policy.ts/workforce-capacity.ts — see page.tsx's own note on why this is computed once, server-side. */
+  year: number;
 }) {
   const [q, setQ] = useState("");
   const [showInactive, setShowInactive] = useState(false);
@@ -155,6 +159,11 @@ export function EmployeesGrid({
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null);
   const [selectedHiringPosition, setSelectedHiringPosition] = useState<HiringPosition | null>(null);
   const [creatingHiringPosition, setCreatingHiringPosition] = useState(false);
+  // "How was this capacity-hours total built" -- a different question ("which
+  // employees/positions, what proration") from the group/department drills
+  // above ("who"), so it's its own piece of overlay state rather than reusing
+  // group/departmentKey.
+  const [capacityDrill, setCapacityDrill] = useState<{ title: string; subtitle?: string; employees: EmployeeRow[]; hiringPositions: HiringPosition[] } | null>(null);
 
   // Local, optimistically-updated copy of the server-loaded positions — a
   // successful assign/create/update (hiring-actions.ts) updates this
@@ -391,6 +400,8 @@ export function EmployeesGrid({
           onSelectGroup={openGroup}
           onSelectDepartment={openDepartment}
           onSelectHiring={openHiringView}
+          year={year}
+          onSelectCapacity={setCapacityDrill}
         />
       ) : (
         <EmployeesCards
@@ -401,6 +412,8 @@ export function EmployeesGrid({
           onSelectDepartment={departmentKey ? undefined : (card) => openDepartment(group, card)}
           hiringPositions={scopedHiring}
           onSelectHiringPosition={selectHiringPosition}
+          year={year}
+          onSelectCapacity={setCapacityDrill}
         />
       )}
 
@@ -425,6 +438,17 @@ export function EmployeesGrid({
 
       {creatingHiringPosition && (
         <CreateHiringPositionDrawer onClose={() => setCreatingHiringPosition(false)} onCreated={applyHiringCreate} />
+      )}
+
+      {capacityDrill && (
+        <CapacityDrillDrawer
+          title={capacityDrill.title}
+          subtitle={capacityDrill.subtitle}
+          employees={capacityDrill.employees}
+          hiringPositions={capacityDrill.hiringPositions}
+          year={year}
+          onClose={() => setCapacityDrill(null)}
+        />
       )}
     </>
   );

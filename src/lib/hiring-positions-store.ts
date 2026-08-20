@@ -55,13 +55,36 @@ export async function setHiringAssignment(
 /**
  * Sets/clears just the expected-start-date overlay for a workbook-sourced
  * position -- independent of setHiringAssignment above (see its own
- * comment). `expectedStartDate: null` explicitly clears it back to "unknown"
- * (counts as full-year, per workforce-capacity.ts's isStartedByMonth).
+ * comment: the UPDATE clause here lists only expectedStartDate, never
+ * workforceGroup/department, so an EXISTING row's group/department -- real
+ * values or an explicit Unassigned clear -- is never touched by this call).
+ *
+ * `currentWorkforceGroup`/`currentDepartment` matter only for the INSERT
+ * branch, when this position has no HiringPositionAssignment row yet (i.e.
+ * it's still on the classifier's best-effort guess, isManuallyAssigned:
+ * false). Without them, creating a new row here with group/department left
+ * at their column default (NULL) would make the position look explicitly
+ * Unassigned the moment someone sets a date on it -- found live: the
+ * classifier's guess silently disappeared the first time this was tested
+ * against an auto-placed position. The caller (setHiringPositionExpectedStartDate)
+ * passes the position's CURRENT effective group/department (whatever
+ * hiring-positions.ts already resolved them to, manual or auto-guessed) so
+ * the new row preserves exactly what was already showing, and this call
+ * changes nothing about placement -- only the date.
+ *
+ * `expectedStartDate: null` explicitly clears it back to "unknown" (counts
+ * as full-year, per workforce-capacity.ts's isStartedByMonth).
  */
-export async function setHiringExpectedStartDate(positionSourceId: string, expectedStartDate: Date | null, actorEmail: string | null): Promise<void> {
+export async function setHiringExpectedStartDate(
+  positionSourceId: string,
+  expectedStartDate: Date | null,
+  currentWorkforceGroup: string | null,
+  currentDepartment: string | null,
+  actorEmail: string | null,
+): Promise<void> {
   await prisma.$executeRaw`
-    INSERT INTO HiringPositionAssignment (positionSourceId, expectedStartDate, updatedByEmail, updatedAt, createdAt)
-    VALUES (${positionSourceId}, ${expectedStartDate}, ${actorEmail}, NOW(3), NOW(3))
+    INSERT INTO HiringPositionAssignment (positionSourceId, workforceGroup, department, expectedStartDate, updatedByEmail, updatedAt, createdAt)
+    VALUES (${positionSourceId}, ${currentWorkforceGroup}, ${currentDepartment}, ${expectedStartDate}, ${actorEmail}, NOW(3), NOW(3))
     ON DUPLICATE KEY UPDATE expectedStartDate = ${expectedStartDate}, updatedByEmail = ${actorEmail}, updatedAt = NOW(3)
   `;
 }

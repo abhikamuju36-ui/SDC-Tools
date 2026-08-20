@@ -8,6 +8,10 @@ import { DISCIPLINE_LABEL } from "@/lib/disciplines";
 import { buildDepartmentCards, type DepartmentCard } from "@/lib/employee-department-cards";
 import { DASH, type EmployeeRow } from "@/lib/employee-row";
 import type { HiringPosition } from "@/lib/hiring-positions";
+import { employeeCapacityHours, hiringCapacityHours } from "@/lib/workforce-capacity";
+import { hasYearPolicy } from "@/lib/workforce-capacity-policy";
+import { hours as fmtHours } from "@/components/ui/format";
+import type { CapacityDrillTarget } from "@/components/WorkforceSummaryCards";
 
 export { DASH };
 export type { EmployeeRow };
@@ -59,6 +63,8 @@ export function EmployeesCards({
   onSelectDepartment,
   hiringPositions,
   onSelectHiringPosition,
+  year,
+  onSelectCapacity,
 }: {
   rows: EmployeeRow[];
   placeholders: SchedulerPlaceholder[];
@@ -70,6 +76,10 @@ export function EmployeesCards({
   /** Open positions (2026-08-19) — matched to a card by `position.department === card.key`. Omitted entirely, cards render exactly as before hiring existed. */
   hiringPositions?: HiringPosition[];
   onSelectHiringPosition?: (position: HiringPosition) => void;
+  /** For workforce-capacity-policy.ts/workforce-capacity.ts. Omitted entirely, capacity hours render exactly as before this feature (not at all). */
+  year?: number;
+  /** Opens the "how was this total built" drill. Omitted entirely along with `year`, capacity hours don't render. */
+  onSelectCapacity?: (target: CapacityDrillTarget) => void;
 }) {
   const cards = useMemo(() => buildDepartmentCards(rows, placeholders), [rows, placeholders]);
   const hiringByDepartment = useMemo(() => {
@@ -96,6 +106,10 @@ export function EmployeesCards({
         const inactiveCount = card.people.length - activeCount;
         const cardHiring = hiringByDepartment.get(card.key) ?? [];
         const plannedCount = activeCount + cardHiring.length;
+        const hasCapacityPolicy = year != null && hasYearPolicy(year);
+        const cardCurrentHours = hasCapacityPolicy ? employeeCapacityHours(activeCount, year) : 0;
+        const cardHiringHours = hasCapacityPolicy ? hiringCapacityHours(cardHiring, year) : 0;
+        const cardPlannedHours = cardCurrentHours + cardHiringHours;
         return (
           <section key={card.key} className="mb-4 flex flex-col overflow-hidden rounded-xl border border-sdc-border bg-white shadow-sm break-inside-avoid-column">
             {onSelectDepartment ? (
@@ -134,6 +148,33 @@ export function EmployeesCards({
                 </>
               )}
             </div>
+            {hasCapacityPolicy && onSelectCapacity && (
+              <button
+                type="button"
+                onClick={() =>
+                  onSelectCapacity({
+                    title: `${card.title} — Capacity`,
+                    employees: card.people.filter((p) => p.active),
+                    hiringPositions: cardHiring,
+                  })
+                }
+                title="See how this capacity total was built, by employee and open position"
+                className="flex items-baseline gap-1.5 border-b border-sdc-border bg-sdc-gray-50 px-3.5 py-1.5 text-left text-xs text-sdc-muted hover:bg-sdc-blue-light/30"
+              >
+                <span className="font-bold tabular-nums text-sdc-navy">{fmtHours(cardCurrentHours)}</span>
+                <span>current hrs/yr</span>
+                {cardHiringHours > 0 && (
+                  <>
+                    <span className="text-sdc-gray-400">·</span>
+                    <span className="font-bold tabular-nums text-sdc-green-text">+{fmtHours(cardHiringHours)}</span>
+                    <span>hiring</span>
+                    <span className="text-sdc-gray-400">·</span>
+                    <span className="font-bold tabular-nums text-sdc-navy">{fmtHours(cardPlannedHours)}</span>
+                    <span>planned</span>
+                  </>
+                )}
+              </button>
+            )}
             <ul className="min-h-[72px] p-1.5">
               {card.people.map((p) => {
                 const role = roleOf(p, card.title);

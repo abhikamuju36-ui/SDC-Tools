@@ -96,7 +96,12 @@ export async function setHiringPositionExpectedStartDate(positionSourceId: strin
   const before = await getHiringPositionById(positionSourceId);
   if (!before) return { ok: false, error: "This position is no longer open — it may have been filled or removed from the workbook." };
 
-  await setHiringExpectedStartDate(positionSourceId, date, session.user.email ?? null);
+  // The position's CURRENT effective group/department (manual or still just
+  // the classifier's best-effort guess) -- so if this position has no
+  // HiringPositionAssignment row yet, creating one here for the date alone
+  // doesn't also blank out its placement. See
+  // setHiringExpectedStartDate's own comment.
+  await setHiringExpectedStartDate(positionSourceId, date, before.workforceGroup, before.department, session.user.email ?? null);
 
   await logAudit({
     action: "hiring.expectedStartDateSet",
