@@ -670,6 +670,23 @@ function App() {
         }
       }).catch(() => {});
     }
+    // The shell's IPC channel only ever carries name/email — never a role.
+    // The REAL role/allowedCategories come from this app's own backend,
+    // which now resolves them from the sdc_session cookie the shell set
+    // (see server/middleware/requireAuth.js, fixed 2026-08-20 to stop
+    // handing every shell user the same hardcoded admin identity). Same-
+    // origin request, so the cookie rides along with no Authorization
+    // header needed. On any failure (offline, cookie not set yet, server
+    // unreachable) this silently keeps the LOCAL_USER admin defaults
+    // already in state — the same behavior as before this fix, not a new
+    // failure mode.
+    fetch(`${API_URL}/auth/me`, { credentials: 'include', signal: AbortSignal.timeout(8000) })
+      .then(r => { if (!r.ok) throw new Error('unauth'); return r.json(); })
+      .then(data => {
+        setResolvedUser(u => ({ ...u, role: data.role, allowedCategories: data.allowedCategories }));
+        setAllowedCats(new Set(data.allowedCategories));
+      })
+      .catch(() => {});
   }, []);
 
   // Verify JWT token when not in LOCAL_MODE
@@ -685,7 +702,9 @@ function App() {
   const handleSignOut   = () => { localStorage.removeItem('sdc_auth_token'); setAuthToken(null); setAuthUser(null); setAllowedCats(null); };
 
   if (LOCAL_MODE) {
-    return <CalendarApp authToken={null} authUser={resolvedUser} allowedCats={new Set(LOCAL_USER.allowedCategories)} onSignOut={()=>{ window.location.reload(); }} />;
+    // allowedCats starts null and is set once /auth/me resolves above — fall
+    // back to the LOCAL_USER admin defaults only until then, not forever.
+    return <CalendarApp authToken={null} authUser={resolvedUser} allowedCats={allowedCats || new Set(LOCAL_USER.allowedCategories)} onSignOut={()=>{ window.location.reload(); }} />;
   }
   if (!authToken)  return <LoginScreen onAuthReady={handleAuthReady} />;
   if (authLoading) return <div className="login-screen"><div className="login-spinner"></div></div>;

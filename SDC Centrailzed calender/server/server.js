@@ -2,6 +2,7 @@ require('dotenv').config();
 
 const express = require('express');
 const session = require('express-session');
+const cookieParser = require('cookie-parser');
 const corsMiddleware = require('cors');
 const path    = require('path');
 const logger  = require('./logger');
@@ -52,6 +53,10 @@ app.use(corsMiddleware({
 }));
 
 app.use(express.json());
+// Needed to read the shared `sdc_session` cookie the SDC Tools shell sets
+// (see middleware/requireAuth.js) — must run before any route that calls
+// requireAuth/requireAdmin.
+app.use(cookieParser());
 
 // Winston HTTP Logging Middleware
 app.use((req, res, next) => {

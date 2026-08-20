@@ -2,6 +2,7 @@ require('dotenv').config();
 const express = require('express');
 const jwt     = require('jsonwebtoken');
 const db      = require('./db');
+const { resolveFromSdcSessionCookie } = require('./middleware/requireAuth');
 
 const router = express.Router();
 
@@ -79,14 +80,17 @@ router.get('/callback', async (req, res) => {
 
 // GET /auth/me
 router.get('/me', async (req, res) => {
-  if (process.env.SKIP_AUTH === 'true') {
-    return res.json({
-      id:                'shell-sso-user',
-      email:             process.env.SHELL_USER_EMAIL || 'sdc@sdcautomation.com',
-      name:              process.env.SHELL_USER_NAME  || 'SDC User',
-      role:              'admin',
-      allowedCategories: ['holiday','payday','birthday','meeting','company','deadline','personal','vacation'],
-    });
+  // Preferred path: the SDC Tools shell's own Azure AD login, carried via the
+  // shared sdc_session cookie — see middleware/requireAuth.js for why the
+  // role comes from THIS app's own users/roles tables rather than the
+  // token's coarse app-membership claim.
+  try {
+    const sdcUser = await resolveFromSdcSessionCookie(req);
+    if (sdcUser) return res.json(sdcUser);
+  } catch (e) {
+    // DB hiccup resolving the shell identity — fall through to the legacy
+    // bearer check below rather than 500 on what is, to the caller, just a
+    // "who am I" check.
   }
 
   const auth = req.headers.authorization;

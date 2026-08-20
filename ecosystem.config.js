@@ -173,6 +173,12 @@ module.exports = {
         PORT:             '4005',
         NODE_ENV:         'production',
         NODE_NO_WARNINGS: '1',
+        // Legacy flag (2026-08-20): no longer bypasses authentication — real
+        // per-user identity now comes from the shared sdc_session cookie
+        // (server/middleware/requireAuth.js). Only still skips setting up
+        // express-session, which the unused standalone Azure OAuth flow
+        // needed. SDC_SESSION_SECRET is read from this app's own .env, same
+        // as the other 4 SDC Tools apps.
         SKIP_AUTH:        'true',
         // Update to the actual server hostname/IP so calendar links work correctly
         FRONTEND_URL:     'http://SERVER-APP1:4005',

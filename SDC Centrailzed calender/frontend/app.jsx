@@ -2281,6 +2281,19 @@ function App() {
         }
       }).catch(() => {});
     }
+    // Same fix as src/App.jsx (2026-08-20): the shell's IPC only carries
+    // name/email, never a role — the real role/allowedCategories come from
+    // this app's own backend, resolved from the sdc_session cookie the
+    // shell set (server/middleware/requireAuth.js). Falls back to the
+    // LOCAL_USER admin defaults already in state on any failure, same as
+    // before this fix.
+    fetch(`${API_URL}/auth/me`, { credentials: 'include', signal: AbortSignal.timeout(8000) })
+      .then(r => { if (!r.ok) throw new Error('unauth'); return r.json(); })
+      .then(data => {
+        setResolvedUser(u => ({ ...u, role: data.role, allowedCategories: data.allowedCategories }));
+        setAllowedCats(new Set(data.allowedCategories));
+      })
+      .catch(() => {});
   }, []);
 
   // Verify JWT token when not in LOCAL_MODE
@@ -2296,7 +2309,7 @@ function App() {
   const handleSignOut   = () => { localStorage.removeItem('sdc_auth_token'); setAuthToken(null); setAuthUser(null); setAllowedCats(null); };
 
   if (LOCAL_MODE) {
-    return <CalendarApp authToken={null} authUser={resolvedUser} allowedCats={new Set(LOCAL_USER.allowedCategories)} onSignOut={()=>{ window.location.reload(); }} />;
+    return <CalendarApp authToken={null} authUser={resolvedUser} allowedCats={allowedCats || new Set(LOCAL_USER.allowedCategories)} onSignOut={()=>{ window.location.reload(); }} />;
   }
   if (!authToken)  return <LoginScreen onAuthReady={handleAuthReady} />;
   if (authLoading) return <div className="login-screen"><div className="login-spinner"></div></div>;

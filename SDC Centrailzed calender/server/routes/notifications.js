@@ -1,14 +1,17 @@
 const express      = require('express');
 const router       = express.Router();
 const sqlite       = require('../sqlite');
-const { requireAuth } = require('../middleware/requireAuth');
 
 // GET /api/notifications/pending
 // Returns events starting within the next `window` minutes (default 30).
-// Used by the shell to poll for upcoming reminders and display them in the
-// notification center even when the calendar window is not open.
-// requireAuth is satisfied automatically when SKIP_AUTH=true (shell mode).
-router.get('/pending', requireAuth, async (req, res) => {
+// Used by the shell's MAIN PROCESS to poll for upcoming reminders (see
+// shell/electron/main.js's pollAppNotifications) — a plain Node fetch with no
+// BrowserWindow/session behind it, so it never carries the sdc_session
+// cookie requireAuth now checks. Left unauthenticated deliberately rather
+// than broken: the handler never reads req.user and returns no per-person
+// data, only which already-approved events are starting soon — the same
+// thing every signed-in person already sees on the calendar itself.
+router.get('/pending', async (req, res) => {
   try {
     const windowMins = parseInt(req.query.window, 10) || 30;
     const now        = new Date();
