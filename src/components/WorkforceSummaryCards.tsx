@@ -31,10 +31,29 @@ import { hours as fmtHours } from "@/components/ui/format";
 const WORKFORCE_THEME: Record<WorkforceGroupKey, { band: string; onBand: string }> = {
   engineering: { band: "bg-sdc-navy", onBand: "text-white" },
   shop: { band: "bg-sdc-yellow", onBand: "text-sdc-navy" },
-  pm: { band: "bg-sdc-blue", onBand: "text-white" },
+  // Purple (2026-08-19, by request) -- --sdc-purple (globals.css) is the dark
+  // half of the EXISTING Project Management purple already defined one level
+  // down, in employee-card-theme.ts's CARD_COLORS.pm (matched to Scheduler's
+  // own Departments board), reused here as a solid band instead of that
+  // pastel card's light-bg/dark-text style, to match this level's other
+  // bold-band cards. employee-teams.ts's own PM department color stays
+  // --sdc-blue, unchanged -- that's a third, separate palette (see this
+  // file's header comment on why the three levels don't share one).
+  pm: { band: "bg-sdc-purple", onBand: "text-white" },
   other: { band: "bg-sdc-gray-700", onBand: "text-white" },
 };
 const HIRING_THEME = { band: "bg-sdc-green", onBand: "text-sdc-navy" };
+
+// Card render order (2026-08-19, by request): PM, Engineering, Shop, then
+// whatever's left (just "other," if it has any cards) -- Hiring Positions is
+// rendered separately, always last, unaffected by this list. Deliberately
+// NOT a reorder of WORKFORCE_GROUPS itself (employee-workforce-groups.ts) --
+// that array also drives dropdown option order in HiringMoveToControl.tsx/
+// CreateHiringPositionDrawer.tsx/HiringPositionDetailDrawer.tsx and the
+// Hiring Positions card's own internal breakdown list, none of which this
+// request asked to change. This is a display-order concern local to this
+// component only.
+const CARD_RENDER_ORDER: WorkforceGroupKey[] = ["pm", "engineering", "shop", "other"];
 
 type WorkforceSummary = {
   key: WorkforceGroupKey;
@@ -82,7 +101,11 @@ export function WorkforceSummaryCards({
       if (list) list.push(card);
       else byGroup.set(key, [card]);
     }
-    return WORKFORCE_GROUPS.map((def) => ({ key: def.key, title: def.title, cards: byGroup.get(def.key) ?? [] })).filter(
+    const byKey = new Map(WORKFORCE_GROUPS.map((def) => [def.key, def]));
+    return CARD_RENDER_ORDER.map((key) => {
+      const def = byKey.get(key)!;
+      return { key: def.key, title: def.title, cards: byGroup.get(def.key) ?? [] };
+    }).filter(
       // An empty workforce group (everyone filtered out, or genuinely nobody
       // on it) shows nothing rather than a "0 employees" card with nowhere
       // useful to drill — matches EmployeesCards' own "no card for an empty

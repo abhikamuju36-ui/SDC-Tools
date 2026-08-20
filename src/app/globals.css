@@ -23,6 +23,19 @@
   --sdc-blue-light: #e6f0fa;
   --sdc-blue-100: #aacee8;
   --sdc-navy: #061d39;
+  /* PM's workforce-group card color (2026-08-19) — the dark half of the
+   * EXISTING Project Management purple already defined in
+   * employee-card-theme.ts's CARD_COLORS.pm ({ bg: "#e9d5ff", text: "#581c87" }),
+   * itself matched to the SDC Scheduler's own Departments board colors (see
+   * that file's header comment). That pair is a light-bg/dark-text pastel
+   * card style, not a solid band -- this token reuses its dark #581c87
+   * (Tailwind's own purple-900) as a solid band with white text instead, to
+   * match this level's existing bold-band cards (navy, yellow, ...) in
+   * WEIGHT while staying the same purple FAMILY, per the request. Not a new,
+   * unrelated purple -- this exact hex already means "Project Management"
+   * elsewhere in this codebase.
+   */
+  --sdc-purple: #581c87;
   --sdc-lime: #befa4f;
   --sdc-border: #d9d9d9;
   --sdc-border-soft: #ececec;
@@ -133,6 +146,7 @@
   --color-sdc-blue-light: var(--sdc-blue-light);
   --color-sdc-blue-100: var(--sdc-blue-100);
   --color-sdc-navy: var(--sdc-navy);
+  --color-sdc-purple: var(--sdc-purple);
   --color-sdc-lime: var(--sdc-lime);
   --color-sdc-border: var(--sdc-border);
   --color-sdc-border-soft: var(--sdc-border-soft);
