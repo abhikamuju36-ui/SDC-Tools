@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const cookieParser = require('cookie-parser');
 const path = require('path');
 const fs = require('fs');
 const config = require('./config/paths');
@@ -56,6 +57,9 @@ function rateLimit(maxPerMin) {
 // ─── CORS ─────────────────────────────────────────────────────────────────────
 app.use(cors({ origin: config.ALLOWED_ORIGIN }));
 
+// ─── Cookies (required to read the SDC Tools "sdc_session" cookie) ───────────
+app.use(cookieParser());
+
 // ─── Body parsing (capped at 1 MB to prevent memory exhaustion) ───────────────
 app.use(express.json({ limit: '1mb' }));
 
@@ -67,6 +71,12 @@ app.use((req, _res, next) => {
 
 // ─── Health check (used by Electron shell to detect readiness) ────────────────
 app.get('/health', (_req, res) => res.json({ ok: true, service: 'assemblies' }));
+
+// ─── SDC Tools centralized session ───────────────────────────────────────────
+// Requires the shared "sdc_session" cookie (minted by SDC Scheduler's central
+// SSO after Azure AD login) on everything below this line. No-op until
+// SDC_SSO_ENABLED=true is set — see server/sdcSessionAuth.js.
+app.use(require('./sdcSessionAuth').requireSdcSession('assemblies'));
 
 // ─── API Routes ───────────────────────────────────────────────────────────────
 app.use('/api/assemblies', rateLimit(300), assembliesRouter);

@@ -54,6 +54,7 @@ contextBridge.exposeInMainWorld('shellAPI', {
   authGetStatus: () => ipcRenderer.invoke('auth-get-status'),
   authLogin:     () => ipcRenderer.invoke('auth-login'),
   authLogout:    () => ipcRenderer.invoke('auth-logout'),
+  getSdcApps:    () => ipcRenderer.invoke('get-sdc-apps'),
 
   // ── Notifications ─────────────────────────────────────────────────────────
   getNotifications:       ()     => ipcRenderer.invoke('get-notifications'),

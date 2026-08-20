@@ -76,7 +76,7 @@ async function getAuthStatus() {
     const account = await _getSDCAccount();
     if (!account) return { isAuthenticated: false, user: null, configured: true };
     // Silent refresh validates the cached token is still accepted by Azure AD
-    await _getPCA().acquireTokenSilent({
+    const result = await _getPCA().acquireTokenSilent({
       account,
       scopes: ['openid', 'profile', 'email'],
     });
@@ -84,6 +84,11 @@ async function getAuthStatus() {
       isAuthenticated: true,
       configured: true,
       user: { name: account.name, email: account.username },
+      // Needed by sdcSession.js to (re-)establish the cross-app session on
+      // startup without prompting a fresh interactive login — see main.js's
+      // app.whenReady(). Not persisted anywhere by this module; the caller
+      // uses it once and discards it.
+      idToken: result.idToken,
     };
   } catch {
     return { isAuthenticated: false, user: null, configured: true };
@@ -133,6 +138,8 @@ async function login() {
     return {
       success: true,
       user: { name: result.account.name, email: result.account.username },
+      // See getAuthStatus()'s matching comment — same reason, first-login case.
+      idToken: result.idToken,
     };
   } catch (err) {
     if (err.errorCode === 'user_cancelled' || err.message?.includes('user_cancelled')) {

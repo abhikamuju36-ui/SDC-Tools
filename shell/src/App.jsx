@@ -60,6 +60,7 @@ const api = window.shellAPI ?? {
   authGetStatus: () => Promise.resolve({ isAuthenticated: false, configured: false, user: null }),
   authLogin: () => Promise.resolve({ success: false, error: 'No API' }),
   authLogout: () => Promise.resolve({ success: true }),
+  getSdcApps: () => Promise.resolve(null),
   checkForUpdates: () => Promise.resolve(),
   triggerUpdate: () => Promise.resolve({ ok: false }),
   getServerHost: () => Promise.resolve(''),
@@ -171,6 +172,19 @@ export default function App() {
     })
   }, [])
 
+  // Per-app roles/flags from the central SSO exchange (fresh login or the
+  // silent startup restore both land here — same source either way). Used
+  // only to filter which tiles show; the real enforcement is server-side in
+  // each app's own sdcSessionAuth.js gate, not this. Stays null if the
+  // exchange hasn't run or failed — in that case every tile stays visible
+  // (unchanged behavior), since hiding everything on a fetch hiccup would be
+  // worse than a tile that shows but the server still correctly blocks.
+  const [sdcApps, setSdcApps] = useState(null)
+  useEffect(() => {
+    if (!authUser) return
+    api.getSdcApps().then(setSdcApps).catch(() => {})
+  }, [authUser])
+
   const handleSignOut = useCallback(async () => {
     await api.authLogout()
     setAuthUser(false)
@@ -272,13 +286,20 @@ export default function App() {
     : authUser.email[0].toUpperCase()
   const firstName = authUser.name?.split(' ')[0] || authUser.email?.split('@')[0] || 'there'
 
+  // Only hide a tile if sdcApps actually covers that app AND says no —
+  // an app sdcApps doesn't mention yet (e.g. 'reports', not part of the SSO
+  // rollout) or a roles fetch that hasn't resolved stays visible as before.
+  const visibleApps = sdcApps
+    ? apps.filter(a => !(a.id in sdcApps) || Boolean(sdcApps[a.id]))
+    : apps
+
   // Filter apps by search
   const filteredApps = searchQuery.trim()
-    ? apps.filter(a =>
+    ? visibleApps.filter(a =>
         a.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
         a.description?.toLowerCase().includes(searchQuery.toLowerCase())
       )
-    : apps
+    : visibleApps
 
   return (
     <div className="app">

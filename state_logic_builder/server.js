@@ -32,6 +32,14 @@ const os   = require('os');
 // so PM2's injected ecosystem env still wins in production.
 require('dotenv').config({ path: path.join(__dirname, '.env') });
 
+// SDC Tools SSO — required right after dotenv() so SDC_SESSION_SECRET /
+// SDC_SSO_ENABLED (read once at module-load time inside sdcSessionAuth.js)
+// see the .env values. See applySdcSessionGate() below for how these are
+// wired into this file's raw http.createServer handler (there is no
+// Express `app` in this file to app.use() these onto).
+const cookieParser = require('cookie-parser');
+const { requireSdcSession } = require('./sdcSessionAuth');
+
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js':   'application/javascript',
@@ -63,6 +71,41 @@ function readBody(req) {
     req.on('end', () => resolve(Buffer.concat(chunks).toString('utf8')));
     req.on('error', reject);
   });
+}
+
+// ── SDC Tools SSO gate ──────────────────────────────────────────────────────
+// This server is a plain http.createServer callback, not Express, but
+// sdcSessionAuth.js's requireSdcSession() is shared verbatim across all 4
+// gated SDC Tools apps and calls Express-style res.status()/.json()/
+// .type()/.send(). Rather than fork that shared file for this app's
+// non-Express style, we shim just those four methods onto the real
+// http.ServerResponse right before invoking it — every other route in this
+// file keeps using res.writeHead()/res.end() directly, untouched.
+//
+// Both cookie-parser and requireSdcSession() call their `next` callback
+// synchronously (no I/O, verified in cookie-parser's source and in
+// sdcSessionAuth.js itself), so this can be a plain synchronous gate:
+// callers just check the boolean return and `return` early on false.
+const parseSdcCookies = cookieParser();
+const sdcSessionGate = requireSdcSession('statelogic');
+
+function applySdcSessionGate(req, res) {
+  let allowed = false;
+  parseSdcCookies(req, res, () => {
+    res.status = function (code) { res.statusCode = code; return res; };
+    res.json = function (data) {
+      const body = JSON.stringify(data);
+      res.writeHead(res.statusCode || 200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+    };
+    res.type = function (t) { res._sdcContentType = t === 'html' ? 'text/html; charset=utf-8' : t; return res; };
+    res.send = function (body) {
+      res.writeHead(res.statusCode || 200, { 'Content-Type': res._sdcContentType || 'text/plain', 'Access-Control-Allow-Origin': '*' });
+      res.end(body);
+    };
+    sdcSessionGate(req, res, () => { allowed = true; });
+  });
+  return allowed;
 }
 
 // ── MySQL module (lazy-loaded so server still starts without it) ──────────────
@@ -392,6 +435,16 @@ function startServer({ port, dataDir, standardsDir, distDir } = {}) {
     if (pathname === '/health' && method === 'GET') {
       return sendJson(res, 200, { ok: true, storage: dbReady ? 'mysql' : 'local' });
     }
+
+    // SDC Tools SSO gate — everything below this line requires the shared
+    // sdc_session cookie once SDC_SSO_ENABLED=true (see sdcSessionAuth.js).
+    // While the flag is unset/false (default today) this is a no-op, so
+    // behavior is unchanged until SSO is deliberately turned on for this
+    // app. The OPTIONS preflight handled above is intentionally NOT gated:
+    // browsers never send cookies on a preflight request, so gating it
+    // would break CORS preflight for every cross-origin call regardless of
+    // login state.
+    if (!applySdcSessionGate(req, res)) return; // 401 (or sign-in page) already sent
 
     if (pathname.startsWith('/api/projects')) {
       const rest     = pathname.slice('/api/projects'.length);

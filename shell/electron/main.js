@@ -1,10 +1,11 @@
 require('dotenv').config({ path: require('path').join(__dirname, '../.env') });
 
-const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, globalShortcut, Notification } = require('electron');
+const { app, BrowserWindow, ipcMain, Tray, Menu, nativeImage, dialog, globalShortcut, Notification, shell } = require('electron');
 const path = require('path');
 const fs   = require('fs');
 const processManager = require('./processManager');
 const auth           = require('./auth');
+const sdcSession     = require('./sdcSession');
 
 // ── Auto-updater (production only) ──────────────────────────────────────────
 // Design (mirrors Dan's state_logic_builder approach):
@@ -163,7 +164,7 @@ async function performQuit() {
   }
 }
 
-function openAppWindow(appId) {
+async function openAppWindow(appId) {
   const status = processManager.getStatus();
   const appInfo = status[appId];
 
@@ -208,7 +209,33 @@ function openAppWindow(appId) {
     },
   });
 
-  win.loadURL(appInfo.url);
+  // Reports (sdc-etc-planner) isn't one of the 5 apps with a shared session
+  // cookie — it has its own separate NextAuth login. It already has a
+  // purpose-built bridge FROM Scheduler for exactly this (its own
+  // "open this job in Reports" links use it); drive that same bridge here
+  // instead of building new cross-app trust. A 2s cap on the mint call keeps
+  // a slow/unreachable Scheduler from stalling the window — on any failure
+  // this just falls back to the bare URL, i.e. Reports' own login form,
+  // never worse than before this existed.
+  let targetUrl = appInfo.url;
+  if (appId === 'reports') {
+    const hop = await Promise.race([
+      sdcSession.mintEtcSsoHopToken(),
+      new Promise(resolve => setTimeout(() => resolve(null), 2000)),
+    ]).catch(() => null);
+    if (hop) targetUrl = `${appInfo.url}/api/auth/sso?token=${encodeURIComponent(hop)}&next=/`;
+  }
+
+  // Without this, Electron's default behavior for any target="_blank" link
+  // (e.g. Reports' "open this job in Scheduler" link) is to silently deny
+  // the new-window request — the click does nothing, no error, no window.
+  // Hand it to the OS's default browser instead, same as a normal web page.
+  win.webContents.setWindowOpenHandler(({ url }) => {
+    shell.openExternal(url);
+    return { action: 'deny' };
+  });
+
+  win.loadURL(targetUrl);
   win.once('ready-to-show', () => win.show());
 
   // Push update status so app sidebar shows "Up to date!" immediately
@@ -329,6 +356,31 @@ app.whenReady().then(() => {
 
   processManager.startAll();
 
+  // ── Centralized SDC Tools session ─────────────────────────────────────────
+  // If the shell restarted with a still-valid MSAL cache, silently
+  // re-establish the cross-app session too — no login prompt on a normal
+  // restart. If nothing is cached yet, this is a no-op (getAuthStatus()
+  // returns isAuthenticated:false and there's no idToken to exchange); the
+  // user logs in via LoginScreen, which drives the same exchange through the
+  // auth-login handler below.
+  auth.getAuthStatus().then(status => {
+    if (status.isAuthenticated && status.idToken) {
+      sdcSession.establishSdcSession(status.idToken).catch(err =>
+        console.warn('[sdcSession] startup re-establish failed:', err.message));
+    }
+  });
+
+  // Keep the internal session fresh while the shell stays open, well before
+  // its 12h expiry — mirrors the existing auto-updater interval just below.
+  setInterval(() => {
+    auth.getAuthStatus().then(status => {
+      if (status.isAuthenticated && status.idToken) {
+        sdcSession.establishSdcSession(status.idToken).catch(err =>
+          console.warn('[sdcSession] periodic refresh failed:', err.message));
+      }
+    });
+  }, 60 * 60 * 1000);
+
   // Start notification polling — first run after 15 s (let apps boot), then every 60 s
   setTimeout(() => {
     pollAppNotifications();
@@ -410,8 +462,27 @@ app.whenReady().then(() => {
 
   // ── Auth IPC ───────────────────────────────────────────────────────────────
   ipcMain.handle('auth-get-status', () => auth.getAuthStatus());
-  ipcMain.handle('auth-login',      () => auth.login());
-  ipcMain.handle('auth-logout',     () => auth.logout());
+  ipcMain.handle('auth-login',      async () => {
+    const result = await auth.login();
+    if (!result.success) return result;
+    const sdcResult = await sdcSession.establishSdcSession(result.idToken);
+    if (!sdcResult.success) {
+      // Microsoft login worked but the suite-wide session didn't — surface
+      // this distinctly rather than silently leaving every sub-app unable to
+      // authenticate. LoginScreen shows result.error either way.
+      return { success: false, error: 'Signed into Microsoft, but SDC Tools sign-in failed: ' + sdcResult.error };
+    }
+    return { ...result, apps: sdcResult.apps };
+  });
+  ipcMain.handle('auth-logout',     async () => {
+    await sdcSession.clearSdcSession();
+    return auth.logout();
+  });
+  // Per-app roles/flags from the last successful exchange (fresh login or the
+  // silent startup restore) — lets the launcher filter tiles by what the
+  // server would actually allow. Never the only enforcement: each app's own
+  // sdcSessionAuth.js gate is what actually matters; this is UI convenience.
+  ipcMain.handle('get-sdc-apps', () => sdcSession.getLastApps());
 
   ipcMain.handle('get-status',   () => processManager.getStatus());
   ipcMain.handle('get-logs',     (_, appId) => processManager.getLogs(appId));

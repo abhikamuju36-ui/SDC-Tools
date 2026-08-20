@@ -15,8 +15,10 @@
   },
   "dependencies": {
     "@xyflow/react": "^12.3.0",
+    "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.5",
     "electron-updater": "^6.8.3",
+    "jsonwebtoken": "^9.0.2",
     "mysql2": "^3.11.0",
     "nanoid": "^5.0.7",
     "pdf-parse": "^2.4.5",

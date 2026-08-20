@@ -1,6 +1,7 @@
 require('dotenv').config();
 const express = require('express');
 const path = require('path');
+const cookieParser = require('cookie-parser');
 
 // ── Env validation — warn if ETO vars missing in live mode ──────────────────
 if (process.env.ETO_HOST && process.env.ETO_HOST !== 'your-server-here') {
@@ -16,11 +17,21 @@ const bomRoutes = require('./routes/bom');
 const readinessRoutes = require('./routes/readiness');
 const emailRoutes = require('./routes/emails');
 const checkRoutes = require('./routes/check');
+const { requireSdcSession } = require('./sdcSessionAuth');
 
 const fs = require('fs');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
+
+app.use(cookieParser());
+
+app.get('/health', (_req, res) => res.json({ ok: true, service: 'readiness', uptime: process.uptime() }));
+
+// SDC Tools centralized session — requires the shared "sdc_session" cookie
+// (minted by SDC Scheduler's central SSO after Azure AD login) on everything
+// below this line. No-op until SDC_SSO_ENABLED=true — see server/sdcSessionAuth.js.
+app.use(requireSdcSession('readiness'));
 
 // ── Static file strategy ─────────────────────────────────────────────────────
 // Prefer the Vite production build (client/dist/) when it exists — it is a
@@ -37,8 +48,6 @@ console.log(`[readiness] Serving frontend from: ${staticDir}`);
 
 app.use(express.static(staticDir));
 app.use(express.json());
-
-app.get('/health', (_req, res) => res.json({ ok: true, service: 'readiness', uptime: process.uptime() }));
 
 app.use('/api/check', checkRoutes);
 app.use('/api/bom', bomRoutes);
