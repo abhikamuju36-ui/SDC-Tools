@@ -1,11 +1,11 @@
 import { cookies } from "next/headers";
-import { auth, signOut } from "@/lib/auth";
+import { auth } from "@/lib/auth";
 import AppShell from "@/components/AppShell";
 import { COLLAPSED_COOKIE, WIDTH_COOKIE, parseSidebarPrefs } from "@/lib/sidebar-prefs";
 import { LiveRefresh } from "@/components/LiveRefresh";
 import { RealtimeProvider } from "@/components/RealtimeProvider";
 import { InteractionMetrics } from "@/components/InteractionMetrics";
-import { getSchedulerBaseUrl, revokeSchedulerSession } from "@/lib/scheduler-link";
+import { getSchedulerBaseUrl } from "@/lib/scheduler-link";
 import { withSchedulerSso } from "@/lib/scheduler-sso";
 import { hasPermission } from "@/lib/permissions";
 import { ROUTE_PERMISSIONS } from "@/lib/route-permissions";
@@ -47,15 +47,21 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
   // the role directly instead of going through ROUTE_PERMISSIONS.
   if (role === "ELT") visibleHrefs.push("/cash-flow");
 
-  async function handleSignOut() {
-    "use server";
-    // Invalidate any Scheduler session for the same person too — read
-    // BEFORE signOut() clears this app's own session, since there'd be
-    // nothing left to read afterward. Best-effort; see revokeSchedulerSession
-    // for why a slow/unreachable Scheduler can't hang or block this.
-    await revokeSchedulerSession(session?.user?.email);
-    await signOut({ redirectTo: "/login" });
-  }
+  // ── Sign-out removed (2026-08-20, SDC Tools centralized login) ────────────
+  // This app no longer owns a sign-out of its own. Identity comes from the SDC
+  // Tools shell's single Azure AD login; only the shell signs you out, and it
+  // clears this app's session cookie along with the rest of the suite.
+  //
+  // The old handler also called revokeSchedulerSession() before signOut(),
+  // which — now that both apps share one login — created a MUTUAL REVOCATION
+  // LOOP with the Scheduler: a session invalidated here bounced to /login,
+  // that revoked the Scheduler, which invalidated the token the shell had just
+  // seeded there, whose own sign-out revoked this app straight back. Observed
+  // live on 2026-08-20: users.token_version climbing 7 → 9 → 14 on its own,
+  // and BOTH apps demanding a fresh login seconds after a successful SSO
+  // hand-off. Cross-app revoke made sense when each app had its own login; it
+  // is actively destructive now. Do not reintroduce it without a single
+  // owner for session lifetime (that owner is the shell).
 
 
   return (
@@ -65,7 +71,6 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
     <AppShell
       userEmail={session?.user?.email}
       visibleHrefs={visibleHrefs}
-      signOutAction={handleSignOut}
       // What the server rendered with. The client store reads the same two cookies, so
       // the value React hydrates with is the value already on screen.
       sidebar={sidebar}

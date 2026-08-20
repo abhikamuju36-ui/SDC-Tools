@@ -16,7 +16,8 @@ export default function AppShell({
   userEmail?: string | null;
   /** Which nav hrefs this role may see, computed server-side in the (app) layout — see its own note on why this can't be decided inside Sidebar itself. */
   visibleHrefs: string[];
-  signOutAction: () => Promise<void>;
+  /** Omitted since the SDC Tools shell owns sign-out for the whole suite (2026-08-20) — when absent the sidebar renders no sign-out control. */
+  signOutAction?: () => Promise<void>;
   schedulerProjectsUrl?: string;
   /** Resolved from cookies in the (app) layout, so the first paint is already correct. */
   sidebar?: SidebarPrefs;

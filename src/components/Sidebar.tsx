@@ -299,7 +299,8 @@ export default function Sidebar({
   // frozen build-time snapshot, and a DB-backed permission change needs to
   // reach this list on every server re-render, not just at build time.
   visibleHrefs: string[];
-  signOutAction: () => Promise<void>;
+  /** Omitted since the SDC Tools shell owns sign-out for the whole suite (2026-08-20) — when absent no sign-out control renders. */
+  signOutAction?: () => Promise<void>;
   // Absolute URL of the SDC Scheduler's Projects page, resolved server-side in
   // the layout (SCHEDULER_BASE_URL). Undefined hides the link rather than
   // rendering a dead one.
@@ -920,6 +921,7 @@ export default function Sidebar({
           </div>
           <div className={collapsed ? "contents" : "min-w-0 flex-1"}>
             <p className={collapsed ? "sr-only" : "truncate text-note text-[#C3D1E0]"}>{userEmail}</p>
+            {signOutAction && (
             <form action={signOutAction} className={collapsed ? "w-full" : undefined}>
               <button
                 onClick={(e) => {
@@ -946,6 +948,7 @@ export default function Sidebar({
                 <span className={collapsed ? "sr-only" : ""}>Sign out</span>
               </button>
             </form>
+            )}
           </div>
         </div>
 
