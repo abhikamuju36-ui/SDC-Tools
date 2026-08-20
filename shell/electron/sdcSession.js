@@ -73,6 +73,14 @@ async function clearSdcSession() {
   await Promise.all([
     ses.cookies.remove(COOKIE_URL, 'sdc_session'),
     ses.cookies.remove(COOKIE_URL, 'scheduler_token'),
+    // Reports (sdc-etc-planner) isn't one of the 5 apps sharing sdc_session —
+    // it's a real independent NextAuth session, established via the
+    // mint-etc-sso bridge in openAppWindow(). Its cookie is non-secure and
+    // host-only (same host, no Domain attribute), so it lives in this same
+    // cookie jar under COOKIE_URL — clearing it here is what makes "sign out
+    // of SDC Tools" actually sign out of Reports too, not just leave its
+    // separate session running until it expires on its own.
+    ses.cookies.remove(COOKIE_URL, 'authjs.session-token'),
   ]);
   _lastApps = null;
   _lastSchedulerToken = null;
