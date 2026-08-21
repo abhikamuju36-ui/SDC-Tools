@@ -63,8 +63,20 @@ test("a title with no discipline signal at all classifies to Unassigned, not a g
 });
 
 test("every function-code mapping resolves to a real, known department", () => {
-  for (const code of ["111", "312", "313", "411", "412", "413"]) {
+  // 211/311/414 added 2026-08-20 — completed to match sections.ts's own
+  // numbering per the centralized Paylocity mapping audit; they used to fall
+  // through to the keyword heuristic like an unrecognized code would.
+  for (const code of ["111", "211", "311", "312", "313", "411", "412", "413", "414"]) {
     const c = classifyHiringPosition(row({ functionCode: code }));
     assert.notEqual(c.department, null, `function code ${code} should classify to a department`);
   }
+});
+
+test("Function 211 (Mechanical Engineering) and 311 (Controls Engineering) no longer fall through to a keyword guess", () => {
+  assert.deepEqual(classifyHiringPosition(row({ title: "Anything", functionCode: "211" })), { workforceGroup: "engineering", department: "mech" });
+  assert.deepEqual(classifyHiringPosition(row({ title: "Anything", functionCode: "311" })), { workforceGroup: "engineering", department: "controls" });
+});
+
+test("Function 414 (Manufacturing's other raw code) classifies the same as 413", () => {
+  assert.deepEqual(classifyHiringPosition(row({ functionCode: "414" })), classifyHiringPosition(row({ functionCode: "413" })));
 });

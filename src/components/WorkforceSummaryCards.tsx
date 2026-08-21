@@ -76,6 +76,7 @@ export function WorkforceSummaryCards({
   onSelectHiring,
   year,
   onSelectCapacity,
+  expandedGroup,
 }: {
   rows: EmployeeRow[];
   placeholders: SchedulerPlaceholder[];
@@ -91,6 +92,13 @@ export function WorkforceSummaryCards({
   year: number;
   /** Opens the "how was this total built" drill (Level 3, a different question from onSelectGroup/onSelectDepartment's "who"). */
   onSelectCapacity: (target: CapacityDrillTarget) => void;
+  /**
+   * Which card is currently EXPANDED below this grid (2026-08-21) — a group
+   * key, "hiring", or null. Purely the pressed/ringed state of the card that
+   * opened the expansion; these cards render identically either way, since
+   * the overview deliberately stays on screen while a group is open.
+   */
+  expandedGroup?: WorkforceGroupKey | "hiring" | null;
 }) {
   const summaries = useMemo<WorkforceSummary[]>(() => {
     const cards = buildDepartmentCards(rows, placeholders);
@@ -224,11 +232,17 @@ export function WorkforceSummaryCards({
           const groupHiringHours = hasCapacityPolicy ? hiringCapacityHours(groupHiring, year) : 0;
           const groupPlannedHours = groupCurrentHours + groupHiringHours;
           return (
-            <section key={group.key} className="flex flex-col overflow-hidden rounded-xl border border-sdc-border bg-white shadow-sm">
+            <section
+              key={group.key}
+              className={`flex flex-col overflow-hidden rounded-xl border bg-white shadow-sm ${
+                expandedGroup === group.key ? "border-sdc-blue ring-2 ring-sdc-blue/40" : "border-sdc-border"
+              }`}
+            >
               <button
                 type="button"
                 onClick={() => onSelectGroup(group.key)}
-                title={`Show ${group.title}'s departments`}
+                aria-expanded={expandedGroup === group.key}
+                title={expandedGroup === group.key ? `Collapse ${group.title}` : `Show ${group.title}'s departments below`}
                 className={`flex flex-col gap-1 px-4 py-3 text-left motion-interactive hover:brightness-95 ${theme.band} ${theme.onBand}`}
               >
                 <h3 className="text-sm font-bold uppercase tracking-wide">{group.title}</h3>
@@ -307,11 +321,16 @@ export function WorkforceSummaryCards({
         })}
 
         {openPositions > 0 && (
-          <section className="flex flex-col overflow-hidden rounded-xl border border-sdc-border bg-white shadow-sm">
+          <section
+            className={`flex flex-col overflow-hidden rounded-xl border bg-white shadow-sm ${
+              expandedGroup === "hiring" ? "border-sdc-blue ring-2 ring-sdc-blue/40" : "border-sdc-border"
+            }`}
+          >
             <button
               type="button"
               onClick={onSelectHiring}
-              title="Show all open hiring positions"
+              aria-expanded={expandedGroup === "hiring"}
+              title={expandedGroup === "hiring" ? "Collapse hiring positions" : "Show all open hiring positions below"}
               className={`flex flex-col gap-1 px-4 py-3 text-left motion-interactive hover:brightness-95 ${HIRING_THEME.band} ${HIRING_THEME.onBand}`}
             >
               <h3 className="text-sm font-bold uppercase tracking-wide">Hiring Positions</h3>

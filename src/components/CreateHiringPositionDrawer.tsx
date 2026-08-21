@@ -5,7 +5,7 @@ import { BuildReadinessDrawer } from "@/components/build-readiness/BuildReadines
 import { createHiringPosition } from "@/lib/hiring-actions";
 import { WORKFORCE_GROUPS, workforceGroupForCardKey, type WorkforceGroupKey } from "@/lib/employee-workforce-groups";
 import { EMPLOYEE_TEAMS } from "@/lib/employee-teams";
-import { MANUAL_JOB_STATUSES, DEFAULT_MANUAL_JOB_STATUS } from "@/lib/hiring-position-status";
+import { MANUAL_JOB_STATUSES, DEFAULT_MANUAL_JOB_STATUS, isOpenHiringStatus } from "@/lib/hiring-position-status";
 import type { HiringPosition } from "@/lib/hiring-positions";
 
 // The "+ Create Position" drawer (2026-08-19) — same BuildReadinessDrawer
@@ -80,12 +80,16 @@ export function CreateHiringPositionDrawer({
         title: title.trim(),
         status: jobStatus,
         subStatus: null,
-        isOpen: jobStatus === DEFAULT_MANUAL_JOB_STATUS,
+        // Same single rule the server applies -- see the matching comment in
+        // HiringPositionDetailDrawer. A position created as Published counts
+        // as open immediately, exactly like the workbook's Published rows.
+        isOpen: isOpenHiringStatus(jobStatus, null, false),
         source: "manual",
         workforceGroup,
         department: selectedDepartment,
         isManuallyAssigned: true,
         expectedStartDate: startDate,
+        isVisible: true,
         functionDescription: null,
         sectionDescription: null,
         workLocDescription: workLocDescription || null,

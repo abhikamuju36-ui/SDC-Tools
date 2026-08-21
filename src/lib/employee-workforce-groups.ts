@@ -16,6 +16,8 @@ export type WorkforceGroupKey = "engineering" | "shop" | "pm" | "other";
 export type WorkforceGroupDef = {
   key: WorkforceGroupKey;
   title: string;
+  /** Spelled-out name, for the in-place group header only ("PM" the card, "Project Management" the heading above its departments). Defaults to `title`. */
+  longTitle?: string;
   // employee-teams.ts's `schedulerCode` values that belong to this group.
   // "other" has none listed — it is whatever no other group claims.
   teamCodes: string[];
@@ -24,7 +26,7 @@ export type WorkforceGroupDef = {
 export const WORKFORCE_GROUPS: WorkforceGroupDef[] = [
   { key: "engineering", title: "Engineering", teamCodes: ["mech", "controls", "service"] },
   { key: "shop", title: "Shop", teamCodes: ["build", "wire", "mfgops"] },
-  { key: "pm", title: "PM", teamCodes: ["pm"] },
+  { key: "pm", title: "PM", longTitle: "Project Management", teamCodes: ["pm"] },
   { key: "other", title: "Other", teamCodes: [] },
 ];
 
@@ -49,4 +51,14 @@ export function workforceGroupForCardKey(cardKey: string): WorkforceGroupKey {
 
 export function workforceGroupTitle(key: WorkforceGroupKey): string {
   return WORKFORCE_GROUPS.find((g) => g.key === key)?.title ?? "Other";
+}
+
+/**
+ * The group heading shown above its departments once a workforce card is
+ * opened in place. Same string as workforceGroupTitle() for every group but
+ * PM, whose card abbreviation reads oddly as a section heading.
+ */
+export function workforceGroupLongTitle(key: WorkforceGroupKey): string {
+  const def = WORKFORCE_GROUPS.find((g) => g.key === key);
+  return def?.longTitle ?? def?.title ?? "Other";
 }

@@ -33,13 +33,29 @@ export type ClassifiedWorkforce = {
   department: string | null;
 };
 
+// Completed 2026-08-20 against the centralized Paylocity mapping audit, which
+// found this table silently missing Function 211 (Mechanical Engineering),
+// 311 (Controls Engineering) and 414 (Manufacturing's other raw code, aliased
+// to 413 everywhere else) — a position posted under any of the three fell
+// through to the keyword heuristic below instead of the same numbering
+// sections.ts already classifies punches by. General Engineering (515-518)
+// and Engineering "Other" (112/118/119/120) still have no entry: unlike the
+// five above, there is no existing employee-team card for "General
+// Engineering" hiring to land on (see employee-teams.ts's EMPLOYEE_TEAMS —
+// seven delivery teams, none of them that), and inventing one is a workforce-
+// roster decision outside what centralizing the Paylocity HOURS mapping asks
+// for. Those codes keep falling through to the keyword heuristic, same as
+// today, rather than being guessed into the wrong team.
 const FUNCTION_CODE_TEAM: Record<string, string> = {
   "111": "pm",
+  "211": "mech",
+  "311": "controls",
   "312": "controls",
   "313": "controls",
   "411": "build",
   "412": "wire",
   "413": "mfgops",
+  "414": "mfgops",
 };
 
 const KEYWORD_TEAM: { pattern: RegExp; teamCode: string }[] = [

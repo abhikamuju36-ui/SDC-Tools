@@ -1,13 +1,15 @@
 "use client";
 
-import { useMemo } from "react";
+import { useEffect, useMemo, useRef } from "react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { AddEmployeeButton } from "@/components/AddEmployeeButton";
 import type { SchedulerPlaceholder } from "@/lib/scheduler-db";
 import { DISCIPLINE_LABEL } from "@/lib/disciplines";
-import { buildDepartmentCards, type DepartmentCard } from "@/lib/employee-department-cards";
+import { buildDepartmentCards } from "@/lib/employee-department-cards";
 import { DASH, type EmployeeRow } from "@/lib/employee-row";
 import type { HiringPosition } from "@/lib/hiring-positions";
+import { HiringStatusPill } from "@/components/HiringStatusPill";
+import { hiringStatusStyle } from "@/lib/hiring-position-status";
 import { employeeCapacityHours, hiringCapacityHours } from "@/lib/workforce-capacity";
 import { hasYearPolicy } from "@/lib/workforce-capacity-policy";
 import { hours as fmtHours } from "@/components/ui/format";
@@ -60,19 +62,26 @@ export function EmployeesCards({
   placeholders,
   canAddEmployees,
   onSelectEmployee,
-  onSelectDepartment,
+  focusDepartment,
   hiringPositions,
   onSelectHiringPosition,
   year,
   onSelectCapacity,
+  canAssignHiring,
 }: {
   rows: EmployeeRow[];
   placeholders: SchedulerPlaceholder[];
   canAddEmployees: boolean;
   /** Opens the Level 3 employee-detail drawer. Omitted entirely, the roster renders read-only exactly as before. */
   onSelectEmployee?: (row: EmployeeRow) => void;
-  /** Drills from "all of this workforce group's departments" down to just this one card's department — see WorkforceSummaryCards.tsx for the level above this. */
-  onSelectDepartment?: (card: DepartmentCard) => void;
+  /**
+   * A DepartmentCard key to scroll to and briefly ring on mount (2026-08-21) —
+   * how clicking a department line item on the overview card lands you on that
+   * department. It scopes NOTHING: every department of the open workforce group
+   * stays rendered, which is the whole point of removing the old
+   * one-department-only third level.
+   */
+  focusDepartment?: string | null;
   /** Open positions (2026-08-19) — matched to a card by `position.department === card.key`. Omitted entirely, cards render exactly as before hiring existed. */
   hiringPositions?: HiringPosition[];
   onSelectHiringPosition?: (position: HiringPosition) => void;
@@ -80,6 +89,8 @@ export function EmployeesCards({
   year?: number;
   /** Opens the "how was this total built" drill. Omitted entirely along with `year`, capacity hours don't render. */
   onSelectCapacity?: (target: CapacityDrillTarget) => void;
+  /** Whether the viewer can see positions hidden via HiringVisibilityControl. Omitted/false hides them from the "Hiring" list below — never from cardHiring.length/hiringCapacityHours, which must stay driven by isOpen regardless of visibility. */
+  canAssignHiring?: boolean;
 }) {
   const cards = useMemo(() => buildDepartmentCards(rows, placeholders), [rows, placeholders]);
   const hiringByDepartment = useMemo(() => {
@@ -92,6 +103,15 @@ export function EmployeesCards({
     }
     return m;
   }, [hiringPositions]);
+
+  // Scroll-to-department, replacing the old "narrow the view to this one
+  // department" drill. The ring is a plain CSS animation on the section, so
+  // nothing about WHICH cards render depends on this ref.
+  const focusRef = useRef<HTMLElement | null>(null);
+  useEffect(() => {
+    if (!focusDepartment) return;
+    focusRef.current?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }, [focusDepartment]);
 
   const total = cards.reduce((s, c) => s + c.people.length, 0);
 
@@ -111,22 +131,16 @@ export function EmployeesCards({
         const cardHiringHours = hasCapacityPolicy ? hiringCapacityHours(cardHiring, year) : 0;
         const cardPlannedHours = cardCurrentHours + cardHiringHours;
         return (
-          <section key={card.key} className="mb-4 flex flex-col overflow-hidden rounded-xl border border-sdc-border bg-white shadow-sm break-inside-avoid-column">
-            {onSelectDepartment ? (
-              <button
-                type="button"
-                onClick={() => onSelectDepartment(card)}
-                title={`Show only ${card.title}`}
-                className="px-3.5 py-2.5 text-left motion-interactive hover:brightness-95"
-                style={{ background: card.colors.bg, color: card.colors.text }}
-              >
-                <h3 className="truncate text-sm font-bold">{card.title}</h3>
-              </button>
-            ) : (
-              <header className="px-3.5 py-2.5" style={{ background: card.colors.bg, color: card.colors.text }}>
-                <h3 className="truncate text-sm font-bold">{card.title}</h3>
-              </header>
-            )}
+          <section
+            key={card.key}
+            ref={card.key === focusDepartment ? focusRef : undefined}
+            className={`mb-4 flex flex-col overflow-hidden rounded-xl border bg-white shadow-sm break-inside-avoid-column ${
+              card.key === focusDepartment ? "border-sdc-blue ring-2 ring-sdc-blue/40" : "border-sdc-border"
+            }`}
+          >
+            <header className="px-3.5 py-2.5" style={{ background: card.colors.bg, color: card.colors.text }}>
+              <h3 className="truncate text-sm font-bold">{card.title}</h3>
+            </header>
             <div className="flex items-baseline gap-1.5 border-b border-sdc-border bg-sdc-gray-50 px-3.5 py-1.5 text-xs text-sdc-muted">
               <span className="font-bold tabular-nums text-sdc-navy">{activeCount}</span>
               <span>active</span>
@@ -225,25 +239,44 @@ export function EmployeesCards({
                 own section, never merged into the `<ul>` of real people
                 above — the task's own "do not mix open positions into the
                 actual employee list as if they are employees". */}
-            {cardHiring.length > 0 && (
+            {/* Filtered by isVisible for a non-editor here only — never on
+                cardHiring itself, so cardHiring.length/hiringCapacityHours
+                above (and what onSelectCapacity hands off) keep counting
+                every open position regardless of visibility. */}
+            {cardHiring.filter((p) => p.isVisible || canAssignHiring).length > 0 && (
               <>
                 <div className="border-t border-dashed border-sdc-border px-3 pt-1.5 text-label font-bold uppercase tracking-wider text-sdc-green-text">
                   Hiring
                 </div>
                 <ul className="px-1.5 pb-1">
-                  {cardHiring.map((p) => (
-                    <li key={p.sourceId}>
-                      <button
-                        type="button"
-                        onClick={onSelectHiringPosition ? () => onSelectHiringPosition(p) : undefined}
-                        disabled={!onSelectHiringPosition}
-                        className="w-full truncate rounded-md border-l-2 border-sdc-green px-2 py-1.5 text-left text-sm text-sdc-navy hover:bg-sdc-blue-light/40 disabled:cursor-default disabled:hover:bg-transparent"
-                        title={p.title}
-                      >
-                        {p.title}
-                      </button>
-                    </li>
-                  ))}
+                  {cardHiring
+                    .filter((p) => p.isVisible || canAssignHiring)
+                    .map((p) => {
+                      // Same three indicators as HiringPositionsList's rows,
+                      // from the same central lookup -- the left accent was
+                      // hardcoded green here before, which read as "Open"
+                      // whatever the real status was.
+                      const style = hiringStatusStyle(p.status);
+                      return (
+                        <li key={p.sourceId}>
+                          <button
+                            type="button"
+                            onClick={onSelectHiringPosition ? () => onSelectHiringPosition(p) : undefined}
+                            disabled={!onSelectHiringPosition}
+                            className={`flex w-full items-center gap-1.5 rounded-md border-l-2 px-2 py-1.5 text-left text-sm text-sdc-navy hover:brightness-95 disabled:cursor-default ${style.accent} ${style.tint}`}
+                            title={p.title}
+                          >
+                            <span className="min-w-0 flex-1 truncate">{p.title}</span>
+                            <HiringStatusPill status={p.status} />
+                            {!p.isVisible && (
+                              <span className="shrink-0 rounded bg-sdc-yellow-bg px-1.5 py-0.5 text-micro font-bold uppercase tracking-wide text-sdc-yellow-text">
+                                Hidden
+                              </span>
+                            )}
+                          </button>
+                        </li>
+                      );
+                    })}
                 </ul>
               </>
             )}

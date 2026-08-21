@@ -31,14 +31,99 @@ export function isOpenHiringStatus(status: string, subStatus: string | null, arc
 
 // The fixed vocabulary for a position CREATED in SDC Reports — unlike the
 // workbook, nothing external dictates these, so they're validated at write
-// time rather than merely displayed. "Open" is the only one isOpenHiringStatus
-// above treats as open; the other three all match a CLOSED_STATUS_KEYWORDS
-// entry by construction, so they fall out of hiring/planned-headcount totals
-// the same way a Filled/Cancelled workbook row would, with no special-casing.
-export const MANUAL_JOB_STATUSES = ["Open", "On Hold", "Filled", "Cancelled"] as const;
+// time rather than merely displayed. Four statuses (2026-08-21, by request):
+// "Cancelled" was dropped and "Published" added, so this list and the
+// workbook's own observed vocabulary are finally the same four words.
+//
+// Open-ness is NOT re-decided here: isOpenHiringStatus above stays the one
+// rule, and it already reads Open/Published as open and On Hold/Filled as
+// closed (the latter two match a CLOSED_STATUS_KEYWORDS entry). Adding
+// "Published" therefore changes nothing about hiring hours or planned
+// headcount — a manually-created Published position counts exactly like the
+// workbook's Published rows always have.
+export const MANUAL_JOB_STATUSES = ["Open", "Published", "On Hold", "Filled"] as const;
 export type ManualJobStatus = (typeof MANUAL_JOB_STATUSES)[number];
 export const DEFAULT_MANUAL_JOB_STATUS: ManualJobStatus = "Open";
 
 export function isManualJobStatus(value: string): value is ManualJobStatus {
   return (MANUAL_JOB_STATUSES as readonly string[]).includes(value);
+}
+
+/**
+ * How a status LOOKS, everywhere a hiring position is rendered (2026-08-21):
+ * the row's left accent, its background tint, and the pill's own dot/text.
+ * One entry per status so the table badge, the row styling, the filter and
+ * both forms can never drift into three different ideas of what "On Hold"
+ * looks like — the request's "same centralized status configuration".
+ *
+ * Every colour is an EXISTING palette token (globals.css) rather than a new
+ * hue: green = Open, blue = Published, the palette's yellow = the requested
+ * amber for On Hold, gray = Filled. Tints are those same tokens at low alpha,
+ * so a tinted row is a wash of its status colour and never a solid band.
+ */
+export type HiringStatusStyle = {
+  /** Pill text. For an off-vocabulary workbook status this is the raw text itself, never a guessed mapping. */
+  label: string;
+  /** Row background tint — deliberately very light. */
+  tint: string;
+  /** Thin left accent border colour. */
+  accent: string;
+  /** Pill background + text. */
+  pill: string;
+  /** The pill's leading dot. */
+  dot: string;
+};
+
+const STATUS_STYLES: Record<ManualJobStatus, HiringStatusStyle> = {
+  Open: {
+    label: "Open",
+    tint: "bg-sdc-green-bg/40",
+    accent: "border-l-sdc-green",
+    pill: "bg-sdc-green-bg text-sdc-green-text",
+    dot: "bg-sdc-green",
+  },
+  Published: {
+    label: "Published",
+    tint: "bg-sdc-blue-light/40",
+    accent: "border-l-sdc-blue",
+    pill: "bg-sdc-blue-light text-sdc-blue-dark",
+    dot: "bg-sdc-blue",
+  },
+  "On Hold": {
+    label: "On Hold",
+    tint: "bg-sdc-yellow-bg/45",
+    accent: "border-l-sdc-yellow",
+    pill: "bg-sdc-yellow-bg text-sdc-yellow-text",
+    dot: "bg-sdc-yellow",
+  },
+  Filled: {
+    label: "Filled",
+    tint: "bg-sdc-gray-50",
+    accent: "border-l-sdc-border",
+    pill: "bg-sdc-gray-100 text-sdc-muted",
+    dot: "bg-sdc-muted",
+  },
+};
+
+/**
+ * Which of the four statuses a raw status string IS, or null for anything
+ * else. Case/whitespace-insensitive because the workbook column is free
+ * text; deliberately NOT a fuzzy closed-status match — a workbook row still
+ * reading "Cancelled" or "Withdrawn" must not be relabelled as "Filled", so
+ * it resolves to null and hiringStatusStyle() below shows its own real text.
+ */
+export function manualJobStatusOf(raw: string): ManualJobStatus | null {
+  const v = raw.trim().toLowerCase();
+  return MANUAL_JOB_STATUSES.find((s) => s.toLowerCase() === v) ?? null;
+}
+
+/**
+ * The one status→appearance lookup. An off-vocabulary status keeps its own
+ * text and renders in the neutral treatment, so it stays readable and
+ * obviously not one of the four rather than being silently coerced into one.
+ */
+export function hiringStatusStyle(raw: string): HiringStatusStyle {
+  const key = manualJobStatusOf(raw);
+  if (key) return STATUS_STYLES[key];
+  return { ...STATUS_STYLES.Filled, label: raw.trim() || "Unknown" };
 }

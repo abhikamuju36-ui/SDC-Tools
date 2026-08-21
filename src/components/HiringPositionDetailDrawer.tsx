@@ -7,7 +7,8 @@ import { HiringExpectedStartDateControl } from "@/components/HiringExpectedStart
 import { workforceGroupForCardKey, workforceGroupTitle, WORKFORCE_GROUPS, type WorkforceGroupKey } from "@/lib/employee-workforce-groups";
 import { EMPLOYEE_TEAMS } from "@/lib/employee-teams";
 import { updateHiringPosition } from "@/lib/hiring-actions";
-import { MANUAL_JOB_STATUSES } from "@/lib/hiring-position-status";
+import { MANUAL_JOB_STATUSES, isManualJobStatus, isOpenHiringStatus } from "@/lib/hiring-position-status";
+import { HiringStatusPill } from "@/components/HiringStatusPill";
 import type { HiringPosition } from "@/lib/hiring-positions";
 
 // Level 3 for a hiring position (2026-08-19). Two modes, by `position.source`:
@@ -54,6 +55,14 @@ function ManualEditForm({
   const [error, setError] = useState<string | null>(null);
   const [pending, startTransition] = useTransition();
 
+  // The four statuses, plus this position's OWN status if it somehow sits
+  // outside them (a legacy value written before the vocabulary changed) --
+  // otherwise a <select> with no matching option would silently rewrite it to
+  // the first entry on the next save.
+  const statusOptions = isManualJobStatus(position.status)
+    ? (MANUAL_JOB_STATUSES as readonly string[])
+    : [...MANUAL_JOB_STATUSES, position.status];
+
   const departmentsInGroup = EMPLOYEE_TEAMS.filter((t) => workforceGroupForCardKey(t.schedulerCode) === workforceGroup);
   const selectedDepartment = departmentsInGroup.some((t) => t.schedulerCode === department) ? department : departmentsInGroup[0]?.schedulerCode ?? "";
 
@@ -79,7 +88,13 @@ function ManualEditForm({
       onUpdated(position.sourceId, {
         title: title.trim(),
         status: jobStatus,
-        isOpen: jobStatus === "Open",
+        // isOpenHiringStatus is the ONE rule for open-ness (Open/Published
+        // open, On Hold/Filled closed). Mirroring it here rather than
+        // re-testing for "Open" keeps this optimistic update identical to what
+        // the server just stored -- with the old literal check, saving a
+        // position as Published would have dropped it out of the hiring
+        // counts on screen until the next full page load.
+        isOpen: isOpenHiringStatus(jobStatus, position.subStatus, false),
         workforceGroup,
         department: selectedDepartment,
         expectedStartDate: startDate,
@@ -97,7 +112,7 @@ function ManualEditForm({
       <label className="flex flex-col gap-1">
         <span className={LABEL}>Job Status *</span>
         <select value={jobStatus} onChange={(e) => setJobStatus(e.target.value)} className={INPUT}>
-          {MANUAL_JOB_STATUSES.map((s) => (
+          {statusOptions.map((s) => (
             <option key={s} value={s}>
               {s}
             </option>
@@ -210,7 +225,15 @@ export function HiringPositionDetailDrawer({
               />
             </div>
           )}
-          <Field label="Job Status" value={position.subStatus && position.subStatus !== "None" ? `${position.status} · ${position.subStatus}` : position.status} />
+          {/* The pill, not plain text -- same colors as the row this drawer
+              was opened from (HiringStatusPill / hiring-position-status.ts). */}
+          <div className="flex items-center justify-between gap-3 border-b border-sdc-border-soft px-4 py-2.5">
+            <span className="text-xs font-semibold uppercase tracking-wide text-sdc-muted">Job Status</span>
+            <span className="flex items-center gap-2">
+              <HiringStatusPill status={position.status} />
+              {position.subStatus && position.subStatus !== "None" && <span className="text-note text-sdc-muted">{position.subStatus}</span>}
+            </span>
+          </div>
           {position.functionDescription && <Field label="Function" value={position.functionDescription} />}
           {position.sectionDescription && <Field label="Section" value={position.sectionDescription} />}
           {position.workLocDescription && <Field label="Work Location" value={position.workLocDescription} />}

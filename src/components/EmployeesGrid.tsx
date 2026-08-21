@@ -11,7 +11,7 @@ import { CapacityDrillDrawer } from "@/components/CapacityDrillDrawer";
 import { DASH, type EmployeeRow } from "@/lib/employee-row";
 import { resolveEmployeeGroup } from "@/lib/employee-card-theme";
 import { resolvePlaceholderGroup, type DepartmentCard } from "@/lib/employee-department-cards";
-import { workforceGroupForCardKey, workforceGroupTitle, type WorkforceGroupKey } from "@/lib/employee-workforce-groups";
+import { workforceGroupForCardKey, workforceGroupLongTitle, type WorkforceGroupKey } from "@/lib/employee-workforce-groups";
 import type { SchedulerPlaceholder } from "@/lib/scheduler-db";
 import type { HiringPosition } from "@/lib/hiring-positions";
 import { MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
@@ -78,41 +78,62 @@ function DepartmentMenu({
   );
 }
 
-// The page-level "Employees > Engineering > Mechanical Engineering" (or
-// "Employees > Hiring Positions") trail (2026-08-19) — separate from
-// EmployeeDetailDrawer/HiringPositionDetailDrawer's own breadcrumb prop,
-// which is each DRAWER's internal one-entry title bar, not this page nav.
-// Every segment but the last is a real button (jump back to that level); the
-// last is the current level, bold and non-interactive — same convention
-// BuildReadinessDrawer's own breadcrumb already uses.
-function DrillBreadcrumb({
-  trail,
-  onJump,
+// The heading above an EXPANDED workforce group (2026-08-21) — the overview
+// cards themselves stay rendered above it: the group's name, its own roll-up, and a
+// single-action way back. Counts are derived from the SAME already-scoped
+// rows/positions the department cards below render, so this line can never
+// disagree with the sum of the cards under it.
+function GroupHeader({
+  title,
+  activeCount,
+  hiringCount,
+  departmentCount,
+  onCollapse,
 }: {
-  /** Root ("Employees") is implicit and always first; this is everything AFTER it. */
-  trail: string[];
-  onJump: (index: number) => void;
+  title: string;
+  activeCount: number;
+  hiringCount: number;
+  departmentCount: number;
+  onCollapse: () => void;
 }) {
-  const segments = ["Employees", ...trail];
   return (
-    <nav aria-label="Breadcrumb" className="mb-3 flex items-center gap-1.5 text-sm">
-      {segments.map((label, i) => (
-        <span key={i} className="flex items-center gap-1.5">
-          {i > 0 && (
-            <span className="text-sdc-gray-300" aria-hidden>
-              /
-            </span>
+    <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sdc-border bg-sdc-gray-50 px-4 py-2.5">
+      <div>
+        <h2 className="text-sm font-bold uppercase tracking-wide text-sdc-navy">{title}</h2>
+        <div className="flex items-baseline gap-1.5 text-xs text-sdc-muted">
+          {activeCount > 0 && (
+            <>
+              <span className="font-bold tabular-nums text-sdc-navy">{activeCount}</span>
+              <span>active</span>
+            </>
           )}
-          {i === segments.length - 1 ? (
-            <span className="font-semibold text-sdc-navy">{label}</span>
-          ) : (
-            <button type="button" onClick={() => onJump(i)} className="font-medium text-sdc-blue hover:underline">
-              {label}
-            </button>
+          {hiringCount > 0 && (
+            <>
+              {activeCount > 0 && <span className="text-sdc-gray-400">·</span>}
+              <span className="font-bold tabular-nums text-sdc-green-text">{hiringCount}</span>
+              <span>hiring</span>
+              {activeCount > 0 && (
+                <>
+                  <span className="text-sdc-gray-400">·</span>
+                  <span className="font-bold tabular-nums text-sdc-navy">{activeCount + hiringCount}</span>
+                  <span>planned</span>
+                </>
+              )}
+            </>
           )}
-        </span>
-      ))}
-    </nav>
+          {departmentCount > 1 && (
+            <>
+              <span className="text-sdc-gray-400">·</span>
+              <span className="font-bold tabular-nums text-sdc-navy">{departmentCount}</span>
+              <span>department{departmentCount === 1 ? "" : "s"}</span>
+            </>
+          )}
+        </div>
+      </div>
+      <button type="button" onClick={onCollapse} className="text-sm font-medium text-sdc-blue hover:underline" title="Collapse — the overview cards above stay where they are">
+        Collapse ✕
+      </button>
+    </div>
   );
 }
 
@@ -153,8 +174,13 @@ export function EmployeesGrid({
   // drawer never resets a filter — there is nothing here that unmounts on
   // navigation, only state that changes.
   const [group, setGroup] = useState<WorkforceGroupKey | null>(null);
-  const [departmentKey, setDepartmentKey] = useState<string | null>(null);
-  const [departmentTitle, setDepartmentTitle] = useState<string | null>(null);
+  // NOT a scope (2026-08-21) — purely which department card to scroll to and
+  // ring once a group opens. The old third level (Overview > Engineering >
+  // Controls Engineering) narrowed the view to one department, which meant
+  // seeing Controls Engineering's people cost two clicks and hid its siblings;
+  // now every department of the open group is on screen at once and this only
+  // says where to land.
+  const [focusDepartment, setFocusDepartment] = useState<string | null>(null);
   const [showHiring, setShowHiring] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null);
   const [selectedHiringPosition, setSelectedHiringPosition] = useState<HiringPosition | null>(null);
@@ -162,7 +188,7 @@ export function EmployeesGrid({
   // "How was this capacity-hours total built" -- a different question ("which
   // employees/positions, what proration") from the group/department drills
   // above ("who"), so it's its own piece of overlay state rather than reusing
-  // group/departmentKey.
+  // group.
   const [capacityDrill, setCapacityDrill] = useState<{ title: string; subtitle?: string; employees: EmployeeRow[]; hiringPositions: HiringPosition[] } | null>(null);
 
   // Local, optimistically-updated copy of the server-loaded positions — a
@@ -248,10 +274,9 @@ export function EmployeesGrid({
     return visible.filter((r) => {
       const card = resolveEmployeeGroup(r);
       if (!card) return false;
-      if (departmentKey) return card.key === departmentKey;
       return workforceGroupForCardKey(card.key) === group;
     });
-  }, [visible, group, departmentKey]);
+  }, [visible, group]);
 
   // Placeholders aren't employees, so the toolbar's filters never apply to
   // them — but the DRILL scope still must, or a Shop placeholder would leak
@@ -263,49 +288,44 @@ export function EmployeesGrid({
     return placeholders.filter((p) => {
       const card = resolvePlaceholderGroup(p);
       if (!card) return false;
-      if (departmentKey) return card.key === departmentKey;
       return workforceGroupForCardKey(card.key) === group;
     });
-  }, [placeholders, group, departmentKey]);
+  }, [placeholders, group]);
 
-  // Same scoping rule applied to hiring positions, so Engineering's Level 2
+  // Same scoping rule applied to hiring positions, so Engineering's opened
   // view shows only Engineering's own open positions, not the whole company's.
   const scopedHiring = useMemo(() => {
     if (!group) return [];
-    return openHiring.filter((p) => (departmentKey ? p.department === departmentKey : p.workforceGroup === group));
-  }, [openHiring, group, departmentKey]);
+    return openHiring.filter((p) => p.workforceGroup === group);
+  }, [openHiring, group]);
 
+  // Clicking the open card again collapses it — the card IS the toggle, so
+  // "get back to just the overview" is the same one click that opened it.
   function openGroup(key: WorkforceGroupKey) {
     setShowHiring(false);
-    setGroup(key);
-    setDepartmentKey(null);
-    setDepartmentTitle(null);
+    setFocusDepartment(null);
+    setGroup((prev) => (prev === key ? null : key));
   }
 
+  // Clicking a department line item on an overview card opens that
+  // department's WHOLE workforce group and lands on the department — one
+  // action, one level, siblings still visible.
   function openDepartment(groupKey: WorkforceGroupKey, card: DepartmentCard) {
     setShowHiring(false);
     setGroup(groupKey);
-    setDepartmentKey(card.key);
-    setDepartmentTitle(card.title);
+    setFocusDepartment(card.key);
   }
 
   function openHiringView() {
     setGroup(null);
-    setDepartmentKey(null);
-    setDepartmentTitle(null);
-    setShowHiring(true);
+    setFocusDepartment(null);
+    setShowHiring((prev) => !prev);
   }
 
-  function backToRoot() {
+  function collapse() {
     setGroup(null);
-    setDepartmentKey(null);
-    setDepartmentTitle(null);
+    setFocusDepartment(null);
     setShowHiring(false);
-  }
-
-  function backToGroup() {
-    setDepartmentKey(null);
-    setDepartmentTitle(null);
   }
 
   function selectEmployee(row: EmployeeRow) {
@@ -320,15 +340,6 @@ export function EmployeesGrid({
 
   const selectedEmployeeGroup = selectedEmployee ? resolveEmployeeGroup(selectedEmployee) : null;
 
-  const breadcrumbTrail = showHiring ? ["Hiring Positions"] : group ? (departmentTitle ? [workforceGroupTitle(group), departmentTitle] : [workforceGroupTitle(group)]) : [];
-
-  function jumpTo(index: number) {
-    if (index === 0) {
-      backToRoot();
-    } else if (index === 1 && group) {
-      backToGroup();
-    }
-  }
 
   return (
     <>
@@ -375,47 +386,66 @@ export function EmployeesGrid({
         )}
       </div>
 
-      {breadcrumbTrail.length > 0 && <DrillBreadcrumb trail={breadcrumbTrail} onJump={jumpTo} />}
-
       {hiringError && (
         <p className="mb-3 rounded border border-sdc-yellow bg-sdc-yellow-bg px-2 py-1 text-note text-sdc-yellow-text">
           Couldn&apos;t read the hiring positions workbook: {hiringError}
         </p>
       )}
 
+      <WorkforceSummaryCards
+        rows={visible}
+        placeholders={placeholders}
+        hiringPositions={openHiring}
+        onSelectGroup={openGroup}
+        onSelectDepartment={openDepartment}
+        onSelectHiring={openHiringView}
+        year={year}
+        onSelectCapacity={setCapacityDrill}
+        expandedGroup={showHiring ? "hiring" : group}
+      />
+
+      {/* The expansion (2026-08-21) — rendered UNDER the overview cards, which
+          stay on screen, rather than replacing them. Clicking Engineering used
+          to swap the whole area out and push you into an "Overview /
+          Engineering / Controls Engineering" trail; now every department of
+          the clicked group, with its people, opens right here in the same
+          Employees tab and the other groups are still one click away. */}
       {showHiring ? (
-        <HiringPositionsList
-          positions={hiring}
-          canAssign={canAssignHiring}
-          canCreate={canAssignHiring}
-          onSelect={selectHiringPosition}
-          onAssigned={applyAssignment}
-          onCreate={() => setCreatingHiringPosition(true)}
-        />
-      ) : !group ? (
-        <WorkforceSummaryCards
-          rows={visible}
-          placeholders={placeholders}
-          hiringPositions={openHiring}
-          onSelectGroup={openGroup}
-          onSelectDepartment={openDepartment}
-          onSelectHiring={openHiringView}
-          year={year}
-          onSelectCapacity={setCapacityDrill}
-        />
-      ) : (
-        <EmployeesCards
-          rows={scopedRows}
-          placeholders={scopedPlaceholders}
-          canAddEmployees={canAddEmployees}
-          onSelectEmployee={selectEmployee}
-          onSelectDepartment={departmentKey ? undefined : (card) => openDepartment(group, card)}
-          hiringPositions={scopedHiring}
-          onSelectHiringPosition={selectHiringPosition}
-          year={year}
-          onSelectCapacity={setCapacityDrill}
-        />
-      )}
+        <div className="mt-4">
+          <GroupHeader title="Hiring Positions" activeCount={0} hiringCount={openHiring.length} departmentCount={0} onCollapse={collapse} />
+          <HiringPositionsList
+            positions={hiring}
+            canAssign={canAssignHiring}
+            canCreate={canAssignHiring}
+            onSelect={selectHiringPosition}
+            onAssigned={applyAssignment}
+            onVisibilityChanged={(sourceId, isVisible) => applyHiringUpdate(sourceId, { isVisible })}
+            onCreate={() => setCreatingHiringPosition(true)}
+          />
+        </div>
+      ) : group ? (
+        <div className="mt-4">
+          <GroupHeader
+            title={workforceGroupLongTitle(group)}
+            activeCount={scopedRows.filter((r) => r.active).length}
+            hiringCount={scopedHiring.length}
+            departmentCount={new Set(scopedRows.map((r) => resolveEmployeeGroup(r)?.key).filter(Boolean)).size}
+            onCollapse={collapse}
+          />
+          <EmployeesCards
+            rows={scopedRows}
+            placeholders={scopedPlaceholders}
+            canAddEmployees={canAddEmployees}
+            onSelectEmployee={selectEmployee}
+            focusDepartment={focusDepartment}
+            hiringPositions={scopedHiring}
+            onSelectHiringPosition={selectHiringPosition}
+            year={year}
+            onSelectCapacity={setCapacityDrill}
+            canAssignHiring={canAssignHiring}
+          />
+        </div>
+      ) : null}
 
       {selectedEmployee && (
         <EmployeeDetailDrawer
@@ -447,6 +477,7 @@ export function EmployeesGrid({
           employees={capacityDrill.employees}
           hiringPositions={capacityDrill.hiringPositions}
           year={year}
+          canAssignHiring={canAssignHiring}
           onClose={() => setCapacityDrill(null)}
         />
       )}

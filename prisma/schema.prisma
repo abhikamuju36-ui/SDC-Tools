@@ -1033,6 +1033,11 @@ model HiringPositionAssignment {
   // department -- see setHiringExpectedStartDate's own comment on why its
   // upsert must not touch those two columns.
   expectedStartDate DateTime? @db.Date
+  // Display-only — never affects Open Positions/Planned Headcount/Hiring
+  // Capacity Hours, which stay driven entirely by Job Status (isOpen). See
+  // redactHiddenPositions in hiring-positions.ts for how a hidden position's
+  // identity (not its contribution to those totals) is kept from non-editors.
+  isVisible        Boolean  @default(true)
   updatedByEmail   String?  @db.VarChar(191)
   updatedAt        DateTime @updatedAt
   createdAt        DateTime @default(now())
@@ -1078,6 +1083,10 @@ model HiringPositionCreated {
   // Prorates this position's Hiring Capacity hours (workforce-capacity.ts) --
   // NULL means "unknown", which counts as full-year, not zero.
   expectedStartDate  DateTime? @db.Date
+  // Display-only — see HiringPositionAssignment.isVisible's comment above.
+  // Toggled only via setCreatedHiringPositionVisibility, never bundled into
+  // the general edit-position write path (updateCreatedHiringPosition).
+  isVisible          Boolean  @default(true)
   createdByEmail     String?  @db.VarChar(191)
   updatedByEmail     String?  @db.VarChar(191)
   createdAt          DateTime @default(now())

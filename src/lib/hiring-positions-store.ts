@@ -14,20 +14,21 @@ export type HiringAssignmentRow = {
   workforceGroup: string | null;
   department: string | null;
   expectedStartDate: Date | null;
+  isVisible: boolean;
   updatedByEmail: string | null;
   updatedAt: Date;
 };
 
 export async function getHiringAssignments(): Promise<HiringAssignmentRow[]> {
   return prisma.$queryRaw<HiringAssignmentRow[]>`
-    SELECT positionSourceId, workforceGroup, department, expectedStartDate, updatedByEmail, updatedAt
+    SELECT positionSourceId, workforceGroup, department, expectedStartDate, isVisible, updatedByEmail, updatedAt
       FROM HiringPositionAssignment
   `;
 }
 
 export async function getHiringAssignment(positionSourceId: string): Promise<HiringAssignmentRow | null> {
   const rows = await prisma.$queryRaw<HiringAssignmentRow[]>`
-    SELECT positionSourceId, workforceGroup, department, expectedStartDate, updatedByEmail, updatedAt
+    SELECT positionSourceId, workforceGroup, department, expectedStartDate, isVisible, updatedByEmail, updatedAt
       FROM HiringPositionAssignment
      WHERE positionSourceId = ${positionSourceId}
      LIMIT 1
@@ -89,6 +90,41 @@ export async function setHiringExpectedStartDate(
   `;
 }
 
+/**
+ * Sets the display-visibility overlay for a workbook-sourced position --
+ * independent of setHiringAssignment/setHiringExpectedStartDate above (same
+ * reason: the UPDATE clause here lists only isVisible, never workforceGroup/
+ * department/expectedStartDate, so none of those are ever touched by this
+ * call, and vice versa).
+ *
+ * `currentWorkforceGroup`/`currentDepartment`/`currentExpectedStartDate`
+ * matter only for the INSERT branch, same as setHiringExpectedStartDate's own
+ * comment explains -- without them, a position with no HiringPositionAssignment
+ * row yet would have its group/department/date silently blanked the moment
+ * someone hides or shows it for the first time. The caller
+ * (setHiringPositionVisibility in hiring-actions.ts) passes the position's
+ * CURRENT effective values for all three so this call changes nothing except
+ * visibility.
+ *
+ * Visibility is display-only -- see HiringPositionAssignment.isVisible's
+ * comment in schema.prisma. It must never be read by anything that computes
+ * Open Positions/Planned Headcount/Hiring Capacity Hours.
+ */
+export async function setHiringPositionVisibility(
+  positionSourceId: string,
+  isVisible: boolean,
+  currentWorkforceGroup: string | null,
+  currentDepartment: string | null,
+  currentExpectedStartDate: Date | null,
+  actorEmail: string | null,
+): Promise<void> {
+  await prisma.$executeRaw`
+    INSERT INTO HiringPositionAssignment (positionSourceId, workforceGroup, department, expectedStartDate, isVisible, updatedByEmail, updatedAt, createdAt)
+    VALUES (${positionSourceId}, ${currentWorkforceGroup}, ${currentDepartment}, ${currentExpectedStartDate}, ${isVisible}, ${actorEmail}, NOW(3), NOW(3))
+    ON DUPLICATE KEY UPDATE isVisible = ${isVisible}, updatedByEmail = ${actorEmail}, updatedAt = NOW(3)
+  `;
+}
+
 // ── Positions created directly in SDC Reports (2026-08-19) ─────────────────
 //
 // A position's own authoritative row (see the model's comment in
@@ -106,6 +142,7 @@ export type CreatedHiringPositionRow = {
   remote: boolean;
   internal: boolean;
   expectedStartDate: Date | null;
+  isVisible: boolean;
   createdByEmail: string | null;
   updatedByEmail: string | null;
   createdAt: Date;
@@ -114,7 +151,7 @@ export type CreatedHiringPositionRow = {
 
 export async function getCreatedHiringPositions(): Promise<CreatedHiringPositionRow[]> {
   return prisma.$queryRaw<CreatedHiringPositionRow[]>`
-    SELECT id, title, jobStatus, workforceGroup, department, workLocDescription, remote, internal, expectedStartDate, createdByEmail, updatedByEmail, createdAt, updatedAt
+    SELECT id, title, jobStatus, workforceGroup, department, workLocDescription, remote, internal, expectedStartDate, isVisible, createdByEmail, updatedByEmail, createdAt, updatedAt
       FROM HiringPositionCreated
      ORDER BY createdAt DESC
   `;
@@ -122,7 +159,7 @@ export async function getCreatedHiringPositions(): Promise<CreatedHiringPosition
 
 export async function getCreatedHiringPositionById(id: number): Promise<CreatedHiringPositionRow | null> {
   const rows = await prisma.$queryRaw<CreatedHiringPositionRow[]>`
-    SELECT id, title, jobStatus, workforceGroup, department, workLocDescription, remote, internal, expectedStartDate, createdByEmail, updatedByEmail, createdAt, updatedAt
+    SELECT id, title, jobStatus, workforceGroup, department, workLocDescription, remote, internal, expectedStartDate, isVisible, createdByEmail, updatedByEmail, createdAt, updatedAt
       FROM HiringPositionCreated
      WHERE id = ${id}
      LIMIT 1
@@ -156,7 +193,7 @@ export async function insertCreatedHiringPosition(fields: CreateHiringPositionFi
         (${fields.title}, ${fields.jobStatus}, ${fields.workforceGroup}, ${fields.department}, ${fields.workLocDescription}, ${fields.remote}, ${fields.internal}, ${fields.expectedStartDate}, ${fields.actorEmail}, ${fields.actorEmail}, NOW(3), NOW(3))
     `;
     const rows = await tx.$queryRaw<CreatedHiringPositionRow[]>`
-      SELECT id, title, jobStatus, workforceGroup, department, workLocDescription, remote, internal, expectedStartDate, createdByEmail, updatedByEmail, createdAt, updatedAt
+      SELECT id, title, jobStatus, workforceGroup, department, workLocDescription, remote, internal, expectedStartDate, isVisible, createdByEmail, updatedByEmail, createdAt, updatedAt
         FROM HiringPositionCreated
        WHERE id = LAST_INSERT_ID()
     `;
@@ -174,10 +211,29 @@ export type UpdateHiringPositionFields = {
 };
 
 export async function updateCreatedHiringPosition(id: number, fields: UpdateHiringPositionFields): Promise<void> {
+  // Deliberately does NOT include isVisible in this SET clause -- see
+  // updateCreatedHiringPositionVisibility below. Keeping visibility out of
+  // the general edit-position write path means a stale "Edit position" form
+  // save can never accidentally revert a hide/show toggle someone else made.
   await prisma.$executeRaw`
     UPDATE HiringPositionCreated
        SET title = ${fields.title}, jobStatus = ${fields.jobStatus}, workforceGroup = ${fields.workforceGroup},
            department = ${fields.department}, expectedStartDate = ${fields.expectedStartDate}, updatedByEmail = ${fields.actorEmail}, updatedAt = NOW(3)
+     WHERE id = ${id}
+  `;
+}
+
+/**
+ * Sets ONLY the display-visibility flag for a manually-created position --
+ * intentionally a separate, narrow function rather than a field on
+ * updateCreatedHiringPosition/UpdateHiringPositionFields (see that function's
+ * comment). Visibility is display-only -- see
+ * HiringPositionCreated.isVisible's comment in schema.prisma.
+ */
+export async function updateCreatedHiringPositionVisibility(id: number, isVisible: boolean, actorEmail: string | null): Promise<void> {
+  await prisma.$executeRaw`
+    UPDATE HiringPositionCreated
+       SET isVisible = ${isVisible}, updatedByEmail = ${actorEmail}, updatedAt = NOW(3)
      WHERE id = ${id}
   `;
 }

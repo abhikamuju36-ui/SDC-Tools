@@ -11,7 +11,7 @@ import { fetchSchedulerOverlay } from "@/lib/employee-scheduler-overlay";
 import { normalizeName } from "@/lib/sync-scheduler-team";
 import { requirePagePermission } from "@/lib/require-permission";
 import { hasPermission } from "@/lib/permissions";
-import { getHiringPositions } from "@/lib/hiring-positions";
+import { getHiringPositions, redactHiddenPositions } from "@/lib/hiring-positions";
 
 // Team groupings, matching the SDC Scheduler app's team_members.discipline
 // categories. Now a sortable AG Grid column (Community can't do row grouping).
@@ -71,6 +71,12 @@ export default async function EmployeesPage() {
   // independent of the system clock, and leaves a clean seam for a future
   // year-selector.
   const year = new Date().getFullYear();
+  // The one enforcement point for "users without hiring-edit permission
+  // should only see positions currently marked visible" (2026-08-19) — done
+  // here, server-side, before the array ever reaches EmployeesGrid (a client
+  // component), so a hidden position's real title is never even sent to a
+  // non-editor's browser. See redactHiddenPositions' own comment.
+  const hiringPositions = redactHiddenPositions(hiring.positions, canAssignHiring);
 
   return (
     <div className="w-full px-8 py-10 md:px-13 md:py-11">
@@ -79,7 +85,8 @@ export default async function EmployeesPage() {
           <PageTitle className="mb-1">Employees</PageTitle>
           <p className="text-sm text-sdc-gray-600">
             Replaces the Project Planner workbook&apos;s Employees tab. Start at the Engineering / Shop / PM workforce
-            overview, then drill into a department&apos;s card and a person&apos;s own detail. Deactivated employees
+            overview, then open one card to see all of that group&apos;s departments and their people right here — a
+            person&apos;s own detail opens in a side panel. Deactivated employees
             keep all historical hours. Team grouping is shared live with SDC Scheduler&apos;s board — the roster here
             is read-only, maintained through the import button and Scheduler&apos;s own board.
           </p>
@@ -96,7 +103,7 @@ export default async function EmployeesPage() {
           disciplines={DISCIPLINES}
           placeholders={placeholders}
           canAddEmployees={canAddEmployees}
-          hiringPositions={hiring.positions}
+          hiringPositions={hiringPositions}
           hiringError={hiring.error}
           canAssignHiring={canAssignHiring}
           year={year}
