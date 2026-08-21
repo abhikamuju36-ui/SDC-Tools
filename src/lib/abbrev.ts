@@ -10,6 +10,7 @@ const RULES: readonly [RegExp, string][] = [
   [/\bMechanical\b/gi, "Mech"],
   [/\bElectrical\b/gi, "Elec"],
   [/\bManufacturing\b/gi, "Mfg"],
+  [/\bManagement\b/gi, "Mgmt"],
   [/\bGeneral\b/gi, "Gen"],
 ];
 

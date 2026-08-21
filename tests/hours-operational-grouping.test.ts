@@ -5,6 +5,7 @@ import {
   UNDEFINED_LABEL,
   DEPARTMENT_ORDER,
   sectionNumberAndName,
+  rawSectionNumberAndName,
   functionGroupFor,
   taskFor,
   departmentFor,
@@ -15,7 +16,7 @@ import {
   codesInDepartment,
 } from "../src/lib/hours-operational-grouping";
 import { HOURS_IMPORT_CODES } from "../src/lib/sections";
-import { rollupByOperationalTier } from "../src/lib/hours-filters";
+import { rollupByOperationalTier, rollupByRawTier } from "../src/lib/hours-filters";
 
 // The Hours tab's acceptance rule is "sum of grouped hours = Total Hours KPI" for
 // any filter, and "every recognized code appears under the standard group; an
@@ -53,10 +54,12 @@ test("reverse lookups round-trip the forward map — every code appears under it
 
 // ── Department: its own tier, not an alias for Function Group (2026-08-17) ──
 
-test("department splits Section 10's Shop by exact function — Mechanical Build / Electrical Build / Manufacturing Operations", () => {
+test("department splits Section 10's Shop by exact function — Mechanical Build / Electrical Build / Manufacturing", () => {
   assert.equal(departmentFor("10-411"), "Mechanical Build");
   assert.equal(departmentFor("10-412"), "Electrical Build");
-  assert.equal(departmentFor("10-413"), "Manufacturing Operations");
+  // "Manufacturing", not "Manufacturing Operations" (2026-08-20) — the
+  // centralized canonical SECTION name for Function 413/414.
+  assert.equal(departmentFor("10-413"), "Manufacturing");
   // Function Group, by contrast, collapses all three into one "Shop" — the
   // two tiers are deliberately different cuts of the same codes.
   assert.equal(functionGroupFor("10-411"), "Shop");
@@ -74,8 +77,11 @@ test("department combines Section Name and Engineering/Shop for 40/50/70/80/90, 
 });
 
 test("department never produces a raw employee/HR department string", () => {
-  // The exact invalid groups reported in the regression.
-  const invalid = new Set(["Mechanical Build / Manufacturing", "Manufacturing", "Machine Wiring", "Electrical Engineering", "Unassigned", "—"]);
+  // The exact invalid groups reported in the regression. "Manufacturing" alone is
+  // deliberately NOT in this list any more (2026-08-20): it is now the centralized
+  // canonical SECTION name for Function 413/414, not an accidental HR-string leak
+  // — "Mechanical Build / Manufacturing" (the compound HR spelling) still is.
+  const invalid = new Set(["Mechanical Build / Manufacturing", "Machine Wiring", "Electrical Engineering", "Unassigned", "—"]);
   for (const code of HOURS_IMPORT_CODES) {
     assert.ok(!invalid.has(departmentFor(code)), `${code} resolved to "${departmentFor(code)}", a raw HR-looking department value`);
   }
@@ -147,12 +153,14 @@ test("every department a real code can resolve to has a position in DEPARTMENT_O
 });
 
 test("departmentOrderRank follows the exact given sequence", () => {
-  assert.equal(departmentOrderRank("Project Management"), 0);
+  // "Management"/"Manufacturing" (2026-08-20), not "Project Management"/
+  // "Manufacturing Operations" — see paylocity-canonical.ts.
+  assert.equal(departmentOrderRank("Management"), 0);
   assert.equal(departmentOrderRank("Mechanical Engineering"), 1);
   assert.equal(departmentOrderRank("Controls Engineering"), 2);
   assert.ok(departmentOrderRank("Mechanical Build") < departmentOrderRank("Electrical Build"));
-  assert.ok(departmentOrderRank("Electrical Build") < departmentOrderRank("Manufacturing Operations"));
-  assert.ok(departmentOrderRank("Manufacturing Operations") < departmentOrderRank("Service — Engineering"));
+  assert.ok(departmentOrderRank("Electrical Build") < departmentOrderRank("Manufacturing"));
+  assert.ok(departmentOrderRank("Manufacturing") < departmentOrderRank("Service — Engineering"));
 });
 
 test("an unrecognized department (including UNDEFINED_LABEL) ranks after every real one", () => {
@@ -163,17 +171,17 @@ test("an unrecognized department (including UNDEFINED_LABEL) ranks after every r
 
 test("rollupByOperationalTier's department tier sorts by the fixed order, NOT by hours descending", () => {
   // Deliberately built so hours-descending would produce the OPPOSITE order:
-  // Manufacturing Operations has the most hours but must still sort AFTER
-  // Project Management, which has the fewest.
+  // Manufacturing has the most hours but must still sort AFTER Management,
+  // which has the fewest.
   const bySection = [
-    { section: "10-413", hours: 500, punchCount: 1 }, // Manufacturing Operations
+    { section: "10-413", hours: 500, punchCount: 1 }, // Manufacturing
     { section: "10-211", hours: 200, punchCount: 1 }, // Mechanical Engineering
-    { section: "10-111", hours: 10, punchCount: 1 }, // Project Management
+    { section: "10-111", hours: 10, punchCount: 1 }, // Management
   ];
   const g = rollupByOperationalTier(bySection, "department");
   assert.deepEqual(
     g.map((r) => r.label),
-    ["Project Management", "Mechanical Engineering", "Manufacturing Operations"],
+    ["Management", "Mechanical Engineering", "Manufacturing"],
     "must follow DEPARTMENT_ORDER, not the 500/200/10 hours ordering",
   );
 });
@@ -185,4 +193,112 @@ test("the other three tiers are UNAFFECTED — they still sort biggest-first", (
   ];
   const bySectionName = rollupByOperationalTier(bySection, "sectionName");
   assert.equal(bySectionName[0].label, "Service", "sectionName must still sort by hours, unchanged by the department fix");
+});
+
+// ── Function: phase-agnostic, keyed off the bare Function ID (2026-08-21) ──
+
+
+// ── Never drops a row for being unmapped (2026-08-21): the raw tier reads the
+// raw Function ID regardless of whether the FULL
+// section+function combination is in OPERATIONAL_GROUPING — the Hours page must
+// keep showing "999", not merge it into one shared "Undefined / Unmapped" bucket
+// with every other unrecognized Function ID. UNDEFINED_LABEL is reserved for a
+// code with no parseable Function ID at all.
+
+
+
+test("rollupByRawTier: functionId merges the SAME raw Function ID across phases (Task, by contrast, does not)", () => {
+  const rows = [
+    { rawSection: "10", rawFunction: "313", hours: 7, punchCount: 1 }, // Software
+    { rawSection: "80", rawFunction: "313", hours: 3, punchCount: 1 }, // same Function ID, Service phase
+  ];
+  const g = rollupByRawTier(rows, "functionId");
+  assert.equal(g.length, 1, "10-313 and 80-313 share one Function bucket");
+  assert.equal(g[0].label, "313 — Software");
+  assert.equal(g[0].hours, 10);
+});
+
+test("rollupByRawTier: functionId preserves the total, and a real-but-unnamed Function ID keeps its own bucket", () => {
+  const rows = [
+    { rawSection: "10", rawFunction: "313", hours: 7, punchCount: 1 },
+    { rawSection: "99", rawFunction: "999", hours: 2, punchCount: 1 }, // Function 999: real id, no canonical name
+  ];
+  const g = rollupByRawTier(rows, "functionId");
+  assert.equal(g.length, 2, "313 and 999 are two distinct buckets, not one shared Undefined bucket");
+  const unmapped = g.find((r) => r.key === "999")!;
+  assert.equal(unmapped.label, "999", "no canonical name, so the bare id is the label");
+  assert.equal(unmapped.hours, 2);
+  assert.equal(g.reduce((s, r) => s + r.hours, 0), 9);
+});
+
+// ── Section: Section Number + Name together, in phase order (2026-08-21) ───
+
+test("rollupByRawTier: sectionNumber labels as 'Number — Name' and sorts in phase order, not by hours", () => {
+  const rows = [
+    { rawSection: "80", rawFunction: "211", hours: 500, punchCount: 1 }, // Service (80) — most hours
+    { rawSection: "10", rawFunction: "313", hours: 10, punchCount: 1 }, // Complete Design and Build (10)
+  ];
+  const g = rollupByRawTier(rows, "sectionNumber");
+  assert.deepEqual(
+    g.map((r) => r.label),
+    ["10 — Complete Design and Build", "80 — Service"],
+    "must read in phase order (10 before 80), not the 500/10 hours ordering",
+  );
+});
+
+test("rollupByRawTier: sectionNumber merges every function within a phase into one row", () => {
+  const rows = [
+    { rawSection: "10", rawFunction: "313", hours: 5, punchCount: 1 },
+    { rawSection: "10", rawFunction: "411", hours: 3, punchCount: 1 },
+  ];
+  const g = rollupByRawTier(rows, "sectionNumber");
+  assert.equal(g.length, 1);
+  assert.equal(g[0].label, "10 — Complete Design and Build");
+  assert.equal(g[0].hours, 8);
+});
+
+// A real Paylocity export can carry a non-numeric MachineSec too ("Not Defined"),
+// not just this module's own UNDEFINED_LABEL — both are NaN under Number(), and a
+// sort comparator that can return NaN has no defined ordering guarantee. Regression
+// guard: this must sort after every real phase number, not wherever a NaN happens
+// to land.
+test("rollupByRawTier: sectionNumber sorts a non-numeric raw section after every real phase number", () => {
+  // normalizeSectionId turns a "Not Defined" MachineSec into "", so the blank bucket is
+  // what a real export produces here. Either way it must sort after every real phase
+  // number rather than wherever a NaN comparator happens to put it.
+  const rows = [
+    { rawSection: "", rawFunction: "311", hours: 1, punchCount: 1 },
+    { rawSection: "80", rawFunction: "211", hours: 1, punchCount: 1 },
+    { rawSection: "10", rawFunction: "313", hours: 1, punchCount: 1 },
+  ];
+  const g = rollupByRawTier(rows, "sectionNumber");
+  assert.deepEqual(g.map((r) => r.key), ["10", "80", ""]);
+});
+
+// ── Never drops a row for being unmapped (2026-08-21): a raw section number the
+// standard mapping has never seen keeps its OWN identity here too, never merging
+// with every other unmapped section number into one shared bucket — see
+// rawSectionNumberAndName's own header for why this deliberately does not reuse
+// sectionNumberAndName/UNDEFINED_LABEL the way "Section Name" still does.
+
+test("rawSectionNumberAndName keeps a real code's exact name, and a genuinely unknown section number its own raw number with a generic name", () => {
+  assert.deepEqual(rawSectionNumberAndName("10-313"), { sectionNumber: "10", sectionName: "Complete Design and Build" });
+  assert.deepEqual(rawSectionNumberAndName("25-999"), { sectionNumber: "25", sectionName: "Unmapped Section" });
+});
+
+test("rollupByRawTier: sectionNumber keeps two different unmapped section numbers apart, and preserves their hours", () => {
+  const rows = [
+    { rawSection: "10", rawFunction: "313", hours: 5, punchCount: 1 },
+    { rawSection: "25", rawFunction: "999", hours: 3, punchCount: 1 },
+    { rawSection: "30", rawFunction: "100", hours: 4, punchCount: 1 },
+  ];
+  const g = rollupByRawTier(rows, "sectionNumber");
+  assert.equal(g.length, 3, "25 and 30 must NOT collapse into one shared Undefined/Unmapped row");
+  const s25 = g.find((r) => r.key === "25")!;
+  const s30 = g.find((r) => r.key === "30")!;
+  assert.equal(s25.label, "25 — Unmapped Section");
+  assert.equal(s25.hours, 3);
+  assert.equal(s30.label, "30 — Unmapped Section");
+  assert.equal(s30.hours, 4);
+  assert.equal(g.reduce((s, r) => s + r.hours, 0), 12, "no hours lost across mapped and unmapped sections alike");
 });

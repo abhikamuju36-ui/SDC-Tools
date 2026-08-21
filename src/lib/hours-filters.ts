@@ -1,7 +1,10 @@
 import type { Prisma } from "@prisma/client";
 import type { SortState } from "@/lib/table-sort";
-import { sectionNumberAndName, functionGroupFor, taskFor, departmentFor, codesInSection, codesInFunctionGroup, codesInTask, codesInDepartment, departmentOrderRank, UNDEFINED_LABEL } from "@/lib/hours-operational-grouping";
+import { sectionNumberAndName, rawSectionNumberAndName, functionGroupFor, taskFor, departmentFor, codesInSection, codesInFunctionGroup, codesInTask, codesInDepartment, departmentOrderRank, UNDEFINED_LABEL } from "@/lib/hours-operational-grouping";
 import { reconcileRounding } from "@/lib/rounding";
+import { canonicalSectionFor } from "@/lib/paylocity-canonical";
+import { rawCodesFoldingInto } from "@/lib/sections";
+import { classifyPunch, STANDARD_DEPARTMENTS, UNDEFINED_LABEL as STANDARD_UNDEFINED } from "@/lib/paylocity-standard-rules";
 import { EMPLOYEE_TEAMS, teamFor } from "@/lib/employee-teams";
 
 // ── Filtering/grouping rules for the Hours tab, kept I/O-free ──────────────────
@@ -40,6 +43,39 @@ export type HoursFilters = {
   months?: string[];
   from?: string; // "YYYY-MM-DD", inclusive
   to?: string; // "YYYY-MM-DD", inclusive
+  // Raw-shape narrowing for the "Section"/"Function" Group By tiers (2026-08-21) —
+  // deliberately NOT expressed as `sections: [...specific codes]` the way
+  // "Section Name"/"Function Group"/"Task Description"/"Department" narrow (see
+  // narrowFiltersForGroupValue below): those four reverse-index off
+  // OPERATIONAL_GROUPING, which only knows the codes the standard mapping has
+  // enumerated — exactly the assumption the Hours page's ingestion fix broke, since
+  // a code outside that table is now a real row instead of a dropped one. `sectionNumber`
+  // matches on the raw code's OWN prefix (`${sectionNumber}-`) and `functionId` on its
+  // suffix (`-${functionId}`), so a section number or Function ID no mapping table has
+  // ever seen still narrows to exactly the rows it actually has, standardized or not.
+  sectionNumber?: string;
+  functionId?: string;
+  // ── TRUE raw narrowing, off the stored raw columns (2026-08-21) ───────────
+  //
+  // `sectionNumber`/`functionId` above match on the STANDARDIZED `section` column's
+  // prefix/suffix. That was the best available before raw identity was persisted, but
+  // it means they report the FOLDED code: a punch booked to 12-211 is stored with
+  // section 10-211, so "Function 211 / Section 10" is what those dimensions show for
+  // it, and there was no way to ask what was actually punched.
+  //
+  // These two read JobHoursDetail.rawSection/rawFunction directly, so they answer the
+  // reconciliation question — "what did Paylocity actually say" — and grouping by them
+  // reproduces the raw Paylocity PivotTable exactly. Both are kept, because they
+  // answer genuinely different questions and conflating them is what made the original
+  // 23-hour discrepancy report so hard to resolve.
+  rawSectionNumber?: string;
+  rawFunctionId?: string;
+  /** "Mapped" | "Undefined" — the approved-rule-book verdict on the raw pair. */
+  mappingStatus?: string;
+  /** "PM" | "Engineering" | "Shop" | "Undefined" — the reconciliation bucket. */
+  standardDepartment?: string;
+  // "Undefined" is a real, stored value now (2026-08-21) — mappingStatus and
+  // standardDepartment are columns written once at ingestion, not computed per query.
 };
 
 // The Department FILTER's own display order (2026-08-17, by request — "match
@@ -67,42 +103,132 @@ export function departmentFilterRank(department: string): number {
   return i === -1 ? Number.MAX_SAFE_INTEGER - 1 : i;
 }
 
-export type HoursGroupBy = "job" | "employee" | "section" | "department" | "date" | "month" | "sectionName" | "functionGroup" | "taskDescription";
+// ── One dedicated field per dimension (2026-08-21) ────────────────────────
+//
+// RAW dimensions — group on the untouched Paylocity value:
+//   sectionNumber -> rawSection      functionId -> rawFunction
+//
+// STANDARDIZED dimensions — allowed to combine many raw values, because that is what
+// a reporting category IS:
+//   sectionName, functionGroup, taskDescription, department, standardDepartment,
+//   mappingStatus
+//
+// The separation is the whole point. "Group By Function" showing 413 and 414 as one
+// row labelled "413" was the defect: the group key came from the STANDARDIZED section
+// (where 10-414 has been folded onto 10-413) while the detail rows underneath carried
+// raw Function 414. Parent said 413, children said 414.
+//
+// There are deliberately no separate "Raw Section"/"Raw Function" dimensions. Section
+// and Function ARE the raw values now, so a second pair would be two ways to ask one
+// question — and the duplicate is how the two drift apart again.
+export type HoursGroupBy = "job" | "employee" | "functionId" | "sectionNumber" | "department" | "date" | "month" | "sectionName" | "functionGroup" | "taskDescription" | "mappingStatus" | "standardDepartment";
 
 export const HOURS_GROUP_BY_VALUES: readonly HoursGroupBy[] = [
   "job",
   "employee",
-  "section",
+  "functionId",
+  "sectionNumber",
   "department",
   "date",
   "month",
   "sectionName",
   "functionGroup",
   "taskDescription",
+  "mappingStatus",
+  "standardDepartment",
 ];
 
 // One label map for all three places that render a dimension name — the field picker,
 // the tree's per-level column header, and (previously duplicated as a page.tsx-local
 // const) the page itself.
 //
+// "Function" and "Section" (2026-08-21) replace the old combined "Function / Section"
+// dimension (which grouped by the raw, phase-specific punch code, e.g. "10-313") with
+// two INDEPENDENT dimensions a user can pick either or both of, in either order —
+// "Function" rolls up by the bare, phase-agnostic Function ID (functionIdFor/
+// functionLabelFor: "313 — Software" spans 10-313 AND 80-313 alike), "Section" by the
+// phase's Section Number + Name alone ("10 — Complete Design and Build"). Selecting
+// both nests the table in whichever order they were picked, same as any other pair of
+// Group By dimensions — see HoursGroupByMenu.
+//
 // "Section Name"/"Function Group"/"Task Description"/"Department" are all the standard
 // operational hierarchy (hours-operational-grouping.ts) — deliberately worded
-// differently from "Function / Section" (the raw code, e.g. "10-313 — Software") so the
-// dimensions are never confused with each other in the Group By menu. "Department" here
-// is Section+Function-derived (departmentFor/codesInDepartment), NOT the employee's raw
-// HR department string — that field is a separate FILTER (HoursFilters.departments) and
-// must never back this label again (2026-08-17 regression fix).
+// differently from "Function"/"Section" so the dimensions are never confused with each
+// other in the Group By menu. "Department" here is Section+Function-derived
+// (departmentFor/codesInDepartment), NOT the employee's raw HR department string — that
+// field is a separate FILTER (HoursFilters.departments) and must never back this label
+// again (2026-08-17 regression fix).
 export const HOURS_GROUP_BY_LABEL: Record<HoursGroupBy, string> = {
   job: "Job",
   employee: "Employee",
-  section: "Function / Section",
+  functionId: "Function",
+  sectionNumber: "Section",
   department: "Department",
   date: "Date",
   month: "Month",
   sectionName: "Section Name",
   functionGroup: "Function Group",
   taskDescription: "Task Description",
+  mappingStatus: "Mapping Status",
+  standardDepartment: "Standard Department",
 };
+
+// ── Which ROW FIELD each dimension groups on ───────────────────────────
+//
+// Declared once, as data, so "what does this dimension group on" has exactly one
+// answer that a test can check against real rows. This is what makes parent/child
+// integrity verifiable instead of aspirational: for any group, every detail row
+// beneath it must have `HOURS_GROUP_BY_ROW_FIELD[dim](row) === group.key`.
+//
+// Dimensions whose key is not a field on the row itself (job/employee/date/month are
+// keyed on ids and dates, and the standardized name tiers are derived from the
+// standardized section) map to null and are checked by their own narrowing instead.
+export const HOURS_GROUP_BY_ROW_FIELD: Record<HoursGroupBy, ((row: GroupCheckRow) => string) | null> = {
+  // RAW — the untouched Paylocity values.
+  sectionNumber: (r) => r.rawSection,
+  functionId: (r) => r.rawFunction,
+  // STANDARDIZED — intentionally many-to-one.
+  standardDepartment: (r) => r.standardDepartment,
+  mappingStatus: (r) => r.mappingStatus,
+  // Keyed on ids/dates rather than a classification.
+  job: (r) => r.jobId,
+  employee: (r) => r.employeeId,
+  date: (r) => r.date,
+  month: (r) => r.date.slice(0, 7),
+  // Derived from the standardized section code; checked via their own code sets.
+  sectionName: null,
+  functionGroup: null,
+  taskDescription: null,
+  department: null,
+};
+
+/** The minimum a row must expose for HOURS_GROUP_BY_ROW_FIELD to check it. */
+export type GroupCheckRow = {
+  rawSection: string;
+  rawFunction: string;
+  standardDepartment: string;
+  mappingStatus: string;
+  jobId: string;
+  employeeId: string;
+  date: string;
+};
+
+/**
+ * Parent/child integrity: every row must belong under the group it was fetched for.
+ *
+ * Returns the rows that do NOT match, so a caller can report them rather than merely
+ * knowing a count. Used by tests and by the audit scripts against live data; cheap
+ * enough that a caller could assert on it in development too.
+ */
+export function groupMismatches<T extends GroupCheckRow>(
+  rows: readonly T[],
+  groupBy: HoursGroupBy,
+  key: string,
+): T[] {
+  const field = HOURS_GROUP_BY_ROW_FIELD[groupBy];
+  if (!field) return [];
+  return rows.filter((r) => field(r) !== key);
+}
 
 /**
  * Parses the `groupBy` query param into an ORDERED list of dimensions — order is
@@ -232,8 +358,48 @@ export function buildHoursWhere(
   if (filters.jobIds && filters.jobIds.length > 0) {
     where.job = { jobId: { in: filters.jobIds } };
   }
+  // Every constraint that lands on the `section` column composed with AND, via a
+  // list of independent conditions rather than fields merged onto one filter object
+  // — `sections` (an exact list), `sectionNumber` (a raw prefix) and `functionId` (a
+  // raw suffix) can all be active at once (e.g. a top-level Function/Section FILTER
+  // narrowed further by drilling into a Section group), and each must independently
+  // hold, the same AND-across-dimensions rule this file uses everywhere else. A
+  // single active condition is assigned directly to `where.section` rather than
+  // wrapped in a one-element `AND` — same "don't wrap the common case" shape
+  // `employeeConstraints` below already uses, and what every existing caller of this
+  // function already expects `where.section` to look like.
+  const sectionConditions: Prisma.JobHoursDetailWhereInput[] = [];
   if (filters.sections && filters.sections.length > 0) {
-    where.section = { in: filters.sections };
+    sectionConditions.push({ section: { in: filters.sections } });
+  }
+  if (filters.sectionNumber) {
+    sectionConditions.push({ section: { startsWith: `${filters.sectionNumber}-` } });
+  }
+  if (filters.functionId) {
+    sectionConditions.push({ section: { endsWith: `-${filters.functionId}` } });
+  }
+  // Exact equality, not a prefix/suffix shape: these are their own columns, so there
+  // is no code string to pattern-match against and no chance of "1" matching "11".
+  if (filters.rawSectionNumber !== undefined) {
+    sectionConditions.push({ rawSection: filters.rawSectionNumber });
+  }
+  if (filters.rawFunctionId !== undefined) {
+    sectionConditions.push({ rawFunction: filters.rawFunctionId });
+  }
+  // Plain equality on the STORED columns (2026-08-21) — mappingStatus/standardDepartment
+  // are written once at ingestion (classifyPunch, applied to the raw pair) and never
+  // recomputed per page, so narrowing to a bucket is a real indexed column read, not a
+  // JS-computed OR over every approved pair.
+  if (filters.mappingStatus !== undefined) {
+    sectionConditions.push({ mappingStatus: filters.mappingStatus });
+  }
+  if (filters.standardDepartment !== undefined) {
+    sectionConditions.push({ standardDepartment: filters.standardDepartment });
+  }
+  if (sectionConditions.length === 1) {
+    Object.assign(where, sectionConditions[0]);
+  } else if (sectionConditions.length > 1) {
+    where.AND = sectionConditions;
   }
   if (filters.months && filters.months.length > 0) {
     where.month = { in: filters.months };
@@ -274,20 +440,29 @@ export function buildHoursWhere(
  * escape whatever from/to the parent already had.
  */
 /**
- * The FOUR operational-hierarchy dimensions — including "department" as of
- * 2026-08-17 (see hours-operational-grouping.ts's OperationalEntry.department
- * for why it's its own tier, not an alias for functionGroup) — narrow the
- * same way `section` already does: by setting `filters.sections`, expanded
- * to every raw code the picked label covers (via hours-operational-
- * grouping.ts's reverse lookups) instead of a single code. That's still a
- * strict subset of whatever the parent's `sections` constraint already was
- * (an empty/absent constraint included), which is what keeps a child's total
- * from ever disagreeing with its parent's.
+ * The FOUR operational-hierarchy dimensions — sectionName/functionGroup/
+ * taskDescription, plus "department" as of 2026-08-17 (see
+ * hours-operational-grouping.ts's OperationalEntry.department for why it's its
+ * own tier, not an alias for functionGroup) — narrow by setting
+ * `filters.sections`, expanded to every raw code the picked label covers (via
+ * hours-operational-grouping.ts's reverse lookups) instead of a single code.
+ * That's still a strict subset of whatever the parent's `sections` constraint
+ * already was (an empty/absent constraint included), which is what keeps a
+ * child's total from ever disagreeing with its parent's.
  *
  * "department" here is DELIBERATELY NOT `{ ...filters, departments: [value] }`
  * — that field is the employee's raw HR string (a different filter dimension
  * entirely, see HoursFilters.departments) and narrowing on it here is the
  * exact bug this was fixed to stop reintroducing.
+ *
+ * "sectionNumber"/"functionId" are deliberately NOT part of that reverse-index
+ * group, for the same reason rollupByOperationalTier's own comment gives: those
+ * four reverse indexes only know the codes OPERATIONAL_GROUPING has enumerated,
+ * so expanding into `sections` would narrow an unmapped section number or
+ * Function ID to an empty list — the exact "standardization decides existence"
+ * bug the 2026-08-21 ingestion fix closed, reopened one layer up. They set
+ * `filters.sectionNumber`/`filters.functionId` instead, which buildHoursWhere
+ * matches by the raw code's own prefix/suffix shape.
  */
 export function narrowFiltersForGroupValue(filters: HoursFilters, groupBy: HoursGroupBy, value: string): HoursFilters {
   switch (groupBy) {
@@ -295,23 +470,231 @@ export function narrowFiltersForGroupValue(filters: HoursFilters, groupBy: Hours
       return { ...filters, jobIds: [value] };
     case "employee":
       return { ...filters, employeeIds: [value] };
-    case "section":
-      return { ...filters, sections: [value] };
+    // Narrow on the RAW columns, matching what these dimensions now group on. This
+    // used to set `functionId`/`sectionNumber`, which buildHoursWhere matched against
+    // the STANDARDIZED code's prefix/suffix — so drilling into "Function 413" returned
+    // every row stored on a `-413` column, raw 414 punches included. Parent and child
+    // disagreed, which is the defect this fixes.
+    case "functionId":
+      return { ...filters, rawFunctionId: value };
+    case "sectionNumber":
+      return { ...filters, rawSectionNumber: value };
     case "month":
       return { ...filters, months: [value] };
     case "date":
       return { ...filters, from: value, to: value };
+    // Widened through rawCodesFoldingInto (2026-08-21): codesInSection/etc. return
+    // STANDARDIZED codes (10-413), but `section` is stored raw now, so a raw pair
+    // that only reaches that code THROUGH the fold (10-414, 12/13/14-211, the
+    // 10-311 split) would silently drop out of the narrowed set without this —
+    // clicking into "Manufacturing" would show 10-413's rows and miss 10-414's.
     case "sectionName":
-      return { ...filters, sections: codesInSection(value) };
+      return { ...filters, sections: rawCodesFoldingInto(codesInSection(value)) };
     case "functionGroup":
-      return { ...filters, sections: codesInFunctionGroup(value) };
+      return { ...filters, sections: rawCodesFoldingInto(codesInFunctionGroup(value)) };
     case "taskDescription":
-      return { ...filters, sections: codesInTask(value) };
+      return { ...filters, sections: rawCodesFoldingInto(codesInTask(value)) };
     case "department":
-      return { ...filters, sections: codesInDepartment(value) };
+      return { ...filters, sections: rawCodesFoldingInto(codesInDepartment(value)) };
+    case "mappingStatus":
+      return { ...filters, mappingStatus: value };
+    case "standardDepartment":
+      return { ...filters, standardDepartment: value };
   }
 }
 
+/** `"10-311"` -> `["10", "311"]`. First hyphen only; both halves are already normalized. */
+export function splitRawPair(value: string): [string, string] {
+  const at = value.indexOf("-");
+  return at < 0 ? [value, ""] : [value.slice(0, at), value.slice(at + 1)];
+}
+
+// ── The raw / reconciliation tier ──────────────────────────────────────────
+//
+// Rolls the per-(rawSection, rawFunction) aggregates — a single
+// `groupBy: ["rawSection","rawFunction"]` query — into whichever raw dimension was
+// asked for. Structurally the same idea as rollupByOperationalTier, but reading the
+// RAW columns, so every tier here reproduces Paylocity rather than the app's folded
+// columns.
+//
+// Deliberately does NOT consult OPERATIONAL_GROUPING for its labels: that table only
+// knows codes the standard mapping enumerated, and the whole point of this tier is to
+// show what was actually punched, including combinations no mapping table has ever
+// heard of. Names come from the canonical vocabulary where it has one, and from the
+// bare code where it does not.
+export type RawTier = "sectionNumber" | "functionId" | "mappingStatus" | "standardDepartment";
+
+export type RawAggregate = { rawSection: string; rawFunction: string; hours: number; punchCount: number };
+
+export function rollupByRawTier(rows: readonly RawAggregate[], tier: RawTier): HoursGroupRow[] {
+  const acc = new Map<string, { label: string; hours: number; punchCount: number; rank: number }>();
+
+  for (const r of rows) {
+    const c = classifyPunch(r.rawSection, r.rawFunction);
+    let key: string;
+    let label: string;
+    let rank = 0;
+    switch (tier) {
+      // The KEY is the bare raw value — always. The LABEL may carry the standardized
+      // name for readability, but the key must never be derived from it: keying on a
+      // label is how two different raw Function IDs collapsed into one group.
+      case "sectionNumber":
+        key = r.rawSection;
+        label = rawSectionLabel(r.rawSection);
+        break;
+      case "functionId":
+        key = r.rawFunction;
+        label = rawFunctionLabel(r.rawFunction);
+        break;
+      case "mappingStatus":
+        key = c.mappingStatus;
+        label = c.mappingStatus;
+        // Undefined sorts last: it is the exception list, and burying the mapped
+        // majority under it reads as though something is wrong when nothing is.
+        rank = c.mappingStatus === "Mapped" ? 0 : 1;
+        break;
+      case "standardDepartment":
+        key = c.department;
+        label = c.department;
+        rank = c.department === STANDARD_UNDEFINED ? STANDARD_DEPARTMENTS.length : STANDARD_DEPARTMENTS.indexOf(c.department as (typeof STANDARD_DEPARTMENTS)[number]);
+        break;
+    }
+    const cur = acc.get(key);
+    if (cur) {
+      cur.hours += r.hours;
+      cur.punchCount += r.punchCount;
+    } else acc.set(key, { label, hours: r.hours, punchCount: r.punchCount, rank });
+  }
+
+  const out = [...acc].map(([key, v]) => ({ key, label: v.label, hours: v.hours, punchCount: v.punchCount, rank: v.rank }));
+  if (tier === "mappingStatus" || tier === "standardDepartment") {
+    // Fixed business order — a manager expects the same sequence every month.
+    out.sort((a, b) => a.rank - b.rank || b.hours - a.hours);
+  } else {
+    // Section and Function are CODES: read them in code order (10 -> 40 -> 50 ...,
+    // 111 -> 211 -> 311 ...), which is how they read on the Paylocity pivot this
+    // grouping has to be comparable against. Non-numeric keys (a stray "Not Defined"
+    // MachineSec, or the blank bucket) sort after every real code rather than being
+    // left to whatever NaN does in a comparator.
+    // `/^\d+$/`, NOT Number.isFinite(Number(key)): Number("") and Number(" ") are both
+    // 0, so the blank bucket would sort as section/function zero and land BEFORE every
+    // real code instead of after them. The blank bucket is the "we could not read this
+    // cell" case and belongs at the end with the other unreadable keys.
+    const numeric = (k: string) => /^\d+$/.test(k);
+    out.sort((a, b) => {
+      const aNum = numeric(a.key);
+      const bNum = numeric(b.key);
+      if (aNum && bNum) return Number(a.key) - Number(b.key);
+      if (aNum) return -1;
+      if (bNum) return 1;
+      return a.key.localeCompare(b.key);
+    });
+  }
+  return out.map(({ rank: _rank, ...row }) => row);
+}
+
+// ── Names, WITHOUT the code prefixed ─────────────────────────────────────
+//
+// These return the name alone, so a table can put the code and the name in their own
+// columns. A combined "10 — Complete Design & Build" cell is fine for a group-by tree
+// NODE (where one line has to identify itself) and wrong for a detail row, where the
+// whole point is to be able to read, sort and compare the two halves independently.
+// The combined forms below are built FROM these, so the two can never drift.
+
+/** "Complete Design & Build" for section "10"; the Undefined label when unknown. */
+export function rawSectionName(rawSection: string): string {
+  if (rawSection === "") return UNDEFINED_LABEL;
+  const { sectionName } = rawSectionNumberAndName(`${rawSection}-`);
+  return sectionName || UNDEFINED_LABEL;
+}
+
+/**
+ * "General" for function "311", from the canonical vocabulary — the Function's OWN
+ * name, independent of which Section it was punched against and of whether that
+ * PAIRING is approved. A caller wanting the verdict wants classifyPunch's
+ * taskDescription instead; conflating the two loses which half of the pair is wrong.
+ */
+export function rawFunctionName(rawFunction: string): string {
+  if (rawFunction === "") return UNDEFINED_LABEL;
+  return canonicalSectionFor(rawFunction) ?? UNDEFINED_LABEL;
+}
+
+/** "10 — Complete Design & Build", for a group-by tree node that must identify itself. */
+export function rawSectionLabel(rawSection: string): string {
+  if (rawSection === "") return "— (blank)";
+  const name = rawSectionName(rawSection);
+  return name === UNDEFINED_LABEL ? rawSection : `${rawSection} — ${name}`;
+}
+
+/** "311 — General", likewise. */
+export function rawFunctionLabel(rawFunction: string): string {
+  if (rawFunction === "") return "— (blank)";
+  const name = rawFunctionName(rawFunction);
+  return name === UNDEFINED_LABEL ? rawFunction : `${rawFunction} — ${name}`;
+}
+
+// ── THE punch-identity projection, shared by every hours page ──────────────
+//
+// Section and Function, raw and standardized, split into their own fields, plus the
+// approved rule book's verdict on the raw pair.
+//
+// Lives here (pure, no I/O) rather than in either query module because the Hours page,
+// the Job Hour Details panel and the Monthly ETC month view must all show the SAME
+// values for the same punch. Each one projecting its own fields — splitting the code,
+// looking up names, deciding Mapped vs Undefined — is how three pages come to disagree
+// about one punch, and how a drill-through stops matching the KPI above it.
+export type PunchIdentity = {
+  // ── Raw — exactly what Paylocity said, never rewritten ──────────────────
+  rawSection: string;
+  rawSectionName: string;
+  rawFunction: string;
+  rawFunctionName: string;
+  /** `"${rawSection}-${rawFunction}"`, generated directly from the raw values —
+   *  NEVER regenerated from a standardized field. The immutable composite key a
+   *  Section+Function reconciliation compares against Paylocity. */
+  rawSectionFunctionKey: string;
+  // ── Standard — reporting metadata ADDED on top; never mutates the raw values ──
+  standardDepartment: string;
+  standardSectionName: string;
+  standardTaskDescription: string;
+  mappingStatus: string;
+  undefinedReason?: string;
+};
+
+/**
+ * THE one punch-identity projection (2026-08-21). Storage no longer folds, aliases or
+ * splits a raw punch to fit the rule book — `section` in JobHoursDetail IS the raw
+ * pair. This function reads the two raw halves directly and adds standardization as
+ * separate, additional fields; it never derives a raw value from anything
+ * standardized, and never merges one raw pair into another.
+ */
+export function punchIdentity(rawSection: string, rawFunction: string): PunchIdentity {
+  const c = classifyPunch(rawSection, rawFunction);
+  return {
+    rawSection,
+    rawSectionName: rawSectionName(rawSection),
+    rawFunction,
+    // The raw Function's OWN name, never the verdict — "311" is "General" even in
+    // Section 10, where the PAIRING is Undefined. Keeping these apart is what lets a
+    // reader see which half of the pair is the problem.
+    rawFunctionName: rawFunctionName(rawFunction),
+    rawSectionFunctionKey: `${rawSection}-${rawFunction}`,
+    standardDepartment: c.department,
+    // Section identity is never reclassified — only whether a given PAIR is
+    // approved is. Reusing the raw section's own name here is honest: nothing about
+    // "Section 10" changes depending on which Function it is paired with.
+    standardSectionName: rawSectionName(rawSection),
+    // "Undefined" for an unapproved pair — classifyPunch's own word, not a second
+    // decision made here.
+    standardTaskDescription: c.taskDescription,
+    mappingStatus: c.mappingStatus,
+    undefinedReason: c.undefinedReason,
+  };
+}
+
+// Standardized tiers only. sectionNumber/functionId moved to the RAW tier on
+// 2026-08-21 — they are Paylocity values, and deriving them from the standardized
+// `section` column is what made a Function group label disagree with its own rows.
 export type OperationalTier = "sectionName" | "functionGroup" | "taskDescription" | "department";
 
 /**
@@ -360,6 +743,12 @@ export function reconcileGroupRowHours(rows: { key: string; hours: number }[], t
 export function rollupByOperationalTier(bySection: { section: string; hours: number; punchCount: number }[], tier: OperationalTier): HoursGroupRow[] {
   const rolled = new Map<string, HoursGroupRow>();
   for (const r of bySection) {
+    // Standardized tiers ONLY. `r.section` is the standardized code, which is correct
+    // here — these dimensions are reporting categories and are meant to combine many
+    // raw values. sectionNumber/functionId used to be computed here too, off this same
+    // standardized code, and that was the bug: a Paylocity value must never be derived
+    // from a standardized one. They now live in rollupByRawTier, keyed on the actual
+    // rawSection/rawFunction columns.
     const label =
       tier === "sectionName"
         ? sectionNumberAndName(r.section).sectionName
@@ -368,10 +757,7 @@ export function rollupByOperationalTier(bySection: { section: string; hours: num
           : tier === "department"
             ? departmentFor(r.section)
             : taskFor(r.section);
-    const key =
-      // sectionNumber, not the display name, is the stable key a child narrowing
-      // relies on — see narrowFiltersForGroupValue's "sectionName" case.
-      tier === "sectionName" ? (label === UNDEFINED_LABEL ? UNDEFINED_LABEL : sectionNumberAndName(r.section).sectionNumber) : label;
+    const key = tier === "sectionName" ? sectionNumberAndName(r.section).sectionNumber : label;
     const cur = rolled.get(key) ?? { key, label, hours: 0, punchCount: 0 };
     cur.hours += r.hours;
     cur.punchCount += r.punchCount;
@@ -381,11 +767,13 @@ export function rollupByOperationalTier(bySection: { section: string; hours: num
   // "Department" reads in the fixed business order (2026-08-17, by request —
   // "match Monthly ETC exactly"), never by hours: a manager scanning down the
   // list expects PM/ME/CE/... in the same sequence every month, regardless of
-  // which one happened to log the most hours. The other three tiers are
-  // unaffected — sectionName/functionGroup/taskDescription still read
-  // biggest-first, which is what they were built for and nobody asked to change.
+  // which one happened to log the most hours.
   if (tier === "department") {
     return rows.sort((a, b) => departmentOrderRank(a.label) - departmentOrderRank(b.label));
   }
+  // The remaining standardized tiers (sectionName/functionGroup/taskDescription) read
+  // biggest-first, which is what they were built for. The numeric code ordering that
+  // used to live here belonged to sectionNumber/functionId, which are now raw
+  // dimensions handled by rollupByRawTier.
   return rows.sort((a, b) => b.hours - a.hours);
 }

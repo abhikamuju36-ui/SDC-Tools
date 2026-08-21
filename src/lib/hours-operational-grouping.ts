@@ -11,10 +11,40 @@
 // it from instead of re-deriving it.
 //
 // One entry per code the app can now import (sections.ts's expanded
-// HOURS_IMPORT_CODES, 30 codes as of 2026-08-17). A code missing from this table
+// HOURS_IMPORT_CODES, 34 codes as of 2026-08-20). A code missing from this table
 // resolves to UNDEFINED_LABEL at every tier — the defensive fallback the Hours
 // tab's grouping needs so a future code drift lands somewhere visible instead of
 // silently joining another group's total.
+//
+// ── Wording sourced from the centralized canonical vocabulary (2026-08-20) ──
+//
+// For every SECTION-10, single-Function-ID row (the ones the user's canonical
+// table names directly), `functionGroup`/`task` are now DERIVED from
+// paylocity-canonical.ts rather than typed here a second time — this is exactly
+// the table that used to call the same code "PM"/"Project Management" here,
+// "PM" in sections.ts, and "Management" nowhere, or 10-412's `task` "Panel
+// Build" while its own `department` field on the very same line called it
+// "Electrical Build". `department`'s VALUES change to match (same canonical
+// words), but its SHAPE does not: it still splits Section 10's Shop three ways
+// and still equals `functionGroup` everywhere else, exactly as before —
+// see each field's own comment below for why.
+//
+// Phases 40/50/70/80/90 are OUT OF SCOPE for that rename on purpose: those rows
+// represent several canonical Function IDs MERGED onto one shared bucket (see
+// sections.ts's SECTION_ALIASES), which the flat canonical table has no opinion
+// about at all — changing their wording here would be inventing an answer, not
+// applying one that was given. They keep their exact existing strings.
+import { canonicalDepartmentFor, canonicalSectionFor } from "@/lib/paylocity-canonical";
+import { SECTIONS } from "@/lib/sections";
+
+function phase10Entry(sectionName: string, functionId: string, departmentOverride?: string): OperationalEntry {
+  const functionGroup = canonicalDepartmentFor(functionId);
+  const task = canonicalSectionFor(functionId);
+  if (!functionGroup || !task) {
+    throw new Error(`hours-operational-grouping.ts: Function ${functionId} has no canonical department/section`);
+  }
+  return { sectionNumber: "10", sectionName, functionGroup, task, department: departmentOverride ?? functionGroup };
+}
 
 export type OperationalEntry = {
   sectionNumber: string;
@@ -24,29 +54,43 @@ export type OperationalEntry = {
   // The Hours tab's "Group By: Department" tier (2026-08-17, fix — see the
   // module header's "Department means operational" note). Deliberately its
   // OWN naming, not a re-render of `functionGroup`: for Section 10 it splits
-  // Shop into Mechanical Build / Electrical Build / Manufacturing Operations
-  // (functionGroup collapses all three into one "Shop"), and for Sections
-  // 40/50/70/80/90 it's "<Section Name> — <Engineering|Shop>" rather than the
-  // bare "Engineering"/"Shop" functionGroup uses — a different, coarser-in-
-  // some-places/finer-in-others cut of the same 30 codes, by request.
+  // Shop into Mechanical Build / Electrical Build / Manufacturing — the
+  // canonical SECTION words (functionGroup collapses all three into one
+  // "Shop", the canonical DEPARTMENT word) — and for Sections 40/50/70/80/90
+  // it's "<Section Name> — <Engineering|Shop>" rather than the bare
+  // "Engineering"/"Shop" functionGroup uses — a different, coarser-in-some-
+  // places/finer-in-others cut of the same codes, by request.
   department: string;
 };
 
 export const UNDEFINED_LABEL = "Undefined / Unmapped";
 
+// "Complete Design and Build" (Section 10) rows below are built with
+// phase10Entry() rather than typed literals — see the module header. The
+// SHOP rows pass a `department` override because that tier deliberately stays
+// finer than `functionGroup` there (Mechanical Build / Electrical Build /
+// Manufacturing, canonical's SECTION words — not "Shop" three times over).
 export const OPERATIONAL_GROUPING: Record<string, OperationalEntry> = {
   // ── Complete Design and Build (10) ──────────────────────────────────────────
-  "10-111": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "PM", task: "Project Management", department: "Project Management" },
-  "10-211": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "ME", task: "Machine Design", department: "Mechanical Engineering" },
-  "10-312": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "CE", task: "Design and Drawings", department: "Controls Engineering" },
-  "10-313": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "CE", task: "Software", department: "Controls Engineering" },
-  "10-515": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "General Engineering", task: "HMI", department: "General Engineering" },
-  "10-516": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "General Engineering", task: "Robot", department: "General Engineering" },
-  "10-517": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "General Engineering", task: "Vision", department: "General Engineering" },
-  "10-518": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "General Engineering", task: "Database and Device", department: "General Engineering" },
-  "10-411": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "Shop", task: "Mechanical Build", department: "Mechanical Build" },
-  "10-412": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "Shop", task: "Panel Build", department: "Electrical Build" },
-  "10-413": { sectionNumber: "10", sectionName: "Complete Design and Build", functionGroup: "Shop", task: "Manufacturing", department: "Manufacturing Operations" },
+  "10-111": phase10Entry("Complete Design and Build", "111"),
+  "10-211": phase10Entry("Complete Design and Build", "211"),
+  "10-312": phase10Entry("Complete Design and Build", "312"),
+  "10-313": phase10Entry("Complete Design and Build", "313"),
+  "10-515": phase10Entry("Complete Design and Build", "515"),
+  "10-516": phase10Entry("Complete Design and Build", "516"),
+  "10-517": phase10Entry("Complete Design and Build", "517"),
+  "10-518": phase10Entry("Complete Design and Build", "518"),
+  "10-411": phase10Entry("Complete Design and Build", "411", canonicalSectionFor("411")!),
+  "10-412": phase10Entry("Complete Design and Build", "412", canonicalSectionFor("412")!),
+  "10-413": phase10Entry("Complete Design and Build", "413", canonicalSectionFor("413")!),
+  // ── Engineering "Other" (112, 118, 119, 120), 2026-08-20 ────────────────────
+  // Previously unmapped anywhere — see sections.ts's ENGINEERING_OTHER_CODES for
+  // why they went entirely uncounted before. One consistent bucket, not a per-
+  // code guess at which specific engineering discipline each belongs to.
+  "10-112": phase10Entry("Complete Design and Build", "112"),
+  "10-118": phase10Entry("Complete Design and Build", "118"),
+  "10-119": phase10Entry("Complete Design and Build", "119"),
+  "10-120": phase10Entry("Complete Design and Build", "120"),
 
   // ── Machine Testing (40) ─────────────────────────────────────────────────────
   "40-211": { sectionNumber: "40", sectionName: "Machine Testing", functionGroup: "Engineering", task: "ME and CE", department: "Machine Testing — Engineering" },
@@ -93,12 +137,53 @@ export function sectionNumberAndName(code: string): { sectionNumber: string; sec
   return e ? { sectionNumber: e.sectionNumber, sectionName: e.sectionName } : { sectionNumber: UNDEFINED_LABEL, sectionName: UNDEFINED_LABEL };
 }
 
+// sectionNumber -> its standard name, e.g. "10" -> "Complete Design and Build" —
+// derived once from every phase OPERATIONAL_GROUPING already defines.
+const SECTION_NUMBER_NAME = new Map<string, string>();
+for (const e of Object.values(OPERATIONAL_GROUPING)) {
+  if (!SECTION_NUMBER_NAME.has(e.sectionNumber)) SECTION_NUMBER_NAME.set(e.sectionNumber, e.sectionName);
+}
+
+// ── The Hours tab's "Group By: Section" (raw-preserving) ───────────────────
+//
+// Deliberately a SEPARATE function from sectionNumberAndName above, not a shared
+// helper with an extra flag: that one backs "Group By: Section Name" (and the
+// filter menu's/export's section-name lookups), which — signed off 2026-08-17 and
+// pinned by its own tests — collapses every code the standard mapping has never
+// seen into one shared "Undefined / Unmapped" bucket. That collapsing is correct
+// for a coarse, named-group tier where several raw codes always shared one bucket
+// by design anyway. "Group By: Section" is different: the ticket that added it
+// requires an unrecognized SECTION NUMBER to keep its own raw identity ("25 —
+// Unmapped Section"), not merge with every other unrecognized section number into
+// one indistinguishable row — so this reads the section number straight off the
+// raw code's own shape (`${sectionNumber}-${functionId}`) rather than off
+// OPERATIONAL_GROUPING, and only consults the lookup above for the DISPLAY NAME of
+// a section number that turns out to be one of the standard ones.
+export function rawSectionNumberAndName(code: string): { sectionNumber: string; sectionName: string } {
+  const sectionNumber = code.split("-")[0]?.trim();
+  if (!sectionNumber) return { sectionNumber: UNDEFINED_LABEL, sectionName: UNDEFINED_LABEL };
+  return { sectionNumber, sectionName: SECTION_NUMBER_NAME.get(sectionNumber) ?? "Unmapped Section" };
+}
+
 export function functionGroupFor(code: string): string {
   return OPERATIONAL_GROUPING[code]?.functionGroup ?? UNDEFINED_LABEL;
 }
 
 export function taskFor(code: string): string {
   return OPERATIONAL_GROUPING[code]?.task ?? UNDEFINED_LABEL;
+}
+
+// ── The one section-code -> display-name lookup (2026-08-20) ───────────────
+//
+// Five files each hand-copied `new Map(SECTIONS.map(s => [s.code, s.name]))` —
+// off-grid-hours.ts, tm-hours.ts, data-quality-actions.ts, job-hours-detail.ts,
+// jobs/[id]/page.tsx — plus hours-explorer.ts's own slightly fuller version
+// (SECTIONS name, else this module's `task` for a code SECTIONS doesn't cover).
+// This is that fuller version, exported once so every one of those reads THE
+// same name for a raw section code instead of a raw code or a blank cell for
+// anything off the 17-column ETC/Quoted grid.
+export function sectionDisplayName(code: string): string {
+  return SECTIONS.find((s) => s.code === code)?.name ?? taskFor(code);
 }
 
 // The Hours tab's "Group By: Department" — see OperationalEntry.department's
@@ -112,6 +197,28 @@ export function taskFor(code: string): string {
 export function departmentFor(code: string): string {
   return OPERATIONAL_GROUPING[code]?.department ?? UNDEFINED_LABEL;
 }
+
+// ── "Group By: Function" does NOT live here (removed 2026-08-21) ───────────
+//
+// This module held `functionIdFor(code)` and `functionLabelFor(code)`, which read a
+// Function ID off a `${section}-${function}` string. They were deleted along with their
+// only caller.
+//
+// The problem was not the functions — it was what they were being GIVEN. Every caller
+// passed `JobHoursDetail.section`, the STANDARDIZED column, in which 10-414 has been
+// folded onto 10-413 (and 12/13/14-211 onto 10-211). So "Group By: Function" produced a
+// group keyed and labelled `413` whose detail rows carried raw Function 414 — parent and
+// children disagreeing, which looks like a data bug and cannot be diagnosed from the UI.
+//
+// Function and Section grouping now read the dedicated `rawFunction`/`rawSection`
+// columns, via rollupByRawTier in hours-filters.ts. These two helpers are gone rather
+// than merely left unused, because a helper that accepts either a raw or a standardized
+// code and cannot tell them apart is a trap: the next caller has no way to know which
+// one it is holding. If you need a Function ID, read `rawFunction`.
+//
+// The standardized tiers that remain in this module (Section Name, Function Group, Task
+// Description, Department) are reporting categories and are MEANT to combine many raw
+// values — they legitimately read the standardized code.
 
 // ── Reverse lookups, for narrowing a group-by tree node ─────────────────────────
 //
@@ -159,20 +266,27 @@ export function codesInDepartment(department: string): string[] {
 //
 // Not sorted by hours, not alphabetical — the same left-to-right reading
 // order as the "Estimate to Complete" reference sheet's own layout: each
-// Section 10 function group in its column order (PM, ME, CE, General
-// Engineering, then Shop split into its three trades), then each later
-// phase in sequence, Engineering before Shop within a phase, ending with
-// Spare Parts. `UNDEFINED_LABEL` is deliberately absent from this list — see
+// Section 10 function group in its column order (Management, Mechanical
+// Engineering, Controls Engineering, General Engineering, Engineering
+// "Other", then Shop split into its three trades), then each later phase in
+// sequence, Engineering before Shop within a phase, ending with Spare Parts.
+// `UNDEFINED_LABEL` is deliberately absent from this list — see
 // `departmentOrderRank` below — so it always sorts after every real
 // department, never accidentally slotted in the middle by an edit here.
+//
+// "Project Management"/"Manufacturing Operations" -> "Management"/
+// "Manufacturing" (2026-08-20): wording only, matching the centralized
+// canonical vocabulary — see phase10Entry above. Every other entry, and the
+// list's own shape, is unchanged.
 export const DEPARTMENT_ORDER: string[] = [
-  "Project Management",
+  "Management",
   "Mechanical Engineering",
   "Controls Engineering",
   "General Engineering",
+  "Engineering",
   "Mechanical Build",
   "Electrical Build",
-  "Manufacturing Operations",
+  "Manufacturing",
   "Machine Testing — Engineering",
   "Machine Testing — Shop",
   "Teardown & Install — Engineering",
@@ -188,7 +302,7 @@ export const DEPARTMENT_ORDER: string[] = [
 const DEPARTMENT_RANK = new Map(DEPARTMENT_ORDER.map((d, i) => [d, i]));
 
 // A department NOT in the fixed list — today that's only `UNDEFINED_LABEL`,
-// since every real code the app imports resolves to one of the 17 above —
+// since every real code the app imports resolves to one of the list above —
 // ranks after all of them, so it reads at the bottom of any department-
 // ordered list without needing its own special-cased position in the array.
 export function departmentOrderRank(department: string): number {

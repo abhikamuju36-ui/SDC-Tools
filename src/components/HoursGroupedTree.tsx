@@ -88,7 +88,7 @@ const SORT_COLUMNS: SortColumns<HoursGroupRow, SortKey> = {
 // client-side string compare with no such constraint — extended locally
 // rather than widening the shared type (which would force orderByForSort to
 // grow a case it has no correct way to satisfy).
-type DetailSortKey = "date" | "employee" | "department" | "jobId" | "jobName" | "section" | "hours";
+type DetailSortKey = "date" | "employee" | "department" | "jobId" | "jobName" | "rawSection" | "rawSectionName" | "rawFunction" | "standardTaskDescription" | "mappingStatus" | "hours";
 
 const DETAIL_SORT_COLUMNS: SortColumns<HoursRow, DetailSortKey> = {
   date: { type: "date", value: (r) => r.date },
@@ -96,7 +96,15 @@ const DETAIL_SORT_COLUMNS: SortColumns<HoursRow, DetailSortKey> = {
   department: { type: "text", value: (r) => r.department },
   jobId: { type: "id", value: (r) => r.jobId },
   jobName: { type: "text", value: (r) => r.jobName },
-  section: { type: "text", value: (r) => r.section },
+  // Sortable on each half independently — the point of splitting them. Section and
+  // Function sort as TEXT on their numeric strings, matching how the codes read
+  // elsewhere in the app (and they are fixed-width in practice, so text order is
+  // numeric order).
+  rawSection: { type: "text", value: (r) => r.rawSection },
+  rawSectionName: { type: "text", value: (r) => r.rawSectionName },
+  rawFunction: { type: "text", value: (r) => r.rawFunction },
+  standardTaskDescription: { type: "text", value: (r) => r.standardTaskDescription },
+  mappingStatus: { type: "text", value: (r) => r.mappingStatus },
   hours: { type: "hours", value: (r) => r.hours },
 };
 
@@ -157,7 +165,14 @@ function DetailBlock({ depth, drill, parentDisplayHours }: { depth: number; dril
             <SortableTh label="Department" sortKey="department" type="text" sort={sort} onSort={onSort} className={DETAIL_TH} />
             <SortableTh label="Job Id" sortKey="jobId" type="id" sort={sort} onSort={onSort} className={DETAIL_TH} />
             <SortableTh label="Job / Machine" sortKey="jobName" type="text" sort={sort} onSort={onSort} className={DETAIL_TH} />
-            <SortableTh label="Function / Section" sortKey="section" type="text" sort={sort} onSort={onSort} className={DETAIL_TH} />
+            {/* Separate columns (2026-08-21) — see the Hours page table for why the
+                combined "Function / Section" cell was removed. `section` stays the sort
+                key because it is the indexed column; the split is presentational. */}
+            <SortableTh label="Section" sortKey="rawSection" type="text" sort={sort} onSort={onSort} className={DETAIL_TH} />
+            <SortableTh label="Section Name" sortKey="rawSectionName" type="text" sort={sort} onSort={onSort} className={DETAIL_TH} />
+            <SortableTh label="Function" sortKey="rawFunction" type="text" sort={sort} onSort={onSort} className={DETAIL_TH} />
+            <SortableTh label="Function Name" sortKey="standardTaskDescription" type="text" sort={sort} onSort={onSort} className={DETAIL_TH} />
+            <SortableTh label="Mapping Status" sortKey="mappingStatus" type="text" sort={sort} onSort={onSort} className={DETAIL_TH} />
             <SortableTh label="Hours" sortKey="hours" type="hours" sort={sort} onSort={onSort} className={DETAIL_TH} />
           </tr>
         </thead>
@@ -171,8 +186,21 @@ function DetailBlock({ depth, drill, parentDisplayHours }: { depth: number; dril
               <td className={`${TD} max-w-xs truncate`} title={r.jobName}>
                 {r.jobName}
               </td>
+              <td className={`${TD} font-mono`}>{r.rawSection}</td>
+              <td className={TD}>{r.rawSectionName}</td>
+              <td className={`${TD} font-mono`}>{r.rawFunction}</td>
+              <td className={TD}>{r.standardTaskDescription}</td>
               <td className={TD}>
-                {r.section} — {r.sectionName}
+                {r.mappingStatus === "Undefined" ? (
+                  <span
+                    className="text-sdc-yellow-text"
+                    title={`Undefined${r.undefinedReason ? `: ${r.undefinedReason}` : ""} — Section ${r.rawSection || "(blank)"} + Function ${r.rawFunction || "(blank)"} is not in the approved rule book. The hours are still counted.`}
+                  >
+                    Undefined
+                  </span>
+                ) : (
+                  <span className="text-sdc-muted">Mapped</span>
+                )}
               </td>
               {/* hoursCell(), matching every other punch-level view in the app —
                   never a decimal, and a real sub-half-hour punch reads as "<1"
@@ -183,7 +211,7 @@ function DetailBlock({ depth, drill, parentDisplayHours }: { depth: number; dril
         </tbody>
         <tfoot>
           <tr className="font-semibold">
-            <td colSpan={6} className="border-b border-sdc-border-soft px-3 py-1.5 text-sm text-sdc-muted">
+            <td colSpan={10} className="border-b border-sdc-border-soft px-3 py-1.5 text-sm text-sdc-muted">
               {drill.truncated
                 ? `Showing the first ${drill.rows.length.toLocaleString()} punches — narrow the filters or add another Group By level to see the rest.`
                 : `Total (${drill.rows.length.toLocaleString()} punch${drill.rows.length === 1 ? "" : "es"})`}

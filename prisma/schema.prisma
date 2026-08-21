@@ -237,18 +237,38 @@ model JobHoursDetail {
   id         Int      @id @default(autoincrement())
   jobId      Int
   job        Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  section    String // Section-Function Code, e.g. "10-211"
+  // `section` IS the raw Paylocity pair "${rawSection}-${rawFunction}" (2026-08-21) —
+  // no alias, fold, or split. Storage never rewrites a punch to fit a rule book; the
+  // ETC grid's fixed-column fold (10-311 -> 312/313, 12/13/14-211 -> 10-211, etc.) is
+  // computed on the fly by the handful of consumers that need it (syncActualHours,
+  // syncHoursWorked, the ETC-month drill, T&M) — never stored here.
+  section    String
   month      String // "2026-07" — denormalised from workDate so a month can be replaced wholesale
   workDate   DateTime @db.Date
   employeeId String // Paylocity Employee Id
   hours      Decimal  @db.Decimal(10, 2)
+  // Split out of `section` at write time, for plain-column filtering/grouping with no
+  // string parsing. rawSection + "-" + rawFunction === section, always.
+  rawSection  String @default("")
+  rawFunction String @default("")
+  // The approved Section+Function rule book, applied once at write time and stored so
+  // every page's Group By is a plain SQL GROUP BY on these columns — no per-page
+  // recomputation, no drift between pages. Pure functions of rawSection/rawFunction
+  // (paylocity-standard-rules.ts's classifyPunch), so recomputing them for every row
+  // needs no re-read of Paylocity — see scripts/recompute-standard-columns.ts.
+  standardDepartment      String @default("") // "PM" | "Engineering" | "Shop" | "Undefined"
+  standardTaskDescription String @default("") // e.g. "Manufacturing"; "Undefined" when unmapped
+  mappingStatus           String @default("") // "Mapped" | "Undefined"
   source     String   @default("sharepoint")
   syncedAt   DateTime @default(now())
 
-  // One punch per employee/day/job/section. The Paylocity export is already
-  // aggregated to this grain, so a duplicate means the same row was ingested
-  // twice rather than someone booking twice.
-  @@unique([jobId, section, workDate, employeeId])
+  // One row per employee/day/job/RAW punch. `section` already IS the raw pair, so this
+  // is the true punch grain with no possibility of two different raw punches summing
+  // into one row.
+  @@unique([jobId, section, workDate, employeeId], map: "JobHoursDetail_punch_grain_key")
+  @@index([rawSection, rawFunction], map: "JobHoursDetail_raw_pair_idx")
+  @@index([standardDepartment])
+  @@index([mappingStatus])
   // The drill queries by job (all sections, like the report's page).
   @@index([jobId, month])
 }

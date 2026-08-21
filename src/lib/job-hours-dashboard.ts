@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { SECTIONS, PHASE_GROUPS, PARTS_COST_SECTION } from "@/lib/sections";
+import { SECTIONS, ETC_SECTIONS, PHASE_GROUPS, PARTS_COST_SECTION } from "@/lib/sections";
 import { suggestNewEtc } from "@/lib/etc";
 import { validJobTypeFilter, compareJobIds } from "@/lib/job-filters";
 import { loadActualHoursBySection, loadMonthlyWorkedBySection } from "@/lib/actual-hours";
@@ -22,13 +22,13 @@ export type SectionHours = {
   actual: number;
 };
 
-// Engineering vs Shop split — mirrors sections.ts ENGINEERING_CODES (the set the
-// sheet's Total-New-ETC formula treats as Engineering).
-const ENGINEERING_CODES = new Set([
-  "10-211", "10-312", "10-313", "10-515", "10-516", "10-517", "10-518", "40-211", "50-211",
-]);
-const billingGroupOf = (code: string): "Engineering" | "Shop" =>
-  ENGINEERING_CODES.has(code) ? "Engineering" : "Shop";
+// Engineering vs Shop split — READ from sections.ts's own ETC_SECTIONS.billingGroup
+// rather than a second, hand-copied code list (found live, 2026-08-20: this used to
+// re-type sections.ts's private ENGINEERING_CODES set, which could silently drift
+// from the real one with no compiler warning — exactly the "signed-off number
+// disagrees across screens" failure class this app has hit before).
+const BILLING_GROUP_BY_CODE = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]));
+const billingGroupOf = (code: string): "Engineering" | "Shop" => BILLING_GROUP_BY_CODE.get(code) ?? "Shop";
 
 export type JobHoursDashboard = {
   job: { id: number; jobId: string; jobName: string; customer: string | null; status: string };

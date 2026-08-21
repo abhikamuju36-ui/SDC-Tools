@@ -8,6 +8,8 @@ import {
   reconciliationMessage,
   reportMonthForWorkDate,
   undefinedTotalsForMonth,
+  roundedHoursVisible,
+  visibleUndefinedTotals,
   KPI_COUNTED_REASONS,
   UNDEFINED_REASON_FIX,
   UNDEFINED_REASON_LABEL,
@@ -225,5 +227,39 @@ test("a fully reversed entry reconciles at zero without vanishing", () => {
   assert.equal(reconcileUndefined(drill, kpi).ok, true);
   // The rows are still there to look at — a zero total with two entries behind it is
   // a different situation from no entries, and the drill has to show which.
+  assert.equal(totals[0].rows, 2);
+});
+
+// ── Zero-hour row filtering (by request, 2026-08-20) ────────────────────────
+
+test("roundedHoursVisible matches the display rounding exactly", () => {
+  assert.equal(roundedHoursVisible(0.49), false, "rounds to 0");
+  assert.equal(roundedHoursVisible(-0.49), false, "rounds to -0, still invisible");
+  assert.equal(roundedHoursVisible(0.5), true, "rounds to 1");
+  assert.equal(roundedHoursVisible(0), false);
+  assert.equal(roundedHoursVisible(8), true);
+});
+
+test("visibleUndefinedTotals drops rows that round to 0 before they ever reach a total", () => {
+  const rejected = [
+    row({ hours: 8, label: "Not Defined" }),
+    // Real time, but invisible at whole-hour display — must not pad the total.
+    row({ hours: 0.2, label: "Not Defined" }),
+    row({ hours: -0.3, label: "Not Defined" }),
+  ];
+  const totals = visibleUndefinedTotals(rejected);
+  assert.equal(totals.length, 1);
+  assert.equal(totals[0].hours, 8, "the 0.2 and -0.3 rows are excluded, not merely hidden");
+  assert.equal(totals[0].rows, 1);
+});
+
+test("a reversal pair still nets correctly even though each half rounds to non-zero", () => {
+  // Distinct from the invisible-single-row case above: two real, individually-visible
+  // rows that happen to sum to something small are not the same thing as one row that
+  // rounds away on its own — the filter is per-row, applied before aggregation, never
+  // on the aggregate itself.
+  const totals = visibleUndefinedTotals([row({ hours: 4 }), row({ hours: -3.6 })]);
+  assert.equal(totals.length, 1);
+  assert.ok(Math.abs(totals[0].hours - 0.4) < 1e-9);
   assert.equal(totals[0].rows, 2);
 });

@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { SECTIONS, ETC_TRACKED_CODES } from "@/lib/sections";
+import { SECTIONS, ETC_TRACKED_CODES, mapPunchToColumns } from "@/lib/sections";
 
 // "Hours Detail" — the punch-level rows behind a job's Actual hours, recreating
 // the Power BI report's drillthrough page: one line per employee per day per
@@ -10,13 +10,15 @@ import { SECTIONS, ETC_TRACKED_CODES } from "@/lib/sections";
 // clicked), per Dan: the useful question is usually "who has been on this job",
 // and a section filter on top of the full list answers both.
 
+import { punchIdentity, type PunchIdentity } from "@/lib/hours-filters";
+
 const SECTION_NAME = new Map(SECTIONS.map((s) => [s.code, s.name]));
 
 export type HoursDetailRow = {
   date: string; // YYYY-MM-DD
   employee: string; // resolved name, or the raw Paylocity id
   department: string;
-  section: string; // Section-Function Code
+  section: string; // getJobHoursDetail: the RAW pair (== rawSection-rawFunction). getEtcMonthHoursDetail: the ETC-grid column this raw punch was folded/allocated onto for that scoped view — see each function.
   sectionName: string;
   hours: number;
   // Only set when the detail spans more than one job — the Monthly ETC month
@@ -24,7 +26,11 @@ export type HoursDetailRow = {
   // single-job drill, where a Job column would repeat the page heading on
   // every row.
   job?: string;
-};
+} & PunchIdentity;
+// ^ Section and Function as SEPARATE raw/standardized fields (2026-08-21), from the
+// one shared projection in hours-filters.ts. Intersected rather than re-declared so
+// this page, the Hours page and Monthly ETC cannot drift: they all show the same
+// values for the same punch because they all call punchIdentity().
 
 export type JobHoursDetail = {
   rows: HoursDetailRow[];
@@ -50,7 +56,7 @@ export async function getJobHoursDetail(jobPks: number[]): Promise<JobHoursDetai
   const [detail, employees] = await Promise.all([
     prisma.jobHoursDetail.findMany({
       where: { jobId: { in: jobPks } },
-      select: { section: true, workDate: true, employeeId: true, hours: true, job: { select: { jobId: true, jobName: true } } },
+      select: { section: true, rawSection: true, rawFunction: true, workDate: true, employeeId: true, hours: true, job: { select: { jobId: true, jobName: true } } },
       // Newest first, like the report's page (its Date column sorts descending).
       orderBy: [{ workDate: "desc" }, { section: "asc" }],
       take: MAX_ROWS + 1, // one extra, purely to detect truncation
@@ -75,6 +81,11 @@ export async function getJobHoursDetail(jobPks: number[]): Promise<JobHoursDetai
 
   const rows: HoursDetailRow[] = kept.map((d) => {
     const emp = byPaylocityId.get(d.employeeId);
+    // `section` IS the raw pair now, so SECTION_NAME (keyed by the 17 ETC-fold codes)
+    // rarely has an entry for it. Fall back to the rule book's own verdict —
+    // "10-413 — Manufacturing", "35-211 — Undefined" — rather than repeating the
+    // raw code as its own name.
+    const id = punchIdentity(d.rawSection, d.rawFunction);
     return {
       ...(showJob ? { job: `${d.job.jobId} — ${d.job.jobName}` } : {}),
       date: d.workDate.toISOString().slice(0, 10),
@@ -85,8 +96,9 @@ export async function getJobHoursDetail(jobPks: number[]): Promise<JobHoursDetai
       employee: emp?.name ?? (d.employeeId ? `#${d.employeeId}` : "—"),
       department: emp?.department?.trim() || "—",
       section: d.section,
-      sectionName: SECTION_NAME.get(d.section) ?? d.section,
+      sectionName: SECTION_NAME.get(d.section) ?? id.standardTaskDescription,
       hours: Number(d.hours),
+      ...id,
     };
   });
 
@@ -118,15 +130,17 @@ export async function getEtcMonthHoursDetail(month: string, jobPks: number[]): P
 
   const [detail, employees] = await Promise.all([
     prisma.jobHoursDetail.findMany({
-      // Scoped to the codes the ETC grid actually shows. The importer now also
-      // keeps Manufacturing punches (see HOURS_IMPORT_CODES), which belong in a
-      // job's real hours but NOT here: this drill sits under the Monthly ETC
-      // cards, and a footer total that included a column the grid doesn't have
-      // would make the card and its own detail disagree — the exact failure
-      // DEVLOG §12 was written about.
-      where: { month, jobId: { in: jobPks }, section: { in: [...ETC_TRACKED_CODES] } },
+      // NOT filtered by section at the DB level any more (2026-08-21): `section` is the
+      // RAW pair now, and a raw pair like "10-311" or "10-414" does not literally equal
+      // any ETC_TRACKED_CODES entry even though it folds onto one (10-312/10-313,
+      // 10-413). Filtering here would silently drop every punch that needs folding —
+      // exactly the class of bug this migration exists to prevent. So every row for
+      // the month/jobs is fetched, then folded and filtered in JS below.
+      where: { month, jobId: { in: jobPks } },
       select: {
         section: true,
+        rawSection: true,
+        rawFunction: true,
         workDate: true,
         employeeId: true,
         hours: true,
@@ -145,17 +159,29 @@ export async function getEtcMonthHoursDetail(month: string, jobPks: number[]): P
   const truncated = detail.length > MAX_ROWS;
   const kept = truncated ? detail.slice(0, MAX_ROWS) : detail;
 
-  const rows: HoursDetailRow[] = kept.map((d) => {
+  // ── Fold each raw punch onto the ETC grid's fixed columns, HERE, in memory ────
+  //
+  // The fold (and the 10-311 30/70 split) is computed on the fly, exactly as
+  // sync-powerbi.ts's syncHoursWorked does for the same grid. `section`/`sectionName`
+  // on the resulting row are the ETC-column destination — correct for THIS view,
+  // whose entire purpose is "what does the ETC grid show" — while `rawSection`/
+  // `rawFunction` (via punchIdentity, spread below) stay the untouched original punch.
+  // A 10-311 punch therefore renders as two allocation rows here, each one still
+  // showing raw Section=10/Function=311 and together summing back to the punch.
+  const rows: HoursDetailRow[] = kept.flatMap((d) => {
     const emp = byPaylocityId.get(d.employeeId);
-    return {
-      date: d.workDate.toISOString().slice(0, 10),
-      employee: emp?.name ?? (d.employeeId ? `#${d.employeeId}` : "—"),
-      department: emp?.department?.trim() || "—",
-      section: d.section,
-      sectionName: SECTION_NAME.get(d.section) ?? d.section,
-      hours: Number(d.hours),
-      job: `${d.job.jobId} — ${d.job.jobName}`,
-    };
+    return mapPunchToColumns(d.section, Number(d.hours))
+      .filter((col) => ETC_TRACKED_CODES.has(col.section))
+      .map((col) => ({
+        date: d.workDate.toISOString().slice(0, 10),
+        employee: emp?.name ?? (d.employeeId ? `#${d.employeeId}` : "—"),
+        department: emp?.department?.trim() || "—",
+        section: col.section,
+        sectionName: SECTION_NAME.get(col.section) ?? col.section,
+        hours: col.hours,
+        job: `${d.job.jobId} — ${d.job.jobName}`,
+        ...punchIdentity(d.rawSection, d.rawFunction),
+      }));
   });
 
   const bySection = new Map<string, number>();

@@ -23,9 +23,16 @@ import type { HoursByYear, JobCostRow } from "@/lib/job-cost";
 // Billing-group bucket per section code, from the FULL section list (every
 // phase), not the narrower ETC-grid-scoped subset — Job Cost Explorer's
 // Actual/Eng/Shop/Other columns are whole-job totals across every phase.
+//
+// "ME"/"CE" -> "Mechanical Engineering"/"Controls Engineering" (2026-08-20):
+// sections.ts's `group` now carries the centralized canonical wording, not
+// its own abbreviation — this check has to match the CURRENT values or every
+// ME/CE-coded section silently falls through to "other" (found live while
+// migrating; nothing here would have errored, it would just have quietly
+// moved hours off the Eng column).
 const SECTION_BUCKET: Record<string, "eng" | "shop" | "other"> = {};
 for (const s of SECTIONS) {
-  SECTION_BUCKET[s.code] = ["ME", "CE", "General Engineering", "Engineering"].includes(s.group)
+  SECTION_BUCKET[s.code] = ["Mechanical Engineering", "Controls Engineering", "General Engineering", "Engineering"].includes(s.group)
     ? "eng"
     : s.group === "Shop"
       ? "shop"

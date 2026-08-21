@@ -1,7 +1,15 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { SECTIONS } from "@/lib/sections";
-import { UNDEFINED_REASON_LABEL, UNDEFINED_REASON_FIX, type UndefinedReason } from "@/lib/undefined-hours-rules";
+import { punchIdentity, splitRawPair } from "@/lib/hours-filters";
+import {
+  UNDEFINED_REASON_LABEL,
+  UNDEFINED_REASON_FIX,
+  roundedHoursVisible,
+  visibleUndefinedTotals,
+  type UndefinedReason,
+  type UndefinedTotal,
+} from "@/lib/undefined-hours-rules";
 import type { HoursDetailRow } from "@/lib/job-hours-detail";
 
 // Punch-level detail behind the "Undefined hours" KPI card — the time booked to
@@ -82,7 +90,7 @@ export type UnattributedDetail = {
 };
 
 export async function getUnattributedDetail(month: string): Promise<UnattributedDetail> {
-  const [stored, employees, kpiRows, latestImport] = await Promise.all([
+  const [stored, employees, latestImport] = await Promise.all([
     // Everything for the month, counted and excluded alike — the split happens below
     // so both halves come from one read.
     prisma.undefinedHoursRow.findMany({
@@ -93,16 +101,16 @@ export async function getUnattributedDetail(month: string): Promise<Unattributed
       where: { paylocityId: { not: null } },
       select: { paylocityId: true, name: true, department: true },
     }),
-    // The KPI's own number, read from the table the card reads. If this ever differs
-    // from the sum below, the panel says so loudly (§42.28) rather than letting one
-    // of the two quietly win.
-    prisma.hoursImportIssue.findMany({ where: { month }, select: { hours: true } }),
     prisma.paylocityImport.findFirst({ orderBy: { id: "desc" }, select: { fileName: true, completedAt: true } }),
   ]);
 
   const byPaylocityId = new Map(employees.map((e) => [e.paylocityId!, e]));
 
-  const counted = stored.filter((r) => r.countsTowardKpi);
+  // A row whose hours round to 0 is dropped here — before it ever becomes a table row,
+  // a section subtotal, a reason group or the total below — not merely hidden from
+  // view while still padding a number nobody can see the source of (see
+  // roundedHoursVisible).
+  const counted = stored.filter((r) => r.countsTowardKpi && roundedHoursVisible(Number(r.hours)));
   const excludedRows = stored.filter((r) => !r.countsTowardKpi);
 
   const toRow = (r: (typeof stored)[number]) => {
@@ -118,6 +126,11 @@ export async function getUnattributedDetail(month: string): Promise<Unattributed
       // never carried.
       sectionName: SECTION_NAME.get(r.section) ?? r.section,
       hours: Number(r.hours),
+      // Section and Function split out, from the one shared projection (2026-08-21).
+      // These rows are rejected BEFORE standardization, so `r.section` already IS the
+      // raw code — passing it as both the standardized and the raw argument is exact
+      // here, not an approximation: no alias, split or merge has been applied to it.
+      ...punchIdentity(...splitRawPair(r.section)),
       job: r.label, // the raw cell value that isn't a usable job number
       reason,
       reasonLabel: UNDEFINED_REASON_LABEL[reason] ?? r.reason,
@@ -158,7 +171,19 @@ export async function getUnattributedDetail(month: string): Promise<Unattributed
     // Bounded by how much bad data exists rather than by a row cap — 56 entries in
     // 2026-07. If that ever stops being true the cap belongs here, not in the UI.
     truncated: false,
-    storedTotal: kpiRows.reduce((s, i) => s + Number(i.hours), 0),
+    // The KPI's own number — computed independently from the SAME raw rows (grouped by
+    // reason/label via aggregateUndefined rather than summed directly), not read back
+    // from a second table. If this ever disagrees with `total` above, the panel says so
+    // loudly (§42.28) rather than letting one of the two quietly win.
+    storedTotal: visibleUndefinedTotals(
+      stored.map((r) => ({
+        reason: r.reason as UndefinedReason,
+        countsTowardKpi: r.countsTowardKpi,
+        month: r.month,
+        label: r.label,
+        hours: Number(r.hours),
+      })),
+    ).reduce((s, g) => s + g.hours, 0),
     groups: group(counted),
     excluded: {
       rows: excludedRows.length,
@@ -169,6 +194,22 @@ export async function getUnattributedDetail(month: string): Promise<Unattributed
     sourceFile: latestImport?.fileName ?? null,
     importedAt: latestImport?.completedAt ?? null,
   };
+}
+
+// ── The KPI card's own figure (§37.13, §42.11) ──────────────────────────────
+//
+// What EtcMonthKpiCards' "Data Quality — Undefined Hours" card and its amber-banner
+// label list read — computed straight off the punch-level rows, not off
+// HoursImportIssue: that table has no per-punch granularity, so it cannot apply the
+// same "hide rows that round to 0" rule the drill above does. Reading it here instead
+// means the card can never show a number the drill's own rows don't sum to.
+export async function getUndefinedHoursTotals(month: string): Promise<{ hours: number; entries: number; issues: UndefinedTotal[] }> {
+  const rows = await prisma.undefinedHoursRow.findMany({
+    where: { month },
+    select: { reason: true, countsTowardKpi: true, month: true, label: true, hours: true },
+  });
+  const issues = visibleUndefinedTotals(rows.map((r) => ({ ...r, reason: r.reason as UndefinedReason, hours: Number(r.hours) })));
+  return { hours: issues.reduce((s, i) => s + i.hours, 0), entries: issues.reduce((s, i) => s + i.rows, 0), issues };
 }
 
 // The reconciliation test (§42.28) lives in lib/undefined-hours-rules.ts with the rest

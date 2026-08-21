@@ -1,6 +1,8 @@
 import { runDax } from "@/lib/powerbi-client";
 import { ETC_TRACKED_CODES, HOURS_IMPORT_CODES, SECTIONS, mapPunchToColumns, poolCategoryForPunch } from "@/lib/sections";
 import { normalizeJobNumber } from "@/lib/job-filters";
+import { normalizeFunctionId } from "@/lib/paylocity-canonical";
+import { normalizeSectionId } from "@/lib/paylocity-standard-rules";
 
 // Power BI reader for actual hours worked — NOT the live source since 2026-08-05.
 // The live source today is the OneDrive-synced Paylocity workbook, read via
@@ -56,12 +58,30 @@ export type PoolHoursByMonth = Map<string, number>;
 // hours still count, they just can't be attributed.
 export type JobHoursRow = {
   jobId: string;
+  /** The STANDARDIZED app column — post alias/split/merge. Unchanged semantics. */
   section: string;
   year: number;
   month: number;
   date: Date;
   hours: number;
   employeeId: string;
+  // ── Raw punch identity (2026-08-21) ───────────────────────────────────────
+  //
+  // Carried alongside `section`, never instead of it. `section` is what every
+  // existing consumer reads and its meaning has not changed; these two say which
+  // raw Paylocity punch it came from, which standardization would otherwise
+  // destroy (the 10-311 split, the 414->413 merge, the 12/13/14-211 fold).
+  //
+  // Needed because the approved rule book validates the RAW PAIR — Section 40 +
+  // Function 311 is approved Engineering, Section 10 + Function 311 is Undefined —
+  // and `section` cannot distinguish those once folded onto 40-211/10-31x.
+  //
+  // Normalized (see normalizeSectionId/normalizeFunctionId), so "010", 10 and
+  // "010 - Complete Design & Build" all arrive as "10". Empty string, never
+  // undefined, when the source cell was blank or non-numeric — that punch is real
+  // and must still reconcile; it classifies as Undefined on exactly that basis.
+  rawSection: string;
+  rawFunction: string;
 };
 
 // Hours the feed holds against something that isn't a job number. An untracked
@@ -292,14 +312,6 @@ export async function fetchJobHoursRowsWithIssues(opts?: { onlyMonth?: string })
   const unattributed = new Map<string, HoursImportIssue>(); // `${month}::${label}`
   const unattributedRows: UnattributedRow[] = [];
   const poolHours: PoolHoursByMonth = new Map();
-  // Diagnostics, same split the SharePoint reader reported:
-  //   pooledByCode  — reaches no job column but IS counted in a Standard Fees pool
-  //   droppedByCode — reaches nothing at all: phases the app doesn't model (80/90),
-  //     shop functions with no column (10-400), odd MachineSec values.
-  // Stated out loud rather than silently dropped, because excluding hours
-  // correctly and losing them look identical from the outside.
-  const pooledByCode = new Map<string, number>();
-  const droppedByCode = new Map<string, number>();
 
   // `onlyMonth` narrows the read to a single month (2026-08-03).
   //
@@ -357,15 +369,30 @@ export async function fetchJobHoursRowsWithIssues(opts?: { onlyMonth?: string })
       }
 
       // Raw Paylocity code -> the app's column(s). Aliases, plus the 10-311
-      // 30/70 design/software split. See mapPunchToColumns in sections.ts.
+      // 30/70 design/software split. See mapPunchToColumns in sections.ts — as of
+      // 2026-08-21 it never drops a row for being unmapped; a code outside
+      // HOURS_IMPORT_CODES comes back as itself and flows into `out` like
+      // everything else.
       const columns = mapPunchToColumns(rawSection, hours, resolve);
-      if (columns.length === 0) {
-        const bucket = poolCategory ? pooledByCode : droppedByCode;
-        bucket.set(rawSection, (bucket.get(rawSection) ?? 0) + hours);
-        continue;
-      }
+      // The raw pair is taken from `machineSec`/`fn` — the untransformed cells —
+      // not re-derived from `rawSection` or from `c.section`, so a future change to
+      // the column mapping cannot quietly alter what we record as raw. Every
+      // column a punch splits into carries the SAME raw pair, which is what lets
+      // the split halves sum back to the punch when grouped by it.
+      const rawSectionId = normalizeSectionId(machineSec);
+      const rawFunctionId = normalizeFunctionId(fn);
       for (const c of columns) {
-        out.push({ jobId, section: c.section, year: y, month: m, date, hours: c.hours, employeeId });
+        out.push({
+          jobId,
+          section: c.section,
+          year: y,
+          month: m,
+          date,
+          hours: c.hours,
+          employeeId,
+          rawSection: rawSectionId,
+          rawFunction: rawFunctionId,
+        });
       }
     }
 
@@ -374,28 +401,6 @@ export async function fetchJobHoursRowsWithIssues(opts?: { onlyMonth?: string })
       m = 1;
       y += 1;
     }
-  }
-
-  const summarise = (map: Map<string, number>) =>
-    [...map.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .slice(0, 8)
-      .map(([c, h]) => `${c} ${h.toFixed(2)}h`)
-      .join(", ");
-
-  if (pooledByCode.size > 0) {
-    const total = [...pooledByCode.values()].reduce((a, b) => a + b, 0);
-    console.warn(
-      `[job-hours] ${total.toFixed(2)}h on ${pooledByCode.size} code(s) with no ETC grid column, counted in the Standard Fees pools ` +
-        `(largest: ${summarise(pooledByCode)}).`,
-    );
-  }
-  if (droppedByCode.size > 0) {
-    const total = [...droppedByCode.values()].reduce((a, b) => a + b, 0);
-    console.warn(
-      `[job-hours] ${total.toFixed(2)}h on ${droppedByCode.size} code(s) reach NO figure anywhere ` +
-        `(largest: ${summarise(droppedByCode)}). Phases 80/90 and sections the app does not model.`,
-    );
   }
 
   const issues = [...unattributed.values()].sort((a, b) => b.hours - a.hours);

@@ -217,13 +217,13 @@ export function UndefinedHoursPanel({
       // untidy, and the page scrolls. Nothing needs the clip — the last child is the
       // padded body, so no background reaches the rounded corners.
       className={`motion-panel flex ${DRILL_CAP} flex-col rounded-xl border border-sdc-border bg-white shadow-sm`}
-      aria-label={`Undefined hours detail for ${month}`}
+      aria-label={`Data Quality — Undefined Hours detail for ${month}`}
     >
       {/* ── Header: title, month, KPI total, close (§42.27) ─────────────── */}
       <header className="flex flex-wrap items-start justify-between gap-3 border-b border-sdc-border-soft px-4 py-3">
         <div className="min-w-0">
           <h3 className="text-sm font-semibold text-sdc-navy">
-            Undefined hours <span className="font-normal text-sdc-muted">— {month}</span>
+            Data Quality — Undefined Hours <span className="font-normal text-sdc-muted">— {month}</span>
           </h3>
           <p className="mt-0.5 text-note leading-relaxed text-sdc-gray-600">
             Time booked to something that isn&apos;t a usable job number. It reaches{" "}

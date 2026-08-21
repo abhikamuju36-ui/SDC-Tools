@@ -20,12 +20,23 @@ import { prisma } from "@/lib/prisma";
 //   6. Function Hierarchy[Is Valid] = FALSE      -> invalid, "Section-Function
 //                                                   Exception"
 //
-// Rules 1, 3, 4 and 5 are reproduced exactly below. Rule 6 can't be: `Is Valid`
-// is a source column on an upstream Function Hierarchy list, and the app's hours
-// import drops punches on codes it doesn't model before they ever reach the
-// database (see HOURS_IMPORT_CODES in sections.ts) — so there's no row left here
-// to flag. Making that check possible means persisting those dropped punches at
-// import time, which is a change to the import path rather than to this file.
+// Rules 1, 4 and 5 are reproduced exactly below. Rule 6 is not (yet) — `Is Valid`
+// is a source column on an upstream Function Hierarchy list, and this file has no
+// query for it. That is no longer because the row is missing: the app's hours
+// import used to drop punches on codes it doesn't model before they ever reached
+// the database, but as of 2026-08-21 (see mapPunchToColumns's own header in
+// sections.ts) it never does — every punch reaches JobHoursDetail under its own
+// raw code, standardized or not, and HOURS_IMPORT_CODES.has(section) is exactly
+// the local equivalent of `Is Valid = FALSE` this rule would need. Implementing
+// Rule 6 here is still a separate, unscoped change (a new finding on this page),
+// not a follow-on to the ingestion fix — just no longer blocked by "there's no
+// row left to flag."
+//
+// Rule 3 ("Job Id Not Defined") used to be reproduced here too, as a "Hours booked
+// to a non-job" finding — moved to the ETC page's "Data Quality — Undefined Hours"
+// card (2026-08-20, by request): the same HoursImportIssue rows were surfacing on
+// both this tab and that page under two different names. See
+// lib/unattributed-hours.ts and lib/undefined-hours-rules.ts.
 //
 // "Undefined Employees" and "Hours Logged in Future" are the page's two dedicated
 // tables, with the same filters it uses.
@@ -51,8 +62,6 @@ export type PunchIssue = {
   completeDate: string | null;
 };
 
-export type NonJobHours = { month: string; label: string; rows: number; hours: number };
-
 export type DataQuality = {
   // The watermark everything is judged against — the same [Hours Refreshed Thru]
   // the report's header card shows. Null when the hours feed has never run.
@@ -60,7 +69,6 @@ export type DataQuality = {
   future: { count: number; hours: number; rows: PunchIssue[] };
   afterCompletion: { count: number; hours: number; rows: PunchIssue[] };
   undefinedEmployees: { count: number; hours: number; ids: { employeeId: string; rows: number; hours: number }[] };
-  nonJobHours: { count: number; hours: number; rows: NonJobHours[] };
   // True when a check had more rows than SAMPLE_LIMIT, so the table can say the
   // list is partial rather than implying the count and the list agree.
   truncated: boolean;
@@ -78,7 +86,7 @@ export async function getDataQuality(): Promise<DataQuality> {
   // One pass over the punches, filtered to the ones that could possibly be a
   // problem. Deliberately NOT every punch: the checks below are all "after some
   // date" or "employee not on the roster", so the query can do most of the work.
-  const [futureRaw, completedJobPunches, allEmployeeIds, importIssues] = await Promise.all([
+  const [futureRaw, completedJobPunches, allEmployeeIds] = await Promise.all([
     // 1. Dated beyond the refresh watermark. `Is Future Date` in the model is
     //    date > Hours Refreshed Thru, NOT date > today — a punch can be in the
     //    future relative to what payroll has published without being in the
@@ -101,10 +109,12 @@ export async function getDataQuality(): Promise<DataQuality> {
     // Every employee id that appears on a punch, to find the ones the roster
     // can't resolve — the page's "Undefined Employees" table.
     prisma.jobHoursDetail.groupBy({ by: ["employeeId"], _count: { _all: true }, _sum: { hours: true } }),
-    // The app's equivalent of rule 3 "Job Id Not Defined": hours whose job cell
-    // matched no job at all, so they never became punch rows. Recorded by the
-    // hours import instead (HoursImportIssue).
-    prisma.hoursImportIssue.findMany({ orderBy: [{ month: "desc" }, { hours: "desc" }], take: 50 }),
+    // Rule 3 "Job Id Not Defined" — hours whose job cell matched no job at all, so they
+    // never became punch rows — used to have its own finding here too (HoursImportIssue,
+    // "Hours booked to a non-job"). Consolidated onto the ETC page's own "Data Quality —
+    // Undefined Hours" card and drill instead (2026-08-20, by request): the same rows
+    // were showing up in both places under different names. See
+    // lib/unattributed-hours.ts.
   ]);
 
   const toIssue = (d: {
@@ -151,13 +161,6 @@ export async function getDataQuality(): Promise<DataQuality> {
     .map((r) => ({ employeeId: r.employeeId, rows: r._count._all, hours: Number(r._sum.hours ?? 0) }))
     .sort((a, b) => b.hours - a.hours);
 
-  const nonJobRows: NonJobHours[] = importIssues.map((i) => ({
-    month: i.month,
-    label: i.label,
-    rows: i.rows,
-    hours: Number(i.hours),
-  }));
-
   const sum = (rows: { hours: number }[]) => rows.reduce((s, r) => s + r.hours, 0);
 
   return {
@@ -165,7 +168,6 @@ export async function getDataQuality(): Promise<DataQuality> {
     future: { count: futureAll.length, hours: sum(futureAll), rows: future },
     afterCompletion: { count: afterAll.length, hours: sum(afterAll), rows: after },
     undefinedEmployees: { count: unresolved.length, hours: sum(unresolved), ids: unresolved },
-    nonJobHours: { count: nonJobRows.length, hours: sum(nonJobRows), rows: nonJobRows },
     truncated: futureAll.length > SAMPLE_LIMIT || afterAll.length > SAMPLE_LIMIT,
   };
 }

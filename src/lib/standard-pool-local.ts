@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { round2, isValidMonth } from "@/lib/etc";
 import { VALID_JOB_TYPES, compareJobIds } from "@/lib/job-filters";
 import { POOL_CATEGORIES, POOL_QUOTED_SECTION, type PoolCategory } from "@/lib/sections";
-import { fetchJobHoursRowsWithIssues, type PoolHoursByMonth } from "@/lib/job-hours-source";
+import type { PoolHoursByMonth } from "@/lib/job-hours-source";
+import { readHoursFeed } from "@/lib/hours-feed";
 
 // The "Standard Fees By Department" pool ledger, computed from the app's OWN
 // data instead of Power BI.
@@ -185,7 +186,13 @@ export async function computeCategoryPoolsLocally(
   //
   // The prefetched path is untouched and still passes every month: auto-sync computes
   // pools for many months in one pass, so there the full map is the point.
-  const poolHours = prefetchedPoolHours ?? (await fetchJobHoursRowsWithIssues({ onlyMonth: month })).poolHours;
+  // Reads through readHoursFeed, the one hours entry point, rather than the Power
+  // BI model it used to call (2026-08-21). Hours come only from the Paylocity Excel
+  // files now, and going through the feed also means the pool tally sees the same
+  // year-authoritative file selection as every other hours figure — reading the
+  // model here could have tallied pools from a month the feed no longer sourced
+  // that way.
+  const poolHours = prefetchedPoolHours ?? (await readHoursFeed({ onlyMonth: month })).poolHours;
   const newHoursAdded = await quotedHoursEnteringMonth(month);
 
   const priorPools = await prisma.categoryPool.findMany({ where: { month: previousMonth(month) } });

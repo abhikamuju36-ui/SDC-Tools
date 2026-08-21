@@ -272,7 +272,11 @@ export function buildKpiBlocks(input: KpiStripInput, fmt: KpiFormatters): KpiBlo
     // clean, where an absent block says nothing either way.
     {
       id: "undefined",
-      label: "Undefined hours",
+      // "Data Quality — Undefined Hours" everywhere this feature is named (by request,
+      // 2026-08-20) — the card, the panel it opens, and nowhere else under a different
+      // name, since that was the actual complaint: the same underlying figure used to
+      // also surface as "Hours booked to a non-job" on the Dashboard's Data Quality tab.
+      label: "Data Quality — Undefined Hours",
       value: fmt.hours(undef.hours),
       hint:
         undef.hours > 0

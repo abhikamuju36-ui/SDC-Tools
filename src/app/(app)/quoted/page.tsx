@@ -153,21 +153,21 @@ const PARTS_COST_COL_CLASS = "pc-col";
 // Group sub-bands: lighter SDC brand tints, each distinct, all drawn from the
 // brand palette (blue/green/yellow tints + light blue), with one bold brand
 // blue for the large General Engineering block so it reads as its own zone.
+//
+// Keyed on `s.group`'s actual values — sections.ts's own canonical wording
+// (2026-08-20; "PM"/"ME"/"CE" -> "Management"/"Mechanical Engineering"/
+// "Controls Engineering") rather than a hand-typed abbreviation of it. This
+// map going stale after that rename would have been silent: a color lookup
+// miss falls back to `?? ""`, so the header would just lose its band color
+// rather than error — exactly the kind of drift a shared vocabulary is
+// supposed to make impossible.
 const GROUP_HEADER_COLOR: Record<string, string> = {
-  PM: "bg-sdc-gray-100 text-sdc-navy", // neutral brand gray
-  ME: "bg-sdc-blue-light text-sdc-navy", // #e6f0fa
-  CE: "bg-sdc-green-bg text-sdc-navy", // #eef7de
+  Management: "bg-sdc-gray-100 text-sdc-navy", // neutral brand gray
+  "Mechanical Engineering": "bg-sdc-blue-light text-sdc-navy", // #e6f0fa
+  "Controls Engineering": "bg-sdc-green-bg text-sdc-navy", // #eef7de
   "General Engineering": "bg-sdc-blue text-white", // #1574C4
   Shop: "bg-sdc-yellow-bg text-sdc-navy", // #fff6d6
   Engineering: "bg-sdc-blue-100 text-sdc-navy", // #aacee8
-};
-// Full names for the department abbreviations above — only defined where the
-// header actually abbreviates something ("General Engineering"/"Shop"/
-// "Engineering" are already spelled out).
-const GROUP_FULL_NAME: Record<string, string> = {
-  PM: "Project Management",
-  ME: "Mechanical Engineering",
-  CE: "Controls Engineering",
 };
 
 // Consecutive runs of the same group within a phase's visible sections, for
@@ -824,7 +824,10 @@ export default async function QuotedPage({
                   <th
                     key={`${g.phase}-group-${i}`}
                     colSpan={run.count}
-                    title={GROUP_FULL_NAME[run.group]}
+                    // The visible text below is abbreviateLabel(run.group); the tooltip
+                    // is always the full canonical name it was abbreviated FROM, so
+                    // there is no separate full-name table to keep in sync.
+                    title={run.group}
                     className={`qc border-l border-sdc-border px-1 py-1.5 text-center text-label italic ${
                       GROUP_HEADER_COLOR[run.group] ?? ""
                     }`}

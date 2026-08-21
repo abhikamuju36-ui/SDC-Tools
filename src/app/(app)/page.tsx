@@ -157,8 +157,7 @@ export default async function Home({
         issueCount={
           dataQuality.future.count +
           dataQuality.afterCompletion.count +
-          dataQuality.undefinedEmployees.count +
-          dataQuality.nonJobHours.count
+          dataQuality.undefinedEmployees.count
         }
         dataQuality={<DataQualityPanel dq={dataQuality} explorer={explorer} />}
         overview={

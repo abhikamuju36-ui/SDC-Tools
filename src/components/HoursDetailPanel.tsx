@@ -162,7 +162,25 @@ export function sectionRank(label: string): number {
 // lines — they show the same row shape, just with some columns hidden (see detailCols).
 // A module-level constant, not a useMemo: every accessor closes over nothing but the row
 // itself, so there is nothing to recompute per render.
-type LineSortKey = "date" | "job" | "employee" | "department" | "section" | "sectionName" | "hours";
+// One rendering of the rule-book verdict, shared by this panel's two tables so the
+// grouped and flat views cannot describe the same punch differently. Undefined is
+// called out in the warning colour and carries the REASON in its tooltip, because the
+// two real fixes differ: a mis-punched Section/Function gets corrected in Paylocity,
+// while a legitimate combination the rule book has not approved yet needs the rule
+// book extended. It is never a reason to hide the row — the hours still count.
+function MappingStatusCell({ row }: { row: { mappingStatus: string; rawSection: string; rawFunction: string; undefinedReason?: string } }) {
+  if (row.mappingStatus !== "Undefined") return <span className="text-sdc-muted">Mapped</span>;
+  return (
+    <span
+      className="text-sdc-yellow-text"
+      title={`Undefined${row.undefinedReason ? `: ${row.undefinedReason}` : ""} — Section ${row.rawSection || "(blank)"} + Function ${row.rawFunction || "(blank)"} is not in the approved rule book. The hours are still counted.`}
+    >
+      Undefined
+    </span>
+  );
+}
+
+type LineSortKey = "date" | "job" | "employee" | "department" | "rawSection" | "rawSectionName" | "rawFunction" | "standardTaskDescription" | "mappingStatus" | "hours";
 
 const LINE_COLUMNS: SortColumns<JobHoursDetail["rows"][number], LineSortKey> = {
   date: { type: "date", value: (r) => r.date },
@@ -171,8 +189,12 @@ const LINE_COLUMNS: SortColumns<JobHoursDetail["rows"][number], LineSortKey> = {
   job: { type: "id", value: (r) => (r.job ? r.job.split(" — ")[0] : null) },
   employee: { type: "text", value: (r) => (r.employee && r.employee !== "—" ? r.employee : null) },
   department: { type: "text", value: (r) => (r.department && r.department !== "—" ? r.department : null) },
-  section: { type: "text", value: (r) => r.section || null },
-  sectionName: { type: "text", value: (r) => r.sectionName || null },
+  // Each half sortable on its own — the point of splitting them.
+  rawSection: { type: "text", value: (r) => r.rawSection || null },
+  rawSectionName: { type: "text", value: (r) => r.rawSectionName || null },
+  rawFunction: { type: "text", value: (r) => r.rawFunction || null },
+  standardTaskDescription: { type: "text", value: (r) => r.standardTaskDescription || null },
+  mappingStatus: { type: "text", value: (r) => r.mappingStatus || null },
   hours: { type: "hours", value: (r) => r.hours },
 };
 
@@ -309,7 +331,7 @@ export function HoursDetailPanel({
       // A line sort survives a groupBy change UNLESS the column it's sorting on just
       // became one of the grouped (hidden) dimensions — date/hours are never hidden.
       const sortedKey = lineSort.sort?.key;
-      if (sortedKey && sortedKey !== "date" && sortedKey !== "hours" && sortedKey !== "sectionName" && next.includes(sortedKey as GroupKey)) {
+      if (sortedKey && sortedKey !== "date" && sortedKey !== "hours" && !sortedKey.startsWith("raw") && !sortedKey.startsWith("standard") && sortedKey !== "mappingStatus" && next.includes(sortedKey as GroupKey)) {
         lineSort.setSort(null);
       }
       return next;
@@ -395,7 +417,21 @@ export function HoursDetailPanel({
 
   // Which columns the flat (ungrouped) punch list shows. Named so the header and the
   // body read the same list rather than two hand-kept copies.
-  const flatCols = ["Date", ...(showJob ? ["Job"] : []), "Employee", "Department", "Section", "Hours"];
+  // Drives the footer's colSpan, so it must list every column the flat table renders.
+  // Section/Function were split into five columns on 2026-08-21; a stale count here
+  // would leave the total cell under the wrong column.
+  const flatCols = [
+    "Date",
+    ...(showJob ? ["Job"] : []),
+    "Employee",
+    "Department",
+    "Section",
+    "Section Name",
+    "Function",
+    "Function Name",
+    "Mapping",
+    "Hours",
+  ];
   // What the table currently IS — the active rollup, with no punch count attached
   // anywhere in it (§62: "3 groups by department · 680 of 680 punches" is now just
   // "Grouped by department"). Counts are gone from every level — this line, each
@@ -527,7 +563,18 @@ export function HoursDetailPanel({
                     {detailCols.department && (
                       <SortableTh label="Department" sortKey="department" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-44" />
                     )}
-                    {detailCols.section && <SortableTh label="Section" sortKey="section" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-40" />}
+                    {detailCols.section && (
+                      <>
+                        {/* Section and Function as separate columns (2026-08-21) — a
+                            combined "10-211 — General" cell cannot say whether the
+                            Section, the Function, or only the pairing is wrong. */}
+                        <SortableTh label="Section" sortKey="rawSection" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-16" />
+                        <SortableTh label="Section Name" sortKey="rawSectionName" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-40" />
+                        <SortableTh label="Function" sortKey="rawFunction" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-16" />
+                        <SortableTh label="Function Name" sortKey="standardTaskDescription" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-40" />
+                        <SortableTh label="Mapping" sortKey="mappingStatus" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-24" />
+                      </>
+                    )}
                     <SortableTh label="Hours" sortKey="hours" type="hours" sort={lineSort.sort} onSort={lineSort.onSort} className="w-20" />
                   </>
                 }
@@ -543,10 +590,15 @@ export function HoursDetailPanel({
                     {detailCols.employee && <td className="text-sdc-gray-700">{r.employee}</td>}
                     {detailCols.department && <td className="text-sdc-muted">{r.department}</td>}
                     {detailCols.section && (
-                      <td className="text-sdc-muted">
-                        <span className="font-mono">{r.section}</span>
-                        {r.sectionName ? ` — ${r.sectionName}` : ""}
-                      </td>
+                      <>
+                        <td className="font-mono text-sdc-muted">{r.rawSection}</td>
+                        <td className="text-sdc-muted">{r.rawSectionName}</td>
+                        <td className="font-mono text-sdc-muted">{r.rawFunction}</td>
+                        <td className="text-sdc-muted">{r.standardTaskDescription}</td>
+                        <td className="text-sdc-muted">
+                          <MappingStatusCell row={r} />
+                        </td>
+                      </>
                     )}
                     <td className={DRILL_NUM} title={hoursExact(r.hours)}>
                       {hoursCell(r.hours)}
@@ -579,8 +631,11 @@ export function HoursDetailPanel({
                 {showJob && <SortableTh label="Job" sortKey="job" type="id" sort={lineSort.sort} onSort={lineSort.onSort} className="w-56" />}
                 <SortableTh label="Employee" sortKey="employee" type="text" sort={lineSort.sort} onSort={lineSort.onSort} />
                 <SortableTh label="Department" sortKey="department" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-44" />
-                <SortableTh label="Section" sortKey="section" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-20" />
-                <SortableTh label="Section Name" sortKey="sectionName" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-40" />
+                <SortableTh label="Section" sortKey="rawSection" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-16" />
+                <SortableTh label="Section Name" sortKey="rawSectionName" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-40" />
+                <SortableTh label="Function" sortKey="rawFunction" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-16" />
+                <SortableTh label="Function Name" sortKey="standardTaskDescription" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-40" />
+                <SortableTh label="Mapping" sortKey="mappingStatus" type="text" sort={lineSort.sort} onSort={lineSort.onSort} className="w-24" />
                 <SortableTh label="Hours" sortKey="hours" type="hours" sort={lineSort.sort} onSort={lineSort.onSort} className="w-20" />
               </>
             }
@@ -605,8 +660,13 @@ export function HoursDetailPanel({
                 )}
                 <td className="text-sdc-gray-700">{r.employee}</td>
                 <td className="text-sdc-muted">{r.department}</td>
-                <td className="font-mono text-sdc-muted">{r.section}</td>
-                <td className="text-sdc-muted">{r.sectionName}</td>
+                <td className="font-mono text-sdc-muted">{r.rawSection}</td>
+                <td className="text-sdc-muted">{r.rawSectionName}</td>
+                <td className="font-mono text-sdc-muted">{r.rawFunction}</td>
+                <td className="text-sdc-muted">{r.standardTaskDescription}</td>
+                <td className="text-sdc-muted">
+                  <MappingStatusCell row={r} />
+                </td>
                 {/* Rounded, like every other hours figure in the app; the title keeps the
                     exact punch reachable. */}
                 <td className={DRILL_NUM} title={hoursExact(r.hours)}>

@@ -27,6 +27,14 @@ function ids(v: unknown, pattern?: RegExp): string[] | undefined {
   return list.length > 0 ? list : undefined;
 }
 
+// Same DoS-hygiene shape as ids() above, for the two raw-narrowing scalars
+// (sectionNumber/functionId) rather than a list. No character-class pattern —
+// a real raw MachineSec/Function value can be non-numeric ("Not Defined") — just
+// the same type/length check every other field here gets.
+function rawId(v: unknown): string | undefined {
+  return typeof v === "string" && v.length > 0 && v.length <= 100 ? v : undefined;
+}
+
 function sanitize(f: HoursFilters): HoursFilters {
   return {
     jobIds: ids(f.jobIds),
@@ -36,6 +44,20 @@ function sanitize(f: HoursFilters): HoursFilters {
     months: ids(f.months, ISO_MONTH),
     from: f.from && ISO_DATE.test(f.from) ? f.from : undefined,
     to: f.to && ISO_DATE.test(f.to) ? f.to : undefined,
+    // "Section"/"Function" narrow via these two (see HoursFilters' own header) — left
+    // out of this allow-list once already, which silently dropped the narrowing on
+    // every server-action drill (though never on the page's own SSR level 0, which
+    // reads HoursFilters directly with no sanitize() in between) and re-ran the
+    // child level completely unfiltered. Found live: expanding an unmapped "Section"
+    // row's Function children returned the WHOLE dataset's Function breakdown
+    // instead of that section's own ~23h.
+    //
+    // Renamed to rawSectionNumber/rawFunctionId (2026-08-21): narrowFiltersForGroupValue
+    // now sets those fields (matching what these dimensions actually group on — the
+    // RAW columns), so forwarding the OLD field names here would drop the narrowing all
+    // over again, the identical class of bug the comment above already describes once.
+    rawSectionNumber: rawId(f.rawSectionNumber),
+    rawFunctionId: rawId(f.rawFunctionId),
   };
 }
 

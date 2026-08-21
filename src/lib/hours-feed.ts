@@ -1,19 +1,15 @@
 import "server-only";
 
-import {
-  buildColumnResolver,
-  fetchJobHoursRowsWithIssues,
-  type HoursImportIssue,
-  type JobHoursRow,
-  type PoolHoursByMonth,
-} from "@/lib/job-hours-source";
+import type { HoursImportIssue, JobHoursRow, PoolHoursByMonth } from "@/lib/job-hours-source";
 import {
   readPaylocityWorkbook,
   workbookPath,
   WorkbookError,
   type RejectedPunch,
   type WorkbookIdentity,
+  type WorkbookReadResult,
 } from "@/lib/paylocity-workbook";
+import { punchSources, type PaylocitySource } from "@/lib/paylocity-sources";
 import { aggregateUndefined, countsAsUndefined, type UndefinedReason } from "@/lib/undefined-hours-rules";
 import { prisma } from "@/lib/prisma";
 
@@ -31,30 +27,31 @@ import { prisma } from "@/lib/prisma";
 // drill ran a live query, and unattributed-hours.ts documented the divergence as an
 // accepted trade-off. It is no longer a trade-off anybody has to accept.
 //
-// ── Which source, and why not a fallback ────────────────────────────────────
+// ── Which source (2026-08-21: the Paylocity Excel files, and only those) ────
 //
-// The workbook is authoritative for the months it covers. Power BI remains the
-// source only for months the workbook does not reach (it starts at 2026-01; the
-// model holds 2025-02 onward), and that is a PARTITION BY MONTH, not a fallback.
+// Hours come exclusively from the Paylocity workbooks in the OneDrive folder, one
+// authoritative file per punch year — see paylocity-sources.ts for the year rule and
+// why overlapping files are gated rather than deduplicated.
 //
-// There is deliberately no fall back to Power BI when the workbook fails. It looks
-// like resilience and is the opposite: the model runs days behind the file (July was
-// short 150.53h, August entirely absent — see paylocity-workbook.ts), so falling back
-// would overwrite fresh figures with stale ones and produce exactly the "mixed old
-// and new metrics" §42.19 forbids. A failed read raises, the sync step records the
-// failure, and the last valid dataset stays on screen untouched.
+// Power BI is not an hours source anywhere in the app any more, on either path: not
+// as a feed, and not as the code->column resolver it used to supply on every read.
+// See the note above readHoursFeed for what that resolver was silently doing to the
+// numbers, and SECTION_ALIASES in sections.ts for where that mapping lives now.
 //
-// HOURS_SOURCE=power_bi forces the old path. An operational escape hatch — if the
-// OneDrive folder is unavailable for a day and somebody decides stale-but-present
-// beats absent, that is a human decision made deliberately, not one this module
-// makes silently on their behalf.
+// A failed read raises. There is no fallback, deliberately: the alternative sources
+// all lag the file, so falling back would answer an hours question with stale
+// figures while the provenance line claimed success. The sync step records the
+// failure and the last valid dataset stays on screen untouched (§42.19).
 
-export type HoursFeedSource = "workbook" | "power_bi";
+// Only one source exists. Kept as a named type rather than collapsed away because
+// `provenance.source` is persisted in refresh records that already hold the old
+// value, and a reader of those records still needs a name for it.
+export type HoursFeedSource = "paylocity_excel";
 
 export type HoursProvenance = {
   source: HoursFeedSource;
-  // Null when the source is Power BI.
-  workbook: WorkbookIdentity | null;
+  /** The current-year workbook. Never null — there is no fileless source any more. */
+  workbook: WorkbookIdentity;
   // Months the source actually carried data for.
   monthsCovered: string[];
   // Latest work date seen — the "Hours Refreshed Thru" figure, and the number that
@@ -62,6 +59,28 @@ export type HoursProvenance = {
   lastWorkDate: Date | null;
   // Why the chosen source was chosen, in words a refresh log can print.
   note: string;
+  // Per-file detail when several workbooks were read (one per punch year — see
+  // paylocity-sources.ts). Absent for the Power BI path, which has no files.
+  // `workbook` above stays the CURRENT-year file, which is what that field has
+  // always meant; this is the full picture, including how much overlapping data each
+  // archive contributed and how much was excluded as another file's years.
+  sources?: PaylocitySourceRead[];
+};
+
+export type PaylocitySourceRead = {
+  fileName: string;
+  /** "2026 and later", "2025" — the punch years this file is authoritative for. */
+  ownershipLabel: string;
+  identity: WorkbookIdentity;
+  /** Bounds of the work dates present in the FILE, before year filtering. */
+  firstWorkDate: Date | null;
+  lastWorkDate: Date | null;
+  rowsRead: number;
+  rowsResolved: number;
+  /** Rows dropped because another file is authoritative for their year. */
+  rowsExcludedByYear: number;
+  hoursExcludedByYear: number;
+  excludedYears: number[];
 };
 
 export type HoursFeed = {
@@ -75,9 +94,23 @@ export type HoursFeed = {
   provenance: HoursProvenance;
 };
 
-export function configuredSource(): HoursFeedSource {
-  return process.env.HOURS_SOURCE?.trim() === "power_bi" ? "power_bi" : "workbook";
-}
+// ── Power BI is not an hours source (2026-08-21) ──────────────────────────
+//
+// `configuredSource()` and the HOURS_SOURCE=power_bi escape hatch are GONE, as is
+// `readFromPowerBi`. Hours now come only from the Paylocity Excel files in the
+// OneDrive folder (see paylocity-sources.ts).
+//
+// The escape hatch read like resilience and was the opposite. The Power BI model
+// lags the file by days (July was short 150.53h, August entirely absent when
+// measured), so the fallback's effect was to answer an hours question with stale
+// numbers while the provenance line said only "Power BI" — a reader could not tell
+// that the figures had moved backwards. Worse, the model was ALSO consulted on the
+// happy path, for the code->column resolver, which meant a transient network
+// failure silently changed how punches were bucketed (see SECTION_ALIASES in
+// sections.ts, where that mapping now lives explicitly).
+//
+// A missing or unreadable workbook therefore raises, exactly as §42.19 requires,
+// and the last valid dataset stays on screen untouched.
 
 // The Undefined Hours rules come from lib/undefined-hours-rules.ts and are re-exported
 // here so callers that already reach for the feed do not need a second import. There is
@@ -92,20 +125,6 @@ async function knownJobNumbers(): Promise<Set<string>> {
   return new Set(jobs.map((j) => j.jobId));
 }
 
-// The model's code -> app column map. Static metadata (what a punch code MEANS), not
-// hours, so reading it from Power BI is not a contradiction with sourcing hours from
-// the file. Falls back to the hand-written SECTION_ALIASES exactly as before, so a
-// Power BI outage costs the newest code mappings and never a single hour.
-async function columnResolver(): Promise<((s: string) => string | null) | undefined> {
-  try {
-    const built = await buildColumnResolver();
-    return built.resolve;
-  } catch (err) {
-    console.warn("[hours-feed] Function Hierarchy unavailable; falling back to SECTION_ALIASES:", err);
-    return undefined;
-  }
-}
-
 /**
  * Read the hours feed.
  *
@@ -114,67 +133,98 @@ async function columnResolver(): Promise<((s: string) => string | null) | undefi
  * valid dataset in place rather than write something partial.
  */
 export async function readHoursFeed(opts?: { onlyMonth?: string }): Promise<HoursFeed> {
-  const source = configuredSource();
+  const known = await knownJobNumbers();
 
-  if (source === "power_bi") {
-    return readFromPowerBi(opts?.onlyMonth, "HOURS_SOURCE=power_bi — reading the Power BI model by explicit configuration.");
+  // ── One file per punch year (2026-08-21) ────────────────────────────────
+  //
+  // The folder holds overlapping workbooks — Job_Hours_2025.xlsx runs five days into
+  // 2026 and repeats 587.20h of punches Current_Job_Hours.xlsx also carries. Each
+  // year has exactly one authoritative file (paylocity-sources.ts), and each file is
+  // read with an `ownsYear` gate that drops the rest BEFORE standardization. So the
+  // rows are concatenated here only after each source has been reduced to the years
+  // it owns — never "read everything, then deduplicate", which would require a punch
+  // identity the export does not guarantee and would delete real hours to remove
+  // imagined ones.
+  const wanted = opts?.onlyMonth;
+  const wantedYear = wanted ? Number(wanted.slice(0, 4)) : null;
+  const sources = punchSources().filter((s) => wantedYear == null || s.ownsYear(wantedYear));
+
+  const reads: { source: PaylocitySource; read: WorkbookReadResult }[] = [];
+  for (const source of sources) {
+    // Sequential rather than parallel: these are 0.8-1.2 MB OneDrive reads and
+    // readStableBytes already retries around a file being rewritten under it.
+    // Hammering the same synced folder concurrently makes that contention likelier
+    // for no meaningful wall-clock gain on two files.
+    reads.push({
+      source,
+      read: await readPaylocityWorkbook({
+        path: source.path,
+        knownJobNumbers: known,
+        onlyMonth: wanted,
+        ownsYear: source.ownsYear,
+      }),
+    });
+  }
+  if (reads.length === 0) {
+    throw new WorkbookError("not_configured", `No Paylocity punch source owns ${wanted ?? "any year"}.`);
   }
 
-  const [resolve, known] = await Promise.all([columnResolver(), knownJobNumbers()]);
-  const wbk = await readPaylocityWorkbook({ resolve, knownJobNumbers: known, onlyMonth: opts?.onlyMonth });
+  // The current-year file stays `provenance.workbook` — it is what "the workbook"
+  // has always meant to every consumer of this field (freshness, the refresh banner,
+  // the same-file-version check), and the archives are static. Per-source detail is
+  // in `sources` for anything that wants the full picture.
+  const primary = reads.find((r) => r.source.toYear == null) ?? reads[0];
 
-  return {
-    rows: wbk.rows,
-    issues: aggregateUndefined(wbk.rejected),
-    rejected: wbk.rejected,
-    poolHours: wbk.poolHours,
-    provenance: {
-      source: "workbook",
-      workbook: wbk.identity,
-      monthsCovered: wbk.monthsCovered,
-      lastWorkDate: wbk.lastWorkDate,
-      note:
-        `${wbk.identity.fileName} (${wbk.identity.size.toLocaleString()} bytes, modified ` +
-        `${wbk.identity.modifiedAt.toISOString().replace("T", " ").slice(0, 16)}Z), ` +
-        `${wbk.stats.rowsWithHours.toLocaleString()} rows with hours through ${wbk.lastWorkDate?.toISOString().slice(0, 10) ?? "—"}.`,
-    },
-  };
-}
+  const rows = reads.flatMap((r) => r.read.rows);
+  const rejected = reads.flatMap((r) => r.read.rejected);
+  const poolHours = new Map<string, number>();
+  for (const { read } of reads) {
+    for (const [k, v] of read.poolHours) poolHours.set(k, (poolHours.get(k) ?? 0) + v);
+  }
+  const monthsCovered = [...new Set(reads.flatMap((r) => r.read.monthsCovered))].sort();
+  let lastWorkDate: Date | null = null;
+  for (const { read } of reads) {
+    if (read.lastWorkDate && (!lastWorkDate || read.lastWorkDate > lastWorkDate)) lastWorkDate = read.lastWorkDate;
+  }
 
-// The pre-2026-08-05 path, kept whole. Reached only by explicit configuration, and by
-// the historical-backfill scripts that legitimately need months the workbook does not
-// carry.
-export async function readFromPowerBi(onlyMonth?: string, note?: string): Promise<HoursFeed> {
-  const { rows, issues, unattributed, poolHours } = await fetchJobHoursRowsWithIssues({ onlyMonth });
-  // Power BI's reader predates the reason vocabulary; everything it rejects it rejects
-  // for one cause — the job cell is not a job number — so that is what it is labelled.
-  // Mapped rather than left empty so the drill renders identically whichever source
-  // produced the data.
-  const rejected: RejectedPunch[] = unattributed.map((u) => ({
-    month: u.month,
-    reason: (Number.isFinite(Number(u.label)) && u.label !== "(blank)" ? "JOB_NOT_FOUND" : u.label === "(blank)" ? "MISSING_JOB_ID" : "JOB_NOT_FOUND") as UndefinedReason,
-    label: u.label,
-    workDate: u.date,
-    employeeId: u.employeeId,
-    section: u.section,
-    hours: u.hours,
-    sourceRow: 0, // the model has no row numbers
-    countsTowardKpi: true, // by construction: this reader only reports what counted
-  }));
-  let last: Date | null = null;
-  for (const r of rows) if (!last || r.date > last) last = r.date;
-  const months = [...new Set(rows.map((r) => `${r.year}-${String(r.month).padStart(2, "0")}`))].sort();
+  const excludedTotal = reads.reduce((s, r) => s + r.read.stats.hoursExcludedByYear, 0);
+  const note =
+    reads
+      .map(
+        ({ source, read }) =>
+          `${read.identity.fileName} [owns ${source.ownershipLabel}] ` +
+          `${read.stats.rowsResolved.toLocaleString()} rows` +
+          (read.stats.rowsExcludedByYear > 0
+            ? `, ${read.stats.rowsExcludedByYear.toLocaleString()} rows/${read.stats.hoursExcludedByYear.toFixed(2)}h excluded as another file's years`
+            : ""),
+      )
+      .join("; ") +
+    `. Hours through ${lastWorkDate?.toISOString().slice(0, 10) ?? "—"}.` +
+    (excludedTotal > 0 ? ` ${excludedTotal.toFixed(2)}h of overlapping duplicate hours prevented.` : "");
+
   return {
     rows,
-    issues,
+    issues: aggregateUndefined(rejected),
     rejected,
     poolHours,
     provenance: {
-      source: "power_bi",
-      workbook: null,
-      monthsCovered: months,
-      lastWorkDate: last,
-      note: note ?? `Power BI 'Hours Actual' (Paylocity Hours), ${rows.length.toLocaleString()} rows through ${last?.toISOString().slice(0, 10) ?? "—"}.`,
+      source: "paylocity_excel",
+      workbook: primary.read.identity,
+      monthsCovered,
+      lastWorkDate,
+      note,
+      sources: reads.map(({ source, read }) => ({
+        fileName: read.identity.fileName,
+        ownershipLabel: source.ownershipLabel,
+        identity: read.identity,
+        firstWorkDate: read.firstWorkDate,
+        lastWorkDate: read.lastWorkDate,
+        rowsRead: read.stats.rowsRead,
+        rowsResolved: read.stats.rowsResolved,
+        rowsExcludedByYear: read.stats.rowsExcludedByYear,
+        hoursExcludedByYear: read.stats.hoursExcludedByYear,
+        excludedYears: read.stats.excludedYears,
+      })),
     },
   };
 }
@@ -184,9 +234,7 @@ export async function readFromPowerBi(onlyMonth?: string, note?: string): Promis
 // looks plausible" is how staleness survives.
 export function describeProvenance(p: HoursProvenance): string {
   const thru = p.lastWorkDate ? p.lastWorkDate.toISOString().slice(0, 10) : "unknown";
-  return p.source === "workbook"
-    ? `Paylocity workbook — hours through ${thru}`
-    : `Power BI model — hours through ${thru}`;
+  return `Paylocity Excel — hours through ${thru}`;
 }
 
 export { WorkbookError, workbookPath };

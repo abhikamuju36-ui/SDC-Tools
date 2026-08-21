@@ -5,7 +5,7 @@ import { prisma } from "@/lib/prisma";
 import { APP_VERSION } from "@/lib/app-version";
 import { round2 } from "@/lib/etc";
 import { readHoursFeed, aggregateUndefined, countsAsUndefined, type HoursFeed } from "@/lib/hours-feed";
-import { WorkbookError, type RejectedPunch } from "@/lib/paylocity-workbook";
+import { WorkbookError, SHEET_NAME, type RejectedPunch } from "@/lib/paylocity-workbook";
 
 // ── One Paylocity import, from file identity to audit row (§42.5, §42.20) ───
 //
@@ -187,12 +187,12 @@ export async function completePaylocityImport(
       data: {
         importId: ctx.importId,
         refreshId: ctx.refreshId,
-        fileName: wb?.fileName ?? "(power bi)",
+        fileName: wb?.fileName ?? "(unknown)",
         filePath: wb?.path ?? "",
         fileSize: wb?.size ?? 0,
         fileModifiedAt: wb?.modifiedAt ?? completedAt,
         sha256: wb?.sha256 ?? "",
-        sheet: feed.provenance.source === "workbook" ? "Report" : "(dax)",
+        sheet: SHEET_NAME,
         reportFrom: firstDate(feed),
         reportTo: feed.provenance.lastWorkDate,
         monthsCovered: JSON.stringify(feed.provenance.monthsCovered),

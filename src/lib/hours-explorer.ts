@@ -2,9 +2,10 @@ import "server-only";
 
 import type { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
-import { SECTIONS, HOURS_IMPORT_CODES } from "@/lib/sections";
-import { buildHoursWhere, rollupByOperationalTier, departmentFilterRank, type HoursFilters, type HoursGroupBy, type HoursGroupRow, type HoursDetailSortKey } from "@/lib/hours-filters";
-import { taskFor } from "@/lib/hours-operational-grouping";
+import { HOURS_IMPORT_CODES, mapPunchToColumns } from "@/lib/sections";
+import { classifyPunch, emptyBucketTotals, type BucketTotals } from "@/lib/paylocity-standard-rules";
+import { buildHoursWhere, punchIdentity, rollupByOperationalTier, rollupByRawTier, departmentFilterRank, type HoursFilters, type HoursGroupBy, type HoursGroupRow, type HoursDetailSortKey, type PunchIdentity } from "@/lib/hours-filters";
+import { sectionDisplayName } from "@/lib/hours-operational-grouping";
 import type { SortState } from "@/lib/table-sort";
 
 export type { HoursFilters, HoursGroupBy, HoursGroupRow };
@@ -22,16 +23,15 @@ export type { HoursFilters, HoursGroupBy, HoursGroupRow };
 // a second computation — the exact bug class §42.14 in this app already fixed once for
 // Undefined Hours.
 
-// SECTIONS only names the 17 codes that drive the Quoted/ETC grid columns (see
-// sections.ts's own header). Codes captured since 2026-08-17 that have no such
-// column — Service/Spare Parts never will — still need a real display name here
-// (the flat "Function / Section" dimension and the sections filter menu both read
-// this map), so any code missing from SECTIONS falls back to
-// hours-operational-grouping.ts's task label rather than the bare "80-211" code.
-// HOURS_IMPORT_CODES is every code JobHoursDetail.section can hold, so building
-// the name map from it (rather than from SECTIONS alone) covers every code this
-// map is ever actually queried with.
-const SECTION_NAME = new Map<string, string>([...HOURS_IMPORT_CODES].map((code) => [code, SECTIONS.find((s) => s.code === code)?.name ?? taskFor(code)]));
+// sectionDisplayName (hours-operational-grouping.ts) is the one shared name
+// lookup: SECTIONS' own name for the 17 codes that drive the Quoted/ETC grid
+// columns, else this module's task label for everything else JobHoursDetail.section
+// can hold (Service/Spare Parts never will get a SECTIONS row). Pre-built into a
+// Map here — not called per-row — because this file's queries iterate far more
+// rows than there are codes; HOURS_IMPORT_CODES is every code JobHoursDetail.section
+// can hold, so building the map from it covers every code this map is ever
+// actually queried with.
+const SECTION_NAME = new Map<string, string>([...HOURS_IMPORT_CODES].map((code) => [code, sectionDisplayName(code)]));
 
 const DEFAULT_PAGE_SIZE = 100;
 const MAX_PAGE_SIZE = 500;
@@ -51,10 +51,18 @@ export type HoursRow = {
   department: string;
   jobId: string;
   jobName: string;
+  // `section`/`sectionName` are the STORED raw pair and its display label — storage
+  // never folds, aliases or splits a punch (2026-08-21), so `section` here IS
+  // `rawSection-rawFunction` on the live path. Kept for the many consumers already
+  // keyed on this combined code; nothing should render it as the ONLY available
+  // value — see PunchIdentity below for the separated columns a detail table uses.
   section: string;
   sectionName: string;
   hours: number;
-};
+} & PunchIdentity;
+// ^ Section and Function as separate raw/standardized fields, from the one shared
+// projection in hours-filters.ts — same intersection HoursDetailRow uses, so the
+// Hours page, Job Hour Details and Monthly ETC cannot drift on what one punch shows.
 
 export type HoursPage = { rows: HoursRow[]; total: number; page: number; pageSize: number };
 
@@ -127,6 +135,8 @@ export async function getHoursFilterOptions(): Promise<HoursFilterOptions> {
 type DetailRow = {
   id: number;
   section: string;
+  rawSection: string;
+  rawFunction: string;
   workDate: Date;
   employeeId: string;
   hours: unknown;
@@ -156,13 +166,17 @@ async function mapDetailRows(detail: DetailRow[]): Promise<HoursRow[]> {
       section: d.section,
       sectionName: SECTION_NAME.get(d.section) ?? d.section,
       hours: Number(d.hours),
+      ...punchIdentity(d.rawSection, d.rawFunction),
     };
   });
 }
 
+
 const DETAIL_SELECT = {
   id: true,
   section: true,
+  rawSection: true,
+  rawFunction: true,
   workDate: true,
   employeeId: true,
   hours: true,
@@ -278,6 +292,72 @@ export async function queryHoursExportRows(filters: HoursFilters, sort?: SortSta
   return { rows, truncated };
 }
 
+// ── The Undefined Hours drill-through (2026-08-21) ─────────────────────────
+//
+// Every punch whose raw Section+Function combination is not in the approved rule
+// book, with the raw values preserved so the punch can be corrected in Paylocity or
+// the rule book extended — the two real fixes. Columns are exactly the audit set that
+// was asked for: Job | Employee | Date | Raw Section | Raw Section Name | Raw
+// Function | Raw Function Name | Hours.
+//
+// Narrowing is `mappingStatus: "Undefined"` — a plain equality on the SAME stored
+// column every page's Group By reads (rollupByRawTier, the KPI buckets). That column
+// is written ONCE at ingestion by classifyPunch, so an Undefined drill built from its
+// own hand-written pair list — the earlier version of this function — is exactly how
+// a drill-through comes to disagree with the number above it, a defect this app has
+// already had once (see unattributed-hours.ts).
+//
+// `filters` composes normally, so this can be scoped to one job, month or employee —
+// the Job 1119 case that started this is just `{ jobIds: ["1119"] }`.
+export type UndefinedHoursDrill = {
+  rows: HoursRow[];
+  truncated: boolean;
+  /** Total across ALL matching rows, not just the returned page — so a truncated
+   *  list still states the true total instead of implying the visible rows are it. */
+  totalHours: number;
+  punchCount: number;
+};
+
+export async function queryUndefinedHoursDrill(filters: HoursFilters = {}): Promise<UndefinedHoursDrill> {
+  const scoped: HoursFilters = { ...filters, mappingStatus: "Undefined" };
+  const where = await resolveWhere(scoped);
+
+  // Aggregate and rows come from ONE where clause, so the stated total is the total of
+  // what was matched even when the row list is capped.
+  const [agg, detail] = await Promise.all([
+    prisma.jobHoursDetail.aggregate({ where, _sum: { hours: true }, _count: true }),
+    prisma.jobHoursDetail.findMany({
+      where,
+      select: DETAIL_SELECT,
+      orderBy: [{ workDate: "desc" }, { id: "desc" }],
+      take: MAX_DRILL_ROWS + 1,
+    }),
+  ]);
+  const truncated = detail.length > MAX_DRILL_ROWS;
+  return {
+    rows: await mapDetailRows(truncated ? detail.slice(0, MAX_DRILL_ROWS) : detail),
+    truncated,
+    totalHours: Number(agg._sum.hours ?? 0),
+    punchCount: agg._count,
+  };
+}
+
+/**
+ * The four reconciliation buckets over the stored punches, from one grouped query.
+ *
+ * This is what makes `PM + Engineering + Shop + Undefined = raw total` checkable at
+ * any time against live data, and it shares `classifyPunch` with the drill above, so
+ * the Undefined bucket here and the drill's `totalHours` are the same number by
+ * construction rather than by coincidence.
+ */
+export async function queryStandardBuckets(filters: HoursFilters = {}): Promise<BucketTotals> {
+  const where = await resolveWhere(filters);
+  const g = await prisma.jobHoursDetail.groupBy({ by: ["rawSection", "rawFunction"], where, _sum: { hours: true } });
+  const totals = emptyBucketTotals();
+  for (const r of g) totals[classifyPunch(r.rawSection, r.rawFunction).department] += Number(r._sum.hours ?? 0);
+  return totals;
+}
+
 export async function queryHoursSummary(filters: HoursFilters): Promise<HoursSummary> {
   const where = await resolveWhere(filters);
   const [agg, jobs, employees, sections] = await Promise.all([
@@ -307,9 +387,51 @@ export async function queryHoursGrouped(filters: HoursFilters, groupBy: HoursGro
   // of these four dimensions, so a second implementation can't quietly grow
   // back next to it.
   if (groupBy === "sectionName" || groupBy === "functionGroup" || groupBy === "taskDescription" || groupBy === "department") {
+    // `section` is the RAW pair now (2026-08-21) — these four tiers were built when
+    // it was always the folded/split value, and hours-operational-grouping.ts's
+    // OPERATIONAL_GROUPING table is keyed by exactly those folded codes. A raw pair
+    // that ONLY existed post-fold before (10-414, 12/13/14-211, ...) has no entry
+    // there, so grouping directly on raw `section` now undercounts every folded
+    // category — measured: "Manufacturing" read 8.61h (10-413 alone) instead of
+    // 182.50h (10-413 + 10-414). Folding each distinct raw pair through
+    // mapPunchToColumns before the lookup is the same fix already applied to the ETC
+    // grid's own consumers (syncActualHours, getEtcMonthHoursDetail, tm-hours) — the
+    // fold happens at READ time, in memory, and never touches storage.
     const g = await prisma.jobHoursDetail.groupBy({ by: ["section"], where, _sum: { hours: true }, _count: true });
-    return rollupByOperationalTier(
-      g.map((r) => ({ section: r.section, hours: Number(r._sum.hours ?? 0), punchCount: r._count })),
+    const folded = g.flatMap((r) => {
+      const cols = mapPunchToColumns(r.section, Number(r._sum.hours ?? 0));
+      return cols.map((col, i) => ({
+        section: col.section,
+        hours: col.hours,
+        // Punch count isn't splittable the way hours are; charge every count to the
+        // FIRST destination only, so the grand total still foots without either
+        // dropping counts or double-counting them across a split's two halves.
+        punchCount: i === 0 ? r._count : 0,
+      }));
+    });
+    return rollupByOperationalTier(folded, groupBy);
+  }
+
+  // ── The raw / reconciliation tier (2026-08-21) ──────────────────────────
+  //
+  // One query grouping on the RAW columns, rolled up by rollupByRawTier. Separate from
+  // the operational branch above because that one groups on `section` — the folded,
+  // standardized column — and so cannot answer "what did Paylocity actually say".
+  // Grouping here by "rawPair" reproduces the Paylocity PivotTable exactly.
+  if (groupBy === "sectionNumber" || groupBy === "functionId" || groupBy === "mappingStatus" || groupBy === "standardDepartment") {
+    const g = await prisma.jobHoursDetail.groupBy({
+      by: ["rawSection", "rawFunction"],
+      where,
+      _sum: { hours: true },
+      _count: true,
+    });
+    return rollupByRawTier(
+      g.map((r) => ({
+        rawSection: r.rawSection,
+        rawFunction: r.rawFunction,
+        hours: Number(r._sum.hours ?? 0),
+        punchCount: r._count,
+      })),
       groupBy,
     );
   }
@@ -337,13 +459,6 @@ export async function queryHoursGrouped(filters: HoursFilters, groupBy: HoursGro
     const byId = new Map(employees.map((e) => [e.paylocityId!, e.name]));
     return g
       .map((r) => ({ key: r.employeeId, label: byId.get(r.employeeId) ?? `#${r.employeeId}`, hours: Number(r._sum.hours ?? 0), punchCount: r._count }))
-      .sort((a, b) => b.hours - a.hours);
-  }
-
-  if (groupBy === "section") {
-    const g = await prisma.jobHoursDetail.groupBy({ by: ["section"], where, _sum: { hours: true }, _count: true });
-    return g
-      .map((r) => ({ key: r.section, label: `${r.section} — ${SECTION_NAME.get(r.section) ?? r.section}`, hours: Number(r._sum.hours ?? 0), punchCount: r._count }))
       .sort((a, b) => b.hours - a.hours);
   }
 

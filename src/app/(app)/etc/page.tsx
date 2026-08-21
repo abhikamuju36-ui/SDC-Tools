@@ -9,6 +9,7 @@ import { bandColSpan } from "@/lib/grid-view";
 import { ExportMenu } from "@/components/ExportMenu";
 import { getEtcMonthJobWhere } from "@/lib/etc-month-jobs";
 import { getEtcMonthKpis } from "@/lib/etc-month-kpis";
+import { getUndefinedHoursTotals } from "@/lib/unattributed-hours";
 import { EtcMonthKpiCards } from "@/components/EtcMonthKpiCards";
 import { auth } from "@/lib/auth";
 import { requirePagePermission } from "@/lib/require-permission";
@@ -101,9 +102,13 @@ const SUBGROUP_DISPLAY: Record<string, string> = {
   "10-518": "General Engineering",
   "10-411": "Shop",
   "10-412": "Shop",
-  "40-211": "ME & CE & GE",
+  // "& GE" removed (2026-08-20): General Engineering's codes (515-518) never
+  // merge into this column — only 211/311/312/313 do, via sections.ts's
+  // SECTION_ALIASES ("40-311/312/313" -> "40-211" etc.). The label was
+  // claiming a fourth discipline that was never actually part of this bucket.
+  "40-211": "ME & CE",
   "40-411": "MB & EB",
-  "50-211": "ME & CE & GE",
+  "50-211": "ME & CE",
   "50-411": "MB & EB",
 };
 
@@ -145,18 +150,18 @@ function headerRuns(cols: EtcCol[], keyOf: (c: EtcCol) => string, labelOf: (c: E
 // `?dept=` values, so the three cannot drift apart. See EtcGridView.
 const DEPT_GROUPS = ETC_DEPT_GROUPS;
 
-// Colored section-cell labels, exactly as the sheet prints them (no "CE"
-// prefixes; Testing/Teardown show "All"/"Total" rather than section names).
+// Colored section-cell labels. Testing/Teardown show "All"/"Total" rather
+// than a section name (those columns merge several codes — see sections.ts).
+// The phase-10 codes used to override sections.ts's own `name` here with a
+// second, independently hand-typed abbreviation ("ME Gen", "HMI", "Design and
+// Drawings", ...) — found live, 2026-08-20: sections.ts's `name` now carries
+// the centralized canonical wording, so this override was actively
+// SUPPRESSING that rename on the one row that's most visible, while this same
+// cell's own tooltip (built straight from `s.name`, line ~1397) had already
+// moved on — the header text and its own tooltip disagreed. Removed rather
+// than updated to match: `sectionDisplay` falls back to `s.name` below, so
+// there is nothing left here to independently keep in sync.
 const ETC_SECTION_DISPLAY: Record<string, string> = {
-  "10-211": "ME Gen",
-  "10-312": "Design and Drawings",
-  "10-313": "Software",
-  "10-515": "HMI",
-  "10-516": "Robot",
-  "10-517": "Vision",
-  "10-518": "Database and Device",
-  "10-411": "Mech Build",
-  "10-412": "Elec Build",
   "40-211": "All",
   "40-411": "Total",
   "50-211": "All",
@@ -294,7 +299,7 @@ function subColBodyBg(col: string): string {
 const SUBGROUP_FULL_NAME: Record<string, string> = {
   ME: "Mechanical Engineering",
   CE: "Controls Engineering",
-  "ME & CE & GE": "Mechanical Engineering & Controls Engineering & General Engineering",
+  "ME & CE": "Mechanical Engineering & Controls Engineering",
   "MB & EB": "Mechanical Build & Electrical Build",
 };
 
@@ -563,7 +568,7 @@ export default async function MonthlyEtcPage({
   // projects a month contains.
   const { where: monthJobWhere, monthIsLocked } = await getEtcMonthJobWhere(month);
 
-  const [jobs, lastPowerBiSync, hoursActualFreshness, etcHoursFreshness, importIssues] = await Promise.all([
+  const [jobs, lastPowerBiSync, hoursActualFreshness, etcHoursFreshness, undefinedHoursTotals] = await Promise.all([
     prisma.job.findMany({
       where: monthJobWhere,
       include: { etcEntries: { where: { month } }, executionRate: true },
@@ -576,8 +581,10 @@ export default async function MonthlyEtcPage({
     prisma.powerBiFreshness.findUnique({ where: { source: "etc_hours_worked" }, select: { status: true, checkedAt: true } }),
     // Time the importer could not attribute to any job — booked against
     // "Not Defined" and similar. Absent from every figure on this page, so it
-    // is stated rather than left as an unexplained shortfall.
-    prisma.hoursImportIssue.findMany({ where: { month }, orderBy: { hours: "desc" } }),
+    // is stated rather than left as an unexplained shortfall. Rows that round to 0
+    // hours are excluded here too, by the same rule the drill applies (see
+    // getUndefinedHoursTotals) — the card and the drill it opens must never disagree.
+    getUndefinedHoursTotals(month),
   ]);
   // No `role` read here any more: every control on this page that used to be
   // admin-only (Reopen, Sync History) is password-gated instead, checked
@@ -974,8 +981,8 @@ export default async function MonthlyEtcPage({
       ? { detail: failedDetail(etcHoursFreshness.status), at: stamp(etcHoursFreshness.checkedAt) }
       : null,
     undefinedHours: {
-      hours: importIssues.reduce((s, i) => s + Number(i.hours), 0),
-      entries: importIssues.reduce((s, i) => s + i.rows, 0),
+      hours: undefinedHoursTotals.hours,
+      entries: undefinedHoursTotals.entries,
     },
     // No `hours > 0` filter here any more — hiddenJobHours is filtered at source now
     // (see where it is built), so the chip, the KPI card and the drill count one list.
@@ -1204,7 +1211,7 @@ export default async function MonthlyEtcPage({
           detailJobIds={detailJobIds}
           // Same rows the amber banner below is built from, so the card and the
           // banner state one number rather than two that could drift.
-          importIssues={importIssues.map((i) => ({ label: i.label, rows: i.rows, hours: Number(i.hours) }))}
+          importIssues={undefinedHoursTotals.issues.map((i) => ({ label: i.label, rows: i.rows, hours: i.hours }))}
           // Same rows the red banner below is built from — one query, one number.
           offGridJobs={hiddenJobHours}
         />
@@ -1363,7 +1370,9 @@ export default async function MonthlyEtcPage({
                     });
                   })()}
                   {visibleGroups.map((group, i) => {
-                    const label = group === "Engineering" ? "ME & CE & GE" : "MB & EB";
+                    // "ME & CE & GE" -> "ME & CE" (2026-08-20, same fix as SUBGROUP_DISPLAY
+                    // above): General Engineering's codes never merge into this column.
+                    const label = group === "Engineering" ? "ME & CE" : "MB & EB";
                     return (
                       <th
                         key={group}

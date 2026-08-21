@@ -81,7 +81,7 @@ export default async function HoursPage({ searchParams }: { searchParams: Promis
     },
     {
       key: "sections",
-      label: "Function / Section",
+      label: "Section-Function",
       searchable: true,
       selected: filters.sections ?? [],
       options: options.sections.map((s) => ({ value: s.code, label: `${s.code} — ${s.name}` })),
@@ -136,7 +136,7 @@ export default async function HoursPage({ searchParams }: { searchParams: Promis
         <IndicatorCard label="Total Hours" value={hours(summary.totalHours)} />
         <IndicatorCard label="Jobs" value={summary.jobs.toLocaleString()} />
         <IndicatorCard label="Employees" value={summary.employees.toLocaleString()} />
-        <IndicatorCard label="Functions / Sections" value={summary.sections.toLocaleString()} />
+        <IndicatorCard label="Section-Function Codes" value={summary.sections.toLocaleString()} />
       </div>
 
       <div className={card("p-4")}>
@@ -236,7 +236,17 @@ function DetailTable({
             <th className={TH}>Department</th>
             <SortLinkTh label="Job Id" sortKey="jobId" sort={sort} hrefWith={hrefWith} />
             <SortLinkTh label="Job / Machine" sortKey="jobName" sort={sort} hrefWith={hrefWith} />
-            <SortLinkTh label="Function / Section" sortKey="section" sort={sort} hrefWith={hrefWith} />
+            {/* Section and Function are SEPARATE columns (2026-08-21). The single
+                combined "Function / Section" cell ("10-211 — General") could not tell a
+                reader whether the Section was wrong, the Function was wrong, or only
+                the pairing was — which is the question every Paylocity reconciliation
+                asks. Sorting is still on the combined `section` code, which is the
+                indexed column; the split is presentational. */}
+            <SortLinkTh label="Section" sortKey="section" sort={sort} hrefWith={hrefWith} />
+            <th className={TH}>Section Name</th>
+            <th className={TH}>Function</th>
+            <th className={TH}>Function Name</th>
+            <th className={TH}>Mapping Status</th>
             <SortLinkTh label="Hours" sortKey="hours" align="right" sort={sort} hrefWith={hrefWith} />
           </tr>
         </thead>
@@ -250,8 +260,29 @@ function DetailTable({
               <td className={`${TD} max-w-xs truncate`} title={r.jobName}>
                 {r.jobName}
               </td>
+              {/* RAW Section/Function — what Paylocity actually said, never overwritten
+                  with the standardized value. `standardTaskDescription` is the rule book's
+                  verdict and reads "Undefined" for an unapproved combination, so the two
+                  columns together show exactly where a punch is being reclassified. */}
+              <td className={`${TD} font-mono`}>{r.rawSection}</td>
+              <td className={TD}>{r.rawSectionName}</td>
+              <td className={`${TD} font-mono`}>{r.rawFunction}</td>
+              <td className={TD}>{r.standardTaskDescription}</td>
               <td className={TD}>
-                {r.section} — {r.sectionName}
+                {r.mappingStatus === "Undefined" ? (
+                  <span
+                    className="text-sdc-yellow-text"
+                    title={
+                      r.undefinedReason
+                        ? `Undefined: ${r.undefinedReason} — Section ${r.rawSection || "(blank)"} + Function ${r.rawFunction || "(blank)"} is not in the approved rule book. The hours are still counted.`
+                        : undefined
+                    }
+                  >
+                    Undefined
+                  </span>
+                ) : (
+                  <span className="text-sdc-muted">Mapped</span>
+                )}
               </td>
               {/* hoursCell(), not a raw toLocaleString — never a decimal, and a real
                   but sub-half-hour punch reads as "<1" rather than a misleading "0"

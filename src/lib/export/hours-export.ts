@@ -81,7 +81,16 @@ export async function buildHoursExport(params: HoursSearchParams, now: Date): Pr
     { header: "Department", type: "text", width: 20 },
     { header: "Job Id", type: "text", width: 10 },
     { header: "Job / Machine", type: "text", width: 30 },
-    { header: "Function / Section", type: "text", width: 22 },
+    // Section and Function as separate columns (2026-08-21). The export is the
+    // artifact people pivot against the Paylocity workbook, so a combined
+    // "10-211 — General" cell was the worst place of all for it: a PivotTable cannot
+    // split it back apart. Raw values, plus the rule book's verdict, so the export
+    // reconciles against Paylocity directly.
+    { header: "Section", type: "text", width: 10 },
+    { header: "Section Name", type: "text", width: 26 },
+    { header: "Function", type: "text", width: 10 },
+    { header: "Function Name", type: "text", width: 24 },
+    { header: "Mapping Status", type: "text", width: 14 },
     { header: "Hours", type: "hours" },
   ];
 
@@ -91,11 +100,19 @@ export async function buildHoursExport(params: HoursSearchParams, now: Date): Pr
     r.department,
     r.jobId,
     r.jobName,
-    `${r.section} — ${r.sectionName}`,
+    r.rawSection,
+    r.rawSectionName,
+    r.rawFunction,
+    r.standardTaskDescription,
+    r.mappingStatus,
     r.hours,
   ]);
 
-  const totals: CellValue[] = columns.map((_, i) => (i === 0 ? `TOTAL (${rows.length} punches)` : i === 6 ? summary.totalHours : null));
+  // Index the Hours column by NAME rather than by a hardcoded position — splitting
+  // Section/Function moved it from 6 to 10, and a literal here would have silently put
+  // the total under "Mapping Status".
+  const hoursCol = columns.findIndex((c) => c.header === "Hours");
+  const totals: CellValue[] = columns.map((_, i) => (i === 0 ? `TOTAL (${rows.length} punches)` : i === hoursCol ? summary.totalHours : null));
 
   const subtitle = [...subtitleBase, `Exported ${now.toISOString().slice(0, 16).replace("T", " ")} — ${rows.length} punch${rows.length === 1 ? "" : "es"}`];
   if (truncated) subtitle.push(`Truncated to the first ${rows.length.toLocaleString()} rows — narrow the filters for a complete export.`);

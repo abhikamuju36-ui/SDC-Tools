@@ -565,22 +565,13 @@ function SectionHierarchyChart({
   // owes it (same +126 delta applied there).
   const BAR_H = 546;
   const max = Math.max(1, ...rows.flatMap((r) => [r.planned, r.actual]));
-  // Square-root, not linear (by request) — a plain `value / max` puts every bar
-  // on one straight line from (0,0) to (max, 100%), and this chart's own max is
-  // a Total row (a sum of everything above it), so an individual section sits
-  // nowhere near that ceiling: at a real range like max≈232, a 1-3 hour section
-  // rendered under 4px tall — no taller than its own border radius, i.e.
-  // unreadable even though the number above it is correct. Square-root keeps
-  // everything about a linear scale that matters for reading this chart —
-  // zero still maps to zero (no fixed-minimum floor faking a bar for an empty
-  // section), order never inverts, and a bigger value always draws taller —
-  // while giving the low end of the range far more of BAR_H than the top end
-  // needs: that same 1-hour section now clears ~15px, and the largest value in
-  // the chart still resolves to exactly 100%. The trade is that a section
-  // twice the size of another no longer draws exactly twice as tall — a
-  // deliberate choice for legibility across this wide a range, not an
-  // accident of the formula.
-  const scalePct = (value: number) => (max <= 0 ? 0 : (Math.sqrt(Math.max(0, value)) / Math.sqrt(max)) * 100);
+  // Strictly linear (by request, 2026-08-20) — a prior pass used a square-root
+  // curve here to keep small sections readable against the Total rows' much
+  // larger scale, but that broke the one property this chart actually needs
+  // to hold: two bars' height ratio must equal their value ratio, everywhere
+  // in the chart, not just at the endpoints. Zero still maps to zero and
+  // nothing here imposes a minimum-height floor.
+  const scalePct = (value: number) => (max <= 0 ? 0 : (Math.max(0, value) / max) * 100);
   const deptRuns = groupRuns(rows, (r) => `${r.phase}|${r.group}`, (r) => r.group);
   const phaseRuns = groupRuns(rows, (r) => r.phase, (r) => r.phase);
   // §55: `minmax(0, 1fr)`, not `minmax(60px, 1fr)`, so the columns SHRINK to

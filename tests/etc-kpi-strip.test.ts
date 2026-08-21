@@ -89,7 +89,7 @@ test("all five KPIs are present, in reading order", () => {
   );
   assert.deepEqual(
     blocks().map((b) => b.label),
-    ["Engineering hours", "Shop hours", "Parts spent", "Undefined hours", "Hours off the grid"],
+    ["Engineering hours", "Shop hours", "Parts spent", "Data Quality — Undefined Hours", "Hours off the grid"],
   );
 });
 

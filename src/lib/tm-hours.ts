@@ -1,8 +1,9 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { SECTIONS } from "@/lib/sections";
+import { punchIdentity, type PunchIdentity } from "@/lib/hours-filters";
+import { SECTIONS, mapPunchToColumns } from "@/lib/sections";
 import { validJobTypeFilter } from "@/lib/job-filters";
-import { classifyTmHoursSection, ALL_TM_HOURS_CODES, HOURS_CODES_BY_KEY, type TmHoursDrillKey } from "@/lib/tm-hours-classify";
+import { classifyTmHoursSection, HOURS_CODES_BY_KEY, type TmHoursDrillKey } from "@/lib/tm-hours-classify";
 
 export type { TmHoursDrillKey };
 
@@ -14,7 +15,12 @@ export type TmHoursDrillRow = {
   jobName: string;
   section: string;
   hours: number;
-};
+} & PunchIdentity;
+// ^ Section and Function split into their own raw/standardized fields (2026-08-21),
+// from the one shared projection in hours-filters.ts — same as the Hours page, the Job
+// Hour Details panel and Monthly ETC. This drill reads the same JobHoursDetail table
+// they do, so it must not be the one view still showing a combined "Function /
+// Section" value.
 
 // ── T&M's four Hours cards, read from the app's own Paylocity ingest ────────
 //
@@ -69,16 +75,22 @@ export async function getTmHoursTotals(jobPks: number[], startDate: string, endD
   const totals: TmHoursTotals = { engineeringHours: 0, shopHours: 0, pmHours: 0, manufacturingHours: 0 };
   if (jobPks.length === 0) return totals;
 
+  // `section` is the RAW pair now (2026-08-21) — grouping by it directly and
+  // filtering to ALL_TM_HOURS_CODES would miss every raw punch that FOLDS onto one
+  // of those codes (10-311 -> 312/313, 10-414 -> 413, etc.), so every raw pair for
+  // the scope is folded via mapPunchToColumns here before classifying.
   const grouped = await prisma.jobHoursDetail.groupBy({
     by: ["section"],
-    where: { jobId: { in: jobPks }, workDate: dateRangeWhere(startDate, endDate), section: { in: [...ALL_TM_HOURS_CODES] } },
+    where: { jobId: { in: jobPks }, workDate: dateRangeWhere(startDate, endDate) },
     _sum: { hours: true },
   });
 
   for (const g of grouped) {
-    const key = classifyTmHoursSection(g.section);
-    if (!key) continue; // the `section: { in: ALL_TM_HOURS_CODES }` filter already guarantees this never fires
-    totals[key] += Number(g._sum?.hours ?? 0);
+    for (const col of mapPunchToColumns(g.section, Number(g._sum?.hours ?? 0))) {
+      const key = classifyTmHoursSection(col.section);
+      if (!key) continue;
+      totals[key] += col.hours;
+    }
   }
   return totals;
 }
@@ -100,10 +112,13 @@ export async function getTmHoursDrillRows(
 ): Promise<TmHoursDrillResult> {
   if (jobPks.length === 0) return { rows: [], truncated: false };
 
+  // No `section` filter in SQL (2026-08-21) — `section` is the raw pair, so this
+  // fetches every raw punch for the scope and folds+filters in JS below, exactly as
+  // getTmHoursTotals does for the matching aggregate.
   const [detail, employees] = await Promise.all([
     prisma.jobHoursDetail.findMany({
-      where: { jobId: { in: jobPks }, workDate: dateRangeWhere(startDate, endDate), section: { in: HOURS_CODES_BY_KEY[key] as string[] } },
-      select: { section: true, workDate: true, employeeId: true, hours: true, job: { select: { jobId: true, jobName: true } } },
+      where: { jobId: { in: jobPks }, workDate: dateRangeWhere(startDate, endDate) },
+      select: { section: true, rawSection: true, rawFunction: true, workDate: true, employeeId: true, hours: true, job: { select: { jobId: true, jobName: true } } },
       orderBy: [{ workDate: "desc" }, { section: "asc" }],
       take: MAX_ROWS + 1,
     }),
@@ -113,19 +128,26 @@ export async function getTmHoursDrillRows(
   const truncated = detail.length > MAX_ROWS;
   const kept = truncated ? detail.slice(0, MAX_ROWS) : detail;
   const byPaylocityId = new Map(employees.map((e) => [e.paylocityId!, e]));
+  const wantedCodes = new Set(HOURS_CODES_BY_KEY[key] as string[]);
 
   const rows: TmHoursDrillRow[] = kept
-    .map((d) => {
+    .flatMap((d) => {
       const emp = byPaylocityId.get(d.employeeId);
-      return {
-        date: d.workDate.toISOString().slice(0, 10),
-        employee: emp?.name ?? (d.employeeId ? `#${d.employeeId}` : "—"),
-        department: emp?.department?.trim() || "—",
-        jobId: d.job.jobId,
-        jobName: d.job.jobName,
-        section: SECTION_NAME.get(d.section) ?? d.section,
-        hours: Number(d.hours),
-      };
+      // A raw punch that folds/splits can land in more than one ETC column; only the
+      // allocation(s) belonging to THIS card's codes are kept — the raw identity on
+      // every resulting row is still the untouched original (via punchIdentity below).
+      return mapPunchToColumns(d.section, Number(d.hours))
+        .filter((col) => wantedCodes.has(col.section))
+        .map((col) => ({
+          date: d.workDate.toISOString().slice(0, 10),
+          employee: emp?.name ?? (d.employeeId ? `#${d.employeeId}` : "—"),
+          department: emp?.department?.trim() || "—",
+          jobId: d.job.jobId,
+          jobName: d.job.jobName,
+          section: SECTION_NAME.get(col.section) ?? col.section,
+          hours: col.hours,
+          ...punchIdentity(d.rawSection, d.rawFunction),
+        }));
     })
     .filter((r) => r.hours !== 0);
 

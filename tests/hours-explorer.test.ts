@@ -120,8 +120,60 @@ test("narrows employee by setting employeeIds to exactly the one value", () => {
   assert.deepEqual(narrowFiltersForGroupValue({}, "employee", "100605").employeeIds, ["100605"]);
 });
 
-test("narrows section by setting sections to exactly the one value", () => {
-  assert.deepEqual(narrowFiltersForGroupValue({}, "section", "10-211").sections, ["10-211"]);
+// "sectionNumber"/"functionId" narrow via a raw prefix/suffix match (buildHoursWhere),
+// NOT by expanding into an enumerated `sections` list the way the other four
+// operational tiers do — see narrowFiltersForGroupValue's own header for why: a
+// reverse index built only from OPERATIONAL_GROUPING's known codes would silently
+// exclude a section number or Function ID the standard mapping has never seen, which
+// is exactly the "standardization decides existence" bug the 2026-08-21 ingestion fix
+// closed for storage. These tests pin the field, not an expanded list; buildHoursWhere's
+// own tests below prove the prefix/suffix match actually reaches unmapped codes.
+// Updated 2026-08-21: these narrow on the RAW COLUMNS now, not on the standardized
+// code's prefix/suffix. The old behaviour was the defect — `sectionNumber: "10"` matched
+// `section startsWith "10-"`, so drilling into Function 413 returned every row stored
+// on a `-413` column, INCLUDING raw 414 punches folded there. The parent group said 413
+// and its children said 414. Narrowing on rawSection/rawFunction makes a child row's
+// filter a strict subset of what its parent group was keyed on.
+test("narrows sectionNumber by setting the RAW section field, not the standardized prefix", () => {
+  const narrowed = narrowFiltersForGroupValue({}, "sectionNumber", "10");
+  assert.equal(narrowed.rawSectionNumber, "10");
+  assert.equal(narrowed.sectionNumber, undefined, "must not fall back to the standardized-code prefix match");
+  assert.equal(narrowed.sections, undefined);
+});
+
+test("narrows functionId by setting the RAW function field, not the standardized suffix", () => {
+  const narrowed = narrowFiltersForGroupValue({}, "functionId", "313");
+  assert.equal(narrowed.rawFunctionId, "313");
+  assert.equal(narrowed.functionId, undefined, "must not fall back to the standardized-code suffix match");
+  assert.equal(narrowed.sections, undefined);
+});
+
+// The regression this whole change exists to prevent, pinned as a test.
+test("narrowing Function 413 cannot pull in raw 414 punches (the folded-column defect)", () => {
+  const narrowed = narrowFiltersForGroupValue({}, "functionId", "413");
+  assert.equal(narrowed.rawFunctionId, "413");
+  // A suffix match on the standardized column is what let 10-414 (stored as 10-413)
+  // answer to "413". If this field is ever set again, that door is reopened.
+  assert.equal(narrowed.functionId, undefined);
+});
+
+test("buildHoursWhere: sectionNumber matches by raw prefix, reaching a section number the standard mapping has never seen", () => {
+  const where = buildHoursWhere({ sectionNumber: "25" });
+  assert.deepEqual(where.section, { startsWith: "25-" });
+});
+
+test("buildHoursWhere: functionId matches by raw suffix, reaching a Function ID the standard mapping has never seen", () => {
+  const where = buildHoursWhere({ functionId: "999" });
+  assert.deepEqual(where.section, { endsWith: "-999" });
+});
+
+test("buildHoursWhere: sections, sectionNumber and functionId all compose with AND when set together", () => {
+  const where = buildHoursWhere({ sections: ["10-313", "10-312"], sectionNumber: "10", functionId: "313" });
+  assert.deepEqual(where.AND, [
+    { section: { in: ["10-313", "10-312"] } },
+    { section: { startsWith: "10-" } },
+    { section: { endsWith: "-313" } },
+  ]);
 });
 
 // "department" narrows like the other operational tiers (expanding into
@@ -130,7 +182,14 @@ test("narrows section by setting sections to exactly the one value", () => {
 // distinction is pinned as hard as possible.
 test("narrows department by expanding into every raw code that operational department covers", () => {
   const narrowed = narrowFiltersForGroupValue({}, "department", "Mechanical Engineering");
-  assert.deepEqual(narrowed.sections, ["10-211"]);
+  // Widened through rawCodesFoldingInto (2026-08-21): "10-211" is what
+  // codesInDepartment itself returns, but `section` is stored raw now, so every raw
+  // pair that folds ONTO 10-211 (12/13/14-211 and the rest of SECTION_ALIASES' phase
+  // fold) must also be included, or expanding this group would silently drop them.
+  assert.deepEqual(
+    [...(narrowed.sections ?? [])].sort(),
+    ["10-211", "11-211", "12-211", "13-211", "14-211", "15-211", "16-211", "17-211", "18-211", "25-211"],
+  );
   assert.equal(narrowed.departments, undefined, "must not touch the HR-department filter field");
 });
 
@@ -186,7 +245,7 @@ test("narrows taskDescription by expanding into every raw code sharing that task
 // ── parseHoursGroupByList ─────────────────────────────────────────────────────
 
 test("parses a comma-joined groupBy param, preserving order", () => {
-  assert.deepEqual(parseHoursGroupByList("job,employee,section"), ["job", "employee", "section"]);
+  assert.deepEqual(parseHoursGroupByList("job,employee,sectionNumber"), ["job", "employee", "sectionNumber"]);
 });
 
 test("a bookmarked single-value groupBy (pre-multi-level) still parses to a one-item list", () => {
@@ -228,9 +287,12 @@ test("rollupByOperationalTier's department tier rolls several codes into the sta
   }
 });
 
-test("department rollup splits Section 10's Shop into Mechanical Build / Electrical Build / Manufacturing Operations", () => {
+test("department rollup splits Section 10's Shop into Mechanical Build / Electrical Build / Manufacturing", () => {
   // Unlike Function Group, which collapses all three into one "Shop" —
-  // Department is deliberately more granular here, by request.
+  // Department is deliberately more granular here, by request. "Manufacturing
+  // Operations" -> "Manufacturing" (2026-08-20): the centralized canonical
+  // section name for Function 413/414, not the HR/Employee.department string
+  // of the same near-spelling — see paylocity-canonical.ts.
   const bySection = [
     { section: "10-411", hours: 4, punchCount: 1 },
     { section: "10-412", hours: 6, punchCount: 1 },
@@ -239,7 +301,7 @@ test("department rollup splits Section 10's Shop into Mechanical Build / Electri
   const g = rollupByOperationalTier(bySection, "department");
   assert.deepEqual(
     g.map((x) => x.key).sort(),
-    ["Electrical Build", "Manufacturing Operations", "Mechanical Build"],
+    ["Electrical Build", "Manufacturing", "Mechanical Build"],
   );
 });
 
@@ -310,11 +372,11 @@ test("queryHoursGrouped's 'department' branch groups by section, never by employ
   assert.match(branch, /by:\s*\["section"\]/, "must group the punch table by section, the same aggregate every other operational tier uses");
 });
 
-test("narrowFiltersForGroupValue's department case expands sections, never sets the HR departments field", () => {
+test("narrowFiltersForGroupValue's department case expands sections (through the raw fold), never sets the HR departments field", () => {
   const src = code("src", "lib", "hours-filters.ts");
   const fn = src.slice(src.indexOf("export function narrowFiltersForGroupValue"));
-  const caseBlock = fn.slice(fn.indexOf('case "department"'), fn.indexOf('case "department"') + 120);
-  assert.match(caseBlock, /sections:\s*codesInDepartment\(value\)/);
+  const caseBlock = fn.slice(fn.indexOf('case "department"'), fn.indexOf('case "department"') + 160);
+  assert.match(caseBlock, /sections:\s*rawCodesFoldingInto\(codesInDepartment\(value\)\)/);
   assert.doesNotMatch(caseBlock, /departments:\s*\[value\]/, "narrowing on the HR field is the exact bug being guarded against");
 });
 

@@ -1,17 +1,17 @@
 import { prisma } from "@/lib/prisma";
 import { VALID_JOB_TYPES, etcActiveJobFilter } from "@/lib/job-filters";
-import { ETC_TRACKED_CODES, PARTS_COST_SECTION, SERVICE_AND_SPARE_PARTS_CODES } from "@/lib/sections";
+import { ETC_TRACKED_CODES, PARTS_COST_SECTION, JOB_DASHBOARD_HOURS_CODES, mapPunchToColumns } from "@/lib/sections";
 import { calcHoursLeft, round2, isMonthLocked, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, monthWindowUtc, prevMonth } from "@/lib/etc";
 import { getPartsCostBookedByJob } from "@/lib/sync-totaleto";
 import {
-  fetchJobHoursRows,
-  fetchJobHoursRowsWithIssues,
   hoursByJobSection,
   latestWorkDate,
   type HoursImportIssue,
   type JobHoursRow,
   type PoolHoursByMonth,
 } from "@/lib/job-hours-source";
+import { readHoursFeed } from "@/lib/hours-feed";
+import { classifyPunch } from "@/lib/paylocity-standard-rules";
 
 // One read of the hours feed, shared by the two syncs that use it. Exported so a
 // caller running both (auto-sync's pass, the ETC Refresh Data button) can fetch
@@ -22,10 +22,10 @@ export type HoursExport = { rows: JobHoursRow[]; issues: HoursImportIssue[]; poo
 // (the job-level rollup the dashboard / job detail use), summed across every
 // tracked section.
 //
-// Sourced from Power BI's `Hours Actual` since 2026-08-03 (job-hours-source.ts);
-// before that it was the OneDrive-synced Paylocity workbook, and before that Power
-// BI again. The two were proven identical on 1,127 of 1,127 job/section/month
-// cells before the switch.
+// Sourced from the Paylocity Excel files in the OneDrive folder, via readHoursFeed
+// — the one hours entry point. Power BI is not an hours source anywhere in the app
+// (2026-08-21); see hours-feed.ts for why the model path and its code->column
+// resolver were both removed rather than kept as a fallback.
 //
 // Covers EVERY job the hours were booked to, Complete and Active alike — the job
 // lookup below filters on nothing but the job ids present in the feed.
@@ -40,27 +40,39 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
   rowsSkippedOverridden: number;
   detailRowsWritten: number;
 }> {
-  const { rows } = prefetched ?? (await fetchJobHoursRowsWithIssues());
+  // Falls back to readHoursFeed (the Paylocity Excel files) rather than the Power BI
+  // model (2026-08-21) — Power BI is no longer an hours source anywhere.
+  const { rows } = prefetched ?? (await readHoursFeed());
   // Undefined hours are NOT recorded here any more (2026-08-05, §42.14 stage 10).
   // They moved to their own refresh step — lib/paylocity-import.ts recordUndefinedHours
   // — for two reasons: it writes the punch-level rows as well as the totals, in one
   // transaction, which is what makes the KPI and its drill-through reconcile by
   // construction; and it is a stage a manager watching a refresh should see named
   // ("Calculating Undefined Hours…") rather than buried inside "Actual hours".
-  // Sum every tracked section to a per-job, per-month total — except Service/Spare
-  // Parts (2026-08-17). Those two were just added to HOURS_IMPORT_CODES so the Hours
-  // tab can see them, but they have no SECTIONS row at all, unlike PM/Warranty/
-  // Manufacturing — so letting them into this sum would grow JobMonthlyActualHours
-  // (Job detail's "Actual Hours by Month") while the Job Hour Details dashboard and
+  // Sum only the codes JobMonthlyActualHours has always modeled (2026-08-17,
+  // widened 2026-08-21 — see JOB_DASHBOARD_HOURS_CODES's own comment). Service,
+  // Spare Parts, Engineering "Other", and now any raw code the standard mapping
+  // has never seen, have no SECTIONS row at all, unlike PM/Warranty/Manufacturing
+  // — so letting them into this sum would grow JobMonthlyActualHours (Job
+  // detail's "Actual Hours by Month") while the Job Hour Details dashboard and
   // Projects grid, which only ever iterate the 17 SECTIONS codes, stayed blind to
   // why. Excluding them here keeps every one of those pages byte-identical to
-  // today; JobHoursDetail (below) still gets every row, unfiltered.
+  // today; JobHoursDetail (below) still gets every row, unfiltered — that is the
+  // whole point of the allow-list being an explicit set rather than a complement
+  // of exclusions that a future unmapped code could slip past.
+  // Rows are RAW now (2026-08-21 — storage stopped folding/splitting). This function
+  // still needs the ETC grid's fixed-column figure, so it folds each raw punch via
+  // mapPunchToColumns here, at aggregation time, exactly as the reader used to do
+  // before pushing it into the row list. Nothing is stored folded any more — this
+  // fold exists only in memory, only for this one total.
   const byJobMonth = new Map<string, number>(); // `${jobId}::${YYYY-MM}` -> hours
   for (const r of rows) {
-    if (SERVICE_AND_SPARE_PARTS_CODES.has(r.section)) continue;
-    const monthStr = `${r.year}-${String(r.month).padStart(2, "0")}`;
-    const key = `${r.jobId}::${monthStr}`;
-    byJobMonth.set(key, (byJobMonth.get(key) ?? 0) + r.hours);
+    for (const col of mapPunchToColumns(r.section, r.hours)) {
+      if (!JOB_DASHBOARD_HOURS_CODES.has(col.section)) continue;
+      const monthStr = `${r.year}-${String(r.month).padStart(2, "0")}`;
+      const key = `${r.jobId}::${monthStr}`;
+      byJobMonth.set(key, (byJobMonth.get(key) ?? 0) + col.hours);
+    }
   }
 
   let rowsUpserted = 0;
@@ -71,7 +83,22 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
   // loop spans EVERY job × EVERY month the feed holds (18 months of
   // history), so the old per-key job.findUnique + overridden findUnique meant
   // thousands of serial round-trips per Refresh — multi-minute, timeout-prone.
-  const jobIdStrs = [...new Set([...byJobMonth.keys()].map((k) => k.split("::")[0]))];
+  // ── Resolved from EVERY row, not just allow-listed ones (2026-08-21 fix) ──
+  //
+  // This used to derive the job list from `byJobMonth`, which is filtered by
+  // JOB_DASHBOARD_HOURS_CODES. That map is then handed to syncJobHoursDetail, which
+  // skips any row whose job is absent from it — so a job whose punches ALL fall
+  // outside the allow-list resolved to nothing and lost every one of its punch rows,
+  // silently. Measured on 2026-08-21: jobs 955 and 993 held zero JobHoursDetail rows
+  // while carrying real hours in the source, and job 953 held only a single stale row.
+  //
+  // That is the same "standardization decides existence" defect the ingestion fix
+  // closed in mapPunchToColumns, reintroduced one layer up through the job map. The
+  // allow-list is a scoping rule for the ROLLUP (JobMonthlyActualHours, which feeds
+  // Job detail's "Actual Hours by Month") and must not decide whether a punch is
+  // stored at all — JobHoursDetail is the audit record and has to hold every
+  // job-attributed punch, mapped or not.
+  const jobIdStrs = [...new Set(rows.map((r) => r.jobId))];
   const jobRows = await prisma.job.findMany({ where: { jobId: { in: jobIdStrs } }, select: { id: true, jobId: true } });
   const jobByJobId = new Map(jobRows.map((j) => [j.jobId, j]));
   // Mirrors the legacy "Actual Hours Override" tab: a manually corrected month
@@ -97,7 +124,7 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
     await prisma.jobMonthlyActualHours.upsert({
       where: { jobId_month: { jobId: job.id, month: monthStr } },
       update: { actualHours: hours, syncedAt: new Date() },
-      create: { jobId: job.id, month: monthStr, actualHours: hours, source: "power_bi" },
+      create: { jobId: job.id, month: monthStr, actualHours: hours, source: "paylocity_excel" },
     });
     rowsUpserted++;
   }
@@ -120,19 +147,19 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
 // self-healing (a punch deleted upstream disappears here too, which an
 // upsert-only pass would leave behind forever).
 //
-// Months absent from the feed are left untouched. That mattered more when the
-// source was a rolling-window file reaching back only to 2026-01; the Power BI
-// feed returns its whole span (2025-02 onward), so in practice every month is
-// rewritten each pass. The rule stays because "absent" must never mean "delete" —
-// a failed or partial read would otherwise erase history.
+// Months absent from the feed are left untouched. With one authoritative Paylocity
+// file per punch year (paylocity-sources.ts) the feed now spans 2025 onward, so in
+// practice every month it covers is rewritten each pass. The rule stays because
+// "absent" must never mean "delete" — a failed or partial read would otherwise
+// erase history. The visible cost is that punches deleted upstream linger until
+// their month is rewritten from a file that still covers it.
 export async function syncJobHoursDetail(
   rows: JobHoursRow[],
   jobByJobId: Map<string, { id: number; jobId: string }>,
-  // Exported (and given this param) for scripts/backfill-hours-2025.ts, which writes the
-  // exact same replace-by-(job, month) shape from a different source file and needs the
-  // provenance to say so rather than claim "power_bi" for rows that came from a workbook.
-  // Every existing caller is unaffected — the default is unchanged.
-  source = "power_bi",
+  // Provenance label stored on each row. Defaults to the Paylocity Excel files, which
+  // is now the only hours source; scripts writing the same replace-by-(job, month)
+  // shape from somewhere else pass their own label rather than inheriting a wrong one.
+  source = "paylocity_excel",
 ): Promise<number> {
   // job pk + month -> the rows for it
   const byJobMonth = new Map<string, { jobPk: number; month: string; rows: JobHoursRow[] }>();
@@ -148,30 +175,55 @@ export async function syncJobHoursDetail(
 
   let written = 0;
   for (const { jobPk, month, rows: monthRows } of byJobMonth.values()) {
-    // Collapse to the unique key before writing: the export is already one row
-    // per employee/day/job/section, but the 10-311 → 312/313 split can emit two
-    // rows for the same key if a person books that function twice in a day.
-    const merged = new Map<string, { section: string; workDate: Date; employeeId: string; hours: number }>();
+    // Collapse to the true punch grain before writing: the export is already one row
+    // per employee/day/job/raw-pair, but a person can book the same raw pair twice in
+    // a day (two separate punches). `section` IS the raw pair now (2026-08-21), so it
+    // alone is the whole key — no fold, no split, nothing else can collide on it.
+    const merged = new Map<
+      string,
+      { section: string; workDate: Date; employeeId: string; hours: number; rawSection: string; rawFunction: string }
+    >();
     for (const r of monthRows) {
       const day = new Date(Date.UTC(r.date.getUTCFullYear(), r.date.getUTCMonth(), r.date.getUTCDate()));
       const k = `${r.section}::${day.toISOString().slice(0, 10)}::${r.employeeId}`;
       const cur = merged.get(k);
       if (cur) cur.hours += r.hours;
-      else merged.set(k, { section: r.section, workDate: day, employeeId: r.employeeId, hours: r.hours });
+      else
+        merged.set(k, {
+          section: r.section,
+          workDate: day,
+          employeeId: r.employeeId,
+          hours: r.hours,
+          rawSection: r.rawSection,
+          rawFunction: r.rawFunction,
+        });
     }
 
     await prisma.$transaction([
       prisma.jobHoursDetail.deleteMany({ where: { jobId: jobPk, month } }),
       prisma.jobHoursDetail.createMany({
-        data: [...merged.values()].map((m) => ({
-          jobId: jobPk,
-          section: m.section,
-          month,
-          workDate: m.workDate,
-          employeeId: m.employeeId,
-          hours: round2(m.hours),
-          source,
-        })),
+        data: [...merged.values()].map((m) => {
+          // The approved Section+Function rule book, applied ONCE here and stored as
+          // real columns — this is what makes every page's Group By a plain SQL
+          // GROUP BY rather than a per-page recomputation. Pure function of the raw
+          // pair, so re-running this write with an updated rule book (via a resync)
+          // is the only thing that ever changes it — never a page-level guess.
+          const c = classifyPunch(m.rawSection, m.rawFunction);
+          return {
+            jobId: jobPk,
+            section: m.section,
+            month,
+            workDate: m.workDate,
+            employeeId: m.employeeId,
+            hours: round2(m.hours),
+            rawSection: m.rawSection,
+            rawFunction: m.rawFunction,
+            standardDepartment: c.department,
+            standardTaskDescription: c.taskDescription,
+            mappingStatus: c.mappingStatus,
+            source,
+          };
+        }),
       }),
     ]);
     written += merged.size;
@@ -194,6 +246,19 @@ export async function syncJobHoursDetail(
 // the entry is CREATED rather than the hours silently dropped. Prior ETC for
 // these comes from the previous month's entry if one exists, else 0.
 // `prefetchedRows` — see syncActualHours: one parse shared between the two.
+// Raw rows -> ETC-grid-column rows, in memory. The 10-311 split (one raw row becomes
+// two) happens HERE, not in storage — see mapPunchToColumns in sections.ts for the
+// exact fold/split rules this reuses.
+function foldRowsToEtcColumns(rows: JobHoursRow[]): JobHoursRow[] {
+  const out: JobHoursRow[] = [];
+  for (const r of rows) {
+    for (const col of mapPunchToColumns(r.section, r.hours)) {
+      out.push({ ...r, section: col.section, hours: col.hours });
+    }
+  }
+  return out;
+}
+
 export async function syncHoursWorked(
   month: string,
   prefetchedRows?: JobHoursRow[],
@@ -210,8 +275,12 @@ export async function syncHoursWorked(
   }
 
   const [year, monthNum] = month.split("-").map(Number);
-  const allRows = prefetchedRows ?? (await fetchJobHoursRows());
-  const spentByKey = hoursByJobSection(allRows, year, monthNum);
+  const allRows = prefetchedRows ?? (await readHoursFeed()).rows;
+  // Rows are RAW (2026-08-21) — fold each one onto its ETC grid column(s) here, in
+  // memory, before summing. hoursByJobSection itself does no folding; it just sums
+  // whatever `section` it is given, so this is the one place that turns "raw punches"
+  // into "what the fixed 17-column ETC grid shows", without storing the fold anywhere.
+  const spentByKey = hoursByJobSection(foldRowsToEtcColumns(allRows), year, monthNum);
 
   // Resolve every job once, up front (one query), instead of the same
   // job.findUnique repeated per section row. The per-row EtcEntry reads below

@@ -121,10 +121,11 @@ FILTER(
   L.push(`| **Total** | **${fmt(lostTotal + poolTotal + notDefinedTotal)}** | | |`);
   L.push("");
   L.push(
-    "The app models 17 `MachineSec-Function` codes (see `SECTIONS` in `src/lib/sections.ts`). " +
-      "Every other code is folded onto one of them using the model's OWN `Function Hierarchy` table, which files each code " +
-      "under a (Section Name, Section Function Name) pair. " +
-      "Anything outside that set has nowhere to go.",
+    "The app imports every code in `HOURS_IMPORT_CODES` (`src/lib/sections.ts`) — the 17 ETC/Quoted grid columns plus " +
+      "PM, Warranty, Manufacturing, Service, Spare Parts, and (2026-08-20) Engineering \"Other\" (Function 112/118/119/120, " +
+      "the centralized canonical mapping's catch-all for engineering-shaped work with no per-function breakout). Every other " +
+      "code is folded onto one of them using the model's OWN `Function Hierarchy` table, which files each code under a " +
+      "(Section Name, Section Function Name) pair. Anything outside that set has nowhere to go — the bucket below is what's left.",
   );
   L.push("");
 

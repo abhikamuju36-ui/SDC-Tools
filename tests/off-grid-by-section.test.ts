@@ -75,9 +75,12 @@ test("a section the app does not model sorts after every grid column", () => {
 });
 
 test("section codes are given their names", () => {
+  // Canonical wording (2026-08-20) — see paylocity-canonical.ts. "ME Gen"/"Design &
+  // Drawings" were sections.ts's own hand-typed abbreviations; the name now comes
+  // straight from the centralized Function-ID vocabulary.
   const rows = offGridBySection(JULY);
-  assert.equal(rows.find((r) => r.section === "10-211")!.name, "ME Gen");
-  assert.equal(rows.find((r) => r.section === "10-312")!.name, "Design & Drawings");
+  assert.equal(rows.find((r) => r.section === "10-211")!.name, "General");
+  assert.equal(rows.find((r) => r.section === "10-312")!.name, "System Design & Drawings");
 });
 
 test("an unrecognised code still counts, just unnamed", () => {

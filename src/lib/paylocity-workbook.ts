@@ -8,6 +8,9 @@ import {
   mapPunchToColumns,
   poolCategoryForPunch,
 } from "@/lib/sections";
+import { isTotalControlFunctionId, normalizeFunctionId } from "@/lib/paylocity-canonical";
+import { normalizeSectionId } from "@/lib/paylocity-standard-rules";
+import type { JobHoursRow } from "@/lib/job-hours-source";
 import { normalizeJobNumber as normalizeJobId } from "@/lib/job-filters";
 // The Undefined Hours definition, from the one module that owns it. Imported for use
 // here AND re-exported below, so callers can reach it either way but there is still
@@ -187,15 +190,14 @@ export type RejectedPunch = {
 // A punch that DID resolve, at the app's own grain. Same shape job-hours-source.ts
 // returns, deliberately: five callers consume it and none should care which reader
 // produced it.
-export type WorkbookHoursRow = {
-  jobId: string;
-  section: string;
-  year: number;
-  month: number;
-  date: Date;
-  hours: number;
-  employeeId: string;
-};
+//
+// Now an ALIAS of that type rather than a second hand-maintained copy of it
+// (2026-08-21). It was structurally identical by intent, but "identical by intent"
+// is exactly what drifts: adding rawSection/rawFunction to one and not the other
+// broke the assignment at three call sites and would have silently let this reader
+// write rows without raw provenance. An alias makes the two literally the same
+// type, so the next field cannot be added to only one of them.
+export type WorkbookHoursRow = JobHoursRow;
 
 export type WorkbookReadResult = {
   identity: WorkbookIdentity;
@@ -220,6 +222,14 @@ export type WorkbookReadResult = {
     // `segmentsMerged` in the body. NOT duplicates.
     segmentsMerged: number;
     zeroHourRows: number;
+    // Rows this file carries for a punch year another workbook is authoritative for,
+    // dropped before standardization. The measure of how much double-counting the
+    // year rule prevented — see the ownership gate in the body and
+    // paylocity-sources.ts. Zero when no `ownsYear` was supplied.
+    rowsExcludedByYear: number;
+    hoursExcludedByYear: number;
+    /** The years those excluded rows fell in, ascending. */
+    excludedYears: number[];
   };
 };
 
@@ -407,6 +417,10 @@ export async function readPaylocityWorkbook(opts?: {
   // Refresh). The whole file is still parsed — it is one 746 KB read, ~1s — but
   // everything outside the month is discarded before it reaches the caller.
   onlyMonth?: string;
+  // Which punch YEARS this file is authoritative for. Supplied by
+  // paylocity-sources.ts; omitted means "this file owns everything in it", which is
+  // the historical single-file behaviour every existing caller relies on.
+  ownsYear?: (year: number) => boolean;
 }): Promise<WorkbookReadResult> {
   const path = opts?.path ?? workbookPath();
   if (!path) {
@@ -479,6 +493,7 @@ export async function readPaylocityWorkbook(opts?: {
   const resolve = opts?.resolve;
   const known = opts?.knownJobNumbers;
   const wantMonth = opts?.onlyMonth;
+  const ownsYear = opts?.ownsYear;
 
   const rows: WorkbookHoursRow[] = [];
   const rejected: RejectedPunch[] = [];
@@ -491,6 +506,11 @@ export async function readPaylocityWorkbook(opts?: {
   let rowsWithHours = 0;
   let zeroHourRows = 0;
   let segmentsMerged = 0;
+  // Rows this file carries but does NOT own — another workbook is authoritative for
+  // their year. Reported so the exclusion is auditable rather than invisible.
+  let rowsExcludedByYear = 0;
+  let hoursExcludedByYear = 0;
+  const excludedYears = new Set<number>();
 
   // ── Why there is no row-level duplicate detection (§42.5, §42.12) ─────────
   //
@@ -586,6 +606,38 @@ export async function readPaylocityWorkbook(opts?: {
       continue;
     }
 
+    // Centralized Paylocity mapping (2026-08-20): 990/991/992/993/998 are Power BI
+    // Function Hierarchy totals/control rows, never a real punch section — checked
+    // ahead of every other gate below so one can never be misfiled as a job-number
+    // problem or silently folded into the generic UNSUPPORTED_CATEGORY bucket.
+    if (isTotalControlFunctionId(fn)) {
+      reject("CONTROL_TOTAL_CODE", rawSection);
+      continue;
+    }
+
+    // ── Year ownership: the anti-double-counting gate (2026-08-21) ──────────
+    //
+    // Several workbooks in the folder overlap — Job_Hours_2025.xlsx runs five days
+    // into 2026 and repeats 587.20h of punches that Current_Job_Hours.xlsx also
+    // carries. Exactly one file is authoritative per punch year (see
+    // paylocity-sources.ts), and rows outside this file's owned years are dropped
+    // HERE: before standardization, before the job checks, before the pool tally,
+    // before aggregation. Nothing downstream ever sees them, so nothing downstream
+    // can sum them twice.
+    //
+    // Placed after the file-level bookkeeping above, deliberately, so `monthsCovered`
+    // and the work-date bounds keep describing the WHOLE file — the audit needs to
+    // report each file's real span alongside what was excluded from it.
+    //
+    // Counted, not silently skipped: a rule that quietly discards hours is
+    // indistinguishable from a bug that loses them, so the totals are reported.
+    if (ownsYear && !ownsYear(workDate.getUTCFullYear())) {
+      rowsExcludedByYear++;
+      hoursExcludedByYear += hours;
+      excludedYears.add(workDate.getUTCFullYear());
+      continue;
+    }
+
     // Everything below is scoped work; skip it for months the caller did not ask for,
     // but only AFTER the file-level bookkeeping above so the covered-months list and
     // the work-date bounds still describe the whole file.
@@ -622,27 +674,36 @@ export async function readPaylocityWorkbook(opts?: {
       poolHours.set(k, (poolHours.get(k) ?? 0) + hours);
     }
 
-    const columns = mapPunchToColumns(rawSection, hours, resolve);
-    if (columns.length === 0) {
-      // Reaches no app column. Correct behaviour for phases the app does not model
-      // and for the four pool sections — which is why UNSUPPORTED_CATEGORY is outside
-      // KPI_COUNTED_REASONS. Still recorded, so "where did the rest of the hours go"
-      // has an answer.
-      reject("UNSUPPORTED_CATEGORY", rawSection);
-      continue;
-    }
-
-    for (const c of columns) {
-      rows.push({
-        jobId,
-        section: c.section,
-        year: workDate.getUTCFullYear(),
-        month: workDate.getUTCMonth() + 1,
-        date: workDate,
-        hours: c.hours,
-        employeeId,
-      });
-    }
+    // ── One row per raw punch, `section` IS the raw pair (2026-08-21) ────────
+    //
+    // Storage never rewrites a punch to fit a rule book: no alias, no fold, no
+    // 10-311 30/70 split here. `rawSection` (this function's local var, above) is
+    // already the untransformed "${machineSec}-${fn}" string read straight off the
+    // sheet — exactly what the raw-truth rule requires `section` to hold. The ETC
+    // grid's fixed-column fold (mapPunchToColumns/SECTION_ALIASES) still exists and
+    // is still correct for its OWN narrow purpose — it now runs at aggregation time
+    // in sync-powerbi.ts (syncActualHours/syncHoursWorked) and in the ETC-month /
+    // T&M drills, reading these raw rows and folding on the fly. It never touches
+    // what gets stored here.
+    const rawSectionId = normalizeSectionId(machineSec);
+    const rawFunctionId = normalizeFunctionId(fn);
+    // `section` is built from the SAME normalized halves as rawSection/rawFunction —
+    // NOT from the pre-normalization `rawSection` local var above (which can read
+    // "Not Defined-216" while its normalized form is really the blank-section case
+    // "-216"). Building it any other way is exactly the "regenerated from a different
+    // representation" mistake the raw-key rule forbids: section and the two halves
+    // must describe the identical fact, always.
+    rows.push({
+      jobId,
+      section: `${rawSectionId}-${rawFunctionId}`,
+      year: workDate.getUTCFullYear(),
+      month: workDate.getUTCMonth() + 1,
+      date: workDate,
+      hours,
+      employeeId,
+      rawSection: rawSectionId,
+      rawFunction: rawFunctionId,
+    });
   }
 
   if (rowsWithHours === 0) {
@@ -669,6 +730,9 @@ export async function readPaylocityWorkbook(opts?: {
       rowsRejected: rejected.length,
       segmentsMerged,
       zeroHourRows,
+      rowsExcludedByYear,
+      hoursExcludedByYear,
+      excludedYears: [...excludedYears].sort(),
     },
   };
 }

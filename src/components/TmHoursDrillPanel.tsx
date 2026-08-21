@@ -18,7 +18,7 @@ import type { TmHoursDrillRow } from "@/lib/tm-hours";
 // the KPI row's own number came from — so this table's Hours column always
 // sums back to the row, whatever the current Job/Status/date selection is.
 
-type SortKey = "date" | "employee" | "department" | "jobId" | "jobName" | "section" | "hours";
+type SortKey = "date" | "employee" | "department" | "jobId" | "jobName" | "rawSection" | "rawSectionName" | "rawFunction" | "standardTaskDescription" | "hours";
 
 const COLUMNS: SortColumns<TmHoursDrillRow, SortKey> = {
   date: { type: "date", value: (r) => r.date },
@@ -26,7 +26,10 @@ const COLUMNS: SortColumns<TmHoursDrillRow, SortKey> = {
   department: { type: "text", value: (r) => r.department || null },
   jobId: { type: "id", value: (r) => r.jobId || null },
   jobName: { type: "text", value: (r) => r.jobName || null },
-  section: { type: "text", value: (r) => r.section || null },
+  rawSection: { type: "text", value: (r) => r.rawSection || null },
+  rawSectionName: { type: "text", value: (r) => r.rawSectionName || null },
+  rawFunction: { type: "text", value: (r) => r.rawFunction || null },
+  standardTaskDescription: { type: "text", value: (r) => r.standardTaskDescription || null },
   hours: { type: "hours", value: (r) => r.hours },
 };
 
@@ -51,7 +54,10 @@ export function TmHoursDrillPanel({
         r.department.toLowerCase().includes(q) ||
         r.jobId.toLowerCase().includes(q) ||
         r.jobName.toLowerCase().includes(q) ||
-        r.section.toLowerCase().includes(q),
+        r.rawSection.toLowerCase().includes(q) ||
+        r.rawSectionName.toLowerCase().includes(q) ||
+        r.rawFunction.toLowerCase().includes(q) ||
+        r.standardTaskDescription.toLowerCase().includes(q),
     );
   }, [rows, query]);
 
@@ -87,13 +93,18 @@ export function TmHoursDrillPanel({
                   <SortableTh label="Department" sortKey="department" type="text" sort={sort.sort} onSort={sort.onSort} className="w-40" />
                   <SortableTh label="Job ID" sortKey="jobId" type="id" sort={sort.sort} onSort={sort.onSort} className="w-20" />
                   <SortableTh label="Job / Machine" sortKey="jobName" type="text" sort={sort.sort} onSort={sort.onSort} className="w-56" />
-                  <SortableTh label="Function / Section" sortKey="section" type="text" sort={sort.sort} onSort={sort.onSort} className="w-44" />
+                  {/* Separate columns (2026-08-21) — consistent with every other view
+                      of these same JobHoursDetail rows. */}
+                  <SortableTh label="Section" sortKey="rawSection" type="text" sort={sort.sort} onSort={sort.onSort} className="w-16" />
+                  <SortableTh label="Section Name" sortKey="rawSectionName" type="text" sort={sort.sort} onSort={sort.onSort} className="w-40" />
+                  <SortableTh label="Function" sortKey="rawFunction" type="text" sort={sort.sort} onSort={sort.onSort} className="w-16" />
+                  <SortableTh label="Function Name" sortKey="standardTaskDescription" type="text" sort={sort.sort} onSort={sort.onSort} className="w-40" />
                   <SortableTh label="Hours" sortKey="hours" type="hours" sort={sort.sort} onSort={sort.onSort} className="w-20" />
                 </>
               }
               foot={
                 <tr>
-                  <td className={DRILL_TOTAL_LABEL} colSpan={6}>
+                  <td className={DRILL_TOTAL_LABEL} colSpan={9}>
                     {filtering ? "Shown" : "Total"}
                   </td>
                   <td className={`${DRILL_NUM} text-sm font-semibold`} title={hoursExact(total)}>
@@ -111,7 +122,10 @@ export function TmHoursDrillPanel({
                   <td className="text-sdc-gray-700" title={r.jobName}>
                     <span className="line-clamp-1">{r.jobName || "—"}</span>
                   </td>
-                  <td className="text-sdc-muted">{r.section || "—"}</td>
+                  <td className="font-mono text-sdc-muted">{r.rawSection || "—"}</td>
+                  <td className="text-sdc-muted">{r.rawSectionName || "—"}</td>
+                  <td className="font-mono text-sdc-muted">{r.rawFunction || "—"}</td>
+                  <td className="text-sdc-muted">{r.standardTaskDescription || "—"}</td>
                   <td className={DRILL_NUM} title={hoursExact(r.hours)}>
                     {hoursCell(r.hours)}
                   </td>

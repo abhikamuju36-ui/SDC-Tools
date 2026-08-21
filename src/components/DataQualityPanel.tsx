@@ -1,13 +1,11 @@
 "use client";
 
+import Link from "next/link";
 import { card } from "@/components/ui/classnames";
 import { SectionTitle } from "@/components/ui/Typography";
-import type { DataQuality, NonJobHours, PunchExplorer } from "@/lib/data-quality";
+import type { DataQuality, PunchExplorer } from "@/lib/data-quality";
 import { DataQualityExplorer } from "@/components/DataQualityExplorer";
 import { DataQualityDrill, EmployeeIdDrill } from "@/components/DataQualityDrill";
-import { useColumnSort } from "@/components/useColumnSort";
-import { SortableTh } from "@/components/ui/SortableHeader";
-import { sortRows, type SortColumns } from "@/lib/table-sort";
 import { hours as fmtHours } from "@/components/ui/format";
 
 // The Power BI report's "Data Quality" page. Its rules — which punches count as
@@ -62,50 +60,6 @@ function Finding({
       ) : (
         <div className="mt-3">{children}</div>
       )}
-    </div>
-  );
-}
-
-// No text-left baked into TH — every header here is a SortableTh, which supplies its
-// own alignment (see the matching note in DataQualityDrill.tsx).
-const TH = "px-2 py-1.5 text-label font-bold uppercase tracking-wide text-white";
-const TD = "px-2 py-1 text-left text-note text-sdc-navy";
-
-const NON_JOB_HOURS_COLUMNS: SortColumns<NonJobHours, "month" | "label" | "rows" | "hours"> = {
-  // "YYYY-MM" — already chronological as a plain string, same reasoning as every other
-  // date-typed column in the app (see table-sort.ts).
-  month: { type: "date", value: (r) => r.month },
-  label: { type: "text", value: (r) => r.label },
-  rows: { type: "number", value: (r) => r.rows },
-  hours: { type: "hours", value: (r) => r.hours },
-};
-
-// Pulled out of Finding's children (was inlined there) so the sort state has a
-// component to live in — this file has no other stateful table.
-function NonJobHoursTable({ rows }: { rows: NonJobHours[] }) {
-  const sort = useColumnSort<"month" | "label" | "rows" | "hours">();
-  return (
-    <div className="overflow-hidden rounded-lg border border-sdc-border">
-      <table className="w-full border-collapse">
-        <thead className="bg-sdc-navy">
-          <tr>
-            <SortableTh label="Month" sortKey="month" type="date" sort={sort.sort} onSort={sort.onSort} className={TH} />
-            <SortableTh label="Booked to" sortKey="label" type="text" sort={sort.sort} onSort={sort.onSort} className={TH} />
-            <SortableTh label="Rows" sortKey="rows" type="number" sort={sort.sort} onSort={sort.onSort} className={TH} />
-            <SortableTh label="Hours" sortKey="hours" type="hours" sort={sort.sort} onSort={sort.onSort} className={TH} />
-          </tr>
-        </thead>
-        <tbody>
-          {sortRows(rows, sort.sort, NON_JOB_HOURS_COLUMNS).map((r, i) => (
-            <tr key={`${r.month}-${r.label}`} className={i % 2 === 1 ? "bg-sdc-gray-50/60" : ""}>
-              <td className={`${TD} font-mono text-label`}>{r.month}</td>
-              <td className={TD}>{r.label}</td>
-              <td className={`${TD} text-right tabular-nums`}>{r.rows.toLocaleString()}</td>
-              <td className={`${TD} text-right tabular-nums`}>{fmtH(r.hours)}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
     </div>
   );
 }
@@ -167,15 +121,15 @@ export function DataQualityPanel({ dq, explorer }: { dq: DataQuality; explorer: 
         <EmployeeIdDrill ids={dq.undefinedEmployees.ids} />
       </Finding>
 
-      <Finding
-        title="Hours booked to a non-job"
-        rule={`The report's "Job Id Not Defined" case. These never became punch rows here — the hours import records them separately, because there is no job to attach them to. They are counted nowhere in the app, so they are pure loss until they are recoded in Paylocity.`}
-        count={dq.nonJobHours.count}
-        hours={dq.nonJobHours.hours}
-        unit="month/label pairs"
-      >
-        <NonJobHoursTable rows={dq.nonJobHours.rows} />
-      </Finding>
+      {/* "Hours booked to a non-job" (the report's "Job Id Not Defined" case) used to
+          have its own finding and table here, reading the same HoursImportIssue rows
+          the ETC page's own card already showed under a different name. Consolidated
+          onto that one location (2026-08-20, by request) rather than left duplicated. */}
+      <p className="rounded-lg border border-sdc-border bg-sdc-gray-50 px-4 py-3 text-xs leading-relaxed text-sdc-gray-600">
+        Hours booked to something that isn&apos;t a usable job number (the report&apos;s &quot;Job Id Not Defined&quot; case) are
+        tracked on the <Link href="/etc" className="font-semibold text-sdc-blue hover:underline">ETC page</Link>&apos;s{" "}
+        <strong>Data Quality — Undefined Hours</strong> card, one month at a time, rather than duplicated here.
+      </p>
 
       {dq.truncated && (
         <p className="text-xs text-sdc-gray-400">

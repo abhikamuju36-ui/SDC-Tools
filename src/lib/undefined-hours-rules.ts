@@ -27,6 +27,7 @@ export type UndefinedReason =
   | "INVALID_HOURS"
   | "DUPLICATE_RECORD"
   | "UNSUPPORTED_CATEGORY"
+  | "CONTROL_TOTAL_CODE"
   | "OTHER";
 
 // Human wording, in one place so the KPI hint, the drill's group headers, the banner
@@ -41,6 +42,12 @@ export const UNDEFINED_REASON_LABEL: Record<UndefinedReason, string> = {
   INVALID_HOURS: "Invalid Hours",
   DUPLICATE_RECORD: "Duplicate Record",
   UNSUPPORTED_CATEGORY: "Unsupported Category",
+  // "990, 991, 992, 993, 998 -> TOTALS/CONTROL rows, never real punch sections" — a
+  // Power BI Function Hierarchy summary row, not a real employee timesheet entry.
+  // Given its own reason (2026-08-20) rather than folded into UNSUPPORTED_CATEGORY,
+  // so a control/total code showing up on a punch is visibly its own, self-explaining
+  // category rather than indistinguishable from a deliberately-unmodeled phase.
+  CONTROL_TOTAL_CODE: "Total/Control Code",
   OTHER: "Other Mapping Error",
 };
 
@@ -57,6 +64,7 @@ export const UNDEFINED_REASON_FIX: Record<UndefinedReason, string> = {
   INVALID_HOURS: "Correct the hours value on this punch in Paylocity.",
   DUPLICATE_RECORD: "Remove the duplicated entry in Paylocity.",
   UNSUPPORTED_CATEGORY: "No action — this phase is deliberately not modelled on the ETC grid.",
+  CONTROL_TOTAL_CODE: "No action — this Function ID is a reporting total, not a real timesheet entry. If it keeps appearing, tell IT; a punch should never carry it.",
   OTHER: "Review this punch in Paylocity.",
 };
 
@@ -104,6 +112,24 @@ export function countsAsUndefined(r: Pick<RejectionLike, "reason" | "countsTowar
 }
 
 export type UndefinedTotal = { month: string; label: string; rows: number; hours: number };
+
+// ── Zero-hour row filtering (by request, 2026-08-20) ────────────────────────
+//
+// A punch whose hours round to 0 under the same rounding the tables display (ui/format's
+// `hours()`: `Math.round`) is real time, but a bare "0" beside someone's name reads as a
+// bug rather than a rounding artifact, and letting it stay in the total while never
+// appearing as a row would make "the total is the sum of what you can see" false. So a
+// row like this is dropped from the visible list AND from every total derived from it —
+// consistently with "rounding must happen BEFORE aggregation, not after" above, the
+// SUMMED value stays the exact raw figure; only the visibility test is rounded.
+export function roundedHoursVisible(hoursValue: number): boolean {
+  return Math.round(hoursValue) !== 0;
+}
+
+/** `aggregateUndefined`, restricted to rows that will actually be shown (see above). */
+export function visibleUndefinedTotals(rejected: RejectionLike[]): UndefinedTotal[] {
+  return aggregateUndefined(rejected.filter((r) => roundedHoursVisible(r.hours)));
+}
 
 /**
  * Aggregate punch-level rejections into the per-month/label rows the KPI card reads.
