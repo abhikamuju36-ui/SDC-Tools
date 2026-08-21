@@ -24,11 +24,20 @@ export function hiringWorkbookPath(): string {
   return process.env.HIRING_POSITIONS_LOCAL_PATH?.trim() || DEFAULT_PATH;
 }
 
+// /*turbopackIgnore*/ below: this path is a runtime value pointing OUTSIDE
+// the project (an env var, or the absolute OneDrive path it falls back to).
+// Next's build-time tracer (@vercel/nft) statically scans `fs` calls to decide
+// what a route must bundle; when it can't resolve an argument to a literal
+// path it over-includes to be safe, which is exactly the "next.config.ts was
+// traced unintentionally / whole project was traced" build warning this
+// produced on every route reaching this module. Same reasoning and same fix as
+// job-cost-inventory-sync.ts (2026-08-11) -- see its own longer note. The
+// comment only affects TRACING; the read itself is unchanged.
 export async function readHiringWorkbook(): Promise<HiringPositionSourceRow[]> {
   const path = hiringWorkbookPath();
   let buf: Buffer;
   try {
-    buf = await readFile(path);
+    buf = await readFile(/* turbopackIgnore: true */ path);
   } catch (err) {
     throw new HiringWorkbookError(
       "file_missing",

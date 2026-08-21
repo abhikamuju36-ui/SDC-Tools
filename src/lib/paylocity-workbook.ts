@@ -253,7 +253,7 @@ export type WorkbookReadResult = {
 async function readStableBytes(path: string): Promise<{ buf: Buffer; size: number; modifiedAt: Date }> {
   let before;
   try {
-    before = await stat(path);
+    before = await stat(/* turbopackIgnore: true */ path);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     if (code === "ENOENT") {
@@ -271,7 +271,7 @@ async function readStableBytes(path: string): Promise<{ buf: Buffer; size: numbe
 
   let buf: Buffer;
   try {
-    buf = await readFile(path);
+    buf = await readFile(/* turbopackIgnore: true */ path);
   } catch (err) {
     const code = (err as NodeJS.ErrnoException).code;
     // A dehydrated OneDrive placeholder that cannot be fetched surfaces here.
@@ -283,7 +283,7 @@ async function readStableBytes(path: string): Promise<{ buf: Buffer; size: numbe
     );
   }
 
-  const after = await stat(path);
+  const after = await stat(/* turbopackIgnore: true */ path);
   if (after.size !== before.size || after.mtimeMs !== before.mtimeMs) {
     throw new WorkbookError(
       "file_unstable",

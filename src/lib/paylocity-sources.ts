@@ -135,7 +135,13 @@ function resolvePath(s: SourceSpec): string {
   // always meant), so it applies only to the open-ended-future source. Every other
   // workbook is still looked up by name in the same folder.
   if (explicitFile && s.toYear == null) return explicitFile;
-  return path.join(paylocityFolder(), s.fileName);
+  // /*turbopackIgnore*/: paylocityFolder() is a runtime value (env var, or the
+  // absolute OneDrive path it falls back to) pointing OUTSIDE the project, so
+  // Next's build tracer can't resolve it and over-includes the whole project
+  // into every route that reaches this module -- the "whole project was traced
+  // unintentionally" warning. Tracing only; the join is unchanged. Same fix as
+  // job-cost-inventory-sync.ts (2026-08-11) and hiring-workbook.ts.
+  return path.join(/* turbopackIgnore: true */ paylocityFolder(), s.fileName);
 }
 
 // ── Validation: total and disjoint ──────────────────────────────────────────
