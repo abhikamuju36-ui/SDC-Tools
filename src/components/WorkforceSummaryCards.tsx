@@ -42,7 +42,13 @@ const WORKFORCE_THEME: Record<WorkforceGroupKey, { band: string; onBand: string 
   pm: { band: "bg-sdc-purple", onBand: "text-white" },
   other: { band: "bg-sdc-gray-700", onBand: "text-white" },
 };
-const HIRING_THEME = { band: "bg-sdc-green", onBand: "text-sdc-navy" };
+// Hiring is deliberately NOT given a solid color band like the workforce
+// groups (2026-08-21): it isn't a group of people, it's a list of open
+// requisitions, and a fourth solid band read as a fourth department. It uses
+// this app's existing "open seat" language instead -- a DASHED border and
+// green accents, the same visual grammar EmployeesCards already uses for its
+// per-department Hiring and Placeholders sections.
+const HIRING_ACCENT = "text-sdc-green-text";
 
 // Card render order (2026-08-19, by request): PM, Engineering, Shop, then
 // whatever's left (just "other," if it has any cards) -- Hiring Positions is
@@ -63,6 +69,13 @@ type WorkforceSummary = {
 
 function StatChip({ children }: { children: ReactNode }) {
   return <span>{children}</span>;
+}
+
+// The small caps label over each region. Quiet on purpose -- it is there to
+// say "these two things are different kinds of thing", not to compete with
+// the cards' own headers.
+function RegionLabel({ children }: { children: React.ReactNode }) {
+  return <div className="mb-1.5 text-label font-bold uppercase tracking-wider text-sdc-muted">{children}</div>;
 }
 
 export type CapacityDrillTarget = { title: string; subtitle?: string; employees: EmployeeRow[]; hiringPositions: HiringPosition[] };
@@ -218,8 +231,15 @@ export function WorkforceSummaryCards({
         )}
       </div>
 
-      <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-4">
-        {summaries.map((group) => {
+      {/* Two regions, not one grid of four peers (2026-08-21): the real
+          workforce on the left, open requisitions set apart on the right past
+          a divider. Side by side from xl up; below xl the aside drops under a
+          horizontal rule instead, so the separation survives every width. */}
+      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:gap-5">
+        <div className="min-w-0 flex-1">
+          <RegionLabel>Current Workforce</RegionLabel>
+          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {summaries.map((group) => {
           const theme = WORKFORCE_THEME[group.key];
           const activeCount = group.cards.reduce((s, c) => s + c.people.filter((p) => p.active).length, 0);
           const inactiveCount = group.cards.reduce((s, c) => s + c.people.length, 0) - activeCount;
@@ -319,56 +339,67 @@ export function WorkforceSummaryCards({
             </section>
           );
         })}
+          </div>
+        </div>
 
         {openPositions > 0 && (
-          <section
-            className={`flex flex-col overflow-hidden rounded-xl border bg-white shadow-sm ${
-              expandedGroup === "hiring" ? "border-sdc-blue ring-2 ring-sdc-blue/40" : "border-sdc-border"
-            }`}
-          >
-            <button
-              type="button"
-              onClick={onSelectHiring}
-              aria-expanded={expandedGroup === "hiring"}
-              title={expandedGroup === "hiring" ? "Collapse hiring positions" : "Show all open hiring positions below"}
-              className={`flex flex-col gap-1 px-4 py-3 text-left motion-interactive hover:brightness-95 ${HIRING_THEME.band} ${HIRING_THEME.onBand}`}
-            >
-              <h3 className="text-sm font-bold uppercase tracking-wide">Hiring Positions</h3>
-              <div className="flex items-baseline gap-1 text-xs opacity-90">
-                <span className="text-lg font-bold tabular-nums">{openPositions}</span>
-                <span>open</span>
-              </div>
-            </button>
-            {hasCapacityPolicy && (
-              <button
-                type="button"
-                onClick={() => onSelectCapacity({ title: "Hiring Positions — Capacity", employees: [], hiringPositions })}
-                title="See how this capacity total was built, by open position"
-                className="flex items-baseline gap-1.5 border-b border-sdc-border-soft bg-sdc-gray-50 px-4 py-1.5 text-left text-xs text-sdc-muted hover:bg-sdc-blue-light/30"
+          <>
+            {/* The divider itself: a vertical rule between the two regions on
+                wide screens, a horizontal one when the aside wraps under. */}
+            <div className="h-px w-full shrink-0 bg-sdc-border xl:h-auto xl:w-px xl:self-stretch" aria-hidden />
+            <aside className="min-w-0 xl:w-64 xl:shrink-0">
+              <RegionLabel>Planned</RegionLabel>
+              <section
+                className={`flex flex-col overflow-hidden rounded-xl border border-dashed bg-white ${
+                  expandedGroup === "hiring" ? "border-sdc-blue ring-2 ring-sdc-blue/40" : "border-sdc-green"
+                }`}
               >
-                <span className="font-bold tabular-nums text-sdc-green-text">+{fmtHours(hiringCapacityHoursTotal)}</span>
-                <span>hiring hrs/yr</span>
-              </button>
-            )}
-            <ul className="flex-1 p-1.5">
-              {WORKFORCE_GROUPS.filter((g) => g.key !== "other").map((g) => {
-                const count = hiringByGroup.get(g.key) ?? 0;
-                if (count === 0) return null;
-                return (
-                  <li key={g.key} className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-sm">
-                    <span className="min-w-0 truncate text-sdc-navy">{g.title}</span>
-                    <span className="shrink-0 font-semibold tabular-nums text-sdc-muted">{count}</span>
-                  </li>
-                );
-              })}
-              {unassignedHiring > 0 && (
-                <li className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-sm">
-                  <span className="min-w-0 truncate text-sdc-navy">Unassigned</span>
-                  <span className="shrink-0 font-semibold tabular-nums text-sdc-muted">{unassignedHiring}</span>
-                </li>
-              )}
-            </ul>
-          </section>
+                <button
+                  type="button"
+                  onClick={onSelectHiring}
+                  aria-expanded={expandedGroup === "hiring"}
+                  title={expandedGroup === "hiring" ? "Collapse hiring positions" : "Show all open hiring positions below"}
+                  className={`flex flex-col gap-1 border-b border-dashed border-sdc-green bg-sdc-green-bg/50 px-4 py-3 text-left motion-interactive hover:brightness-95 ${HIRING_ACCENT}`}
+                >
+                  <h3 className="text-sm font-bold uppercase tracking-wide">Hiring Positions</h3>
+                  <div className="flex items-baseline gap-1 text-xs">
+                    <span className="text-lg font-bold tabular-nums">{openPositions}</span>
+                    <span>open</span>
+                  </div>
+                  <span className="text-label text-sdc-muted">Not yet people — open requisitions</span>
+                </button>
+                {hasCapacityPolicy && (
+                  <button
+                    type="button"
+                    onClick={() => onSelectCapacity({ title: "Hiring Positions — Capacity", employees: [], hiringPositions })}
+                    title="See how this capacity total was built, by open position"
+                    className="flex items-baseline gap-1.5 border-b border-dashed border-sdc-border bg-sdc-gray-50 px-4 py-1.5 text-left text-xs text-sdc-muted hover:bg-sdc-blue-light/30"
+                  >
+                    <span className="font-bold tabular-nums text-sdc-green-text">+{fmtHours(hiringCapacityHoursTotal)}</span>
+                    <span>hiring hrs/yr</span>
+                  </button>
+                )}
+                <ul className="flex-1 p-1.5">
+                  {WORKFORCE_GROUPS.filter((g) => g.key !== "other").map((g) => {
+                    const count = hiringByGroup.get(g.key) ?? 0;
+                    if (count === 0) return null;
+                    return (
+                      <li key={g.key} className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-sm">
+                        <span className="min-w-0 truncate text-sdc-navy">{g.title}</span>
+                        <span className="shrink-0 font-semibold tabular-nums text-sdc-muted">{count}</span>
+                      </li>
+                    );
+                  })}
+                  {unassignedHiring > 0 && (
+                    <li className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-sm">
+                      <span className="min-w-0 truncate text-sdc-navy">Unassigned</span>
+                      <span className="shrink-0 font-semibold tabular-nums text-sdc-muted">{unassignedHiring}</span>
+                    </li>
+                  )}
+                </ul>
+              </section>
+            </aside>
+          </>
         )}
       </div>
     </div>
