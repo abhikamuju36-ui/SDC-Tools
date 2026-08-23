@@ -3,9 +3,9 @@
 ## Table of Contents
 1. [High-Level Overview](#high-level-overview)
 2. [Electron Shell](#electron-shell)
-3. [In-Process Sub-App Loading](#in-process-sub-app-loading)
-4. [Azure SQL — Shared Database](#azure-sql--shared-database)
-5. [Authentication Flow](#authentication-flow)
+3. [How the Shell Talks to the Apps](#how-the-shell-talks-to-the-apps)
+4. [Databases](#databases)
+5. [Authentication](#authentication)
 6. [Auto-Update Pipeline](#auto-update-pipeline)
 7. [IPC Contract (Electron ↔ Renderer)](#ipc-contract-electron--renderer)
 8. [Sub-App Details](#sub-app-details)
@@ -18,214 +18,139 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│                     Electron Shell                          │
-│                                                             │
-│  ┌──────────────────┐    ┌──────────────────────────────┐  │
-│  │  BrowserWindow   │    │     processManager.js         │  │
-│  │  (React UI)      │◄──►│  require() each sub-app      │  │
-│  │  localhost:5173  │    │  startServer({ port })        │  │
-│  │  (dev)           │    │                               │  │
-│  └──────────────────┘    │  assemblies  :4001  running  │  │
-│                           │  readiness   :4002  running  │  │
-│  ┌──────────────────┐    │  scheduler   :4003  running  │  │
-│  │  WebView / BrowserView  statelogic  :4004  running  │  │
-│  │  Opens sub-apps  │    │  calendar    :4005  running  │  │
-│  │  in new window   │    └──────────────────────────────┘  │
-│  └──────────────────┘                                       │
+│                     Electron Shell (thin client)             │
+│                                                               │
+│  ┌──────────────────┐    ┌──────────────────────────────┐   │
+│  │  BrowserWindow    │    │     processManager.js         │   │
+│  │  (React UI)       │◄──►│  HTTP health-polls each app   │   │
+│  └──────────────────┘    │  opens a BrowserWindow at its  │   │
+│                           │  URL — never spawns anything   │   │
+│                           └──────────────────────────────┘   │
 └─────────────────────────────────────────────────────────────┘
-         │                           │
-         ▼                           ▼
-  Azure AD (MSAL)             Azure SQL
-  Authentication              Shared database
-                              Per-app schemas
+                              │  HTTP (GET /health)
+                              ▼
+        ┌──────────────────────────────────────────────────┐
+        │              SERVER-APP1  (PM2)                   │
+        │  assemblies :4001   readiness  :4002              │
+        │  scheduler  :4003   statelogic :4004               │
+        │  calendar   :4005   etc-planner:4006               │
+        └──────────────────────────────────────────────────┘
+         │            │            │            │
+         ▼            ▼            ▼            ▼
+   MySQL (local, one DB per app)   Total ETO (MSSQL, read-only)
 ```
 
-All five sub-apps run **inside the same Electron process** as in-process Node.js servers. There are no child processes. Each server exports a `startServer({ port })` function that the shell calls via `require()`.
+All six apps are independent, always-on Node.js processes managed by PM2 on `SERVER-APP1`. The Electron shell is a **pure thin client** — it never spawns or `require()`s any app. It just polls each app's health endpoint and, when the user clicks a tile, opens a `BrowserWindow` pointed at that app's URL on the server.
 
 ---
 
 ## Electron Shell
 
-### Entry Point — `shell/electron/main.js`
+### Entry Point — `apps/shell/electron/main.js`
 
 Responsibilities:
 - Creates the `BrowserWindow` (launcher UI)
-- Initialises `processManager` and starts all 5 sub-apps
+- Initialises `processManager` and starts polling all 6 apps
 - Handles Azure AD authentication via MSAL
 - Registers IPC handlers (status, logs, open-app, restart, stop, update)
 - Sets up `electron-updater` for auto-updates (checks every 30 min)
+- Drives the SDC Reports SSO hand-off on open (see [Authentication](#authentication))
 
-### Process Manager — `shell/electron/processManager.js`
+### Process Manager — `apps/shell/electron/processManager.js`
 
 ```
 ProcessManager
-├── _servers: Map<id, { port, status, logs[] }>    in-process require() servers
-├── _processes: Map<id, ChildProcess>               spawn fallback (native mismatch)
-└── _spawnFallback: Set<id>                         apps permanently in spawn mode
+├── configs: { [id]: { port, url, healthPath, ... } }   static per-app config
+├── _statuses: Map<id, 'starting'|'running'|'error'|'stopped'>
+└── _logs: Map<id, string[]>                             buffered log lines for the UI
 ```
 
-**Start sequence:**
-1. Try `require(appPath)` and call `startServer({ port })`
-2. On native module mismatch (e.g. `NODE_MODULE_VERSION`) → add to `_spawnFallback` and retry via `child_process.spawn('node.exe', [appPath])`
-3. Poll the app's `/health` endpoint every 2 s until it responds 200 (status → `running`)
+Its own header comment says it plainly: *"Backends run on the company server PC managed by PM2. This module pings their health endpoints and reports status to the UI. No processes are spawned locally — the Electron shell is a pure thin client."*
 
-**Why in-process instead of spawn?**
-- No inter-process serialisation overhead
-- Single Node.js heap → lower memory
-- stdout/stderr captured synchronously → no pipe buffering glitches
-- Sub-apps can be stopped by calling `server.close()` directly
+**What it actually does, every 20 seconds per app:**
+1. `GET http://{SDC_SERVER_HOST}:{port}{healthPath}` (host defaults to `localhost` for local dev)
+2. 2xx–4xx → `running`; timeout or network error → `error`
+3. Pushes a status-change event to the renderer
+
+**Why this replaced in-process loading:** every app still exports a dormant `startServer({port})` from an earlier design where the shell would `require()` each app directly into its own process. That convention is unused today — nothing in the shell calls it. Keeping the export costs nothing; don't assume it's load-bearing.
 
 ---
 
-## In-Process Sub-App Loading
+## How the Shell Talks to the Apps
 
-Each sub-app exposes:
+Each app remains an ordinary standalone Express server, started by PM2 with its own `PORT` env var (`ecosystem.config.js`). The shell has zero special integration beyond HTTP health checks and, for SDC Reports specifically, a one-time SSO hand-off token so opening that tile doesn't prompt for a second login (see [Authentication](#authentication)).
 
-```js
-// server.js (in each sub-app)
-function startServer({ port }) {
-  const server = app.listen(port, () => { ... })
-  return server   // shell calls server.close() to stop
-}
-module.exports = { startServer }
-```
-
-The shell calls:
-```js
-const { startServer } = require(resolvedPath)
-const srv = startServer({ port: cfg.port })
-```
-
-**Packaged app paths** (after `electron-builder`):
-```
-resources/
-  app.asar.unpacked/        (asarUnpack: ["**"] in electron-builder.yml)
-  apps/
-    assemblies/             from: "../Assembilies library main"
-    readiness/              from: "../Build_Readiness_Report"
-    scheduler/              from: "../SDC_Scheduler"
-    statelogic/             from: "../state_logic_builder"
-    calendar/               from: "../SDC Centrailzed calender"
-```
-
-The shell uses `process.resourcesPath` to resolve paths in production, and `path.join(__dirname, '../../<app>')` in development.
+There is no shared in-process runtime, no `resources/apps/` bundling of backend code into the installer, and no packaged-app path resolution — the current `electron-builder.yml` bundles only `electron/**`, the built launcher UI, icons, and its own `package.json`/`.env`. Backends are never bundled; they run wherever PM2 runs them.
 
 ---
 
-## Azure SQL — Shared Database
+## Databases
 
-All five apps share **one Azure SQL instance** using per-app schemas to isolate data:
+There is **no shared Azure SQL instance** today — each app owns its own local MySQL database on `SERVER-APP1` (`localhost:3306`), migrated off Azure SQL/SQLite between 2026-05 and 2026-06-11 after recurring login/availability issues with the shared Azure SQL server:
 
-```
-free-sql-db-7038618 (Azure SQL Database)
-├── [assemblies].[assemblies]       Assemblies Library
-├── [scheduler].[tasks]             SDC Scheduler
-├── [scheduler].[team_members]
-├── [scheduler].[settings]
-├── [scheduler].[project_financials]
-├── [readiness].[...]               Build Readiness Report
-├── [statelogic].[...]              State Logic Builder
-└── [calendar].[events]             SDC Calendar
-```
+| App | Database | Driver |
+|---|---|---|
+| Assemblies Library | `sdc_assemblies` | `mysql2` |
+| Build Readiness Report | *(none of its own)* | — reads Total ETO directly |
+| SDC Scheduler | `sdc_scheduler` | `mysql2` |
+| State Logic Builder | `sdc_statelogic` (+ local-JSON fallback) | `mysql2` |
+| SDC Calendar | `sdc_calendar` | `mysql2` |
+| SDC Reports | its own MySQL DB, via Prisma | `@prisma/client` |
 
-**Connection pattern** (every sub-app):
-```js
-// azureDb.js
-const sql = require('mssql')
+Two apps also read a second, external database read-only:
 
-const pool = await sql.connect({
-  server:   process.env.AZURE_SQL_SERVER,
-  database: process.env.AZURE_SQL_DATABASE,
-  user:     process.env.AZURE_SQL_USER,
-  password: process.env.AZURE_SQL_PASSWORD,
-  options:  { encrypt: true, trustServerCertificate: false },
-  pool:     { max: 10, min: 0, idleTimeoutMillis: 30000 },
-})
-```
+- **Total ETO** (on-prem SQL Server, `SERVER-APP1.stevendouglas.local:1433`, database `SDC`) — read-only source of truth for jobs/parts/prints. Used directly by Build Readiness Report and SDC Scheduler (`lib/etoDb.js`), and by SDC Reports (raw `mssql` queries, mostly pre-synced).
+- **SDC Scheduler's own MySQL**, read read-only by SDC Reports (`SCHEDULER_DATABASE_URL`, mirrors the team roster) and by SDC Calendar (a `better-sqlite3` bridge to a `scheduler.db` SQLite file that, in production, doesn't exist — Scheduler runs MySQL-only in production, so that bridge's routes currently always return `[]`; it only matters for local dev setups that still use SQLite).
 
-**Why Azure SQL over SQLite?**
-- Multi-user: all engineers share one live dataset (no per-machine DB files)
-- No native module: `mssql` is pure JS → no `NODE_MODULE_VERSION` mismatch in Electron
-- Built-in backups, geo-redundancy, and monitoring via Azure Portal
-- Works from any machine on the network without file-share access
+**Why MySQL over the old shared Azure SQL:** each app gets an independent, always-reachable local database with no cross-app schema coupling or shared-login failure mode; no native driver mismatch risk in the (now-dormant) in-process Electron loading path.
 
 ---
 
-## Authentication Flow
+## Authentication
 
-```
-User opens SDC Tools
-        │
-        ▼
-auth.js checks MSAL token cache
-        │
-   ┌────┴─────┐
-   │ cached?  │
-   └────┬─────┘
-   yes  │  no
-        │  ├─► Show LoginScreen (React)
-        │  │   User clicks "Sign in with Microsoft"
-        │  │   MSAL opens popup → Azure AD OAuth2
-        │  │   Token stored in MSAL cache
-        │  │
-        ▼  ▼
-   authUser = { name, email, token }
-        │
-        ▼
-   processManager.start() — sub-apps launch
-   Shell UI shows launcher dashboard
-```
+Two layers exist, and most apps only implement one of them:
 
-- **Library**: `@azure/msal-node` (MSAL for Node.js)
-- **Flow**: Authorization Code + PKCE via a loopback redirect
-- **Token storage**: MSAL in-memory cache (session only; no token persisted to disk)
-- **Dev bypass**: if `AZURE_TENANT_ID` is not set, shell auto-authenticates as `Dev Mode`
+**1. Shell login (Azure AD via MSAL)** — the shell itself authenticates the user against Azure AD (Authorization Code + PKCE, loopback redirect). If `AZURE_TENANT_ID` isn't set, it auto-authenticates as `Dev Mode`.
+
+**2. Centralized SDC Tools SSO (`sdc_session` cookie)** — added 2026-08-20, currently **dormant everywhere** (`SDC_SSO_ENABLED` defaults off in every app's `.env`). When enabled: SDC Scheduler acts as the identity broker (`routes/ssoCentral.js`), minting a JWT signed with a secret shared across Assemblies, Build Readiness, State Logic, and Calendar (each verifies it via an identical, currently-duplicated `sdcSessionAuth.js` — see [packages/README.md](packages/README.md)). SDC Reports is deliberately **not** part of this shared cookie — it has its own separate NextAuth (Credentials-only) login, reached instead through a purpose-built one-time SSO hand-off token that Scheduler mints and the shell drives when the Reports tile opens (`apps/shell/electron/main.js`, `apps/shell/electron/sdcSession.js`).
+
+Until `SDC_SSO_ENABLED` is turned on, every app behaves exactly as it does today — no login-flow change happens as a side effect of this doc update.
 
 ---
 
 ## Auto-Update Pipeline
 
+Two independent update mechanisms exist — don't confuse them:
+
+### Desktop shell (OTA installer)
+
 ```
-Developer bumps version in shell/package.json
+Developer bumps version in apps/shell/package.json
         │
 git push → master
         │
-GitHub Actions (windows-latest runner)
+GitHub Actions (windows-latest runner) — .github/workflows/release.yml
         ├── check-version: compare HEAD vs HEAD~1
-        │   └── should_release = true (version changed)
-        │
-        ├── Install deps (npm ci for sub-apps, npm install for shell)
-        ├── Build frontends (Vite build)
-        ├── electron-builder --win --publish always
-        │   ├── Compiles NSIS installer
-        │   ├── Uploads SDC-Tools-Setup-<version>.exe to GitHub Releases
-        │   └── Uploads latest.yml (electron-updater feed)
-        │
-        └── Upload installer as 90-day workflow artifact
+        ├── Build apps/shell's Vite UI, electron-builder --publish always
+        └── Uploads SDC-Tools-Setup-<version>.exe + latest.yml to GitHub Releases
                 │
                 ▼
-        Installed app polls for updates every 30 min
-        electron-updater reads latest.yml from GitHub Releases
-        If new version found → silently downloads in background
-        Banner appears: "Click Restart & Install"
-        User restarts → NSIS installs new version
+        Installed copies poll every 30 min, silently download,
+        show a "Restart & Install" banner — never auto-installs on quit.
 ```
 
-**Key settings** (`shell/electron/main.js`):
-```js
-autoUpdater.autoDownload = true         // download silently in background
-autoUpdater.autoInstallOnAppQuit = false // never install without user action
-// Check interval: 30 minutes
-```
+### Backend servers (live, no shell release needed)
 
-**Triggering a release** — only a version bump on `master` starts the build:
-```bash
-# bump shell/package.json "version" then:
-git commit -m "chore: release v1.X.Y"
-git push
-```
+One PM2 process, `sdc-updater-hub`, runs four independent pollers in a single Node process (merged from four separate PM2 apps for operational simplicity — each poller's own error handling is unchanged):
 
-No manual tagging required. The `check-version` job diffs `shell/package.json` between the last two commits.
+| Poller | Watches | Interval | Manual trigger | Scope of what it overwrites |
+|---|---|---|---|---|
+| `sdc-main-updater.js` | `abhikamuju36-ui/SDC-Tools` (this monorepo's `master`) | 5 min | — | Everything **except** paths owned by the two updaters below; selective `git checkout` per changed file, `git reset --soft`; restarts `sdc-assemblies`, `sdc-readiness`, `sdc-calendar` |
+| `sdc-brr-updater.js` (inside `apps/build-readiness/scripts/`) | `abhikamuju36-ui/Build_Readiness_Report` (separate repo) | 2 min | `POST :4012/trigger` | `client/`, `server/{routes,services,lib}/`, `tests/`; restarts `sdc-readiness` |
+| `server-auto-update.js` (inside `SDC_Scheduler/scripts/`) | `danbelliveau2/SDC_Scheduler` `main` | 2 min | `POST :4013/trigger` | **Whole repo**, `git reset --hard origin/main` — any local uncommitted change here is destroyed within 2 minutes |
+| `server-auto-update.js` (inside `apps/state-logic/scripts/`) | `danbelliveau2/state_logic_builder` GitHub *Releases* (not every commit) | 5 min | `POST :4014/trigger` | `src/`, `public/`, `index.html` only — `server.js`/DB files/`.env` preserved |
+
+`sdc-etc-planner` (SDC Reports) and `SDC-PowerBI-DEV` have no live auto-updater — they're deployed manually (`npm run deploy` for Reports; Power BI Desktop publish for the PBI project).
 
 ---
 
@@ -234,61 +159,61 @@ No manual tagging required. The `check-version` job diffs `shell/package.json` b
 The preload script exposes `window.shellAPI` to the React renderer:
 
 | Method | Direction | Description |
-|--------|-----------|-------------|
+|--------|-----------|--------------|
 | `getStatus()` | renderer → main | Returns current status of all apps |
 | `onStatusChange(cb)` | main → renderer | Push updates when any app status changes |
 | `openApp(id)` | renderer → main | Opens the app in a new BrowserWindow |
 | `retryApp(id)` | renderer → main | Retries a failed app |
-| `stopAll()` | renderer → main | Stops all sub-app servers |
-| `restartAll()` | renderer → main | Restarts all sub-app servers |
-| `getLogs(id)` | renderer → main | Returns buffered log lines for an app |
-| `onAppLog(cb)` | main → renderer | Push new log lines in real time |
-| `getAppVersion()` | renderer → main | Returns current app version string |
-| `onUpdateStatus(cb)` | main → renderer | Push auto-update phase changes |
-| `updateDownload()` | renderer → main | Trigger manual download (legacy) |
-| `updateInstall()` | renderer → main | Quit and install downloaded update |
-| `getLaunchOnStartup()` | renderer → main | Returns Windows startup setting |
-| `setLaunchOnStartup(v)` | renderer → main | Enables/disables Windows startup |
-| `authGetStatus()` | renderer → main | Returns `{ isAuthenticated, user }` |
-| `authLogin()` | renderer → main | Triggers MSAL interactive login |
-| `authLogout()` | renderer → main | Clears MSAL token cache |
-| `getNotifications()` | renderer → main | Returns notification list |
-| `onNotificationsUpdated(cb)` | main → renderer | Push notification updates |
+| `stopAll()` / `restartAll()` | renderer → main | Stops/restarts health polling (does **not** touch the remote PM2 processes) |
+| `getLogs(id)` / `onAppLog(cb)` | both | Buffered/live health-check log lines |
+| `getAppVersion()` | renderer → main | Returns current shell version string |
+| `onUpdateStatus(cb)` / `updateDownload()` / `updateInstall()` | both | Shell's own OTA update lifecycle |
+| `getLaunchOnStartup()` / `setLaunchOnStartup(v)` | both | Windows startup toggle |
+| `authGetStatus()` / `authLogin()` / `authLogout()` | both | Shell's own Azure AD (MSAL) session |
+| `getNotifications()` / `onNotificationsUpdated(cb)` | both | Notification center |
 
 ---
 
 ## Sub-App Details
 
 ### Assemblies Library (port 4001)
-- **Backend**: Express + `mssql` → `[assemblies].[assemblies]`
-- **Frontend**: React + Vite (built to `client/dist/`, served statically by Express)
-- **Key feature**: Fuzzy search — broad SQL `LIKE` filter → JS scoring + pagination. No native module (fully migrated from SQLite to Azure SQL).
-- **Sync**: File-system scanner syncs SolidWorks vault directory to Azure SQL on schedule
+- **Backend**: Express + `mysql2` → `sdc_assemblies`
+- **Frontend**: React + Vite, built to `client/dist/`, served statically
+- **Key feature**: Fuzzy search — broad SQL `LIKE` filter → JS scoring + pagination
+- **Sync**: file-system scanner syncs the SolidWorks vault directory to MySQL on schedule
 
 ### Build Readiness Report (port 4002)
-- **Backend**: Express + `mssql`
+- **Backend**: Express + `mssql` (Total ETO, read-only)
 - **Frontend**: React served statically
-- **Key feature**: ETO project readiness checklist — pulls from Smartsheet, displays sign-off status per project
+- **Key feature**: ETO project readiness checklist. Build-start/ship dates now come from SDC Scheduler's own integration API (`SCHEDULER_URL`), replacing an earlier Smartsheet integration that's been fully removed.
 
 ### SDC Scheduler (port 4003)
-- **Backend**: Express + Socket.io + MySQL (`mysql2` pool via `lib/mysqlDb.js`) — 11 tables, schema auto-migrated at boot
-- **Frontend**: Vanilla JS single-page app (`public/app.js` ~15k lines, `public/styles.css`)
-- **Routes**: 13 Express route modules in `routes/` — tasks, projects, team, users, settings, shop-parts, vendor-POs, financials, ETO, agent, hours, auth
-- **Backend helpers**: all in `lib/` — auth (JWT), ops (backups/health), agent (Claude AI), emailService, cronJobs, backfillProjects, hoursApi, etoDb, mysqlDb
-- **ETO integration**: read-only `lib/etoDb.js` (MSSQL) feeds procurement BOM, vendor PO sync, and job hours data
-- **Key features**: Gantt scheduling (predecessor FS/SS/FF/SF + lag), procurement drawer, vendor PO tracking, job hours chart (Quoted vs Actual by function/billing group), SDC Assistant (Claude AI), Socket.io real-time presence
-- **Two developers**: Dan (danbelliveau2) owns `public/`; Abhi owns backend. Documented in `CLAUDE.md`
-- **Performance**: cascade scheduler batches DB writes; hot queries indexed; ETO sync serialised to avoid overlap
+- **Backend**: Express + Socket.io + MySQL (`mysql2` pool, `lib/mysqlDb.js`) — routes split across 12 files in `routes/`, shared logic in `lib/`
+- **Frontend**: Vanilla JS single-page app (`public/app.js`, ~26k lines)
+- **ETO integration**: read-only `lib/etoDb.js` feeds procurement BOM, vendor PO sync, job hours
+- **Key features**: Gantt scheduling (predecessor FS/SS/FF/SF + lag), procurement drawer, vendor PO tracking, Power BI job-hours chart, SDC Assistant (Claude AI), Socket.io presence
+- **Not moved** in the 2026-08 restructuring — own standalone git repo, external collaborator (Dan) owns the frontend files
 
 ### State Logic Builder (port 4004)
-- **Backend**: Express + `mssql`
-- **Frontend**: React + Vite (ReactFlow for canvas)
-- **Key feature**: Visual PLC state-machine editor that exports Allen-Bradley ControlLogix L5X files ready for Studio 5000 import
+- **Backend**: Express + `mysql2` → `sdc_statelogic` (local-JSON fallback if MySQL is unreachable)
+- **Frontend**: React + Vite, React Flow canvas
+- **Key feature**: visual PLC state-machine editor exporting Allen-Bradley ControlLogix L5X
+- Also ships as a **separate standalone Electron desktop installer** (its own release pipeline, local port 3131) — independent of the PM2 web app above
 
 ### SDC Calendar (port 4005)
-- **Backend**: Express + `mssql` → `[calendar]` schema; Azure AD for identity
-- **Frontend**: Vanilla HTML/JS
-- **Key feature**: Company-wide calendar with Smartsheet sync, scheduler task overlay, event notifications
+- **Backend**: Express + `mysql2` → `sdc_calendar`
+- **Frontend**: React + Vite (plus a legacy vanilla-JS `frontend/` fallback)
+- **Key feature**: company-wide calendar, employee directory, read-only Scheduler task overlay
+
+### SDC Reports / ETC Planner (port 4006, renumbered from 3010 on 2026-08-23)
+- **Backend**: Next.js 16 Server Actions + Prisma (own MySQL), raw `mssql`/`mysql2` for the two external read-only sources
+- **Frontend**: Next.js App Router, ag-Grid, ECharts
+- **Key feature**: replaces three manually-maintained Excel workbooks (Project Planner Data Control, End of Month ETC, Standard Fees) with a live shared app; reads Paylocity job-hours exports from a OneDrive-synced folder via a self-validating year-range source table (`src/lib/paylocity-sources.ts`) — do not alter this casually
+- **Not moved** — own standalone git repo (`sdc-sheets`)
+
+### Power BI Dev (no port)
+- Power BI Desktop source files (`.pbix`/`.pbip`) plus a .NET 8 MCP server, published as a self-contained exe and spawned **on demand** (stdio, not a daemon) by SDC Scheduler's `lib/hoursApi.js` to run DAX queries
+- **Not moved** — own standalone git repo (`SDC-PowerBI`), not a service
 
 ---
 
@@ -296,7 +221,7 @@ The preload script exposes `window.shellAPI` to the React renderer:
 
 ### `.github/workflows/release.yml`
 ```
-Trigger: push to master where shell/package.json version changed
+Trigger: push to master where apps/shell/package.json version changed
 Runner:  windows-latest
 
 Steps:
@@ -304,102 +229,64 @@ Steps:
   2. build-and-release (win)  — only if should_release == true
      a. Checkout
      b. Setup Node 22
-     c. npm ci --omit=dev  for each sub-app
-     d. npm run build       for Vite frontends
-     e. npm install         for shell
-     f. npm run build       for shell Vite UI
-     g. electron-builder --win --publish always
-     h. Upload .exe as 90-day artifact
+     c. Write apps/shell/.env from GitHub Secrets
+     d. npm install (apps/shell only — deliberately excluded from the root
+        npm workspace so electron-builder resolves its own local electron binary)
+     e. npm run build (Vite launcher UI)
+     f. electron-builder --win --publish always
+     g. Upload the installer as a 90-day workflow artifact
 ```
 
 ### `.github/workflows/ci.yml`
-- Runs on every pull request
-- Installs deps and runs any available tests
+- Runs on every push/PR, one job per app, each scoped to its own `apps/<name>` (or `SDC_Scheduler`) working directory
+- Installs deps and runs whatever build/test/syntax-check that app defines
 
 ---
 
 ## Directory Layout
 
 ```
-SDC-Tools/
+Centralized library/
 │
-├── .github/
-│   └── workflows/
-│       ├── release.yml             Auto-build installer on version bump
-│       └── ci.yml                  PR checks
+├── apps/
+│   ├── shell/                       Electron launcher (main process + React UI)
+│   │   ├── electron/
+│   │   │   ├── main.js              Entry — BrowserWindow, IPC, auto-updater, SSO hand-off
+│   │   │   ├── processManager.js    Thin HTTP health-poll client (no spawning)
+│   │   │   ├── auth.js              Azure AD (MSAL) authentication
+│   │   │   ├── sdcSession.js        Shared-cookie sign-out + Reports SSO hand-off
+│   │   │   ├── preload.js / appPreload.js
+│   │   ├── src/                     React launcher UI (Vite)
+│   │   ├── electron-builder.yml     Installer config — bundles electron/dist/icons only
+│   │   └── package.json
+│   │
+│   ├── assemblies/                  Assemblies Library (Express + React/Vite + MySQL)
+│   ├── build-readiness/             Build Readiness (Express + React, ETO SQL)
+│   ├── state-logic/                 State Logic Builder (Express + React/Vite + MySQL)
+│   └── calendar/                    SDC Calendar (Express + React/Vite + MySQL)
 │
-├── shell/                          Electron launcher
-│   ├── build/
-│   │   ├── icon.ico                App icon
-│   │   └── icon.png
-│   ├── electron/
-│   │   ├── main.js                 Main process entry
-│   │   ├── processManager.js       In-process sub-app lifecycle manager
-│   │   ├── auth.js                 MSAL Azure AD authentication
-│   │   ├── preload.js              Launcher renderer bridge
-│   │   └── appPreload.js           Sub-app WebView bridge
-│   ├── src/                        React launcher UI
-│   ├── electron-builder.yml        Build + bundle config
-│   ├── vite.config.js
-│   └── package.json
+├── SDC_Scheduler/                    Own standalone repo (danbelliveau2/SDC_Scheduler) — NOT moved
+├── sdc-etc-planner/                  SDC Reports — own standalone repo (sdc-sheets) — NOT moved
+├── SDC-PowerBI-DEV/                  Power BI project — own standalone repo — NOT moved, not a service
 │
-├── Assembilies library main/       Assemblies Library
-│   ├── client/                     React/Vite frontend
-│   ├── server/
-│   │   ├── azureDb.js              Azure SQL connection pool
-│   │   ├── controllers/
-│   │   ├── routes/
-│   │   └── services/
-│   │       ├── db.service.js       Azure SQL CRUD (replaces SQLite)
-│   │       ├── scanner.service.js  Vault file-system scanner
-│   │       └── sync.service.js     Scheduled sync orchestrator
-│   └── package.json
+├── packages/
+│   └── README.md                     Convention doc; no shared code extracted yet
 │
-├── Build_Readiness_Report/
-│   ├── client/
-│   ├── server/
-│   └── package.json
+├── docs/
+│   ├── APPLICATIONS.md               Every app: purpose, port, start command, data sources
+│   └── PORTS.md                      Definitive port registry
 │
-├── SDC_Scheduler/                  Standalone repo (own .git → danbelliveau2/SDC_Scheduler)
-│   ├── public/                     Vanilla JS SPA (app.js, styles.css, index.html)
-│   ├── routes/                     13 Express route modules
-│   ├── lib/                        Backend helpers
-│   │   ├── mysqlDb.js              MySQL connection pool
-│   │   ├── auth.js                 JWT middleware
-│   │   ├── ops.js                  Backups, health, status
-│   │   ├── agent.js                Claude AI (SDC Assistant)
-│   │   ├── emailService.js         SMTP mention + digest emails
-│   │   ├── cronJobs.js             Scheduled tasks
-│   │   ├── backfillProjects.js     Project backfill from ETO
-│   │   ├── etoDb.js                ETO on-prem MSSQL (read-only)
-│   │   └── hoursApi.js             Job hours bridge
-│   ├── scripts/                    Utilities
-│   │   ├── server-auto-update.js   PM2 auto-pull + restart (port 4013)
-│   │   └── create-admin.js         CLI: create/reset admin user
-│   ├── server.js                   Express + Socket.io entry point
-│   ├── db.js                       MySQL schema bootstrap (11 tables)
-│   ├── CLAUDE.md                   AI agent working rules (two-dev workflow)
-│   └── package.json
+├── scripts/
+│   ├── sdc-updater-hub.js            Runs all 4 backend auto-updaters in one PM2 process
+│   └── sdc-main-updater.js           Monorepo-level updater (assemblies/readiness/calendar)
 │
-├── state_logic_builder/
-│   ├── src/                        React/Vite frontend
-│   ├── server.js
-│   ├── azureDb.js
-│   └── package.json
+├── .github/workflows/
+│   ├── release.yml                   Build + publish installer on shell version bump
+│   └── ci.yml                        Per-app PR checks
 │
-├── SDC Centrailzed calender/
-│   ├── frontend/                   Vanilla JS frontend
-│   ├── server/
-│   │   ├── server.js
-│   │   ├── azureDb.js
-│   │   ├── auth.js
-│   │   └── routes/
-│   └── package.json
-│
-├── .env.example                    Environment variable template
+├── ecosystem.config.js               PM2 process definitions for SERVER-APP1 (7 apps)
+├── .env.example                      Environment variable reference (names only)
 ├── .gitignore
-├── package.json                    npm workspaces root
-├── package-lock.json
-├── README.md
-└── ARCHITECTURE.md                 ← this file
+├── package.json                      npm workspaces root
+└── ARCHITECTURE.md                   ← this file
 ```

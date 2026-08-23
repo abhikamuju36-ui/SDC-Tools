@@ -3,6 +3,17 @@
 # directly at danbelliveau2/SDC_Scheduler for clean bi-directional sync.
 SDC_Scheduler/
 
+# ── SDC-PowerBI-DEV — managed as its own standalone git repo ────────────────
+# Own .git pointing at abhikamuju36-ui/SDC-PowerBI. Previously committed here
+# as an unregistered gitlink (no .gitmodules) — a fresh clone got an empty
+# folder. Ignored instead, same pattern as SDC_Scheduler above.
+SDC-PowerBI-DEV/
+
+# ── sdc-etc-planner — managed as its own standalone git repo ────────────────
+# Own .git pointing at abhikamuju36-ui/sdc-sheets. Ignored proactively so an
+# accidental `git add -A` never repeats the SDC-PowerBI-DEV gitlink mistake.
+sdc-etc-planner/
+
 # ── Dependencies ──────────────────────────────────────────────────────────────
 node_modules/
 **/node_modules/
@@ -29,9 +40,9 @@ build/
 **/dist/
 **/client/dist/
 out/
-# Allow shell/build/ — it holds static Electron icon source assets, not build output
-!shell/build/
-!shell/build/**
+# Allow apps/shell/build/ — it holds static Electron icon source assets, not build output
+!apps/shell/build/
+!apps/shell/build/**
 
 # ── Electron-builder artifacts ────────────────────────────────────────────────
 *.exe

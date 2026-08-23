@@ -36,8 +36,8 @@ process.on('unhandledRejection', (err) => {
 log('Starting all 4 updaters in one process...');
 
 require('./sdc-main-updater.js');
-require('../Build_Readiness_Report/scripts/sdc-brr-updater.js');
+require('../apps/build-readiness/scripts/sdc-brr-updater.js');
 require('../SDC_Scheduler/scripts/server-auto-update.js');
-require('../state_logic_builder/scripts/server-auto-update.js');
+require('../apps/state-logic/scripts/server-auto-update.js');
 
 log('All 4 updaters started (assemblies/readiness/calendar/vendor monorepo, BRR, scheduler, statelogic).');

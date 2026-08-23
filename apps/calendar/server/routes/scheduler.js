@@ -2,8 +2,13 @@
  * server/routes/scheduler.js
  * Read-only bridge to the SDC Scheduler SQLite database.
  *
- * Reads directly from ../../SDC_Scheduler/scheduler.db using better-sqlite3.
- * Returns gracefully empty arrays if the file doesn't exist yet.
+ * Reads directly from <monorepo root>/SDC_Scheduler/scheduler.db using
+ * better-sqlite3. Returns gracefully empty arrays if the file doesn't exist
+ * yet — which is always true in production today, since Scheduler runs
+ * MySQL-only there; this only matters for a local dev setup still on SQLite.
+ * SDC_Scheduler was not relocated by the 2026-08 apps/ restructuring, but
+ * this app (apps/calendar/) moved one level deeper than its old location
+ * (SDC Centrailzed calender/), so the hop count below is 4, not 3.
  */
 
 const express    = require('express');
@@ -13,7 +18,7 @@ const { requireAuth } = require('../middleware/requireAuth');
 
 const router = express.Router();
 
-const SCHEDULER_DB = path.resolve(__dirname, '..', '..', '..', 'SDC_Scheduler', 'scheduler.db');
+const SCHEDULER_DB = path.resolve(__dirname, '..', '..', '..', '..', 'SDC_Scheduler', 'scheduler.db');
 
 const PHASE_COLORS = {
   me:          '#aacee8',

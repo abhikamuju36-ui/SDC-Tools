@@ -10,7 +10,7 @@
  *   3. If newer: downloads the source tarball, replaces src/ + public/ + index.html,
  *      runs npm install (if package.json changed), npm run build, pm2 restart statelogic
  *
- * Only src/, public/, and index.html are overwritten — server.js, azureDb.js,
+ * Only src/, public/, and index.html are overwritten — server.js, mysqlDb.js,
  * .env, vite.config.js, and user data (projects/, standards/) are preserved.
  *
  * Run via PM2:  pm2 start ecosystem.config.js --only statelogic-updater
@@ -197,7 +197,7 @@ async function checkAndUpdate() {
       }
       if (depsChanged) {
         log('New dependencies detected — running npm install…');
-        // Merge only deps into local package.json (preserve server.js scripts + mssql)
+        // Merge only deps into local package.json (preserve server.js scripts + mysql2)
         for (const key of depKeys) {
           if (upstream[key]) local[key] = { ...local[key], ...upstream[key] };
         }

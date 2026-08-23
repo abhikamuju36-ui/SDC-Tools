@@ -27,13 +27,13 @@ Then start the server with `NODE_ENV=production node server.js` and open http://
 
 ## Key architecture decisions
 
-**Vite build pipeline.** `src/` contains proper ES modules. `client/package.json` manages Vite dev/build dependencies (separate from the root `package.json` which is for Electron). The legacy `frontend/` directory is still served in dev mode (`NODE_ENV !== 'production'`) for backward compatibility.
+**Vite build pipeline.** `src/` contains proper ES modules. `client/package.json` manages Vite dev/build dependencies (separate from the root `package.json` which is for Electron). `server.js` picks `dist/` vs the legacy `frontend/` purely by `fs.existsSync(dist/index.html)` — not a `NODE_ENV` check.
 
 **Component structure.** `src/App.jsx` is the entry component; `src/components/` contains all sub-components extracted from the original monolithic `frontend/app.jsx`. `src/utils.js`, `src/data.js`, and `src/constants.js` are the ES module versions of `frontend/utils.js`, `frontend/data.js`, and inline constants.
 
-**Auth bypass.** When run via the shell, `SKIP_AUTH=true` is injected into the process environment. `server/middleware/requireAuth.js` detects this and injects a hardcoded `SHELL_USER` admin context instead of checking JWT tokens. `frontend/app.jsx` has `LOCAL_MODE = true` which skips the login screen. Do not change these.
+**Auth (updated 2026-08-20 — the old bypass described here before is gone).** `server/middleware/requireAuth.js` verifies a real `sdc_session` JWT cookie (HMAC'd with `SDC_SESSION_SECRET`), minted by SDC Scheduler's central SSO, resolving genuine per-user identity from this app's own MySQL `users` table. There is no more hardcoded `SHELL_USER` admin context. `SKIP_AUTH` today has exactly one remaining effect — it only decides whether `server.js` sets up Express's `session` middleware (for the unused legacy Azure OAuth flow); it is not read anywhere inside `requireAuth()`/`requireAdmin()`. Production sets `SKIP_AUTH=true` deliberately and harmlessly for that reason.
 
-**SDC Scheduler integration.** `server/routes/scheduler.js` opens the SDC Scheduler SQLite DB at `../../SDC_Scheduler/scheduler.db` (relative to `server/routes/`) in read-only mode using the `sqlite3` npm package. If the file doesn't exist, the route returns `[]` gracefully — the calendar still works without it.
+**SDC Scheduler integration.** `server/routes/scheduler.js` opens the SDC Scheduler SQLite DB at `<monorepo root>/SDC_Scheduler/scheduler.db` (4 `path.resolve` hops up from `server/routes/`, since this app moved to `apps/calendar/` in 2026-08) in read-only mode using `better-sqlite3`. If the file doesn't exist, the route returns `[]` gracefully — true in production today (Scheduler runs MySQL-only there), so the calendar works fine without it.
 
 **Frontend state.** `schedulerEvents` (formerly `ssEvents`) holds tasks synced from the Scheduler. Persisted to `localStorage` under `sdc_scheduler_events`. Cleared by clicking "Clear Tasks" in the Scheduler Sync panel.
 
@@ -44,7 +44,7 @@ Then start the server with `NODE_ENV=production node server.js` and open http://
 
 ## Common tasks
 
-**Add a new category** — Edit `CATEGORIES` in `frontend/utils.js`. Update `allowedCategories` in `server/middleware/requireAuth.js` `SHELL_USER` constant if it should be visible to shell users.
+**Add a new category** — Edit `CATEGORIES` in `frontend/utils.js`.
 
 **Change the scheduler DB path** — Edit `SCHEDULER_DB` constant in `server/routes/scheduler.js`.
 

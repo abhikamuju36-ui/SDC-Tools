@@ -1,7 +1,7 @@
 'use strict';
 
 /**
- * Build_Readiness_Report/scripts/sdc-brr-updater.js
+ * apps/build-readiness/scripts/sdc-brr-updater.js
  *
  * Polls abhikamuju36-ui/Build_Readiness_Report for new commits every 2 min.
  * On change: downloads tarball, replaces safe dirs/files, merges deps,

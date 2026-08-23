@@ -3,8 +3,8 @@ name: Build & Release SDC Tools
 # ─────────────────────────────────────────────────────────────────────────────
 # How to ship a new version:
 #
-#   1. Update SDC_SERVER_HOST in shell/.env to the real server hostname/IP
-#   2. Bump "version" in shell/package.json  (e.g. "1.1.0" → "1.2.0")
+#   1. Update SDC_SERVER_HOST in apps/shell/.env to the real server hostname/IP
+#   2. Bump "version" in apps/shell/package.json  (e.g. "1.1.0" → "1.2.0")
 #   3. git commit -m "chore: release v1.2.0"
 #   4. git push origin master
 #
@@ -39,12 +39,12 @@ jobs:
 
       - name: Get current version
         id: get_version
-        run: echo "version=$(node -p "require('./shell/package.json').version")" >> $GITHUB_OUTPUT
+        run: echo "version=$(node -p "require('./apps/shell/package.json').version")" >> $GITHUB_OUTPUT
 
       - name: Compare with previous commit
         id: check
         run: |
-          PREV=$(git show HEAD~1:shell/package.json 2>/dev/null \
+          PREV=$(git show HEAD~1:apps/shell/package.json 2>/dev/null \
             | node -p "JSON.parse(require('fs').readFileSync('/dev/stdin','utf8')).version" \
             2>/dev/null || echo "none")
           CURR="${{ steps.get_version.outputs.version }}"
@@ -74,13 +74,13 @@ jobs:
           cache: "npm"
           cache-dependency-path: package-lock.json
 
-      # Write shell/.env so the installer gets SDC_SERVER_HOST baked in.
+      # Write apps/shell/.env so the installer gets SDC_SERVER_HOST baked in.
       # Set SDC_SERVER_HOST in GitHub → Settings → Secrets → Actions.
       # Azure AD keys are only needed if MSAL auth is enabled.
-      - name: Write shell/.env
+      - name: Write apps/shell/.env
         shell: bash
         run: |
-          cat > shell/.env <<EOF
+          cat > apps/shell/.env <<EOF
           SDC_SERVER_HOST=${{ secrets.SDC_SERVER_HOST || 'SERVER-APP1' }}
           AZURE_TENANT_ID=${{ secrets.AZURE_TENANT_ID }}
           AZURE_CLIENT_ID=${{ secrets.AZURE_CLIENT_ID }}
@@ -89,18 +89,18 @@ jobs:
       # Shell is NOT in the workspace (removed so electron-builder finds electron locally)
       # Install shell deps locally so electron-builder can resolve the electron binary
       - name: Install shell deps
-        working-directory: shell
+        working-directory: apps/shell
         run: npm install
 
       # Build the Vite launcher UI (React frontend for the shell window)
       - name: Build Vite launcher UI
-        working-directory: shell
+        working-directory: apps/shell
         run: npm run build
 
       # Package and publish to GitHub Releases
       # Installer is now ~100 MB (shell only — backends run on server PC)
       - name: Package & publish installer to GitHub Releases
-        working-directory: shell
+        working-directory: apps/shell
         run: npx electron-builder --win --publish always
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -110,5 +110,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: SDC-Tools-v${{ needs.check-version.outputs.version }}
-          path: shell/dist-electron/*.exe
+          path: apps/shell/dist-electron/*.exe
           retention-days: 90

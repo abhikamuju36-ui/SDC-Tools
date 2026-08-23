@@ -19,7 +19,7 @@
  * Protected paths — never overwritten (managed by per-app updaters):
  *   SDC_Scheduler/public/, db.js, .gitignore, ARROW_ROUTING_RULES.md
  *     → managed by sdc-scheduler-updater  (danbelliveau2/SDC_Scheduler)
- *   state_logic_builder/src/, public/, index.html
+ *   apps/state-logic/src/, public/, index.html
  *     → managed by sdc-statelogic-updater (danbelliveau2/state_logic_builder)
  *
  * Run via PM2:
@@ -44,9 +44,9 @@ const PROTECTED = [
   'SDC_Scheduler/db.js',
   'SDC_Scheduler/.gitignore',
   'SDC_Scheduler/ARROW_ROUTING_RULES.md',
-  'state_logic_builder/src/',
-  'state_logic_builder/public/',
-  'state_logic_builder/index.html',
+  'apps/state-logic/src/',
+  'apps/state-logic/public/',
+  'apps/state-logic/index.html',
 ];
 
 // ─── helpers ─────────────────────────────────────────────────────────────────
@@ -164,7 +164,7 @@ async function checkAndUpdate() {
     if (checkedOut > 0) log(`Checked out ${checkedOut} monorepo file(s).`);
 
     // 5. Advance HEAD to remote SHA without touching working tree.
-    //    Per-app-updater files in SDC_Scheduler/ and state_logic_builder/ are preserved as-is.
+    //    Per-app-updater files in SDC_Scheduler/ and apps/state-logic/ are preserved as-is.
     run(`git reset --soft origin/${GITHUB_BRANCH}`);
     log(`HEAD → ${remoteSha.slice(0, 7)}`);
 
@@ -175,10 +175,10 @@ async function checkAndUpdate() {
     }
 
     // 7. Rebuild Assemblies Library frontend only if its sources changed
-    const assembliesChanged = monorepoFiles.some(f => f.startsWith('Assembilies library main/'));
+    const assembliesChanged = monorepoFiles.some(f => f.startsWith('apps/assemblies/'));
     if (assembliesChanged) {
       log('Assemblies Library changed — rebuilding frontend…');
-      run('npm run build --prefix "Assembilies library main"');
+      run('npm run build --prefix apps/assemblies');
     }
 
     // 8. Restart only the apps this updater owns.

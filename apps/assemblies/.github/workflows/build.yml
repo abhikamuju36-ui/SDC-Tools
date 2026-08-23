@@ -24,11 +24,6 @@ jobs:
       - name: Install Dependencies
         run: npm install
 
-      - name: Rebuild better-sqlite3 for Electron
-        run: npx --yes @electron/rebuild -f -w better-sqlite3
-        env:
-          npm_config_msvs_version: "2022"
-
       - name: Build React Client
         run: npm run build
 

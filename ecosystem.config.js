@@ -1,7 +1,7 @@
 /**
  * PM2 Ecosystem Config — SDC Tools Server
  *
- * Run on the company server PC to manage all 5 backend services.
+ * Run on the company server PC to manage all 7 backend services.
  *
  * ── First-time setup ─────────────────────────────────────────────────────────
  *   1. Install Node.js LTS  →  https://nodejs.org
@@ -27,13 +27,23 @@
  * ── Environment ──────────────────────────────────────────────────────────────
  *   Each app loads its own .env file via dotenv (from its cwd).
  *   Copy .env.example → each app's folder and fill in ETO SQL / MySQL creds.
- *   Shell-launcher specific: .env at repo root (SDC_SERVER_HOST, AZURE_*).
+ *   Shell-launcher specific: .env at apps/shell/ (SDC_SERVER_HOST, AZURE_*).
  *
- * ── Ports ────────────────────────────────────────────────────────────────────
+ * ── Ports (see docs/PORTS.md for the full registry incl. support ports) ──────
  *   sdc-assemblies   4001    sdc-readiness   4002
  *   sdc-scheduler    4003    sdc-statelogic  4004    sdc-calendar  4005
+ *   sdc-etc-planner  4006
  *
  *   Open these ports in Windows Firewall (inbound, TCP) for LAN access.
+ *
+ * ── Folder layout (2026-08 restructuring) ─────────────────────────────────────
+ *   apps/assemblies, apps/build-readiness, apps/state-logic, apps/calendar,
+ *   apps/shell live inside this monorepo and moved here from their old flat
+ *   top-level names. SDC_Scheduler, sdc-etc-planner, and SDC-PowerBI-DEV did
+ *   NOT move — each is its own independent git repo with its own remote and
+ *   deploy pipeline, so relocating them inside this monorepo wouldn't change
+ *   how production gets updates for them, only the paths every reference to
+ *   them here would need to keep matching. See docs/APPLICATIONS.md.
  * ─────────────────────────────────────────────────────────────────────────────
  */
 
@@ -67,7 +77,7 @@ module.exports = {
     {
       name:          'sdc-assemblies',
       script:        'server/index.js',
-      cwd:           './Assembilies library main',
+      cwd:           './apps/assemblies',
       env: {
         PORT:             '4001',
         NODE_ENV:         'production',
@@ -91,7 +101,7 @@ module.exports = {
     {
       name:          'sdc-readiness',
       script:        'server/index.js',
-      cwd:           './Build_Readiness_Report',
+      cwd:           './apps/build-readiness',
       env: {
         PORT:             '4002',
         NODE_ENV:         'production',
@@ -102,7 +112,8 @@ module.exports = {
         ETO_PORT:         '1433',
         // ETO_USER / ETO_PASSWORD: load from this app's own .env (cwd) via
         // dotenv — kept out of this git-tracked file. See .env.example.
-        // (Smartsheet integration removed — superseded by SDC Scheduler.)
+        // (Smartsheet integration removed — superseded by SDC Scheduler's
+        // /api/integration/project-dates via SCHEDULER_URL, also in its .env.)
       },
       watch:         false,
       max_restarts:  10,
@@ -113,6 +124,8 @@ module.exports = {
     },
 
     // ── SDC Scheduler ───────────────────────────────────────────────────────
+    // NOT moved — own standalone git repo (danbelliveau2/SDC_Scheduler),
+    // deliberately excluded from this monorepo's git tracking (see .gitignore).
     // (its auto-updater now runs inside sdc-updater-hub, not as a separate app)
     {
       name:          'sdc-scheduler',
@@ -146,7 +159,7 @@ module.exports = {
     {
       name:          'sdc-statelogic',
       script:        'server.js',
-      cwd:           './state_logic_builder',
+      cwd:           './apps/state-logic',
       env: {
         PORT:             '4004',
         NODE_ENV:         'production',
@@ -164,11 +177,11 @@ module.exports = {
     },
 
     // ── SDC Calendar ────────────────────────────────────────────────────────
-    // (state_logic_builder's auto-updater now runs inside sdc-updater-hub too)
+    // (its auto-updater now runs inside sdc-updater-hub too)
     {
       name:          'sdc-calendar',
       script:        'server/server.js',
-      cwd:           './SDC Centrailzed calender',
+      cwd:           './apps/calendar',
       env: {
         PORT:             '4005',
         NODE_ENV:         'production',
@@ -188,6 +201,49 @@ module.exports = {
       max_restarts:  10,
       restart_delay: 3000,
       max_memory_restart: '300M',
+      log_date_format: 'YYYY-MM-DD HH:mm:ss',
+      merge_logs:    true,
+    },
+
+    // ── SDC Reports (ETC Planner) ────────────────────────────────────────────
+    // NOT moved — own standalone git repo (abhikamuju36-ui/sdc-sheets). Folded
+    // in from its own previously-separate ecosystem.config.js, which had a
+    // broken cwd (pointed at "D:\AI Projects\sdc-etc-planner", missing the
+    // "Centrailized library" segment — fixed below). Next.js auto-loads this
+    // folder's own .env (DATABASE_URL, SCHEDULER_SHARED_TOKEN, TotalETO/PowerBI
+    // creds, etc.) — no need to duplicate secrets here.
+    //
+    // Renumbered 3010 → 4006 (2026-08-23). This requires a coordinated shell
+    // release (apps/shell/electron/processManager.js's "reports" tile + a
+    // version bump) before installed desktops learn the new port — until that
+    // release ships and rolls out (~30 min OTA poll per client), un-updated
+    // shells will health-check the old 3010 and show this tile as down.
+    //
+    // ⚠️  MEASURED WINDOWS BUG (2026-08-06, 3x in 20 min): `pm2 stop`,
+    // `pm2 restart`, and `pm2 delete` have each reported success on this app
+    // while the underlying `next start` process kept running and kept the
+    // port. The replacement then crash-loops on EADDRINUSE every ~4s while the
+    // OLD build keeps serving — looks fine, isn't. Prefer `npm run deploy`
+    // (from inside sdc-etc-planner/), which frees the port explicitly via
+    // scripts/free-port.mjs and fails loudly if something's still bound to it.
+    // If you do `pm2 restart sdc-etc-planner` by hand, check
+    // `pm2 logs sdc-etc-planner --err` for EADDRINUSE before trusting it.
+    {
+      name:          'sdc-etc-planner',
+      // `next start` — serves the production build in .next. Invoke the Next
+      // CLI directly so PM2 manages a single node process (no npm shim).
+      script:        'node_modules/next/dist/bin/next',
+      args:          'start -p 4006',
+      interpreter:   'node',
+      cwd:           'D:\\AI Projects\\Centrailized library\\sdc-etc-planner',
+      env: {
+        PORT:             '4006',
+        NODE_ENV:         'production',
+        NODE_NO_WARNINGS: '1',
+      },
+      watch:         false,
+      max_restarts:  10,
+      restart_delay: 3000,
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs:    true,
     },

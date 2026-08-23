@@ -19,11 +19,11 @@ jobs:
     name: Shell — lint & build UI
     runs-on: ubuntu-latest
     if: |
-      contains(github.event.head_commit.modified, 'shell/') ||
+      contains(github.event.head_commit.modified, 'apps/shell/') ||
       github.event_name == 'pull_request'
     defaults:
       run:
-        working-directory: shell
+        working-directory: apps/shell
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -32,7 +32,7 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: shell/package-lock.json
+          cache-dependency-path: apps/shell/package-lock.json
 
       - name: Install
         run: npm ci
@@ -75,7 +75,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: "Assembilies library main"
+        working-directory: apps/assemblies
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -84,7 +84,7 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: "Assembilies library main/package-lock.json"
+          cache-dependency-path: apps/assemblies/package-lock.json
 
       - name: Install
         run: npm ci
@@ -100,7 +100,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: Build_Readiness_Report
+        working-directory: apps/build-readiness
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -109,7 +109,7 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: Build_Readiness_Report/package-lock.json
+          cache-dependency-path: apps/build-readiness/package-lock.json
 
       - name: Install
         run: npm ci
@@ -126,7 +126,7 @@ jobs:
     runs-on: ubuntu-latest
     defaults:
       run:
-        working-directory: state_logic_builder
+        working-directory: apps/state-logic
 
     steps:
       - uses: actions/checkout@v4.2.2
@@ -135,7 +135,7 @@ jobs:
         with:
           node-version: '20'
           cache: npm
-          cache-dependency-path: state_logic_builder/package-lock.json
+          cache-dependency-path: apps/state-logic/package-lock.json
 
       - name: Install
         run: npm ci
