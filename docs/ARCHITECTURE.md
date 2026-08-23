@@ -20,7 +20,7 @@ flowchart TB
         SSE[EventSource<br/>realtime stream]
     end
 
-    subgraph Server["Next.js server (single process, port 3010)"]
+    subgraph Server["Next.js server (single process, port 4006)"]
         RSC[Server Components<br/>page.tsx data fetching]
         Actions["Server Actions<br/>lib/*-actions.ts"]
         Hub["Realtime hub<br/>lib/realtime-hub.ts<br/>(in-process, single instance)"]

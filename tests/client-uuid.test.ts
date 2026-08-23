@@ -6,7 +6,7 @@ import { randomId } from "../src/lib/client-uuid";
 //
 // `Submit {Month} Report` minted its idempotency key with a bare
 // `crypto.randomUUID()`. That method is gated to SECURE CONTEXTS, and this app is
-// served over plain HTTP on a LAN hostname (http://server-app1:3010) — where it is
+// served over plain HTTP on a LAN hostname (http://server-app1:4006) — where it is
 // undefined, not merely different. It threw inside the confirmation dialog's click
 // handler, above the "Submitting…" state and above the server call, so the button
 // did nothing at all: no request, no message, no server log.
@@ -33,7 +33,7 @@ function withCrypto(replacement: unknown, run: () => void): void {
 }
 
 // Real randomness, minus the secure-context-only method — i.e. exactly what a
-// browser exposes on http://server-app1:3010.
+// browser exposes on http://server-app1:4006.
 const insecureContextCrypto = {
   getRandomValues: <T extends ArrayBufferView>(a: T): T => {
     const view = new Uint8Array(a.buffer, a.byteOffset, a.byteLength);

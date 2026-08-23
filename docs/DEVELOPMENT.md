@@ -10,7 +10,7 @@ Local setup and day-to-day workflows. For production deployment, see
 2. `cp .env.example .env` and fill in real values (ask a teammate — none are documented here on
    purpose).
 3. Point `DATABASE_URL` at a MySQL instance and run the Prisma migrations (see below).
-4. `npm run dev` — starts on **port 3010**.
+4. `npm run dev` — starts on **port 4006**.
 
 ### Environment variables (names only)
 
@@ -41,9 +41,9 @@ key -- copy it to `.env` and fill in real values (ask a teammate).
 
 ```bash
 npm install        # install dependencies
-npm run dev         # dev server, port 3010, Turbopack
+npm run dev         # dev server, port 4006, Turbopack
 npm run build       # production build
-npm start           # run the production build, port 3010
+npm start           # run the production build, port 4006
 npm run lint         # eslint
 npm test            # run the test suite
 ```

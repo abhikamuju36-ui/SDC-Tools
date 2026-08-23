@@ -10,9 +10,9 @@ exist — until then, only the email/password form is shown.
 2. Name: `SDC ETC Planner`.
 3. Supported account types: **Accounts in this organizational directory only** (single tenant — this is what restricts sign-in to the SDC tenant).
 4. Redirect URI: platform **Web**, value:
-   - `http://localhost:3010/api/auth/callback/microsoft-entra-id`
+   - `http://localhost:4006/api/auth/callback/microsoft-entra-id`
    - After adding, open **Authentication** and add the server name too:
-     `http://server-app1:3010/api/auth/callback/microsoft-entra-id`
+     `http://server-app1:4006/api/auth/callback/microsoft-entra-id`
    - (Add an `https://…` one later if the app gets a proper hostname/TLS.)
 5. **Certificates & secrets** → **New client secret** → copy the secret **Value**
    immediately (it is shown only once). Pick a 12–24 month expiry and put a

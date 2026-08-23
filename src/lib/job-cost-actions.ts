@@ -18,7 +18,7 @@ import { assertActionPermission } from "@/lib/require-permission";
 // Same reason MonthlyReportSubmission/RefreshRun/DepartmentEtcCompletion use raw
 // SQL (see their comments in schema.prisma): `prisma generate` cannot run while
 // a live server process holds node_modules/.prisma open, and this box runs this
-// app's own production instance on port 3010 — so regenerating the typed client
+// app's own production instance on port 4006 — so regenerating the typed client
 // would mean an unplanned prod interruption just to add three tables. The
 // migration SQL itself applies fine (`prisma migrate dev --skip-generate`, which
 // only touches the database, not node_modules); these three tables are simply

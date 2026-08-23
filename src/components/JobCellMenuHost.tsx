@@ -149,7 +149,7 @@ export function JobCellMenuHost() {
           // &ret= is what powers the Scheduler's "← Back to report" button. It
           // has to be passed explicitly: this opens in a new tab (so browser Back
           // has no entry to return to), and the referrer is useless across
-          // origins — 3010 → 4003 arrives stripped to the bare origin under
+          // origins — 4006 → 4003 arrives stripped to the bare origin under
           // strict-origin-when-cross-origin, losing the report's path and filters.
           href={`${at.schedulerUrl}&ret=${encodeURIComponent(at.ret)}`}
           target="_blank"

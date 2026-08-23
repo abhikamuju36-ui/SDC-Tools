@@ -6,7 +6,7 @@
 npm run deploy
 ```
 
-This is `next build && node scripts/free-port.mjs 3010 && pm2 restart sdc-etc-planner` — always
+This is `next build && node scripts/free-port.mjs 4006 && pm2 restart sdc-etc-planner` — always
 use this script, not a bare `pm2 restart`, for the reason in the next section.
 
 First-time bring-up on a new box (not a redeploy): `pm2 start ecosystem.config.js && pm2 save`.
@@ -14,13 +14,13 @@ First-time bring-up on a new box (not a redeploy): `pm2 start ecosystem.config.j
 ## The one thing that will bite you: PM2 does not reliably kill this process on Windows
 
 `pm2 stop` / `pm2 restart` / `pm2 delete` can all report success while the old `next start`
-process keeps the socket open — the new instance then crash-loops on `EADDRINUSE :::3010` every
+process keeps the socket open — the new instance then crash-loops on `EADDRINUSE :::4006` every
 few seconds, and PM2 keeps respawning it. **The dangerous part is that the old build keeps
 serving the whole time**: `/api/health` stays `200`, the site looks fine, and the only symptom
 is that your change isn't actually live.
 
 `scripts/free-port.mjs` exists specifically to prevent this: it finds the exact process
-listening on port 3010 (matched precisely off `netstat`, not by substring), kills it, waits for
+listening on port 4006 (matched precisely off `netstat`, not by substring), kills it, waits for
 the socket to clear, and **fails the deploy loudly (exit 1)** if a listener survives — on
 purpose, because silently falling through to `pm2 restart` after a failed kill is exactly how
 this bug reaches production unnoticed.

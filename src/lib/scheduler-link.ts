@@ -6,7 +6,7 @@ import { withTimeoutOrNull } from "./with-timeout";
 
 // Browser-reachable base URL of the SDC Scheduler app. The link is clicked in
 // the user's browser, so it must use the LAN hostname (users reach ETC at
-// server-app1:3010 and the Scheduler at server-app1:4003) — NOT localhost.
+// server-app1:4006 and the Scheduler at server-app1:4003) — NOT localhost.
 // Override with SCHEDULER_BASE_URL in .env if the host/port ever changes.
 const DEFAULT_SCHEDULER_BASE_URL = "http://server-app1:4003";
 

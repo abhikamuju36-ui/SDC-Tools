@@ -2,7 +2,7 @@
 //
 // `crypto.randomUUID()` is gated to SECURE CONTEXTS. That is HTTPS or `localhost`
 // — and this app is served over plain HTTP on a LAN hostname
-// (AUTH_URL="http://server-app1:3010"), which is neither. On that origin the
+// (AUTH_URL="http://server-app1:4006"), which is neither. On that origin the
 // method does not merely misbehave, it is UNDEFINED:
 //
 //     isSecureContext            false

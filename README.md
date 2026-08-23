@@ -16,18 +16,18 @@ Next.js 16 (App Router, Turbopack) · React 19 · Prisma / MySQL · NextAuth v5 
 npm install
 cp .env.example .env   # fill in real values — see docs/DEVELOPMENT.md
 npx prisma migrate deploy
-npm run dev          # http://localhost:3010
+npm run dev          # http://localhost:4006
 ```
 
-Use `localhost:3010`, not a hostname, in dev (see `next.config.ts`'s `allowedDevOrigins` note).
+Use `localhost:4006`, not a hostname, in dev (see `next.config.ts`'s `allowedDevOrigins` note).
 
 ## Main commands
 
 ```bash
-npm run dev          # dev server, port 3010
+npm run dev          # dev server, port 4006
 npm run build        # production build
 npm start            # run the production build
-npm run deploy       # build + free port 3010 + pm2 restart (production deploy)
+npm run deploy       # build + free port 4006 + pm2 restart (production deploy)
 npm test             # run the test suite (99 files, tsx --test)
 npm run lint         # eslint
 ```
