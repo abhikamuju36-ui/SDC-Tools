@@ -123,7 +123,14 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
 
     await prisma.jobMonthlyActualHours.upsert({
       where: { jobId_month: { jobId: job.id, month: monthStr } },
-      update: { actualHours: hours, syncedAt: new Date() },
+      // `source` is written on UPDATE as well as CREATE, deliberately. Rows created
+      // during the Power BI era kept source="power_bi" forever while their actualHours
+      // were being overwritten from Paylocity on every sync, so the one column that
+      // answers "where did this number come from" was lying about 939 of them.
+      // Writing it here lets the label self-heal on the next Refresh Data, and leaves
+      // it as "power_bi" only on rows this sync genuinely never touches — the pre-feed
+      // legacy months, which really are Power BI.
+      update: { actualHours: hours, syncedAt: new Date(), source: "paylocity_excel" },
       create: { jobId: job.id, month: monthStr, actualHours: hours, source: "paylocity_excel" },
     });
     rowsUpserted++;

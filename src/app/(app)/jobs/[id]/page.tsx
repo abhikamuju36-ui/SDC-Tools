@@ -325,13 +325,19 @@ export default async function JobDetailPage({
           {monthlyActualHours.length > 0 ? (
             <div className={TABLE_CARD}>
               <div className="border-b border-sdc-border-soft px-4 py-3">
-                <SectionTitle>Actual Hours by Month (Power BI)</SectionTitle>
+                {/* The title used to read "(Power BI)", which is no longer true of most rows:
+                    this table is Paylocity-synced for every month the punch feed covers,
+                    and only the pre-feed legacy months are still Power BI values. One
+                    blanket label cannot say that, so provenance moved to a per-row
+                    Source column and the title states the subject only. */}
+                <SectionTitle>Actual Hours by Month</SectionTitle>
               </div>
               <table className={`w-full text-sm ${TABLE_GRID}`}>
                 <thead>
                   <tr className={TABLE_HEADER_ROW}>
                     <th className="px-4 py-2">Month</th>
                     <th className="px-4 py-2">Actual Hours</th>
+                    <th className="px-4 py-2">Source</th>
                     <th className="px-4 py-2">Correction</th>
                   </tr>
                 </thead>
@@ -348,12 +354,21 @@ export default async function JobDetailPage({
                         )}
                         {m.overriddenNote && <p className="mt-0.5 text-label text-sdc-gray-400">{m.overriddenNote}</p>}
                       </td>
+                      {/* Read straight off the row rather than assumed, so a legacy
+                          month is visibly legacy instead of silently passing as current. */}
+                      <td className="px-4 py-2 text-center text-label align-top text-sdc-muted">
+                        {m.source === "paylocity_excel"
+                          ? "Paylocity"
+                          : m.source === "power_bi"
+                            ? "Power BI (legacy)"
+                            : m.source}
+                      </td>
                       <td className="px-4 py-2 text-center text-label align-top">
                         {m.overridden ? (
                           <form action={revertOverride}>
                             <input type="hidden" name="rowId" value={m.id} />
                             <button type="submit" className="text-label text-sdc-muted underline hover:text-sdc-navy">
-                              Revert to Power BI
+                              Revert to synced value
                             </button>
                           </form>
                         ) : (
