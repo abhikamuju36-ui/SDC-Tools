@@ -510,7 +510,7 @@ function Bar({ value, color, heightPct, grown }: { value: number; color: string;
           it walks every element with this attribute, in left-to-right order,
           and nudges apart whichever neighboring pair its own measurements
           say are actually touching. */}
-      <span data-value-label className="mb-0.5 text-xs font-bold leading-none text-sdc-navy">{value ? fmt(value) : ""}</span>
+      <span data-value-label className="mb-2 text-xs font-bold leading-none text-sdc-navy">{value ? fmt(value) : ""}</span>
       {/* ── scaleY, not height (§36.2, §36.14, §36.15) ──────────────────────────
           This was `transition-[height] duration-500`, which broke three of §36's
           rules at once on a chart that can hold twenty bars:
@@ -565,6 +565,11 @@ function SectionHierarchyChart({
   // BAR_H — see that constant's comment for the baseline-alignment math this
   // owes it (same +126 delta applied there).
   const BAR_H = 546;
+  // Room reserved ABOVE the plot area for the value labels (2026-08-24).
+  // A text-xs bold label is ~12px on this type scale, plus the label's own mb-2
+  // (~7.5px) and a little slack, so the tallest bar's label sits fully inside
+  // the chart box instead of overflowing into the diff-badge row above it.
+  const LABEL_HEADROOM = 26;
   // ── Two domains: the detail bars, and the Total band (2026-08-24) ─────────
   //
   // A Total is the SUM of the sections beside it, so on one shared scale it is
@@ -691,7 +696,23 @@ function SectionHierarchyChart({
           collision pass's measurement frame — its own edges are the "don't
           overflow the chart" boundary a lifted or nudged label is clamped
           against. */}
-      <div ref={barsRef} className="grid items-end gap-x-1" style={{ ...colStyle, height: BAR_H }}>
+      <div
+        ref={barsRef}
+        className="grid items-end gap-x-1"
+        // height = BAR_H + LABEL_HEADROOM with matching paddingTop. Under
+        // border-box (Tailwind's preflight) the CONTENT box stays exactly
+        // BAR_H, so every bar's `height: n%` resolves against the same 546px it
+        // always did — the scaling from the previous pass is untouched. The
+        // padding is pure headroom for the value labels.
+        //
+        // Before this, the tallest bar filled the box edge to edge and its label
+        // had to overflow the top to exist at all. Two things followed: the
+        // label could ride up into the diff-badge row above, and every lift in
+        // resolveLabelOverlaps was skipped for those labels, because the clamp
+        // `rects[i].top - LIFT < bounds.top` was already true before it moved.
+        // With headroom, that clamp does what it was written to do.
+        style={{ ...colStyle, height: BAR_H + LABEL_HEADROOM, paddingTop: LABEL_HEADROOM }}
+      >
         {rows.map((r) => {
           const diff = r.planned - r.actual; // Quoted − Actual: + = under Quoted (green), − = over (red)
           const has = r.planned !== 0 || r.actual !== 0;
