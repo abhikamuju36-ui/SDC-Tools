@@ -3,6 +3,10 @@ const { contextBridge, ipcRenderer } = require('electron');
 contextBridge.exposeInMainWorld('shellAPI', {
   getStatus:   () => ipcRenderer.invoke('get-status'),
   getLogs:     (appId) => ipcRenderer.invoke('get-logs', appId),
+  // Report an unhandled error from the shell's own UI into the platform's
+  // central diagnostic log (see logDiagnostic in electron/main.js). Awaitable,
+  // so a recovery reload can let the write land first.
+  logClientError: (payload) => ipcRenderer.invoke('log-client-error', payload),
   openApp:     (appId) => ipcRenderer.invoke('open-app', appId),
   retryApp:    (appId) => ipcRenderer.invoke('retry-app', appId),
   stopAll:     () => ipcRenderer.invoke('stop-all'),

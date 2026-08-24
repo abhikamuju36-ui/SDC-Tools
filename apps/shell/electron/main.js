@@ -170,6 +170,39 @@ async function performQuit() {
   }
 }
 
+// ── Central diagnostic log for the whole platform (2026-08-24) ─────────────
+//
+// One file, one format, for every blank-screen/crash signal the shell can see:
+// a child app window failing to load, a renderer process dying, and — via the
+// `log-client-error` IPC channel below — an unhandled error inside the shell's
+// OWN React UI. Previously the only such logging lived inside openAppWindow and
+// so could never record a failure of the shell itself.
+//
+// Deliberately a plain append-only file rather than a service: this has to work
+// when the network is the thing that is broken, which is exactly when these
+// lines are worth reading.
+//
+// Nothing here is shown to the user — the recovery UIs carry their own short,
+// non-technical wording. This file is for whoever diagnoses afterwards, so it
+// records what is needed to place a failure (which app, what happened, when)
+// and deliberately NOT session tokens: any token-ish query param is redacted.
+const DIAG_LOG = path.join(__dirname, '..', 'sdc-tools-diagnostics.log');
+
+function _redact(text) {
+  return String(text == null ? '' : text)
+    .replace(/([?&](?:token|sso|code|id_token|access_token)=)[^&\s]+/gi, '$1REDACTED')
+    .replace(/[\u000d\u000a]+/g, ' ');
+}
+
+function logDiagnostic(source, event, detail) {
+  const line = `[${new Date().toISOString()}] [${source}] ${event}${detail ? ` :: ${_redact(detail)}` : ''}`;
+  try {
+    fs.appendFileSync(DIAG_LOG, line + '\u000a');
+  } catch (_) { /* logging must never be the reason something fails to recover */ }
+  // Also to the shell's own stdout, so a dev console shows it live.
+  console.warn(line);
+}
+
 async function openAppWindow(appId) {
   const status = processManager.getStatus();
   const appInfo = status[appId];
@@ -280,13 +313,10 @@ async function openAppWindow(appId) {
   // app URL) so it cannot itself fail to render, and it names the actual error
   // instead of apologising vaguely. The link is a normal navigation, so "Try
   // again" works without IPC or a preload.
-  const _errPageLog = path.join(__dirname, '..', 'app-load-errors.log');
-  function _logLoadError(line) {
-    try {
-      fs.appendFileSync(_errPageLog, `[${new Date().toISOString()}] [${appId}] ${line}
-`);
-    } catch (_) { /* logging must never be the reason a window fails to recover */ }
-  }
+  // Routed through the central logger so a child-app failure and a shell-UI
+  // failure land in the same file, same format, in timestamp order — which is
+  // what makes "the Reports window went white at 09:53" answerable.
+  const _logLoadError = (line) => logDiagnostic(appId, line);
 
   function _showRecoveryPage(heading, detail) {
     // Retrying goes to appInfo.url, NOT targetUrl: a targetUrl carrying a
@@ -305,7 +335,7 @@ async function openAppWindow(appId) {
             Try again</a>
           <p style="margin:1rem 0 0;font-size:.75rem;color:#8a8a8a">
             If this keeps happening, the server may be restarting — wait a moment and try again.
-            Details are logged to apps/shell/app-load-errors.log.</p>
+            Details are logged to apps/shell/sdc-tools-diagnostics.log.</p>
         </div>
       </body>`;
     win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
@@ -602,6 +632,18 @@ app.whenReady().then(() => {
 
   ipcMain.handle('get-status',   () => processManager.getStatus());
   ipcMain.handle('get-logs',     (_, appId) => processManager.getLogs(appId));
+  // The shell's own React UI reporting an unhandled error / rejection /
+  // boundary catch (2026-08-24). Same log file as child-app failures, so one
+  // timeline covers the whole platform. `invoke` rather than `send` so the
+  // renderer can await the write before it reloads itself — otherwise a
+  // recovery reload can race the log line and lose the only record of why.
+  ipcMain.handle('log-client-error', (_evt, payload = {}) => {
+    const { source = 'shell-ui', event = 'error', detail = '' } = payload || {};
+    // Source and event come from the renderer, so they are length-capped:
+    // a runaway string should not be able to bloat the log file.
+    logDiagnostic(String(source).slice(0, 40), String(event).slice(0, 200), String(detail).slice(0, 2000));
+    return true;
+  });
   ipcMain.handle('open-app',     (_, appId) => openAppWindow(appId));
   ipcMain.handle('retry-app',    (_, appId) => processManager.restart(appId));
   ipcMain.handle('stop-all',     () => processManager.stopAll());
