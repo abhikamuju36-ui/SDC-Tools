@@ -22,7 +22,7 @@ import "dotenv/config";
 import path from "path";
 import { readPaylocityWorkbook, workbookPath, type WorkbookHoursRow } from "@/lib/paylocity-workbook";
 import { buildColumnResolver } from "@/lib/job-hours-source";
-import { syncJobHoursDetail } from "@/lib/sync-powerbi";
+import { syncJobHoursDetail } from "@/lib/sync-actuals";
 import { prisma } from "@/lib/prisma";
 import { logAuditFor } from "@/lib/audit";
 

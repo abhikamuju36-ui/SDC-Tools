@@ -152,10 +152,10 @@ No single canonical "Date → month-string" helper exists, despite the need bein
 
 **"Previous month" arithmetic reimplemented 3× (DRY violation, self-consistent — not an observed live divergence):**
 - `etc.ts:470-474` (exported `prevMonth`) — local time.
-- `sync-powerbi.ts:557-561` (`previousMonth`) — byte-identical local-time logic; its own surrounding comment (line 562) notes the function is "no longer on any automatic path" (likely dead code, but still a duplicate while it exists).
+- `sync-actuals.ts:557-561` (`previousMonth`) — byte-identical local-time logic; its own surrounding comment (line 562) notes the function is "no longer on any automatic path" (likely dead code, but still a duplicate while it exists).
 - `standard-pool-local.ts:72-76` (`previousMonth`) — same arithmetic but UTC-based (`Date.UTC`). Each function is internally consistent, so all three currently agree.
 
-**Inline `Date → "YYYY-MM"` template literal repeated ~15× beyond the above**, e.g. `etc-actions.ts:254`, `etc-prior-etc.ts:42`, `parts-cost-financials.ts:76`, `standard-pool-local.ts:75,79`, `sync-powerbi.ts:63,144,470,560`, `etc/page.tsx:1489`, `hours-feed.ts:166`, `job-cost-inventory-sync.ts:76-77`. `undefined-hours-rules.ts:176-177` exports a purpose-built `reportMonthForWorkDate()` for exactly this transform, but most sites don't call it. Mix of UTC vs. local accessors across the list was observed but not individually verified for a live split beyond the `currentMonth()` case already confirmed.
+**Inline `Date → "YYYY-MM"` template literal repeated ~15× beyond the above**, e.g. `etc-actions.ts:254`, `etc-prior-etc.ts:42`, `parts-cost-financials.ts:76`, `standard-pool-local.ts:75,79`, `sync-actuals.ts:63,144,470,560`, `etc/page.tsx:1489`, `hours-feed.ts:166`, `job-cost-inventory-sync.ts:76-77`. `undefined-hours-rules.ts:176-177` exports a purpose-built `reportMonthForWorkDate()` for exactly this transform, but most sites don't call it. Mix of UTC vs. local accessors across the list was observed but not individually verified for a live split beyond the `currentMonth()` case already confirmed.
 
 ### 3.9 Drill-through logic
 Single canonical component for the flat "KPI-card drill-through" family: `src/components/ui/Drill.tsx` (752 lines), whose own header documents it was built to unify three previously-drifted designs. Confirmed current importers: `CashFlowDrillDrawer.tsx`, `TmHoursDrillPanel.tsx`, `TmPartsDrillPanel.tsx`, `EtcMonthKpiCards.tsx`, `HoursDetailPanel.tsx`, `UndefinedHoursPanel.tsx`.
@@ -225,7 +225,7 @@ API routes with no in-`src/` caller but confirmed as legitimate external entry p
 - `configuredSource()` (`hours-feed.ts:78-80`) returns `"workbook"` unless `HOURS_SOURCE=power_bi` is explicitly set — confirmed not set, so production reads the workbook.
 - Reader: `src/lib/paylocity-workbook.ts` — default path hardcoded at line 61 under `akamuju`'s OneDrive profile, overridable via `JOB_HOURS_LOCAL_PATH`. Plain filesystem read (`fs/promises` + `ExcelJS`), not a Graph/SharePoint API call.
 - Reason for workbook-over-PBI (documented at `paylocity-workbook.ts:20-53`, `hours-feed.ts:34-51`): measured 2026-08-05 that the PBI model ran days behind the file (July short 150.53h, August entirely absent). **Deliberately no automatic fallback** to Power BI on failure — a failed read raises and the last good dataset stays on screen, by design, to avoid mixing data vintages.
-- Scheduled path: `auto-sync.ts:56-90` (hourly + manual "Refresh Data") → `beginPaylocityImport()` (`paylocity-import.ts:87-95`) → `readHoursFeed()`. Downstream writers: `syncActualHours`/`syncJobHoursDetail`/`syncHoursWorked` in `sync-powerbi.ts` (filename is legacy — these functions now consume whatever `readHoursFeed()` returns) plus `recordUndefinedHours`.
+- Scheduled path: `auto-sync.ts:56-90` (hourly + manual "Refresh Data") → `beginPaylocityImport()` (`paylocity-import.ts:87-95`) → `readHoursFeed()`. Downstream writers: `syncActualHours`/`syncJobHoursDetail`/`syncHoursWorked` in `sync-actuals.ts` (filename is legacy — these functions now consume whatever `readHoursFeed()` returns) plus `recordUndefinedHours`.
 - Failure mode: typed `WorkbookError` stages (`file_missing`, `file_empty`, `file_unstable`, `workbook_unreadable`, `headers_missing`, `no_valid_rows`); recorded `failed` in `PowerBiFreshness`; last-good data stays visible with the failure surfaced in the header.
 - Separate, unrelated manual-upload feature: `ImportSupervisorsButton.tsx`/`import-employee-supervisors.ts` — a one-off browser upload for org-chart/supervisor data, not on any schedule.
 
@@ -239,11 +239,11 @@ API routes with no in-`src/` caller but confirmed as legitimate external entry p
 | T&M's 3 dollar cards | `tm-report.ts:115-136,188-230` | **Live, intentional** — explicitly a "native recreation of the Power BI T&M page" per its own header. |
 | Job Cost Explorer/Profitability Sales Price fallback | `job-cost-source.ts:207-217`, called at line 302 | **Live, every render**, but only as a fallback when a job isn't in the hand-maintained inventory snapshot. |
 | Historical ETC/pool backfill via Fabric SQL warehouse | `fabric-warehouse.ts`, consumed by `sync-etc-history.ts:5,334,349` | **CLI-only** — only real caller chain is `scripts/backfill-etc-history.ts`. Confirmed independently, matches `docs/INTEGRATIONS.md:60-65`. |
-| ETC period name→month resolution | `etc-period.ts:68-99` | Called by `sync-powerbi.ts:605` (dead, see below) and `sync-etc-history.ts:71` (CLI-only). |
+| ETC period name→month resolution | `etc-period.ts:68-99` | Called by `sync-actuals.ts:605` (dead, see below) and `sync-etc-history.ts:71` (CLI-only). |
 
 **Finding B — three Power-BI-calling functions have zero production callers (dead code):**
-- `syncQuotedFromPowerBi()` (`sync-powerbi.ts:816-916`) — only other mention is a comment in `auto-sync.ts:33-34` explicitly excluding it ("Quoted hours are app-owned now").
-- `syncCategoryPoolsFromPowerBi()` (`sync-powerbi.ts:599-689`) — `auto-sync.ts:296-313` documents it was replaced by `standard-pool-local.ts`'s local computation.
+- `syncQuotedFromPowerBi()` (`sync-actuals.ts:816-916`) — only other mention is a comment in `auto-sync.ts:33-34` explicitly excluding it ("Quoted hours are app-owned now").
+- `syncCategoryPoolsFromPowerBi()` (`sync-actuals.ts:599-689`) — `auto-sync.ts:296-313` documents it was replaced by `standard-pool-local.ts`'s local computation.
 - `fetchPartsEstimatedToComplete()` (`parts-budget-projection.ts:193-201`) — zero callers anywhere, not even a comment reference.
 
 Safe to leave alone in Phase 1, but flagged as a decision point for a later cleanup pass (keep as documented reference implementations, or remove).
@@ -260,7 +260,7 @@ Direct SQL Server connection (`mssql` package); each consumer file opens its own
 - Live-per-render (not pre-synced): `job-bom.ts` (Procurement BOM tree) and `po-detail.ts`, wrapped in a 12s timeout (`with-timeout.ts`) after a real incident of TotalETO hanging 100+ seconds.
 - Cash Flow Forecast: `cash-flow-totaleto.ts`, captured into an immutable snapshot each refresh pass.
 - Failure isolation: each sync step fails independently (`auto-sync.ts:164-200`), recorded via `recordSyncFailure`; Procurement/BOM views show an `EmptyState` rather than hanging.
-- `sync-totaleto.ts:5-12` and `sync-powerbi.ts:382-386` both state Money Spent was verified byte-for-byte against Power BI's own measure before the direct-SQL query replaced it — "removing the last Power BI / data-gateway dependency for the live ETC month's parts."
+- `sync-totaleto.ts:5-12` and `sync-actuals.ts:382-386` both state Money Spent was verified byte-for-byte against Power BI's own measure before the direct-SQL query replaced it — "removing the last Power BI / data-gateway dependency for the live ETC month's parts."
 
 ### 5.4 SharePoint / OneDrive Excel files beyond Paylocity
 Two more live filesystem reads, neither documented in `docs/DEVELOPMENT.md`'s env-var table (Finding C):
@@ -286,7 +286,7 @@ Two more live filesystem reads, neither documented in `docs/DEVELOPMENT.md`'s en
 | Power BI — T&M 3 dollar cards | Yes, intentional/permanent | `tm-report.ts` | Page-level error, out of scope |
 | Power BI — JCE Sales Price fallback | Yes, fallback-only | `job-cost-source.ts:207-217` | Falls back further to `null` |
 | Power BI — Fabric warehouse (ETC history) | No — CLI-only | `fabric-warehouse.ts`, `sync-etc-history.ts` | N/A, manual script |
-| Power BI — Quoted hours / category pools / parts ETC | **No — dead code, zero callers** | `sync-powerbi.ts` (2 fns), `parts-budget-projection.ts` (1 fn) | N/A |
+| Power BI — Quoted hours / category pools / parts ETC | **No — dead code, zero callers** | `sync-actuals.ts` (2 fns), `parts-budget-projection.ts` (1 fn) | N/A |
 | Lisa's inventory workbook | Yes — scheduled | `job-cost-inventory-sync.ts` | Skipped with a stated reason, not a hard failure |
 | Hiring positions workbook | Yes — live per `/employees` render | `hiring-workbook.ts`, `hiring-positions.ts` | Falls back to manual-only, error string shown |
 | `Employee_Department_Map.xlsx` | No — one-off script only, already imported into DB | `scripts/import-employee-departments.ts` | N/A |
@@ -375,9 +375,9 @@ Covers every item raised across all six audits, plus the items already establish
 | `src/app/(app)/quoted/new/page.tsx` (+ its `createProject` action) | OBSOLETE (orphaned, self-documented) | Dead-code audit §4.2 — no live entry point; `docs/CODEBASE-STRUCTURE.md:42` calls it "Legacy" | Delete, after confirming no external bookmark/workflow still targets it directly |
 | `src/app/(app)/jobs/new/page.tsx` | KEEP-source (intentional redirect) | Dead-code audit §4.2 — deliberate bookmark soft-landing | None |
 | `src/app/api/jobs/export/route.ts` | KEEP-source (intentional 410) | Dead-code audit §4.2 — deliberate retirement with explanatory response | None unless bookmark compatibility is being dropped |
-| `src/lib/sync-powerbi.ts: syncQuotedFromPowerBi` | DEAD (zero callers) | Data-source audit Finding B | Remove or keep as documented reference — user decision |
-| `src/lib/sync-powerbi.ts: syncCategoryPoolsFromPowerBi` | DEAD (zero callers) | Data-source audit Finding B | Remove or keep as documented reference — user decision |
-| `src/lib/sync-powerbi.ts: previousMonth()` | DUPLICATE (of `etc.ts:prevMonth`) + likely dead | Duplicate-logic audit §3.8; own comment says "no longer on any automatic path" | Confirm dead, then remove in favor of `etc.ts:prevMonth` |
+| `src/lib/sync-actuals.ts: syncQuotedFromPowerBi` | DEAD (zero callers) | Data-source audit Finding B | Remove or keep as documented reference — user decision |
+| `src/lib/sync-actuals.ts: syncCategoryPoolsFromPowerBi` | DEAD (zero callers) | Data-source audit Finding B | Remove or keep as documented reference — user decision |
+| `src/lib/sync-actuals.ts: previousMonth()` | DUPLICATE (of `etc.ts:prevMonth`) + likely dead | Duplicate-logic audit §3.8; own comment says "no longer on any automatic path" | Confirm dead, then remove in favor of `etc.ts:prevMonth` |
 | `src/lib/parts-budget-projection.ts: fetchPartsEstimatedToComplete` | DEAD (zero callers) | Data-source audit Finding B | Remove or keep as documented reference — user decision |
 | `src/lib/job-hours-source.ts:4-30` header comment | KEEP-source (doc fix needed) | Data-source audit Finding A — asserts PBI is "THE source," false since 2026-08-05 | Rewrite comment to describe the file's true current role (metadata + fallback) |
 | `src/lib/hours-filters.ts:60-65` vs `HoursDetailPanel.tsx:147-152` | DUPLICATE | Duplicate-logic audit §3.1 — independently reimplemented, diverging unranked-fallback sentinel | Consolidate into one exported helper |

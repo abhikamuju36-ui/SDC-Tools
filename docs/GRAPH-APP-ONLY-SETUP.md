@@ -23,7 +23,7 @@
 > Last successful sync: **2026-07-29 19:56:28**. Failing every 10 minutes since;
 > 258 `Cannot decrypt … Error code: 3` entries across the PM2 error logs. A
 > user-triggered Refresh on Monthly ETC now surfaces it as "Submission rejected"
-> (digest `100648713`, `etc-actions.ts:447` → `sync-powerbi.ts:18` →
+> (digest `100648713`, `etc-actions.ts:447` → `sync-actuals.ts:18` →
 > `sharepoint-hours.ts:113`) instead of silently ageing the numbers.
 > </details>
 >

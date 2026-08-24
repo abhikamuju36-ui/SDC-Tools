@@ -162,7 +162,7 @@ export async function getEtcMonthHoursDetail(month: string, jobPks: number[]): P
   // ── Fold each raw punch onto the ETC grid's fixed columns, HERE, in memory ────
   //
   // The fold (and the 10-311 30/70 split) is computed on the fly, exactly as
-  // sync-powerbi.ts's syncHoursWorked does for the same grid. `section`/`sectionName`
+  // sync-actuals.ts's syncHoursWorked does for the same grid. `section`/`sectionName`
   // on the resulting row are the ETC-column destination — correct for THIS view,
   // whose entire purpose is "what does the ETC grid show" — while `rawSection`/
   // `rawFunction` (via punchIdentity, spread below) stay the untouched original punch.

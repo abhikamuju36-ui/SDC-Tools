@@ -16,7 +16,7 @@ import "dotenv/config";
 import { runDax } from "@/lib/powerbi-client";
 import { prisma } from "@/lib/prisma";
 
-// Local copy of sync-powerbi.ts's (unexported) monthToEtcName.
+// Local copy of sync-actuals.ts's (unexported) monthToEtcName.
 const MONTH_NUM_TO_NAME = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 function monthToEtcName(month: string): string {
   const [year, monthNum] = month.split("-").map(Number);

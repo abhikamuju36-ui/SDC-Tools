@@ -872,7 +872,7 @@ interface TotalEtoCosting {
 // their Parts Cost Quoted; the app pulls actual hours and actual parts cost. This
 // is the second half of that — the column was manager-entered and had NO sync at
 // all (Power BI's model has no equivalent measure; see the note in
-// sync-powerbi.ts).
+// sync-actuals.ts).
 //
 // Source: getPartsActualByJob — GL-posted AP spend, the same definition every
 // other Parts Actual in the app resolves to.

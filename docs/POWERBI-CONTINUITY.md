@@ -48,7 +48,7 @@ Only three modules call `runDax`. This is the complete blast radius:
 
 | caller | what it reads | if the model goes away |
 |---|---|---|
-| `sync-powerbi.ts` | `[Cost Quoted]` → `Job.costQuoted`; category pools (`[Hours being pulled this month]`, `[Previous Month Pulled Hours]`, `[Hours Available]`, `[Rate]`, `[Standard Fee]`) | **Job cost budget + the Standard Fees pool panel stop updating.** Stored values persist. |
+| `sync-actuals.ts` | `[Cost Quoted]` → `Job.costQuoted`; category pools (`[Hours being pulled this month]`, `[Previous Month Pulled Hours]`, `[Hours Available]`, `[Rate]`, `[Standard Fee]`) | **Job cost budget + the Standard Fees pool panel stop updating.** Stored values persist. |
 | `sync-etc-history.ts` | `[ETC Historical Hours/Costs]`, `…Prior Month`, `…Left`, `[ETC Name]`, `[ETC Begin Date]` | **Backfill only.** The 10 months already backfilled are in MySQL. Nothing live breaks. |
 | `parts-budget-projection.ts` | `[Part Cost Estimated To Complete]` | **Nothing.** As of 2026-07-30 this is reconciliation-only — the projection was moved onto the app's own Parts New ETC. |
 

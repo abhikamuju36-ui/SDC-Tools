@@ -27,10 +27,10 @@ doing this:
 
 | table | rows | what the app takes | where |
 |---|---:|---|---|
-| **Hours Estimated** | 3,704 | whole table (`EVALUATE 'Hours Estimated'`) → quoted hours per job/section | `sync-powerbi.ts` (`syncQuotedFromPowerBi`) |
-| **Cost Estimated** | 213 | whole table → `Cost Quoted` → `Job.costQuoted`; `[Part Cost Estimated To Complete]` measure for reconciliation | `sync-powerbi.ts`, `parts-budget-projection.ts` |
-| **Estimated to Complete Period** | 10 | whole table → ETC period keys/names/dates, the spine of the history backfill | `sync-etc-history.ts`, `sync-powerbi.ts` |
-| **Standard Fees** | 32 | `Previous Month Pulled Hours`, `Hours Available`, `Hours Worked this Month`, `Hours being pulled this month`, `New ETC Hours`, `Standard Fee`, `Rate`, `Department`, `Billing Group` → CategoryPool | `sync-powerbi.ts`, `sync-etc-history.ts`, `etc.ts` |
+| **Hours Estimated** | 3,704 | whole table (`EVALUATE 'Hours Estimated'`) → quoted hours per job/section | `sync-actuals.ts` (`syncQuotedFromPowerBi`) |
+| **Cost Estimated** | 213 | whole table → `Cost Quoted` → `Job.costQuoted`; `[Part Cost Estimated To Complete]` measure for reconciliation | `sync-actuals.ts`, `parts-budget-projection.ts` |
+| **Estimated to Complete Period** | 10 | whole table → ETC period keys/names/dates, the spine of the history backfill | `sync-etc-history.ts`, `sync-actuals.ts` |
+| **Standard Fees** | 32 | `Previous Month Pulled Hours`, `Hours Available`, `Hours Worked this Month`, `Hours being pulled this month`, `New ETC Hours`, `Standard Fee`, `Rate`, `Department`, `Billing Group` → CategoryPool | `sync-actuals.ts`, `sync-etc-history.ts`, `etc.ts` |
 | **Job** | 250 | `Job Id` as the grain/filter on the history and parts queries | `sync-etc-history.ts`, `parts-budget-projection.ts` |
 | **Function Hierarchy** | 826 | `Section-Function Code` to map model rows onto the app's 17 section codes | `sync-etc-history.ts` |
 | **Date** | 669 | date filters on history queries | `etc.ts` |

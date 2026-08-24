@@ -127,7 +127,7 @@ export async function runAllSyncs(
   // Imported lazily, inside the function: this module is loaded from
   // instrumentation.ts, which also runs under the Edge runtime, where the Node
   // built-ins these pull in (mssql, msal's native cache, fs) cannot load at all.
-  const { syncActualHours, syncHoursWorked, syncPartsCost, recordSyncSuccess, recordSyncFailure, recordSyncNote } = await import("@/lib/sync-powerbi");
+  const { syncActualHours, syncHoursWorked, syncPartsCost, recordSyncSuccess, recordSyncFailure, recordSyncNote } = await import("@/lib/sync-actuals");
   const { computeCategoryPoolsLocally } = await import("@/lib/standard-pool-local");
   const { poolRefreshBlockedBy } = await import("@/lib/standard-pool-eligibility");
   const { syncFromTotalEto, syncPartsCostActual } = await import("@/lib/sync-totaleto");

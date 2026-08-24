@@ -24,7 +24,7 @@ import { readHoursFeed } from "@/lib/hours-feed";
 //
 // Previous Month Pulled Hours — despite the name, the prior month's NEW ETC
 //   HOURS, i.e. the remaining pool balance carried forward. Already local (see
-//   sync-powerbi.ts's own note: verified across 28 archived month-pairs, 22
+//   sync-actuals.ts's own note: verified across 28 archived month-pairs, 22
 //   match prior-month New ETC exactly and ZERO match prior-month Hours Pulled).
 //
 // New Hours Added this Month — quoted hours in the pool's section, summed over

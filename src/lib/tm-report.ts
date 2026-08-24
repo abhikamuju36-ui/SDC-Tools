@@ -31,7 +31,7 @@ import { normalizePbiJobId } from "@/lib/job-hours-source";
 //                                           Measure Tables[Hours Refreshed Thru]
 //
 // Filter columns: 'Job'[Job Id] (the plain job number — NOT the composite
-// 'Job'[Job] display key — confirmed by tracing how sync-powerbi.ts populates
+// 'Job'[Job] display key — confirmed by tracing how sync-actuals.ts populates
 // the app's own local Job.jobId field from Hours Estimated[Job Id]/Cost
 // Estimated[Job Id], the same string src/components/JobSelect.tsx already
 // works in), 'Job'[Job Status], and 'Date'[Date] (a plain Between range — the

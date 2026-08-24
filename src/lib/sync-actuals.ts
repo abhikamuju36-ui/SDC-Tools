@@ -1,3 +1,13 @@
+// ── Writers for this app's own synced actuals ──────────────────────────────
+//
+// Renamed from sync-powerbi.ts on 2026-08-24. The name predated the hours
+// migration and had become simply false. Nothing here reads Power BI — no DAX,
+// no powerbi-client import. Actual hours come from the Paylocity workbooks via
+// readHoursFeed, parts cost from Total ETO via sync-totaleto, and the rest is
+// this file's own sync bookkeeping. The old name kept sending readers to Power
+// BI to explain numbers that never came from there. DEVLOG entries and commits
+// before that date still say sync-powerbi.ts.
+
 import { prisma } from "@/lib/prisma";
 import { VALID_JOB_TYPES, etcActiveJobFilter } from "@/lib/job-filters";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION, JOB_DASHBOARD_HOURS_CODES, mapPunchToColumns } from "@/lib/sections";
@@ -31,9 +41,10 @@ export type HoursExport = { rows: JobHoursRow[]; issues: HoursImportIssue[]; poo
 // lookup below filters on nothing but the job ids present in the feed.
 //
 // `prefetched` lets a caller that also runs syncHoursWorked hand both functions
-// the SAME read. That read is now ~18 DAX round-trips (one per month), so sharing
-// it matters more than it did when it was one workbook parse. Omit it and this
-// fetches its own copy, so no caller is obliged to care.
+// the SAME read. That read parses every Paylocity workbook in the OneDrive folder,
+// so sharing it saves real work. (It was described here as "~18 DAX round-trips"
+// until 2026-08-24 — a leftover from the Power BI era; this file makes no DAX call.)
+// Omit it and this fetches its own copy, so no caller is obliged to care.
 export async function syncActualHours(prefetched?: HoursExport): Promise<{
   rowsUpserted: number;
   jobsNotFound: number;

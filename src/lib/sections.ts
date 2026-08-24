@@ -133,7 +133,7 @@ export const PM_AND_WARRANTY_CODES = new Set(["10-111", "70-211", "70-411"]);
 // Warranty/Manufacturing, these have no existing SECTIONS row, so JobMonthlyActualHours
 // (a raw sum over every captured code) would grow while the Job Hour Details dashboard
 // and Projects grid — which only ever iterate the 17 SECTIONS codes — stayed blind to
-// why, a NEW reconciliation gap this app has no tolerance for. sync-powerbi.ts
+// why, a NEW reconciliation gap this app has no tolerance for. sync-actuals.ts
 // excludes this exact set from the JobMonthlyActualHours rollup so only JobHoursDetail
 // (and therefore the Hours tab) sees them. No aliasing/folding: each stays its own
 // column here, and hours-operational-grouping.ts is what rolls several of them into
@@ -167,7 +167,7 @@ export const SERVICE_AND_SPARE_PARTS_CODES = new Set([
 // have no SECTIONS row and no ETC/Quoted column (they are not part of the
 // grid's team-confirmed 9/4-code formulas), so they are excluded from
 // JobMonthlyActualHours exactly the way Service/Spare Parts already are (see
-// sync-powerbi.ts) — captured by JobHoursDetail/the Hours tab, invisible to
+// sync-actuals.ts) — captured by JobHoursDetail/the Hours tab, invisible to
 // nothing any more, but adding no new column to a signed-off grid.
 export const ENGINEERING_OTHER_CODES = new Set(["10-112", "10-118", "10-119", "10-120"]);
 
@@ -193,7 +193,7 @@ export const HOURS_IMPORT_CODES = new Set([
 // unmapped code inflate a signed-off, job-level figure none of those three pages
 // has a column to explain. Written instead as its own explicit allow-list, so
 // the job-level rollups stay exactly as narrow as they were — see
-// syncActualHours in sync-powerbi.ts, the only place this is used.
+// syncActualHours in sync-actuals.ts, the only place this is used.
 export const JOB_DASHBOARD_HOURS_CODES: ReadonlySet<string> = new Set([...ETC_TRACKED_CODES, "10-413", ...PM_AND_WARRANTY_CODES]);
 
 // ── Punch code -> app column ────────────────────────────────────────────────

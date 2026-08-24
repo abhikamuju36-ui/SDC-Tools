@@ -5,7 +5,7 @@
 // Compares, per job: Cost Quoted, Cost Actual Historical, and each of the 17
 // section codes' Quoted / Actual Historical hours. `Estimate to Complete`
 // hours are reported only, never fixed — that field live-syncs continuously
-// from Power BI (see sync-powerbi.ts), so a static Excel export is just a
+// from Power BI (see sync-actuals.ts), so a static Excel export is just a
 // point-in-time snapshot of it, not a source of truth to force onto the DB.
 //
 // Respects the app's own manual-edit protections: quotedHoursManuallyEdited

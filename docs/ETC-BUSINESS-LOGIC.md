@@ -30,7 +30,7 @@ per caller.
 ## 2. Hours Worked
 
 Not a formula so much as a sourcing rule: `EtcEntry.hoursWorked` is written by
-`syncHoursWorked()` in `src/lib/sync-powerbi.ts`, sourced from the Paylocity workbook (via
+`syncHoursWorked()` in `src/lib/sync-actuals.ts`, sourced from the Paylocity workbook (via
 `readHoursFeed()` → `readPaylocityWorkbook()`) for the current and recent months, falling back
 to Power BI only for months before 2026-01 that the workbook doesn't cover. It's an overwrite on
 every refresh, not something a user can hand-edit — rows the export no longer reports get
@@ -105,7 +105,7 @@ Diff is exactly `0` — not the suggestion's diff, not null.
 ## 7. Parts Cost
 
 The authoritative monthly figure is `getPartsCostBookedByJob()` in `src/lib/sync-totaleto.ts`,
-called by `syncPartsCost()` in `src/lib/sync-powerbi.ts`, written into the `EtcEntry` row for
+called by `syncPartsCost()` in `src/lib/sync-actuals.ts`, written into the `EtcEntry` row for
 the Parts Cost section (its `hoursWorked` field holds money spent, by convention). Basis:
 
 - **Date**: `APBD.APDocDate` — the AP *document* date on the batch-document table. This is what

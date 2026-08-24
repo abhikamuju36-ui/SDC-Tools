@@ -27,7 +27,7 @@ import type { PartsCostLine } from "@/lib/sync-totaleto";
 // basis `committedNotPosted` is measured against (Purchased). It does not:
 // `hoursWorked` on the PARTS_COST EtcEntry — the "money spent this month" that
 // draws `priorEtc` down into New ETC — comes from `getPartsCostBookedByJob`,
-// the AP-document/GL-posted basis (see sync-powerbi.ts §41), the exact same
+// the AP-document/GL-posted basis (see sync-actuals.ts §41), the exact same
 // basis as `actual`/"Invoiced". It is NEVER reduced by an open PO until that
 // PO is actually invoiced. So a PO opened this month raises `committedNotPosted`
 // immediately, but does nothing to New ETC until the invoice posts — possibly

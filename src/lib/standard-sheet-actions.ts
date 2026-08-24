@@ -38,7 +38,7 @@ export async function loadEffectivePools(month: string) {
 //
 // Also refuses a month whose pools came from the PBI historical backfill
 // (source: "power_bi_history") even without a StandardSheetSnapshot: editing
-// those would corrupt the verified ledger chain (sync-powerbi.ts carries
+// those would corrupt the verified ledger chain (sync-actuals.ts carries
 // `prior.newEtcHours` forward), and a later refresh of the FOLLOWING month
 // would then inherit the tampered balance — the same class of bug the June
 // 2026 pool-reset investigation found and fixed.

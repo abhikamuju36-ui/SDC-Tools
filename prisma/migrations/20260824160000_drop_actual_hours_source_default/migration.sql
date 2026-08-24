@@ -1,0 +1,16 @@
+-- Drop the misleading default on JobMonthlyActualHours.source.
+--
+-- It was DEFAULT 'power_bi', set when Power BI really was the hours source. It
+-- outlived that era: syncActualHours wrote `source` only when CREATING a row, so
+-- rows created before the Paylocity migration kept the label 'power_bi' while
+-- their actualHours were overwritten from the Paylocity feed on every sync. The
+-- one column that answers "where did this number come from" was wrong for 939 of
+-- 1,229 rows.
+--
+-- The application now sets `source` on both the create and update branches, so
+-- nothing relies on a default. Removing it makes a writer state its provenance
+-- and turns a future omission into an error instead of a silent wrong label.
+--
+-- Metadata-only in MySQL 8: no table rebuild, no row is read or rewritten, and
+-- existing values are untouched.
+ALTER TABLE `JobMonthlyActualHours` ALTER COLUMN `source` DROP DEFAULT;

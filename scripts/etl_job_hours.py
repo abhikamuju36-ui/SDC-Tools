@@ -2,7 +2,7 @@
 ETL: Paylocity job-hours export -> MySQL `JobHoursDetail`.
 
 Standalone Python equivalent of the app's in-process sync
-(src/lib/sharepoint-hours.ts + syncJobHoursDetail in src/lib/sync-powerbi.ts).
+(src/lib/sharepoint-hours.ts + syncJobHoursDetail in src/lib/sync-actuals.ts).
 
 WHY THIS EXISTS
     The app's own sync authenticates to Graph with a DPAPI-encrypted delegated

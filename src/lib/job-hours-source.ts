@@ -37,7 +37,7 @@ import { normalizeSectionId } from "@/lib/paylocity-standard-rules";
 //
 // ── Contract ────────────────────────────────────────────────────────────────
 // Deliberately the same row shape the old SharePoint reader returned, because
-// several callers still depend on it via readFromPowerBi() (sync-powerbi,
+// several callers still depend on it via readFromPowerBi() (sync-actuals,
 // standard-pool-local's opt-in path) and none of them should care where hours
 // come from.
 

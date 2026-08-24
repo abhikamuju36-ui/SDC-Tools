@@ -18,7 +18,7 @@
 // This is idempotent (replace-by-job-month) and safe to re-run.
 import { prisma } from "../src/lib/prisma";
 import { readHoursFeed } from "../src/lib/hours-feed";
-import { syncActualHours } from "../src/lib/sync-powerbi";
+import { syncActualHours } from "../src/lib/sync-actuals";
 
 const f2 = (n: number) => (Math.round(n * 100) / 100).toFixed(2);
 

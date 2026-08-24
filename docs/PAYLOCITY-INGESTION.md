@@ -200,7 +200,7 @@ indexed table.
 | `src/components/UndefinedHoursPanel.tsx` | **new** — the redesigned drill (§42.27, §42.28) |
 | `src/lib/unattributed-hours.ts` | rewritten to read persisted rows |
 | `src/lib/auto-sync.ts` | reads `readHoursFeed()`; new `undefined_hours` stage |
-| `src/lib/sync-powerbi.ts` | `recordImportIssues` removed; undefined hours moved out |
+| `src/lib/sync-actuals.ts` | `recordImportIssues` removed; undefined hours moved out |
 | `src/lib/refresh-service.ts` | passes `refreshId` + `userName` to the import record |
 | `src/lib/etc-save-state.ts` | `failed` distinguished from `invalid` |
 | `src/components/EtcMonthKpiCards.tsx` | uses the new drill panel |

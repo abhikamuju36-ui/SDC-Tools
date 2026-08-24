@@ -36,7 +36,7 @@ Before any cleanup work began, the working tree held ~100 uncommitted files: a s
 | Department rank for "Group By Department" sort | `HoursDetailPanel.tsx`'s own `departmentRank()` vs. `hours-filters.ts`'s `departmentFilterRank()` | The local copy collapsed "no department" and "a real but unmapped department" to the same rank, where the canonical one deliberately doesn't. `HoursDetailPanel.tsx` now imports the canonical one |
 | Hours formatting (`Math.round(n).toLocaleString()`), 9 independent copies | `JobHoursDashboard.tsx`, `JobCostExplorer.tsx`, `DataQualityPanel.tsx`, `DataQualityDrill.tsx`, `DataQualityExplorer.tsx`, `HoursDetailPanel.tsx`, `UndefinedHoursPanel.tsx`, `StandardPoolPanel.tsx`, `monthly-report.ts` | All now delegate to `ui/format.ts`'s `hours()` |
 | `Date.now()` read during render (`react-hooks/purity`), 6 sites | `JobProcurement.tsx` (×2), `BuildReadinessInsights.tsx`, `DrillContent.tsx`, `PoDetailPanel.tsx`, `BuildReadinessDrillViews.tsx` | New shared `src/lib/use-stable-now.ts` (`useState(() => Date.now())[0]`, a timing React actually guarantees, unlike `useMemo`) |
-| `previousMonth()`/`prevMonth()` duplicate | `sync-powerbi.ts` | Turned out to still be live (`syncHoursWorked`, not just the dead pools-sync function its neighboring comment was actually about) — folded into `etc.ts`'s `prevMonth()`, a straight dedup |
+| `previousMonth()`/`prevMonth()` duplicate | `sync-actuals.ts` | Turned out to still be live (`syncHoursWorked`, not just the dead pools-sync function its neighboring comment was actually about) — folded into `etc.ts`'s `prevMonth()`, a straight dedup |
 
 **Deliberately *not* merged**, with the reasoning kept in code comments:
 - `standard-pool-local.ts`'s own `previousMonth()`/`monthOf()` (UTC-based) — self-consistent, used only for pure month arithmetic on already-parsed values rather than "what is now," and not worth the risk of touching a Standard Fees calculation for a cosmetic-only dedup.
@@ -50,14 +50,14 @@ Before any cleanup work began, the working tree held ~100 uncommitted files: a s
 |---|---|
 | `src/components/charts/ChartTooltip.tsx`, `GaugeCard.tsx` | Zero references anywhere in the repo; consistent with the already-shipped variance-gauge removal |
 | `(app)/quoted/new/page.tsx` (174 lines) + its `createProject` action | No Link/button anywhere reaches it; self-documented as "Legacy" in `docs/CODEBASE-STRUCTURE.md`; also had the permission gap noted in §1 |
-| `syncQuotedFromPowerBi()`, `syncCategoryPoolsFromPowerBi()` (`sync-powerbi.ts`) | Zero callers; each has its own comment explaining what replaced it (quoted hours are app-owned now; category pools compute locally) |
+| `syncQuotedFromPowerBi()`, `syncCategoryPoolsFromPowerBi()` (`sync-actuals.ts`) | Zero callers; each has its own comment explaining what replaced it (quoted hours are app-owned now; category pools compute locally) |
 | `fetchPartsEstimatedToComplete()` (`parts-budget-projection.ts`) | Zero callers, no longer feeds the projection |
-| Dead types/imports that existed only to support the above (`runDax` from `sync-powerbi.ts`, `CategoryPoolRow`, `HoursEstimatedRow`, `CostEstimatedRow`, a local `POOL_CATEGORY`, `resolveEtcPeriodName`) | Followed their functions out |
+| Dead types/imports that existed only to support the above (`runDax` from `sync-actuals.ts`, `CategoryPoolRow`, `HoursEstimatedRow`, `CostEstimatedRow`, a local `POOL_CATEGORY`, `resolveEtcPeriodName`) | Followed their functions out |
 | `tables to cards redesign/` | A Claude-Design canvas mockup, already superseded by the shipped Employees redesign — not app source |
 | `scripts/readiness-audit-output.tsv` | Untracked, regenerable output of `scripts/readiness-audit.ts` |
 | 11 one-off scripts (`add-missing-jobs.ts`, `backfill-employee-team.ts`, `backfill-hours-2025.ts`, `backfill-password-hashes.ts`, `deactivate-non-project-departments.ts`, `import-june-2026-from-excel.ts`, `link-scheduler-users.ts`, `plan-scheduler-team-from-departments.ts`, `restore-zero-hours-carryforward-2026-07.ts`, `_analyze_1116_ledger.ts`, `_read_1116_ledger.ts`) | Self-describe as one-time/done; moved (not deleted — git history preserves them either way, but this also matches the existing 30-file precedent in `scripts/archive/`) |
 
-`sync-powerbi.ts` no longer imports `runDax` at all — despite the filename, every function left in it is bookkeeping or reads through `job-hours-source.ts`/`sync-totaleto.ts`.
+`sync-actuals.ts` no longer imports `runDax` at all — despite the filename, every function left in it is bookkeeping or reads through `job-hours-source.ts`/`sync-totaleto.ts`.
 
 ## 4. Moved
 

@@ -29,7 +29,7 @@
 // invariant. Matching the source exactly is the right one.
 import { prisma } from "../src/lib/prisma";
 import { readHoursFeed } from "../src/lib/hours-feed";
-import { syncActualHours } from "../src/lib/sync-powerbi";
+import { syncActualHours } from "../src/lib/sync-actuals";
 
 const f2 = (n: number) => (Math.round(n * 100) / 100).toFixed(2);
 

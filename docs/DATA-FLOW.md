@@ -30,7 +30,7 @@ records rather than dropped — they surface as Undefined Hours (see
 ```mermaid
 flowchart LR
     A[(Total ETO<br/>AP document tables)] --> B["sync-totaleto.ts:<br/>getPartsCostBookedByJob()"]
-    B --> C["sync-powerbi.ts:<br/>syncPartsCost(month)"]
+    B --> C["sync-actuals.ts:<br/>syncPartsCost(month)"]
     C --> D[(EtcEntry, Parts Cost section)]
     D --> E["etc-month-kpis.ts:<br/>getEtcMonthKpis()"]
     E --> F[KPI strip: Parts Spent card]

@@ -706,7 +706,7 @@ export async function readPaylocityWorkbook(opts?: {
     // sheet — exactly what the raw-truth rule requires `section` to hold. The ETC
     // grid's fixed-column fold (mapPunchToColumns/SECTION_ALIASES) still exists and
     // is still correct for its OWN narrow purpose — it now runs at aggregation time
-    // in sync-powerbi.ts (syncActualHours/syncHoursWorked) and in the ETC-month /
+    // in sync-actuals.ts (syncActualHours/syncHoursWorked) and in the ETC-month /
     // T&M drills, reading these raw rows and folding on the fly. It never touches
     // what gets stored here.
     const rawSectionId = normalizeSectionId(machineSec);

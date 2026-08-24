@@ -215,7 +215,7 @@ model ProjectRelease {
 // Job-level actual hours worked per month, live from Power BI's "Hours
 // Actual, Est to Date" measure — the same one the legacy "Monthly ETC
 // Process" sheet's PivotTable used, scoped by the model's own
-// Date[Is ETC to Date] cutoff (see sync-powerbi.ts).
+// Date[Is ETC to Date] cutoff (see sync-actuals.ts).
 // Punch-level actual hours — one row per employee per day per job per section.
 // The detail behind JobMonthlyActualHours' rollups, recreating the Power BI
 // report's "Hours Detail" drillthrough page inside the app.
@@ -279,7 +279,14 @@ model JobMonthlyActualHours {
   job            Job      @relation(fields: [jobId], references: [id])
   month          String // "2025-01"
   actualHours    Decimal  @db.Decimal(10, 2)
-  source         String   @default("power_bi")
+  // No default, deliberately. This was @default("power_bi"), which outlived the
+  // Power BI era and silently mislabelled every row it touched: syncActualHours
+  // set source only when creating, so rows created before the Paylocity migration
+  // kept "power_bi" while their actualHours were overwritten from Paylocity on
+  // every sync. Requiring the value makes a writer state its provenance and turns
+  // a future omission into a compile error rather than a wrong label. The only
+  // writer is syncActualHours (sync-actuals.ts), which sets it on both branches.
+  source         String
   syncedAt       DateTime @default(now())
   // Manual correction, mirroring the legacy spreadsheet's "Actual Hours
   // Override" tab (e.g. Paylocity coded hours to "Not Defined" instead of

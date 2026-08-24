@@ -10,7 +10,7 @@ import { WorkbookError, SHEET_NAME, type RejectedPunch } from "@/lib/paylocity-w
 // ── One Paylocity import, from file identity to audit row (§42.5, §42.20) ───
 //
 // Sits between the reader (paylocity-workbook.ts — "what does the file say") and the
-// writers in sync-powerbi.ts ("put it in the database"). What it owns is the part
+// writers in sync-actuals.ts ("put it in the database"). What it owns is the part
 // neither of those should: deciding whether this file version has been seen before,
 // and recording what happened either way.
 //
