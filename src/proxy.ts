@@ -9,10 +9,34 @@ import { permissionForPath, safeFallbackPath } from "@/lib/route-permissions";
 // signed in" check that callback used to provide is now THIS function's job
 // too, not just the new permission check below; both live here so there is
 // one place, not two, deciding what a given request may reach.
+
+// The origin the BROWSER actually asked for, taken from the request headers.
+//
+// Two traps make this necessary, and neither is obvious:
+//   1. next-auth v5's `auth()` wrapper rewrites `req.url` (and `req.nextUrl`)
+//      to AUTH_URL's origin. When AUTH_URL drifted from the app's real port
+//      (stale ":3010" after the 2026-08-23 renumber to 4006), every
+//      unauthenticated request 307'd to a dead origin — which in the SDC Tools
+//      Electron shell is a permanently blank white window, no error anywhere.
+//   2. A RELATIVE Location header looks like the clean fix and is legal HTTP,
+//      but Next 16's middleware layer parses the value with `new URL(value)`
+//      and throws ERR_INVALID_URL — a 500 on every gated route. Measured live
+//      2026-08-24; do not "simplify" this back to a bare path.
+// So: absolute, but built from Host rather than from anything AUTH_URL touches.
+function requestOrigin(req: { headers: Headers; nextUrl: URL }) {
+  const host  = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  if (!host) return req.nextUrl.origin;  // no Host header at all — nothing better to use
+  const proto = req.headers.get("x-forwarded-proto") ?? "http";
+  return `${proto}://${host}`;
+}
+
 export const proxy = auth((req) => {
   if (!req.auth?.user) {
-    const signInUrl = new URL("/login", req.url);
-    signInUrl.searchParams.set("callbackUrl", req.nextUrl.href);
+    // callbackUrl is relative — an absolute one built from the rewritten
+    // req.nextUrl.href would carry the wrong origin forward and strand the
+    // user there after a successful login.
+    const signInUrl = new URL("/login", requestOrigin(req));
+    signInUrl.searchParams.set("callbackUrl", req.nextUrl.pathname + req.nextUrl.search);
     return NextResponse.redirect(signInUrl);
   }
 
@@ -24,7 +48,7 @@ export const proxy = auth((req) => {
   // enforcement already covered this; this only adds the same defense-in-depth
   // every other route gets against a typed-in URL.
   if (req.nextUrl.pathname.startsWith("/cash-flow") && req.auth.user.role !== "ELT") {
-    return NextResponse.redirect(new URL(safeFallbackPath(req.auth.user.role), req.url));
+    return NextResponse.redirect(new URL(safeFallbackPath(req.auth.user.role), requestOrigin(req)));
   }
 
   // Defense-in-depth against a typed-in URL — NOT the only enforcement point.
@@ -39,7 +63,7 @@ export const proxy = auth((req) => {
   // always lands on a route the caller's own role can actually see.
   const permission = permissionForPath(req.nextUrl.pathname);
   if (permission && !hasPermission(req.auth.user.role, permission)) {
-    return NextResponse.redirect(new URL(safeFallbackPath(req.auth.user.role), req.url));
+    return NextResponse.redirect(new URL(safeFallbackPath(req.auth.user.role), requestOrigin(req)));
   }
 });
 
@@ -47,5 +71,9 @@ export const config = {
   // api/integration is exempt from the browser NextAuth session: those routes
   // are server-to-server (called by SDC_Scheduler) and enforce their own
   // SCHEDULER_SHARED_TOKEN bearer guard, which fails closed when unset.
-  matcher: ["/((?!login|api/auth|api/integration|api/health|_next/static|_next/image|favicon.ico|brand/).*)"],
+  //
+  // BOTH `api/health` and `health` are exempt — the suite's other apps answer
+  // the bare `/health`, and whatever polls them uniformly was hammering this
+  // app's login redirect once a second until src/app/health/route.ts existed.
+  matcher: ["/((?!login|api/auth|api/integration|api/health|health|_next/static|_next/image|favicon.ico|brand/).*)"],
 };

@@ -15,10 +15,24 @@ import { signIn } from "@/lib/auth";
 // client one) with a synthetic in-process request, so verifying the
 // assertion and establishing the real session cookie happens in one hop —
 // no rendered landing page, no client-side round trip.
+// `req.url` inside a route handler is the server's own internal URL
+// (localhost:4006), NOT the origin the browser asked for — so
+// `NextResponse.redirect(new URL("/login", req.url))` sent SDC Tools shell
+// users to localhost, which on their machine is nothing at all: a blank white
+// window. Build the origin from the Host header instead. (A relative Location
+// header would also be correct HTTP, but see proxy.ts — Next 16 rejects those,
+// so keep both files on the same absolute-from-Host approach.)
+function redirectTo(req: NextRequest, pathAndQuery: string) {
+  const host  = req.headers.get("x-forwarded-host") ?? req.headers.get("host");
+  const proto = req.headers.get("x-forwarded-proto") ?? "http";
+  const base  = host ? `${proto}://${host}` : req.nextUrl.origin;
+  return NextResponse.redirect(new URL(pathAndQuery, base));
+}
+
 export async function GET(req: NextRequest) {
   const token = req.nextUrl.searchParams.get("token");
   const next = req.nextUrl.searchParams.get("next") || "/";
-  if (!token) return NextResponse.redirect(new URL("/login", req.url));
+  if (!token) return redirectTo(req, "/login");
 
   try {
     // `next` reaches NextAuth's own `redirectTo`, which its default redirect
@@ -30,7 +44,11 @@ export async function GET(req: NextRequest) {
       redirectTo: next,
       redirect: false,
     });
-    return NextResponse.redirect(new URL(url as string, req.url));
+    // NextAuth returns either a path or an absolute URL at its own configured
+    // origin; keep only the path+query so the browser resolves it against the
+    // origin it is really on.
+    const dest = new URL(url as string, "http://internal.invalid");
+    return redirectTo(req, dest.pathname + dest.search);
   } catch (e) {
     // Bad signature, expired, already-used, or no Reports account for that
     // email — every one of those collapses to authorize() returning null,
@@ -38,7 +56,7 @@ export async function GET(req: NextRequest) {
     // cause, this must degrade to the normal login form, never a broken or
     // blank page.
     if (e instanceof AuthError) {
-      return NextResponse.redirect(new URL("/login", req.url));
+      return redirectTo(req, "/login");
     }
     throw e;
   }
