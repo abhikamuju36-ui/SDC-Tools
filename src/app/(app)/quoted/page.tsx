@@ -841,15 +841,28 @@ export default async function QuotedPage({
             <tr className={TABLE_HEADER_ROW}>
               {PHASE_GROUPS.flatMap((g) => {
                 const sections = visibleSectionsByPhase.get(g.phase) ?? [];
-                // break-word, NOT the `anywhere` this used to use: `anywhere`
-                // breaks a word the moment it would help, which is what
-                // shattered these headers into "DR AWI NGS". `break-word` only
-                // ever breaks a word that has no line of its own, so it sits
-                // dormant at the width above and just guards against a future
-                // section name longer than any of today's.
+                // `break-normal` here is not a leftover: globals.css sets exactly
+                // that on every `th` on purpose ("the fix is always a wider column,
+                // a shorter label or a smaller font, never a broken word"), and a
+                // label that outgrows its column is meant to overflow visibly and
+                // get reported rather than be silently mangled into "DR AWI NGS".
+                //
+                // 2026-08-24: it WAS reported. HMI/Robot/Vision/Device Programming
+                // all overflowed into each other, because "PROGRAMMING" alone is
+                // wider than the 72px content box and cannot break. Fixed the way
+                // that comment prescribes — a shorter label — via abbreviateLabel,
+                // the same render-time abbreviation the group band one row above
+                // has always used (line ~835). The underlying s.name is untouched,
+                // so every logic key, filter param and colour map still sees the
+                // full string; only this cell renders short.
+                //
+                // Also shortens Mechanical/Electrical Build to Mech/Elec Build,
+                // which now fit on one line instead of wrapping to two, and General
+                // to Gen — matching the "MECH ENG"/"GEN ENG" bands above them.
+                // The full name stays available in the tooltip.
                 return sections.map((s) => (
-                  <th key={s.code} title={s.code} style={DATA_COL_STYLE} className="qc break-normal border-l border-sdc-border px-1 py-2 text-center text-label leading-tight">
-                    {s.name}
+                  <th key={s.code} title={`${s.name} · ${s.code}`} style={DATA_COL_STYLE} className="qc break-normal border-l border-sdc-border px-1 py-2 text-center text-label leading-tight">
+                    {abbreviateLabel(s.name)}
                     <span className="block font-mono text-label font-normal normal-case tracking-normal text-sdc-gray-400">
                       {s.code}
                     </span>

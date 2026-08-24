@@ -12,6 +12,15 @@ const RULES: readonly [RegExp, string][] = [
   [/\bManufacturing\b/gi, "Mfg"],
   [/\bManagement\b/gi, "Mgmt"],
   [/\bGeneral\b/gi, "Gen"],
+  // Added 2026-08-24. "Programming" is the only word in SECTIONS long enough to
+  // overflow the Projects grid's fixed 72px column — HMI/Robot/Vision/Device
+  // Programming all did, and globals.css deliberately refuses to break a word in
+  // a label ("the fix is always a wider column, a shorter label or a smaller
+  // font"), so those four headers overflowed into each other instead. This is the
+  // shorter label. After it the longest single word left in any section name is
+  // "Software"/"Drawings" at 8 characters — exactly what that column width was
+  // measured against, so nothing overflows.
+  [/\bProgramming\b/gi, "Prog"],
 ];
 
 export function abbreviateLabel(s: string): string {
