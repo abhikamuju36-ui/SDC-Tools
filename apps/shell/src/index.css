@@ -287,6 +287,10 @@ button { cursor: pointer; }
   white-space: nowrap;
 }
 
+/* Brand blue sits too dim on the dark header (--bg-header #040c18), the same
+   reason .header-title is lifted to #fff there. */
+[data-theme="dark"] .header-product { color: #4A9FE0; }
+
 [data-theme="dark"] .header-title { color: #fff; }
 [data-theme="dark"] .header-subtitle { color: rgba(255,255,255,0.4); }
 [data-theme="dark"] .header-brand { border-right-color: rgba(255,255,255,0.08); }
@@ -799,160 +803,146 @@ button { cursor: pointer; }
 ═══════════════════════════════════════════════════════════════════════ */
 .app-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
-  gap: 20px;
+  /* 260px, down from 300px: six cards used to stretch into three very wide
+     columns with a lot of dead space inside each. Narrower columns make the
+     cards read as a set of tiles rather than as panels. */
+  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+  gap: 14px;
 }
-
-/* List view */
 .app-grid.is-list { grid-template-columns: 1fr; gap: 8px; }
-.app-grid.is-list .app-card { flex-direction: row; align-items: stretch; }
-.app-grid.is-list .card-accent { width: 4px; height: auto; flex-shrink: 0; }
-.app-grid.is-list .card-body { flex-direction: row; align-items: center; gap: 24px; padding: 14px 18px; flex: 1; min-width: 0; }
-.app-grid.is-list .card-top { flex: 0 0 280px; gap: 12px; align-items: center; margin-bottom: 0; }
-.app-grid.is-list .card-logo { width: 38px; height: 38px; border-radius: 8px; }
-.app-grid.is-list .card-name { font-size: 14px; }
-.app-grid.is-list .card-desc { flex: 1; display: -webkit-box; -webkit-line-clamp: 1; -webkit-box-orient: vertical; overflow: hidden; min-width: 0; margin-bottom: 0; }
-.app-grid.is-list .card-meta { border-top: 0; padding-top: 0; flex: 0 0 auto; white-space: nowrap; margin-bottom: 0; }
-.app-grid.is-list .card-footer { flex: 0 0 auto; background: transparent; border-top: 0; border-left: 1px solid var(--divider); padding: 10px 18px; min-width: 280px; justify-content: flex-end; gap: 14px; }
+.app-grid.is-list .app-card { flex-direction: row; align-items: center; padding: 12px 16px; gap: 16px; }
+.app-grid.is-list .card-head { flex: 0 0 260px; margin-bottom: 0; }
+.app-grid.is-list .card-desc { flex: 1; -webkit-line-clamp: 1; min-height: 0; margin: 0; }
+.app-grid.is-list .card-status { flex: 0 0 auto; margin-top: 0; padding-top: 0; border-top: 0; }
 
-/* ── App card ───────────────────────────────────────────────────────── */
+/* ── App card ───────────────────────────────────────────────────────────
+   Redesigned 2026-08-24: "large and ugly" → one clean surface.
+
+   What was removed, and why each thing was costing more than it gave:
+
+     * a 4px full-width accent stripe on top
+     * a sunken footer band holding the status pill
+     * a dashed rule above the "last opened" line
+
+   Three horizontal bands and four rules per card, times six cards each with a
+   DIFFERENT accent colour, is what read as busy — and stacking a stripe, a body
+   and a footer is also what made them tall. The card is now a single surface
+   with one internal rule, and the accent colour survives in exactly two quiet
+   places: a tint behind the icon, and a hairline that appears on hover.
+
+   Height is now driven by content instead of by structure, and .card-desc keeps
+   a min-height so a card whose description is empty (Reports today) still lines
+   up with its neighbours rather than collapsing into a short one. */
 .app-card {
   position: relative;
-  background: var(--surface);
-  border: 1px solid var(--border);
-  border-radius: var(--radius-card);
-  overflow: hidden;
-  box-shadow: var(--card-shadow);
-  transition: all .15s ease;
-  outline: none;
   display: flex;
   flex-direction: column;
+  padding: 16px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  outline: none;
+  /* A single soft shadow rather than the shared --card-shadow: at this size a
+     heavier shadow reads as a raised panel, which is the opposite of the
+     intent. */
+  box-shadow: 0 1px 2px rgba(6, 29, 57, 0.04);
+  transition: border-color .16s ease, box-shadow .16s ease, transform .16s ease;
 }
 .app-card:hover {
-  border-color: var(--border-2);
-  box-shadow: var(--card-shadow-hov);
-  transform: translateY(-1px);
+  /* The accent's one assertive moment — a hairline border in the app's own
+     colour, so hover identifies WHICH app you are about to open. */
+  border-color: var(--card-accent, var(--blue));
+  box-shadow: 0 6px 20px rgba(6, 29, 57, 0.09);
+  transform: translateY(-2px);
 }
+/* The two shadows above are tuned for a white page; on the dark theme a navy
+   rgba is invisible, so they are restated in black. Kept as an override rather
+   than switching both to a token, because the light values are deliberately
+   softer than the shared --card-shadow (which reads as a raised panel at this
+   card size). */
+[data-theme="dark"] .app-card { box-shadow: 0 1px 2px rgba(0,0,0,0.35); }
+[data-theme="dark"] .app-card:hover { box-shadow: 0 6px 20px rgba(0,0,0,0.5); }
+[data-theme="dark"] .app-card[aria-disabled='true']:hover { box-shadow: 0 1px 2px rgba(0,0,0,0.35); }
+
 .app-card:focus-visible {
   outline: 2px solid var(--blue);
   outline-offset: 2px;
 }
-
-/* Colored top stripe */
-.card-accent {
-  height: 4px;
-  background: var(--card-accent, var(--blue));
-  flex-shrink: 0;
+/* Not clickable until the app is up — say so with the cursor, and hold the
+   card still on hover so it does not invite a click that does nothing. */
+.app-card[aria-disabled='true'] { cursor: default; }
+.app-card[aria-disabled='true']:hover {
+  transform: none;
+  border-color: var(--border);
+  box-shadow: 0 1px 2px rgba(6, 29, 57, 0.04);
 }
 
-.card-body {
-  padding: 18px 18px 14px;
-  display: flex;
-  flex-direction: column;
-  gap: 0;
-  flex: 1;
-}
-
-/* Icon + name + shortcut */
-.card-top {
-  display: flex;
-  align-items: flex-start;
-  gap: 14px;
-  margin-bottom: 14px;
-}
-.card-logo {
-  width: 46px;
-  height: 46px;
-  border-radius: 10px;
-  overflow: hidden;
-  flex-shrink: 0;
+.card-head {
   display: flex;
   align-items: center;
-  justify-content: center;
-  background: var(--light-tint);
-  border: 1px solid rgba(21,116,196,.12);
-  color: var(--blue);
+  gap: 11px;
+  margin-bottom: 10px;
 }
-.card-info { flex: 1; min-width: 0; }
+.card-logo {
+  width: 36px;
+  height: 36px;
+  border-radius: 9px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  /* The accent at 10% over white — enough to identify the app, far short of a
+     block of colour. No border: the tint alone separates it from the surface. */
+  /* Mixed against --surface, NOT a hardcoded #fff: the shell has a dark theme
+     ([data-theme="dark"] redefines --surface to #111827), and mixing with white
+     would leave a pale square floating on a dark card. Against the surface token
+     it resolves correctly in both themes with no override needed — which is how
+     the rest of this card gets its dark support too. */
+  background: color-mix(in srgb, var(--card-accent, var(--blue)) 12%, var(--surface));
+  color: var(--card-accent, var(--blue));
+}
 .card-name {
   font-family: 'Montserrat', sans-serif;
-  font-size: 15px;
+  font-size: 13.5px;
   font-weight: 700;
-  letter-spacing: -.2px;
+  letter-spacing: -.1px;
   color: var(--navy);
-  line-height: 1.2;
-  white-space: normal;
-  word-break: break-word;
+  line-height: 1.25;
+  min-width: 0;
 }
-[data-theme="dark"] .card-name { color: #e2e8f0; }
-
-.card-shortcut {
-  display: inline-flex;
-  gap: 3px;
-  margin-top: 6px;
-}
-.card-shortcut span {
-  font-family: 'Consolas', monospace;
-  font-size: 10px;
-  font-weight: 600;
-  background: var(--surface-sunken);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: 2px 6px;
-  color: var(--text-2);
-  letter-spacing: .3px;
-}
-
-/* Description */
 .card-desc {
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--text-2);
-  line-height: 1.5;
-  margin-bottom: 10px;
+  line-height: 1.45;
+  margin: 0 0 12px;
   display: -webkit-box;
   -webkit-line-clamp: 2;
   -webkit-box-orient: vertical;
   overflow: hidden;
+  /* Two lines' worth, always — this is what keeps a card with no description
+     the same height as one with two lines. */
+  min-height: calc(12px * 1.45 * 2);
 }
-
-/* Port + last opened — dashed separator */
-.card-meta {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding-top: 10px;
-  border-top: 1px dashed var(--divider);
-  margin-bottom: 0;
-  font-family: 'Consolas', monospace;
-  font-size: 11px;
-  color: var(--text-3);
-  letter-spacing: .2px;
-}
-.card-port { color: var(--text-2); font-weight: 500; }
-.card-meta-sep { color: var(--border-2); }
-.card-last-opened { color: var(--text-3); }
-
-/* Footer — sunken */
-.card-footer {
-  background: var(--surface-sunken);
-  border-top: 1px solid var(--divider);
-  padding: 10px 18px;
+/* The one internal rule left, and it is hairline rather than dashed: a dashed
+   border at 1px reads as a placeholder. */
+.card-status {
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+  margin-top: auto;
+  padding-top: 10px;
+  /* --border, not --divider: measured in the browser, --divider (#EEF1F6) at
+     sub-pixel width was literally invisible, which makes it dead code rather
+     than restraint. This is still quiet, but actually there. */
+  border-top: 1px solid var(--border);
 }
-
-[data-theme="dark"] .card-footer { background: rgba(255,255,255,0.03); border-top-color: rgba(255,255,255,0.06); }
-
-/* Name row — holds card-name + UPDATE badge inline */
-.card-name-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  min-width: 0;
+.card-last-opened {
+  font-family: 'Consolas', monospace;
+  font-size: 10.5px;
+  color: var(--text-3);
+  letter-spacing: .2px;
+  white-space: nowrap;
 }
-.card-name-row .card-name { flex: 1; min-width: 0; }
 
 /* Update flag badge */
 .card-update-flag {
@@ -968,9 +958,6 @@ button { cursor: pointer; }
   font-family: 'Montserrat', sans-serif;
 }
 
-/* List view — badge already visible in footer row; hide from name row */
-.app-grid.is-list .card-update-flag { display: none; }
-
 /* ── Status indicator ───────────────────────────────────────────────── */
 .status-pill {
   display: inline-flex;
@@ -982,6 +969,12 @@ button { cursor: pointer; }
   letter-spacing: 1.3px;
   text-transform: uppercase;
 }
+/* Restored 2026-08-24: navy on the dark theme's #111827 card is all but
+   invisible. This override existed before the card redesign and was lost when
+   that block was replaced — caught by rendering the dark theme rather than by
+   reading the diff. (.card-footer's dark override went with it and is correctly
+   gone: the redesign has no footer band.) */
+[data-theme="dark"] .card-name { color: var(--text); }
 .status-dot {
   width: 7px;
   height: 7px;

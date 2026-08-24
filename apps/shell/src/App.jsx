@@ -410,7 +410,7 @@ export default function App() {
             <section className="apps-section">
               {/* Section eyebrow */}
               <div className="section-eyebrow">
-                <span className="section-eyebrow-title">Engineering Applications</span>
+                <span className="section-eyebrow-title">Applications</span>
                 <div style={{ display: 'flex', alignItems: 'center', gap: 14, fontSize: 12, color: 'var(--text-3)' }}>
                   <span>{runningCount} of {apps.length} running</span>
                   <div className="view-toggle">
