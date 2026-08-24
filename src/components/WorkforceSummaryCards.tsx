@@ -11,11 +11,17 @@ import { employeeCapacityHours, hiringCapacityHours } from "@/lib/workforce-capa
 import { hasYearPolicy } from "@/lib/workforce-capacity-policy";
 import { hours as fmtHours } from "@/components/ui/format";
 
-// Level 1 of the Employees tab (2026-08-19, by request): three big workforce
-// entry points — Engineering / Shop / PM — plus a fourth "Other" catch-all
-// for the department cards that were never one of the seven delivery teams
-// (Growth, Finance, Sales, Executive Leadership, any raw department string),
-// and (2026-08-19) a fifth "Hiring Positions" card. Deliberately its OWN
+// Level 1 of the Employees tab: one card per company department — Engineering,
+// Shop, PM, Growth / Business Development, Finance, Executive Leadership and
+// Operations — plus the "Hiring Positions" card (2026-08-19) rendered
+// separately from them.
+//
+// Was three cards (Engineering / Shop / PM) and an "Other" catch-all holding
+// everything else; the four back-office groups were split out of that catch-all
+// on 2026-08-24 by request. "other" still exists as the destination for an
+// unmapped department string, but renders no card while it is empty, which it
+// is on today's roster. The grouping itself lives in
+// employee-workforce-groups.ts — this component only themes and orders it. Deliberately its OWN
 // small color set, not employee-teams.ts's per-team brand colors (shared
 // with Hours/ETC — not this screen's to repaint) and not
 // employee-card-theme.ts's per-department pastels (those stay exactly as
@@ -40,6 +46,18 @@ const WORKFORCE_THEME: Record<WorkforceGroupKey, { band: string; onBand: string 
   // --sdc-blue, unchanged -- that's a third, separate palette (see this
   // file's header comment on why the three levels don't share one).
   pm: { band: "bg-sdc-purple", onBand: "text-white" },
+  // The four back-office groups (2026-08-24). All four bands come from the
+  // palette tokens already in globals.css — nothing new invented, same rule
+  // the three above follow.
+  //
+  // `onBand` is chosen for CONTRAST, not by whether the color feels dark: as
+  // employee-teams.ts already measured, white on the palette's green is 2.4:1
+  // and fails outright, so green and lime take navy text exactly as the pale
+  // colors do. Blue and blue-dark are dark enough to carry white.
+  growth: { band: "bg-sdc-blue", onBand: "text-white" },
+  finance: { band: "bg-sdc-green", onBand: "text-sdc-navy" },
+  exec: { band: "bg-sdc-blue-dark", onBand: "text-white" },
+  operations: { band: "bg-sdc-lime", onBand: "text-sdc-navy" },
   other: { band: "bg-sdc-gray-700", onBand: "text-white" },
 };
 // Hiring is deliberately NOT given a solid color band like the workforce
@@ -59,7 +77,19 @@ const HIRING_ACCENT = "text-sdc-green-text";
 // Hiring Positions card's own internal breakdown list, none of which this
 // request asked to change. This is a display-order concern local to this
 // component only.
-const CARD_RENDER_ORDER: WorkforceGroupKey[] = ["pm", "engineering", "shop", "other"];
+// Delivery teams first, in the order the request listed them, then the
+// back-office departments, then "other" (which renders nothing unless an
+// unmapped department turns up — see the filter in `summaries`).
+const CARD_RENDER_ORDER: WorkforceGroupKey[] = [
+  "pm",
+  "engineering",
+  "shop",
+  "growth",
+  "finance",
+  "exec",
+  "operations",
+  "other",
+];
 
 type WorkforceSummary = {
   key: WorkforceGroupKey;

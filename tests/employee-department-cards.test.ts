@@ -78,9 +78,20 @@ test("people within a card sort lead-first, then by sortOrder, then by name", ()
   );
 });
 
-test("hidden departments (Operations/Unassigned) produce no card at all", () => {
-  const cards = buildDepartmentCards([row({ department: "Operations" }), row({ department: "Unassigned" })], []);
-  assert.equal(cards.length, 0);
+test("Unassigned produces no card, but Operations now gets one", () => {
+  // Operations was in HIDDEN_DEPARTMENT_CARDS alongside Unassigned until
+  // 2026-08-24, which meant its one employee appeared on no card anywhere. The
+  // request asks for an Operations card, so it was taken out of that set.
+  //
+  // "Unassigned" stays hidden, and for a different reason that has not changed:
+  // it is not a department at all, it is the absence of one, and the
+  // NO_DEPARTMENT bucket already covers those people.
+  assert.equal(buildDepartmentCards([row({ department: "Unassigned" })], []).length, 0);
+
+  const opsCards = buildDepartmentCards([row({ department: "Operations" })], []);
+  assert.equal(opsCards.length, 1);
+  assert.equal(opsCards[0].key, "operations");
+  assert.equal(opsCards[0].title, "Operations");
 });
 
 test("cards come back in the canonical delivery-team order, not insertion order", () => {

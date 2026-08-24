@@ -23,6 +23,12 @@ const CARD_COLORS: Record<string, CardColors> = {
   finance: { bg: "#d9f99d", text: "#365314" },
   sales: { bg: "#fbcfe8", text: "#831843" },
   exec: { bg: "#f5d0fe", text: "#701a75" },
+  // Operations got a card of its own on 2026-08-24 (see HIDDEN_DEPARTMENT_CARDS
+  // below). The slate tone is the value Scheduler's own Departments board
+  // already uses for Operations — the same one OTHER_COLORS carries — so this
+  // is the established color for this department, named explicitly now that it
+  // is a card rather than falling through to the neutral default.
+  operations: { bg: "#e2e8f0", text: "#1e293b" },
 };
 
 // Anything not in the map above — a genuinely unknown department, or the
@@ -32,10 +38,15 @@ const OTHER_COLORS: CardColors = { bg: "#e2e8f0", text: "#1e293b" };
 
 export const NO_DEPARTMENT = "No department";
 
-// Non-team departments that don't get a card of their own — same set
-// EmployeesTable.tsx used, preserved exactly. Still counted in the toolbar's
-// totals and still reachable via the department filter; just no card.
-const HIDDEN_DEPARTMENT_CARDS = new Set(["operations", "unassigned"]);
+// Non-team departments that don't get a card of their own. Returning null here
+// means "on no card", so anyone in one of these appears in the toolbar totals
+// and the department filter but on no card — which is exactly why Operations
+// was removed from this set on 2026-08-24: the request asks for an Operations
+// card, and its one employee was previously reachable on no card at all.
+//
+// "unassigned" stays hidden. It is not a department — it is the absence of one,
+// and it has its own NO_DEPARTMENT bucket below.
+const HIDDEN_DEPARTMENT_CARDS = new Set(["unassigned"]);
 
 export type EmployeeGroup = {
   key: string;
@@ -64,6 +75,9 @@ const NAMED_OTHER: { match: (dept: string) => boolean; key: string; title: strin
   { match: (d) => d === "finance", key: "finance", title: "Finance" },
   { match: (d) => d === "sales", key: "sales", title: "Sales" },
   { match: (d) => d === "executive leadership", key: "exec", title: "Executive Leadership" },
+  // NOT the same department as "Manufacturing Operations", which is a Shop
+  // delivery team resolved by teamFor() above and never reaches this list.
+  { match: (d) => d === "operations", key: "operations", title: "Operations" },
 ];
 
 /**
@@ -98,7 +112,7 @@ export function resolveEmployeeGroup(
 // departments, then any other real department A→Z, with "No department"
 // forced last — same ordering rule EmployeesTable.tsx used for its "extras".
 export function compareGroupOrder(a: string, b: string): number {
-  const fixed = [...EMPLOYEE_TEAMS.map((t) => t.schedulerCode), "growth", "finance", "sales", "exec"];
+  const fixed = [...EMPLOYEE_TEAMS.map((t) => t.schedulerCode), "growth", "sales", "finance", "exec", "operations"];
   const ai = fixed.indexOf(a);
   const bi = fixed.indexOf(b);
   if (ai !== -1 || bi !== -1) return (ai === -1 ? fixed.length : ai) - (bi === -1 ? fixed.length : bi);
