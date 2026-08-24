@@ -1,8 +1,9 @@
 import { prisma } from "@/lib/prisma";
-import { SECTIONS, ETC_SECTIONS, PHASE_GROUPS, PARTS_COST_SECTION } from "@/lib/sections";
+import { SECTIONS, ETC_SECTIONS, PHASE_GROUPS, PARTS_COST_SECTION, SERVICE_AND_SPARE_PARTS_CODES } from "@/lib/sections";
 import { suggestNewEtc } from "@/lib/etc";
 import { validJobTypeFilter, compareJobIds } from "@/lib/job-filters";
 import { loadActualHoursBySection, loadMonthlyWorkedBySection } from "@/lib/actual-hours";
+import { classifyPunchCode } from "@/lib/paylocity-standard-rules";
 
 // Data layer for the "Job Hour Details" dashboard — a web recreation of the
 // Power BI "Job Hours Report — Management Level" drillthrough page. Sources every
@@ -16,7 +17,13 @@ export type SectionHours = {
   name: string;
   phase: string;
   group: string;
-  billingGroup: "Engineering" | "Shop";
+  // "Unclassified" (2026-08-24) is for punch codes with no ETC/Quoted column —
+  // Service (80-*) and Spare Parts (90-*) whose Section+Function pair the
+  // approved rule book does not list. They are REAL hours and must be visible,
+  // but attributing them to Engineering or Shop would be inventing a business
+  // rule, so they carry their own value and the billing-group rollup below
+  // (which maps only Engineering and Shop) leaves them out of both totals.
+  billingGroup: "Engineering" | "Shop" | "Unclassified";
   quoted: number;
   etc: number;
   actual: number;
@@ -27,8 +34,53 @@ export type SectionHours = {
 // re-type sections.ts's private ENGINEERING_CODES set, which could silently drift
 // from the real one with no compiler warning — exactly the "signed-off number
 // disagrees across screens" failure class this app has hit before).
+/** Phase band for punch codes with no ETC/Quoted column of their own. */
+const OFF_GRID_PHASE = "Service & Spare Parts";
+
 const BILLING_GROUP_BY_CODE = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]));
+// NOTE the fallback: "Shop" is correct only for the 17 SECTIONS codes, every one
+// of which HAS an ETC_SECTIONS entry, so the ?? never actually fires for them. It
+// must not be reused for anything else — an off-grid code would be silently
+// attributed to Shop. Those go through billingGroupForOffGridCode below.
 const billingGroupOf = (code: string): "Engineering" | "Shop" => BILLING_GROUP_BY_CODE.get(code) ?? "Shop";
+
+// ── Off-grid punch codes: Service (80-*), Spare Parts (90-*) (2026-08-24) ───
+//
+// Reported as "2026 Service punches are missing from Job Hours". They were never
+// missing from the DATA: 1,441.5h of 2026 section-80/90 punches sit in
+// JobHoursDetail and actual-hours.ts already returns them in actualBySection.
+// They were dropped one step later — the section list was built by iterating the
+// fixed 17-code SECTIONS array, and Service/Spare Parts deliberately have no
+// SECTIONS row (no ETC/Quoted column exists for them; see sections.ts). The keys
+// were sitting in the map and nothing ever read them.
+//
+// Rather than add rows to SECTIONS — which ETC_SECTIONS and ETC_TRACKED_CODES
+// derive from, so it would add columns to the signed-off ETC grid and change the
+// quoted/ETC formulas, the exports and the permissions matrix (20 importers) —
+// the extra rows are appended HERE, in the one place that needs them.
+//
+// SCOPED to Service/Spare Parts, via sections.ts's own
+// SERVICE_AND_SPARE_PARTS_CODES — deliberately NOT "everything SECTIONS omits".
+//
+// That distinction is the whole care in this change. Measured all-time, codes with
+// no SECTIONS row carry 3,557h of Service/Spare Parts and 54,112h of OTHER
+// off-grid codes (10-414 alone is 11,006h; 40-311 is 12,620h). Taking every
+// off-grid code would have added ~57.7k hours here, more than doubling this
+// chart's Engineering/Shop actuals, while the Projects grid and
+// JobMonthlyActualHours went on reporting the old figures from their own narrow
+// allowlist (JOB_DASHBOARD_HOURS_CODES) — the "signed-off number disagrees across
+// screens" failure this file already carries a warning about.
+//
+// So this fixes what was reported and nothing more. The 54,112h is real and worth
+// its own decision, but that is a reporting-scope change across several pages,
+// not a bug fix.
+function billingGroupForOffGridCode(code: string): "Engineering" | "Shop" | "Unclassified" {
+  const dept = classifyPunchCode(code).department;
+  // Only the rule book may decide this. "PM" has no billing group on this chart,
+  // and "Undefined" means the pair is not in the rule book at all — both stay out
+  // of the Engineering/Shop totals rather than being guessed into one.
+  return dept === "Engineering" || dept === "Shop" ? dept : "Unclassified";
+}
 
 export type JobHoursDashboard = {
   job: { id: number; jobId: string; jobName: string; customer: string | null; status: string };
@@ -156,7 +208,7 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
     }
   }
 
-  const sections: SectionHours[] = SECTIONS.map((s) => ({
+  const gridSections: SectionHours[] = SECTIONS.map((s) => ({
     code: s.code,
     name: s.name,
     phase: s.phase,
@@ -166,6 +218,32 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
     etc: etcBy.get(s.code) ?? 0,
     actual: actualBy.get(s.code) ?? 0,
   }));
+
+  // Off-grid codes carrying real hours — see billingGroupForOffGridCode above.
+  // quoted/etc are 0 by construction, not by omission: no ETC or Quoted column
+  // exists for these phases, so a diff badge showing the whole actual as "over"
+  // is the truth about unbudgeted work rather than a gap in this query.
+  const gridCodes = new Set(SECTIONS.map((s) => s.code));
+  const offGridSections: SectionHours[] = [...actualBy.entries()]
+    .filter(([code, hours]) => !gridCodes.has(code) && SERVICE_AND_SPARE_PARTS_CODES.has(code) && hours > 0)
+    .sort(([a], [b]) => a.localeCompare(b))
+    .map(([code, hours]) => {
+      const c = classifyPunchCode(code);
+      return {
+        code,
+        name: c.taskDescription,
+        // Its own phase band, so these cluster together on the tiered axis
+        // instead of interleaving with the quoted grid sections.
+        phase: OFF_GRID_PHASE,
+        group: c.department,
+        billingGroup: billingGroupForOffGridCode(code),
+        quoted: 0,
+        etc: 0,
+        actual: hours,
+      };
+    });
+
+  const sections: SectionHours[] = [...gridSections, ...offGridSections];
 
   // Billing-group rollups (Engineering / Shop).
   const bgMap = new Map<string, { quoted: number; etc: number; actual: number }>();
