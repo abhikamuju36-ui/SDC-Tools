@@ -16,6 +16,9 @@ import { sequenced, abandonLane } from "@/lib/request-sequence";
 import { loadTmHoursDrill, loadTmPartsDrill } from "@/lib/tm-drill-actions";
 import { sumTmHoursDrill, sumTmPartsDrill, reconcileTmDrill } from "@/lib/tm-drill-reconcile";
 import { tmDrawerReducer, tmDrawerOpenKey, tmDrawerRowState, type TmDrillKey } from "@/lib/tm-drawer-state";
+// Pure, imports nothing — safe in a client bundle, and the SAME validator the
+// page and the drill actions use, so all three agree on what a valid date is.
+import { isValidCalendarDate } from "@/lib/tm-drill-validate";
 // Type-only from tm-report.ts/tm-hours.ts is deliberate — both modules touch
 // server-only I/O at load time (tm-report.ts: the Node-only Power BI client;
 // tm-hours.ts: `server-only` + Prisma), and a VALUE import here would pull
@@ -188,6 +191,14 @@ export function TmReportClient({
   }
 
   function setDate(key: "start" | "end", value: string) {
+    // Navigate only on a COMPLETE, real date. A <input type="date"> fires change
+    // with value="" while the field is mid-edit or being cleared, and pushing that
+    // put an empty `start`/`end` in the URL, which the server could only read as
+    // "not supplied" — so it fell back to the DEFAULT window. Editing one endpoint
+    // therefore threw away the other end of the range the user had just set, and
+    // the numbers jumped to a period nobody asked for. Ignoring incomplete input
+    // leaves the committed range in place until a valid replacement exists.
+    if (!isValidCalendarDate(value)) return;
     const currentQs = searchParams.toString();
     const qs = nextParams(currentQs);
     qs.set(key, value);
@@ -236,9 +247,17 @@ export function TmReportClient({
   return (
     <div className="flex flex-col gap-5">
       {/* Filters — one unified "Job Status, Job" hierarchical picker (matching
-          the Power BI T&M page's own slicer) plus the ETC start/end date
-          range. Changing either immediately updates all metrics below via a
-          URL navigation. */}
+          the Power BI T&M page's own slicer) plus the start/end date range.
+          Changing either immediately updates all metrics below via a URL
+          navigation.
+
+          Labelled "ETC Start Date"/"ETC End Date" until 2026-08-24, which
+          implied these picked Monthly ETC months. They do not: the range is
+          applied to each metric's own business date — Paylocity workDate for the
+          four Hours cards, and the invoice/transaction date behind the Power BI
+          measures for the three dollar cards. Only the DEFAULT start is
+          ETC-derived (see tm/page.tsx), and a default's provenance is not what a
+          filter's label should describe. */}
       <div className="flex flex-wrap items-end gap-3">
         <div className="flex flex-col gap-1">
           <span className="text-xs font-semibold text-sdc-gray-600">Job Status, Job</span>
@@ -246,7 +265,7 @@ export function TmReportClient({
         </div>
         <div className="flex flex-col gap-1">
           <label className={LABEL} htmlFor="tm-start-date">
-            ETC Start Date
+            Start Date
           </label>
           <input
             id="tm-start-date"
@@ -259,7 +278,7 @@ export function TmReportClient({
         </div>
         <div className="flex flex-col gap-1">
           <label className={LABEL} htmlFor="tm-end-date">
-            ETC End Date
+            End Date
           </label>
           <input
             id="tm-end-date"

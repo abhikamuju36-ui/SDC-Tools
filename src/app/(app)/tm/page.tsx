@@ -3,6 +3,7 @@ import { requirePagePermission } from "@/lib/require-permission";
 import { listDashboardJobs } from "@/lib/job-hours-dashboard";
 import { fetchTmMetrics, fetchTmDateDefaults, type TmMetrics, type TmPartsMetrics } from "@/lib/tm-report";
 import { getTmHoursTotals, type TmHoursTotals } from "@/lib/tm-hours";
+import { resolveTmDateRange } from "@/lib/tm-drill-validate";
 import { TmReportClient } from "@/components/TmReportClient";
 
 // "T&M" — native recreation of the Power BI "Job Hours Report - Management
@@ -29,14 +30,20 @@ export default async function TmPage({
   // PK here too, not zero.
   const jobPks = (selectedJobIds.length > 0 ? jobs.filter((j) => selectedJobIds.includes(j.jobId)) : jobs).map((j) => j.id);
 
-  // Defaults to a 90-day window ending at the model's own "Hours Refreshed
-  // Thru" date when nothing's in the URL yet, and to the day after the last
-  // ETC snapshot for the start — matching the Power BI page's own reporting
-  // window (Estimated to Complete As Of Date -> Hours Refreshed Thru).
+  // With nothing in the URL yet, the window matches the Power BI page's own
+  // reporting window: [Estimated to Complete As Of Date] -> [Hours Refreshed
+  // Thru]. (Described here as "a 90-day window" until 2026-08-24 — it never was;
+  // it is whatever those two measures happen to be, currently a two-month span.)
+  // That ETC-derived START is the only ETC thing about this filter: the range is
+  // applied to transaction and work dates, never to ETC months — which is why the
+  // input labels no longer say "ETC".
   const fallbackEnd = dateDefaults.hoursRefreshedThru ?? new Date().toISOString().slice(0, 10);
   const fallbackStart = dateDefaults.asOfDate ?? fallbackEnd;
-  const startDate = start && /^\d{4}-\d{2}-\d{2}$/.test(start) ? start : fallbackStart;
-  const endDate = end && /^\d{4}-\d{2}-\d{2}$/.test(end) ? end : fallbackEnd;
+
+  // Real calendar validation, one endpoint independent of the other, and an
+  // inverted range read in the order that can match records — see
+  // resolveTmDateRange's own header for the two bugs this replaced.
+  const { startDate, endDate } = resolveTmDateRange(start, end, fallbackStart, fallbackEnd);
 
   // Two independent sources, two independent failure modes: a Power BI outage
   // shouldn't blank out hours that a local database read already has, and
