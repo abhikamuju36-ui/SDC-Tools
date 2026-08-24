@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { getJobPartsCost, type PartsCostLine } from "@/lib/sync-totaleto";
 import { computePartsBudgetProjection, purchasedTotal, actualTotal } from "@/lib/parts-budget-projection";
 import { withTimeoutOrNull, UPSTREAM_BUDGET_MS } from "@/lib/with-timeout";
+import { mapWithConcurrency } from "@/lib/map-concurrent";
 // The type and the pure rounding helper live in a sibling module with no
 // "server-only"/Prisma/TotalETO dependency (see its own header) so a CLIENT
 // component (PartsCostSummary.tsx) can import `reconcilePartsCostRounding`
@@ -91,6 +92,9 @@ async function resolveEtcMonth(jobIds: number[], asOfDate: Date | undefined): Pr
   return latest?.month ?? null;
 }
 
+/** How many per-job Total ETO parts calls may be in flight at once. See the note at the call site. */
+const PARTS_FETCH_CONCURRENCY = 6;
+
 export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate?: Date }): Promise<PartsCostFinancials> {
   if (jobIds.length === 0) {
     return { budget: null, invoiced: 0, leftToInvoice: 0, etc: null, totalSpent: 0, projection: 0, variance: null, variancePct: null, failedJobs: 0, lineCount: 0, lines: [] };
@@ -100,11 +104,21 @@ export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate
   const quoted = jobs.reduce((s, j) => s + Number(j.costQuoted ?? 0), 0);
   const budget = quoted > 0 ? quoted : null;
 
-  const perJob = await Promise.all(
-    jobs.map((j) =>
-      withTimeoutOrNull(`TotalETO parts (job ${j.jobId})`, UPSTREAM_BUDGET_MS, () => getJobPartsCost(j.jobId), (e) =>
-        console.error(`getPartsCostFinancials: getJobPartsCost failed for job ${j.jobId}:`, e),
-      ),
+  // Bounded rather than Promise.all (2026-08-24). This is one live Total ETO
+  // call PER JOB, so an unbounded map meant a 59-job selection became 59
+  // simultaneous upstream requests — which is exactly why the caller used to cap
+  // parts at 12 jobs and show $0 above that. Capping the fan-out here is what
+  // makes lifting that cap defensible: a whole-Active-group selection now
+  // resolves in waves instead of a thundering herd.
+  //
+  // 6 is a deliberate compromise, not a tuned figure: high enough that 59 jobs
+  // is ~10 waves rather than 59 sequential round trips, low enough to stay well
+  // inside what Total ETO handles comfortably. Each call keeps its own
+  // UPSTREAM_BUDGET_MS timeout, so one wedged job delays a slot, never the
+  // whole aggregate.
+  const perJob = await mapWithConcurrency(jobs, PARTS_FETCH_CONCURRENCY, (j) =>
+    withTimeoutOrNull(`TotalETO parts (job ${j.jobId})`, UPSTREAM_BUDGET_MS, () => getJobPartsCost(j.jobId), (e) =>
+      console.error(`getPartsCostFinancials: getJobPartsCost failed for job ${j.jobId}:`, e),
     ),
   );
   const failedJobs = perJob.filter((v) => v == null).length;

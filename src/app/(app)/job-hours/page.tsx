@@ -82,7 +82,16 @@ export default async function JobHoursPage({
   //    but actually means "we couldn't ask". Failures are counted now and shown.
   const isMulti = selectedJobIds.length > 1;
   const singleJobId = selectedJobIds.length === 1 ? selectedJobIds[0] : null;
-  const PARTS_MAX_JOBS = 12;
+  // Was 12, which is what made a whole-Active-group selection show $0 across
+  // every Parts Cost figure (reported 2026-08-24). The cap existed for a real
+  // reason — one live Total ETO call per job, and an unbounded Promise.all
+  // turning 59 jobs into 59 simultaneous upstream requests — so it is lifted
+  // only now that getPartsCostFinancials bounds that fan-out to 6 at a time.
+  //
+  // 100 rather than removed outright: the whole Active group (59) has to work,
+  // but a select-everything on a 300-job list is still 300 upstream calls and
+  // deserves a backstop rather than a stampede.
+  const PARTS_MAX_JOBS = 100;
   const partsCapped = !!data && data.jobRefs.length > PARTS_MAX_JOBS;
 
   // ── The two TotalETO reads are CONCURRENT and TIME-BOXED (§69) ─────────────
@@ -209,12 +218,19 @@ export default async function JobHoursPage({
           <JobHoursDashboard
             data={data}
             hoursDetail={hoursDetail}
-            parts={parts ? { financials: parts, jobCount: data.jobRefs.length } : null}
+            // `partsCapped` forces null rather than passing the all-zero stub
+            // below. That stub used to reach the card, which then rendered
+            // Invoiced $0 / Left to invoice $0 / Spent $0 with the explanation
+            // relegated to a note underneath — indistinguishable from "this
+            // selection genuinely bought nothing", and read (reasonably) as
+            // broken aggregation. A number nobody computed must not be shown at
+            // all.
+            parts={parts && !partsCapped ? { financials: parts, jobCount: data.jobRefs.length } : null}
           />
 
           {partsCapped && (
             <p className="mt-6 rounded-lg border border-sdc-border bg-sdc-gray-50 px-4 py-3 text-sm text-sdc-gray-600">
-              Parts Cost is hidden for selections above 12 jobs — the figures come from one live Total ETO call per job, and a
+              Parts Cost is hidden for selections above 100 jobs — the figures come from one live Total ETO call per job, and a
               selection this size would hammer it for a total nobody reads per job anyway. Narrow the selection to see parts dollars.
             </p>
           )}
