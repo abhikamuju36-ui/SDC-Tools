@@ -10,14 +10,7 @@ import type { HiringPosition } from "@/lib/hiring-positions";
 import { employeeCapacityHours, hiringCapacityHours } from "@/lib/workforce-capacity";
 import { hasYearPolicy } from "@/lib/workforce-capacity-policy";
 import { hours as fmtHours } from "@/components/ui/format";
-import { countOpenings, openingsFor } from "@/lib/hiring-openings";
-// Hiring is deliberately NOT given a solid color band like the workforce
-// groups (2026-08-21): it isn't a group of people, it's a list of open
-// requisitions, and a fourth solid band read as a fourth department. It uses
-// this app's existing "open seat" language instead -- a DASHED border and
-// green accents, the same visual grammar EmployeesCards already uses for its
-// per-department Hiring and Placeholders sections.
-const HIRING_ACCENT = "text-sdc-green-text";
+import { countOpenings } from "@/lib/hiring-openings";
 
 // Card render order (2026-08-19, by request): PM, Engineering, Shop, then
 // whatever's left (just "other," if it has any cards) -- Hiring Positions is
@@ -55,42 +48,23 @@ type WorkforceSummary = {
   cards: DepartmentCard[];
 };
 
-
-// The small caps label over each region. Quiet on purpose -- it is there to
-// say "these two things are different kinds of thing", not to compete with
-// the cards' own headers.
-function RegionLabel({ children }: { children: React.ReactNode }) {
-  return <div className="mb-1.5 text-label font-bold uppercase tracking-wider text-sdc-muted">{children}</div>;
-}
-
 export type CapacityDrillTarget = { title: string; subtitle?: string; employees: EmployeeRow[]; hiringPositions: HiringPosition[] };
 
 export function WorkforceSummaryCards({
   rows,
   placeholders,
   hiringPositions,
-  onSelectHiring,
   year,
   onSelectCapacity,
-  expandedGroup,
 }: {
   rows: EmployeeRow[];
   placeholders: SchedulerPlaceholder[];
   /** Already OPEN positions only — see EmployeesGrid.tsx's `openHiring` derivation off getHiringPositions(). */
   hiringPositions: HiringPosition[];
-  /** Drills into the Hiring Positions list (Level 2 equivalent for that card). */
-  onSelectHiring: () => void;
   /** For workforce-capacity-policy.ts/workforce-capacity.ts. */
   year: number;
   /** Opens the "how was this total built" drill (Level 3, a different question from onSelectGroup/onSelectDepartment's "who"). */
   onSelectCapacity: (target: CapacityDrillTarget) => void;
-  /**
-   * Which card is currently EXPANDED below this grid (2026-08-21) — a group
-   * key, "hiring", or null. Purely the pressed/ringed state of the card that
-   * opened the expansion; these cards render identically either way, since
-   * the overview deliberately stays on screen while a group is open.
-   */
-  expandedGroup?: WorkforceGroupKey | "hiring" | null;
 }) {
   const summaries = useMemo<WorkforceSummary[]>(() => {
     const cards = buildDepartmentCards(rows, placeholders);
@@ -120,17 +94,6 @@ export function WorkforceSummaryCards({
   // but no specific department yet — a valid, expected intermediate state
   // per the task's own two-step "group, then optionally deeper" assignment).
 
-  const hiringByGroup = useMemo(() => {
-    const m = new Map<WorkforceGroupKey, number>();
-    for (const p of hiringPositions) {
-      if (!p.workforceGroup) continue;
-      // Credited to the ROLLUP group: a General Engineering opening counts
-      // toward the Engineering card's hiring total.
-      const key = rollupGroup(p.workforceGroup);
-      m.set(key, (m.get(key) ?? 0) + openingsFor(p));
-    }
-    return m;
-  }, [hiringPositions]);
 
   const unassignedHiring = countOpenings(hiringPositions.filter((p) => !p.workforceGroup));
 
@@ -209,81 +172,14 @@ export function WorkforceSummaryCards({
         )}
       </div>
 
-      {/* The per-group summary cards that used to sit here are gone (2026-08-24,
-          by request): the fully expanded department cards below now show every
-          group with its people, so a card per group above them was the same
-          information twice.
+      {/* Both the per-group summary cards and the Hiring Positions aside that
+          used to sit here are gone (2026-08-24). The cards duplicated the
+          expanded department cards below; the aside moved to its own full-width
+          band after Execution and Operations (HiringPositionsSummary), because
+          once the cards went it was a narrow column with an empty row beside it.
 
-          What is deliberately KEPT is everything those cards were not: the
-          company-wide KPI strip above (headcount / open positions / planned /
-          hrs-per-year, with its capacity drill-through) and the Planned aside
-          below, neither of which the expanded sections carry.
-
-          The aside is no longer half of a two-region row, so it is a plain block
-          rather than a flex sibling — and it keeps its own width cap so it does
-          not stretch across the page now that nothing sits beside it. */}
-      <div>        {openPositions > 0 && (
-          <>
-            {/* No divider any more — it separated this aside from the summary
-                cards that used to sit to its left. */}
-            <aside className="min-w-0 max-w-xs">
-              <RegionLabel>Planned</RegionLabel>
-              <section
-                className={`flex flex-col overflow-hidden rounded-xl border border-dashed bg-white ${
-                  expandedGroup === "hiring" ? "border-sdc-blue ring-2 ring-sdc-blue/40" : "border-sdc-green"
-                }`}
-              >
-                <button
-                  type="button"
-                  onClick={onSelectHiring}
-                  aria-expanded={expandedGroup === "hiring"}
-                  title={expandedGroup === "hiring" ? "Collapse hiring positions" : "Show all open hiring positions below"}
-                  className={`flex flex-col gap-1 border-b border-dashed border-sdc-green bg-sdc-green-bg/50 px-4 py-3 text-left motion-interactive hover:brightness-95 ${HIRING_ACCENT}`}
-                >
-                  <h3 className="text-sm font-bold uppercase tracking-wide">Hiring Positions</h3>
-                  <div className="flex items-baseline gap-1 text-xs">
-                    <span className="text-lg font-bold tabular-nums">{openPositions}</span>
-                    <span>open</span>
-                  </div>
-                  <span className="text-label text-sdc-muted">Not yet people — open requisitions</span>
-                </button>
-                {hasCapacityPolicy && (
-                  <button
-                    type="button"
-                    onClick={() => onSelectCapacity({ title: "Hiring Positions — Capacity", employees: [], hiringPositions })}
-                    title="See how this capacity total was built, by open position"
-                    className="flex items-baseline gap-1.5 border-b border-dashed border-sdc-border bg-sdc-gray-50 px-4 py-1.5 text-left text-xs text-sdc-muted hover:bg-sdc-blue-light/30"
-                  >
-                    <span className="font-bold tabular-nums text-sdc-green-text">+{fmtHours(hiringCapacityHoursTotal)}</span>
-                    <span>hiring hrs/yr</span>
-                  </button>
-                )}
-                <ul className="flex-1 p-1.5">
-                  {/* Rolled-up groups are skipped: their openings are credited
-                      to the group they roll into, so a General Engineering row
-                      here would always read 0 and imply there were none. */}
-                  {WORKFORCE_GROUPS.filter((g) => g.key !== "other" && !g.rollsUpTo).map((g) => {
-                    const count = hiringByGroup.get(g.key) ?? 0;
-                    if (count === 0) return null;
-                    return (
-                      <li key={g.key} className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-sm">
-                        <span className="min-w-0 truncate text-sdc-navy">{g.title}</span>
-                        <span className="shrink-0 font-semibold tabular-nums text-sdc-muted">{count}</span>
-                      </li>
-                    );
-                  })}
-                  {unassignedHiring > 0 && (
-                    <li className="flex items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-sm">
-                      <span className="min-w-0 truncate text-sdc-navy">Unassigned</span>
-                      <span className="shrink-0 font-semibold tabular-nums text-sdc-muted">{unassignedHiring}</span>
-                    </li>
-                  )}
-                </ul>
-              </section>
-            </aside>
-          </>
-        )}
-      </div>
+          What is left is the company-wide KPI strip above — the one thing on this
+          page the expanded sections do not carry. */}
     </div>
   );
 }

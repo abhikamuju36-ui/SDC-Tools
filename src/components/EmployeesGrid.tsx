@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { CARD_RENDER_ORDER } from "@/components/WorkforceSummaryCards";
 import { buildDepartmentCards } from "@/lib/employee-department-cards";
 import { EmployeesCards } from "@/components/EmployeesCards";
+import { HiringPositionsSummary } from "@/components/HiringPositionsSummary";
 import { WorkforceSummaryCards } from "@/components/WorkforceSummaryCards";
 import { EmployeeDetailDrawer } from "@/components/EmployeeDetailDrawer";
 import { HiringPositionsList } from "@/components/HiringPositionsList";
@@ -501,10 +502,8 @@ export function EmployeesGrid({
         rows={visible}
         placeholders={placeholders}
         hiringPositions={openHiring}
-        onSelectHiring={openHiringView}
         year={year}
         onSelectCapacity={setCapacityDrill}
-        expandedGroup={showHiring ? "hiring" : null}
       />
 
       {/* The expansion (2026-08-21) — rendered UNDER the overview cards, which
@@ -513,20 +512,7 @@ export function EmployeesGrid({
           Engineering / Controls Engineering" trail; now every department of
           the clicked group, with its people, opens right here in the same
           Employees tab and the other groups are still one click away. */}
-      {showHiring ? (
-        <div className="mt-4">
-          <GroupHeader title="Hiring Positions" activeCount={0} hiringCount={countOpenings(openHiring)} departmentCount={0} onCollapse={collapse} />
-          <HiringPositionsList
-            positions={hiring}
-            canAssign={canAssignHiring}
-            canCreate={canAssignHiring}
-            onSelect={selectHiringPosition}
-            onAssigned={applyAssignment}
-            onVisibilityChanged={(sourceId, isVisible) => applyHiringUpdate(sourceId, { isVisible })}
-            onCreate={() => setCreatingHiringPosition(true)}
-          />
-        </div>
-      ) : (
+      {(
         bands.map((band) => (
           <section key={band.key} className="mt-6">
             {/* The band heading — a rule across the full width and uppercase
@@ -590,6 +576,37 @@ export function EmployeesGrid({
             </div>
           </section>
         ))
+      )}
+
+      {/* Hiring Positions last, after Execution and Operations (2026-08-24).
+          Full width, and hidden entirely when nothing is open — the same rule the
+          old aside followed. */}
+      <HiringPositionsSummary
+          hiringPositions={openHiring}
+          year={year}
+          onSelectHiring={openHiringView}
+          onSelectCapacity={setCapacityDrill}
+        expanded={showHiring}
+      />
+
+      {/* The list opens BELOW the summary that toggles it, and the workforce
+          bands stay on screen (2026-08-24). It used to replace them and render
+          at the top — which was fine while the summary card was up there too,
+          and disorienting once the summary moved to the bottom: you clicked at
+          the foot of the page and the content you were looking at vanished. */}
+      {showHiring && (
+        <div className="mt-4">
+          <GroupHeader title="Hiring Positions" activeCount={0} hiringCount={countOpenings(openHiring)} departmentCount={0} onCollapse={collapse} />
+          <HiringPositionsList
+            positions={hiring}
+            canAssign={canAssignHiring}
+            canCreate={canAssignHiring}
+            onSelect={selectHiringPosition}
+            onAssigned={applyAssignment}
+            onVisibilityChanged={(sourceId, isVisible) => applyHiringUpdate(sourceId, { isVisible })}
+            onCreate={() => setCreatingHiringPosition(true)}
+          />
+        </div>
       )}
 
       {selectedEmployee && (
