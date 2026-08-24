@@ -24,7 +24,10 @@ function timeAgo(ts) {
 // The status pill moved out of the footer and onto the bottom row beside "last
 // opened", which removed a whole band without losing any information.
 export default function AppCard({ app, lastOpened, onOpen }) {
-  const { id, name, description, status, color } = app
+  // `description` is deliberately NOT destructured: it is no longer shown on
+  // the card (2026-08-24, by request), but the field itself stays on the app
+  // object because App.jsx filters the header search on it.
+  const { id, name, status, color } = app
   const openedAgo = timeAgo(lastOpened?.[id])
   const canOpen = status === 'running'
 
@@ -57,11 +60,6 @@ export default function AppCard({ app, lastOpened, onOpen }) {
         </div>
         <h2 className="card-name">{name}</h2>
       </div>
-
-      {/* Rendered unconditionally, unlike before: the element carries a
-          two-line min-height, so a card with no description (Reports today)
-          stays the same height as its neighbours instead of collapsing. */}
-      <p className="card-desc">{description}</p>
 
       <div className="card-status">
         <div className={`status-pill status-${status}`}>

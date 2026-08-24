@@ -13,7 +13,7 @@ const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'ca
   id,
   name: {
     assemblies: 'Assemblies Library',
-    readiness:  'Project Build Status Dashboard',
+    readiness:  'Build Readiness',
     scheduler:  'Project Planner',
     statelogic: 'State Logic Builder',
     calendar:   'Calendar',
