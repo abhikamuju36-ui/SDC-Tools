@@ -396,6 +396,25 @@ export function EmployeesGrid({
   // way to see it — "Show all groups" in its header restores the full board.
   const shownSections = group ? groupSections.filter((g) => g.key === group) : groupSections;
 
+  // ── Two top-level bands (2026-08-24, by request) ──────────────────────────
+  //
+  // Execution = Project Management, Engineering, Shop. Operations = the
+  // back-office groups. Derived from isExecutionGroup(), the SAME predicate the
+  // Entire Team / Execution Team toggle already uses, rather than a second list
+  // of group keys — so the band a group appears in and the scope it belongs to
+  // can never disagree.
+  //
+  // It also makes the toggle fall out for free: on Execution Team, `visible`
+  // holds no back-office rows, so those sections are empty, get dropped, and the
+  // Operations band renders nothing at all. No separate hiding rule.
+  const bands = [
+    { key: "execution", title: "Execution", blurb: "Project Management, Engineering and Shop" },
+    { key: "operations", title: "Operations", blurb: "Growth, Finance, Executive Leadership and Operations" },
+  ].map((b) => ({
+    ...b,
+    sections: shownSections.filter((sec) => (b.key === "execution" ? isExecutionGroup(sec.key) : !isExecutionGroup(sec.key))),
+  })).filter((b) => b.sections.length > 0);
+
   const selectedEmployeeGroup = selectedEmployee ? resolveEmployeeGroup(selectedEmployee) : null;
 
 
@@ -512,30 +531,49 @@ export function EmployeesGrid({
           />
         </div>
       ) : (
-        shownSections.map((sec) => (
-          <div key={sec.key} className="mt-4">
-            <GroupHeader
-              title={workforceGroupLongTitle(sec.key)}
-              activeCount={sec.rows.filter((r) => r.active).length}
-              hiringCount={countOpenings(sec.hiring)}
-              departmentCount={new Set(sec.rows.map((r) => resolveEmployeeGroup(r)?.key).filter(Boolean)).size}
-              // Only the narrowed view offers a way back out; the default board
-              // has nothing to collapse to.
-              onCollapse={group ? collapse : undefined}
-            />
-            <EmployeesCards
-              rows={sec.rows}
-              placeholders={sec.placeholders}
-              canAddEmployees={canAddEmployees}
-              onSelectEmployee={selectEmployee}
-              focusDepartment={group ? focusDepartment : null}
-              hiringPositions={sec.hiring}
-              onSelectHiringPosition={selectHiringPosition}
-              year={year}
-              onSelectCapacity={setCapacityDrill}
-              canAssignHiring={canAssignHiring}
-            />
-          </div>
+        bands.map((band) => (
+          <section key={band.key} className="mt-6">
+            {/* The band heading. Deliberately louder than GroupHeader below it —
+                a rule across the full width and uppercase tracking — so the page
+                reads as two places (execution work, business support) with the
+                workforce groups nested inside, rather than one long run of
+                equally-weighted cards. */}
+            <div className="mb-3 flex items-baseline gap-3 border-b-2 border-sdc-navy pb-1.5">
+              <h2 className="text-base font-bold uppercase tracking-wider text-sdc-navy">{band.title}</h2>
+              <span className="text-xs text-sdc-muted">{band.blurb}</span>
+              <span className="ml-auto text-xs text-sdc-muted">
+                <span className="font-bold tabular-nums text-sdc-navy">
+                  {band.sections.reduce((n, sec) => n + sec.rows.filter((r) => r.active).length, 0)}
+                </span>{" "}
+                active
+              </span>
+            </div>
+            {band.sections.map((sec) => (
+              <div key={sec.key} className="mt-4">
+                <GroupHeader
+                  title={workforceGroupLongTitle(sec.key)}
+                  activeCount={sec.rows.filter((r) => r.active).length}
+                  hiringCount={countOpenings(sec.hiring)}
+                  departmentCount={new Set(sec.rows.map((r) => resolveEmployeeGroup(r)?.key).filter(Boolean)).size}
+                  // Only the narrowed view offers a way back out; the default board
+                  // has nothing to collapse to.
+                  onCollapse={group ? collapse : undefined}
+                />
+                <EmployeesCards
+                  rows={sec.rows}
+                  placeholders={sec.placeholders}
+                  canAddEmployees={canAddEmployees}
+                  onSelectEmployee={selectEmployee}
+                  focusDepartment={group ? focusDepartment : null}
+                  hiringPositions={sec.hiring}
+                  onSelectHiringPosition={selectHiringPosition}
+                  year={year}
+                  onSelectCapacity={setCapacityDrill}
+                  canAssignHiring={canAssignHiring}
+                />
+              </div>
+            ))}
+          </section>
         ))
       )}
 
