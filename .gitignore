@@ -49,7 +49,10 @@ next-env.d.ts
 
 # Local source workbooks and design references — company financial data,
 # never committed. Migration/verification scripts read them from disk.
+# Both spreadsheet extensions: the Paylocity punch exports come out as
+# legacy .xls, which slipped past an .xlsx-only rule (2026-08-24).
 *.xlsx
+*.xls
 /Old ETC Sheets/
 /old standard sheets/
 /new design/
