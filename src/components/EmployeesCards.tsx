@@ -14,6 +14,7 @@ import { employeeCapacityHours, hiringCapacityHours } from "@/lib/workforce-capa
 import { hasYearPolicy } from "@/lib/workforce-capacity-policy";
 import { hours as fmtHours } from "@/components/ui/format";
 import type { CapacityDrillTarget } from "@/components/WorkforceSummaryCards";
+import { countOpenings, openingsSuffix } from "@/lib/hiring-openings";
 
 export { DASH };
 export type { EmployeeRow };
@@ -125,7 +126,11 @@ export function EmployeesCards({
         const activeCount = card.people.filter((p) => p.active).length;
         const inactiveCount = card.people.length - activeCount;
         const cardHiring = hiringByDepartment.get(card.key) ?? [];
-        const plannedCount = activeCount + cardHiring.length;
+        // Openings, not rows (2026-08-24) — a Quantity 2 requisition adds 2 to
+        // this department's planned headcount. Computed once here and reused
+        // below so the badge and the planned figure can never disagree.
+        const cardHiringOpenings = countOpenings(cardHiring);
+        const plannedCount = activeCount + cardHiringOpenings;
         const hasCapacityPolicy = year != null && hasYearPolicy(year);
         const cardCurrentHours = hasCapacityPolicy ? employeeCapacityHours(activeCount, year) : 0;
         const cardHiringHours = hasCapacityPolicy ? hiringCapacityHours(cardHiring, year) : 0;
@@ -151,10 +156,10 @@ export function EmployeesCards({
                   <span>inactive</span>
                 </>
               )}
-              {cardHiring.length > 0 && (
+              {cardHiringOpenings > 0 && (
                 <>
                   <span className="text-sdc-gray-400">·</span>
-                  <span className="font-bold tabular-nums text-sdc-green-text">{cardHiring.length}</span>
+                  <span className="font-bold tabular-nums text-sdc-green-text">{cardHiringOpenings}</span>
                   <span>hiring</span>
                   <span className="text-sdc-gray-400">·</span>
                   <span className="font-bold tabular-nums text-sdc-navy">{plannedCount}</span>
@@ -266,7 +271,10 @@ export function EmployeesCards({
                             className={`flex w-full items-center gap-1.5 rounded-md border-l-2 px-2 py-1.5 text-left text-sm text-sdc-navy hover:brightness-95 disabled:cursor-default ${style.accent} ${style.tint}`}
                             title={p.title}
                           >
-                            <span className="min-w-0 flex-1 truncate">{p.title}</span>
+                            <span className="min-w-0 flex-1 truncate">
+                              {p.title}
+                              {openingsSuffix(p.quantity)}
+                            </span>
                             <HiringStatusPill status={p.status} />
                             {!p.isVisible && (
                               <span className="shrink-0 rounded bg-sdc-yellow-bg px-1.5 py-0.5 text-micro font-bold uppercase tracking-wide text-sdc-yellow-text">

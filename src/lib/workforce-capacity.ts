@@ -56,16 +56,49 @@ export function employeeCapacityHours(activeCount: number, year: number): number
  * full April onward, a documented simplification matching the feature's
  * monthly granularity elsewhere.
  */
-export function hiringPositionCapacityHours(expectedStartDate: Date | null, year: number): number {
-  if (!expectedStartDate) return annualCapacityHours(year);
-  let total = 0;
-  for (let month = 1; month <= 12; month++) {
-    if (isStartedByMonth(expectedStartDate, year, month)) total += monthlyCapacityHours(year, month);
-  }
-  return Math.round(total * 10) / 10;
+export function hiringPositionCapacityHours(expectedStartDate: Date | null, year: number, openings = 1): number {
+  const perPerson = (() => {
+    if (!expectedStartDate) return annualCapacityHours(year);
+    let total = 0;
+    for (let month = 1; month <= 12; month++) {
+      if (isStartedByMonth(expectedStartDate, year, month)) total += monthlyCapacityHours(year, month);
+    }
+    return total;
+  })();
+  // The request's formula exactly: "Capacity for 1 person based on start date
+  // x Quantity". Multiplied AFTER the proration and rounded once at the end,
+  // so 2 openings is exactly twice one opening rather than twice a
+  // already-rounded figure — otherwise a x7 position drifts from 7x the
+  // single-opening number the drawer shows beside it.
+  //
+  // Defaults to 1 so every existing caller that has no quantity to pass keeps
+  // its current behaviour untouched.
+  return Math.round(perPerson * Math.max(0, openings) * 10) / 10;
 }
 
-/** Capacity hours for a SET of open hiring positions, for one year — the sum of hiringPositionCapacityHours over each. */
-export function hiringCapacityHours(positions: readonly { expectedStartDate: Date | null }[], year: number): number {
-  return Math.round(positions.reduce((sum, p) => sum + hiringPositionCapacityHours(p.expectedStartDate, year), 0) * 10) / 10;
+/**
+ * Capacity hours for a SET of open hiring positions, for one year — the sum of
+ * hiringPositionCapacityHours over each, each weighted by how many openings it
+ * still has.
+ *
+ * `remainingQuantity` is optional and treated as 1 when absent, which is what
+ * keeps this correct for callers holding a plain {expectedStartDate} shape and
+ * for rows predating the quantity columns. It is deliberately the REMAINING
+ * count, not `quantity`: an opening that has already been filled is a real
+ * employee now, counted under Current capacity, and counting it here as well
+ * would double it into Planned.
+ */
+export function hiringCapacityHours(
+  // `number | null` as well as optional: a value read straight off a database
+  // row can legitimately be null, and `?? 1` below already treats that as one
+  // opening. Narrowing it to `number | undefined` would only push a cast onto
+  // every caller holding real row data.
+  positions: readonly { expectedStartDate: Date | null; remainingQuantity?: number | null }[],
+  year: number,
+): number {
+  return (
+    Math.round(
+      positions.reduce((sum, p) => sum + hiringPositionCapacityHours(p.expectedStartDate, year, p.remainingQuantity ?? 1), 0) * 10,
+    ) / 10
+  );
 }

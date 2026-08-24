@@ -1038,6 +1038,26 @@ model HiringPositionAssignment {
   // redactHiddenPositions in hiring-positions.ts for how a hidden position's
   // identity (not its contribution to those totals) is kept from non-editors.
   isVisible        Boolean  @default(true)
+  // ── Quantity: one requisition, several openings (2026-08-24) ──────────────
+  //
+  // "If we need 2 Mechanical Engineers, create ONE position with Quantity = 2
+  // rather than the same position twice." So a row is no longer necessarily
+  // one head: `quantity` is how many were asked for, `filledCount` how many
+  // have been hired against it so far, and quantity - filledCount is what
+  // still counts toward Open Positions, Planned Headcount and Hiring Capacity
+  // hours. See lib/hiring-positions.ts's remainingQuantity, which is the only
+  // value anything downstream should read.
+  //
+  // Defaults of 1 and 0 are what make this safe to add to a live table: every
+  // existing row keeps meaning exactly "one unfilled opening", so no total
+  // moves the moment the column appears.
+  quantity           Int      @default(1)
+  // Never greater than `quantity` — enforced in the write path
+  // (hiring-actions.ts), not by a CHECK constraint, so the clamp can report a
+  // useful error instead of a driver-level failure. A position with
+  // filledCount == quantity has nothing left open and stops counting, which is
+  // the "only close it when ALL openings are filled" rule.
+  filledCount        Int      @default(0)
   updatedByEmail   String?  @db.VarChar(191)
   updatedAt        DateTime @updatedAt
   createdAt        DateTime @default(now())
@@ -1087,6 +1107,26 @@ model HiringPositionCreated {
   // Toggled only via setCreatedHiringPositionVisibility, never bundled into
   // the general edit-position write path (updateCreatedHiringPosition).
   isVisible          Boolean  @default(true)
+  // ── Quantity: one requisition, several openings (2026-08-24) ──────────────
+  //
+  // "If we need 2 Mechanical Engineers, create ONE position with Quantity = 2
+  // rather than the same position twice." So a row is no longer necessarily
+  // one head: `quantity` is how many were asked for, `filledCount` how many
+  // have been hired against it so far, and quantity - filledCount is what
+  // still counts toward Open Positions, Planned Headcount and Hiring Capacity
+  // hours. See lib/hiring-positions.ts's remainingQuantity, which is the only
+  // value anything downstream should read.
+  //
+  // Defaults of 1 and 0 are what make this safe to add to a live table: every
+  // existing row keeps meaning exactly "one unfilled opening", so no total
+  // moves the moment the column appears.
+  quantity           Int      @default(1)
+  // Never greater than `quantity` — enforced in the write path
+  // (hiring-actions.ts), not by a CHECK constraint, so the clamp can report a
+  // useful error instead of a driver-level failure. A position with
+  // filledCount == quantity has nothing left open and stops counting, which is
+  // the "only close it when ALL openings are filled" rule.
+  filledCount        Int      @default(0)
   createdByEmail     String?  @db.VarChar(191)
   updatedByEmail     String?  @db.VarChar(191)
   createdAt          DateTime @default(now())

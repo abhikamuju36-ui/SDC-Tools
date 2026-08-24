@@ -9,6 +9,7 @@ import { EMPLOYEE_TEAMS } from "@/lib/employee-teams";
 import type { HiringPosition } from "@/lib/hiring-positions";
 import { HiringStatusPill } from "@/components/HiringStatusPill";
 import { MANUAL_JOB_STATUSES, hiringStatusStyle, manualJobStatusOf } from "@/lib/hiring-position-status";
+import { openingsSummary } from "@/lib/hiring-openings";
 
 // Level 2 for the "Hiring Positions" card (2026-08-19) — every position
 // (workbook + manually created), bucketed by its current workforce group
@@ -177,9 +178,20 @@ export function HiringPositionsList({
                       type="button"
                       onClick={() => onSelect(p)}
                       className="min-w-0 flex-1 truncate text-left text-sm font-medium text-sdc-navy hover:text-sdc-blue hover:underline"
-                      title={p.title}
+                      title={openingsSummary(p) ? `${p.title} — ${openingsSummary(p)}` : p.title}
                     >
                       {p.title}
+                      {/* One row per requisition, never duplicated for display
+                          (the request is explicit about that) — the count rides
+                          the title as a badge instead. Hidden at quantity 1, so
+                          it marks out the multi-opening rows rather than
+                          decorating every row. */}
+                      {p.quantity > 1 && (
+                        <span className="ml-1.5 rounded bg-sdc-blue-light px-1.5 py-0.5 text-note font-bold tabular-nums text-sdc-blue-dark">
+                          ×{p.quantity}
+                          {p.filledCount > 0 && <span className="font-normal"> · {p.remainingQuantity} left</span>}
+                        </span>
+                      )}
                       {p.department && (
                         <span className="ml-2 truncate text-xs font-normal text-sdc-muted">{DEPARTMENT_TITLE.get(p.department)}</span>
                       )}

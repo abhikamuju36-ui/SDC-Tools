@@ -10,6 +10,7 @@ import type { HiringPosition } from "@/lib/hiring-positions";
 import { employeeCapacityHours, hiringCapacityHours } from "@/lib/workforce-capacity";
 import { hasYearPolicy } from "@/lib/workforce-capacity-policy";
 import { hours as fmtHours } from "@/components/ui/format";
+import { countOpenings, openingsFor } from "@/lib/hiring-openings";
 
 // Level 1 of the Employees tab: one card per company department — Engineering,
 // Shop, PM, Growth / Business Development, Finance, Executive Leadership and
@@ -172,7 +173,9 @@ export function WorkforceSummaryCards({
     const m = new Map<string, number>();
     for (const p of hiringPositions) {
       if (!p.department) continue;
-      m.set(p.department, (m.get(p.department) ?? 0) + 1);
+      // openingsFor, not +1: a Quantity 2 position is two openings on this
+      // department's line, not one (2026-08-24).
+      m.set(p.department, (m.get(p.department) ?? 0) + openingsFor(p));
     }
     return m;
   }, [hiringPositions]);
@@ -181,15 +184,17 @@ export function WorkforceSummaryCards({
     const m = new Map<WorkforceGroupKey, number>();
     for (const p of hiringPositions) {
       if (!p.workforceGroup) continue;
-      m.set(p.workforceGroup, (m.get(p.workforceGroup) ?? 0) + 1);
+      m.set(p.workforceGroup, (m.get(p.workforceGroup) ?? 0) + openingsFor(p));
     }
     return m;
   }, [hiringPositions]);
 
-  const unassignedHiring = hiringPositions.filter((p) => !p.workforceGroup).length;
+  const unassignedHiring = countOpenings(hiringPositions.filter((p) => !p.workforceGroup));
 
   const activeHeadcount = summaries.reduce((s, g) => s + g.cards.reduce((s2, c) => s2 + c.people.filter((p) => p.active).length, 0), 0);
-  const openPositions = hiringPositions.length;
+  // Openings, not rows — one Quantity 2 requisition is 2 open positions and
+  // contributes 2 to Planned Headcount below.
+  const openPositions = countOpenings(hiringPositions);
   const plannedHeadcount = activeHeadcount + openPositions;
 
   const total = activeHeadcount + summaries.reduce((s, g) => s + g.cards.reduce((s2, c) => s2 + c.people.filter((p) => !p.active).length, 0), 0);

@@ -27,8 +27,27 @@ export type HiringPosition = {
   title: string;
   status: string;
   subStatus: string | null;
-  /** Whether this position currently counts toward hiring/planned-headcount totals — see hiring-position-status.ts. */
+  /**
+   * Whether this position currently counts toward hiring/planned-headcount
+   * totals. Two conditions, both required (2026-08-24): its status must read as
+   * open (hiring-position-status.ts) AND it must have at least one opening left
+   * unfilled. The second is what implements "only close it when ALL requested
+   * openings have been filled" — and it is also the only way a WORKBOOK
+   * position can ever read as filled by this app, since its status text belongs
+   * to Paylocity and cannot be written here.
+   */
   isOpen: boolean;
+  /** How many openings this one requisition represents. Always >= 1; rows predating the quantity column read as 1. */
+  quantity: number;
+  /** How many of those openings have been hired against so far. 0..quantity. */
+  filledCount: number;
+  /**
+   * quantity - filledCount, floored at 0 — the ONLY count anything downstream
+   * should use for hiring totals, capacity hours or planning KPIs. A filled
+   * opening is a real employee now, counted under Current capacity, so counting
+   * it here too would double it into Planned.
+   */
+  remainingQuantity: number;
   /** "workbook" = read from Job.xlsx (Paylocity); "manual" = created inside SDC Reports (HiringPositionCreated). */
   source: "workbook" | "manual";
   workforceGroup: WorkforceGroupKey | null;
@@ -56,16 +75,31 @@ export type HiringPositionsResult = {
   error: string | null;
 };
 
+/**
+ * quantity/filledCount as they should be READ, from a source that may predate
+ * the columns entirely (a workbook position with no overlay row at all) or
+ * carry values that have drifted (a quantity later lowered below what had
+ * already been filled). Clamped here, once, so nothing downstream has to think
+ * about a negative remainder or a null quantity.
+ */
+function readOpenings(quantity: number | null | undefined, filledCount: number | null | undefined) {
+  const q = Math.max(1, Math.trunc(Number(quantity ?? 1)) || 1);
+  const filled = Math.min(q, Math.max(0, Math.trunc(Number(filledCount ?? 0)) || 0));
+  return { quantity: q, filledCount: filled, remainingQuantity: Math.max(0, q - filled) };
+}
+
 function toWorkbookPosition(row: HiringPositionSourceRow, manual: HiringAssignmentRow | undefined): HiringPosition {
   const auto = classifyHiringPosition(row);
   const workforceGroup = manual ? (manual.workforceGroup as WorkforceGroupKey | null) : auto.workforceGroup;
   const department = manual ? manual.department : auto.department;
+  const openings = readOpenings(manual?.quantity, manual?.filledCount);
   return {
     sourceId: row.sourceId,
     title: row.title,
     status: row.status,
     subStatus: row.subStatus,
-    isOpen: isOpenPosition(row),
+    isOpen: isOpenPosition(row) && openings.remainingQuantity > 0,
+    ...openings,
     source: "workbook",
     workforceGroup,
     department,
@@ -89,7 +123,8 @@ function toManualPosition(row: CreatedHiringPositionRow): HiringPosition {
     title: row.title,
     status: row.jobStatus,
     subStatus: null,
-    isOpen: isOpenHiringStatus(row.jobStatus, null, false),
+    isOpen: isOpenHiringStatus(row.jobStatus, null, false) && readOpenings(row.quantity, row.filledCount).remainingQuantity > 0,
+    ...readOpenings(row.quantity, row.filledCount),
     source: "manual",
     workforceGroup: row.workforceGroup as WorkforceGroupKey,
     department: row.department,
@@ -108,20 +143,60 @@ function toManualPosition(row: CreatedHiringPositionRow): HiringPosition {
 }
 
 export async function getHiringPositions(): Promise<HiringPositionsResult> {
-  const [manualRows, assignments] = await Promise.all([getCreatedHiringPositions(), getHiringAssignments()]);
+  // ── Every one of the three sources fails soft, independently (2026-08-24) ──
+  //
+  // The workbook read below was already guarded; these two DB reads were not,
+  // so a failure in either threw straight out of here — and because
+  // employees/page.tsx awaits this in a Promise.all, that took down the ENTIRE
+  // Employees page, roster included.
+  //
+  // Found the hard way: the quantity/filledCount columns were deployed before
+  // their migration was applied, so both SELECTs failed with "Unknown column
+  // 'quantity'" and /employees would not load at all. The missing migration was
+  // the immediate cause and is fixed by applying it — but a secondary feature
+  // being unreadable should never cost the primary one, which is exactly the
+  // rule page.tsx already states for its Scheduler sources ("both fail soft to
+  // 'nothing extra shown', so a roster load never depends on Scheduler being
+  // up"). The hiring store now follows the same rule.
+  //
+  // Guarded SEPARATELY rather than as one try/catch around both, because they
+  // degrade differently: losing the assignments overlay only costs the manual
+  // group/department corrections (the classifier's guesses still apply, so
+  // positions stay usable), while losing the created-positions table costs
+  // those positions outright. One combined catch would throw away both
+  // whenever either failed.
+  const notes: string[] = [];
+
+  let manualRows: CreatedHiringPositionRow[] = [];
+  try {
+    manualRows = await getCreatedHiringPositions();
+  } catch (err) {
+    console.error("[hiring-positions] couldn't read created hiring positions:", err);
+    notes.push("Positions created in SDC Reports couldn't be read.");
+  }
+
+  let assignments: HiringAssignmentRow[] = [];
+  try {
+    assignments = await getHiringAssignments();
+  } catch (err) {
+    console.error("[hiring-positions] couldn't read hiring assignments:", err);
+    notes.push("Saved group/department assignments couldn't be read, so some positions may show an automatic placement instead.");
+  }
+
   const manualPositions = manualRows.map(toManualPosition);
 
   let sourceRows: HiringPositionSourceRow[];
   try {
     sourceRows = await readHiringWorkbook();
   } catch (err) {
-    return { positions: manualPositions, error: err instanceof Error ? err.message : "Couldn't read the hiring positions workbook." };
+    notes.push(err instanceof Error ? err.message : "Couldn't read the hiring positions workbook.");
+    return { positions: manualPositions, error: notes.join(" ") };
   }
 
   const byId = new Map(assignments.map((a) => [a.positionSourceId, a]));
   const workbookPositions = sourceRows.map((row) => toWorkbookPosition(row, byId.get(row.sourceId)));
 
-  return { positions: [...workbookPositions, ...manualPositions], error: null };
+  return { positions: [...workbookPositions, ...manualPositions], error: notes.length > 0 ? notes.join(" ") : null };
 }
 
 export async function getHiringPositionById(sourceId: string): Promise<HiringPosition | null> {

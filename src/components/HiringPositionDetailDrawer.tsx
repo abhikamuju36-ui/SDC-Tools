@@ -4,6 +4,7 @@ import { useState, useTransition } from "react";
 import { BuildReadinessDrawer } from "@/components/build-readiness/BuildReadinessDrawer";
 import { HiringMoveToControl } from "@/components/HiringMoveToControl";
 import { HiringExpectedStartDateControl } from "@/components/HiringExpectedStartDateControl";
+import { HiringOpeningsControl } from "@/components/HiringOpeningsControl";
 import { workforceGroupForCardKey, workforceGroupTitle, WORKFORCE_GROUPS, type WorkforceGroupKey } from "@/lib/employee-workforce-groups";
 import { EMPLOYEE_TEAMS } from "@/lib/employee-teams";
 import { updateHiringPosition } from "@/lib/hiring-actions";
@@ -48,6 +49,8 @@ function ManualEditForm({
   onClose: () => void;
 }) {
   const [title, setTitle] = useState(position.title);
+  // Raw text for the same reason as the Create form's field — see the note there.
+  const [quantity, setQuantity] = useState(String(position.quantity));
   const [jobStatus, setJobStatus] = useState(position.status);
   const [workforceGroup, setWorkforceGroup] = useState<WorkforceGroupKey>(position.workforceGroup ?? "engineering");
   const [department, setDepartment] = useState(position.department ?? "");
@@ -72,6 +75,15 @@ function ManualEditForm({
       setError("Position Title is required.");
       return;
     }
+    const parsedQuantity = Number(quantity);
+    if (!quantity.trim() || !Number.isInteger(parsedQuantity) || parsedQuantity < 1) {
+      setError("Quantity must be a whole number of 1 or more.");
+      return;
+    }
+    if (parsedQuantity < position.filledCount) {
+      setError(`Quantity can't be lower than the ${position.filledCount} already filled on this position.`);
+      return;
+    }
     startTransition(async () => {
       const startDate = expectedStartDate ? new Date(expectedStartDate) : null;
       const result = await updateHiringPosition(position.sourceId, {
@@ -80,6 +92,7 @@ function ManualEditForm({
         workforceGroup,
         department: selectedDepartment,
         expectedStartDate: startDate,
+        quantity: parsedQuantity,
       });
       if (!result.ok) {
         setError(result.error);
@@ -88,13 +101,18 @@ function ManualEditForm({
       onUpdated(position.sourceId, {
         title: title.trim(),
         status: jobStatus,
+        quantity: parsedQuantity,
+        remainingQuantity: Math.max(0, parsedQuantity - position.filledCount),
         // isOpenHiringStatus is the ONE rule for open-ness (Open/Published
         // open, On Hold/Filled closed). Mirroring it here rather than
         // re-testing for "Open" keeps this optimistic update identical to what
         // the server just stored -- with the old literal check, saving a
         // position as Published would have dropped it out of the hiring
         // counts on screen until the next full page load.
-        isOpen: isOpenHiringStatus(jobStatus, position.subStatus, false),
+        // Also gated on openings remaining (2026-08-24), matching
+        // hiring-positions.ts: lowering Quantity to what is already filled
+        // closes the position, exactly as the server will have stored it.
+        isOpen: isOpenHiringStatus(jobStatus, position.subStatus, false) && parsedQuantity > position.filledCount,
         workforceGroup,
         department: selectedDepartment,
         expectedStartDate: startDate,
@@ -109,6 +127,30 @@ function ManualEditForm({
         <span className={LABEL}>Position Title *</span>
         <input value={title} onChange={(e) => setTitle(e.target.value)} className={INPUT} />
       </label>
+
+      {/* Directly below Position Title, same as the Create form. Filling
+          openings is NOT done here — that is the "Mark one hired" control
+          (HiringOpeningsControl), so a hire never requires opening and
+          re-saving the whole edit form. This field is only "how many did we
+          ask for". */}
+      <label className="flex flex-col gap-1">
+        <span className={LABEL}>Quantity *</span>
+        <input
+          type="number"
+          min={Math.max(1, position.filledCount)}
+          step={1}
+          inputMode="numeric"
+          value={quantity}
+          onChange={(e) => setQuantity(e.target.value)}
+          className={`${INPUT} w-24`}
+        />
+        {position.filledCount > 0 && (
+          <span className="text-note text-sdc-muted">
+            {position.filledCount} of {position.quantity} already filled — Quantity can&apos;t go below {position.filledCount}.
+          </span>
+        )}
+      </label>
+
       <label className="flex flex-col gap-1">
         <span className={LABEL}>Job Status *</span>
         <select value={jobStatus} onChange={(e) => setJobStatus(e.target.value)} className={INPUT}>
@@ -225,6 +267,35 @@ export function HiringPositionDetailDrawer({
               />
             </div>
           )}
+          {/* Openings (2026-08-24) — shown for BOTH sources, unlike Expected
+              Start Date above: a manual position reaches this branch too when
+              the viewer lacks edit permission, and its opening count is worth
+              reading even then (the control renders as plain text without
+              `canAssign`). */}
+          <div className="flex items-start justify-between gap-3 border-b border-sdc-border-soft px-4 py-2.5">
+            <span className="pt-1 text-xs font-semibold uppercase tracking-wide text-sdc-muted">Openings</span>
+            <HiringOpeningsControl
+              positionSourceId={position.sourceId}
+              quantity={position.quantity}
+              filledCount={position.filledCount}
+              canAssign={canAssign}
+              onSaved={(sourceId, next) =>
+                onUpdated(sourceId, {
+                  quantity: next.quantity,
+                  filledCount: next.filledCount,
+                  remainingQuantity: Math.max(0, next.quantity - next.filledCount),
+                  // isOpen depends on BOTH status and remaining openings (see
+                  // hiring-positions.ts), so filling the last one has to flip it
+                  // here too or the totals on the page behind this drawer would
+                  // keep counting a position this drawer already shows as filled.
+                  // Exactly the server's own rule (hiring-positions.ts): open
+                  // status AND at least one opening left.
+                  isOpen: next.quantity > next.filledCount && isOpenHiringStatus(position.status, position.subStatus, false),
+                })
+              }
+            />
+          </div>
+
           {/* The pill, not plain text -- same colors as the row this drawer
               was opened from (HiringStatusPill / hiring-position-status.ts). */}
           <div className="flex items-center justify-between gap-3 border-b border-sdc-border-soft px-4 py-2.5">

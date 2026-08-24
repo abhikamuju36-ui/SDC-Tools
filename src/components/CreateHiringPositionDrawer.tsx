@@ -33,6 +33,12 @@ export function CreateHiringPositionDrawer({
   onCreated: (position: HiringPosition) => void;
 }) {
   const [title, setTitle] = useState("");
+  // Held as a STRING, not a number (2026-08-24). A number state forces a
+  // decision about what the field shows the instant someone selects "1" and
+  // types — NaN, or a silent snap back to 1 that fights the keystroke. Keeping
+  // the raw text lets the field be briefly empty or mid-edit while typing, and
+  // the value is parsed and validated once, on submit.
+  const [quantity, setQuantity] = useState("1");
   const [jobStatus, setJobStatus] = useState<string>(DEFAULT_MANUAL_JOB_STATUS);
   const [workforceGroup, setWorkforceGroup] = useState<WorkforceGroupKey>("engineering");
   const [department, setDepartment] = useState<string>("");
@@ -59,6 +65,11 @@ export function CreateHiringPositionDrawer({
       setError("Department is required.");
       return;
     }
+    const parsedQuantity = Number(quantity);
+    if (!quantity.trim() || !Number.isInteger(parsedQuantity) || parsedQuantity < 1) {
+      setError("Quantity must be a whole number of 1 or more.");
+      return;
+    }
     startTransition(async () => {
       const startDate = expectedStartDate ? new Date(expectedStartDate) : null;
       const result = await createHiringPosition({
@@ -70,6 +81,7 @@ export function CreateHiringPositionDrawer({
         remote,
         internal,
         expectedStartDate: startDate,
+        quantity: parsedQuantity,
       });
       if (!result.ok) {
         setError(result.error);
@@ -83,7 +95,13 @@ export function CreateHiringPositionDrawer({
         // Same single rule the server applies -- see the matching comment in
         // HiringPositionDetailDrawer. A position created as Published counts
         // as open immediately, exactly like the workbook's Published rows.
+        // A freshly created position has nothing filled yet, so remaining ==
+        // quantity and its open-ness is decided by status alone — the same
+        // answer the server's own readOpenings() gives for filledCount 0.
         isOpen: isOpenHiringStatus(jobStatus, null, false),
+        quantity: parsedQuantity,
+        filledCount: 0,
+        remainingQuantity: parsedQuantity,
         source: "manual",
         workforceGroup,
         department: selectedDepartment,
@@ -115,6 +133,34 @@ export function CreateHiringPositionDrawer({
         <label className="flex flex-col gap-1">
           <span className={LABEL}>Position Title *</span>
           <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="e.g. Controls Engineer" className={INPUT} autoFocus />
+        </label>
+
+        {/* Quantity — directly below Position Title, as requested. Typed OR
+            stepped: `type="number"` gives the browser's own +/- spinner and
+            arrow-key stepping for free, and min/step/inputMode tell it (and a
+            phone keyboard) that only whole numbers from 1 up make sense. None
+            of that is a real constraint on what reaches the server, which is
+            why hiring-actions.ts validates it again — see parseQuantity there. */}
+        <label className="flex flex-col gap-1">
+          <span className={LABEL}>Quantity *</span>
+          <input
+            type="number"
+            min={1}
+            step={1}
+            inputMode="numeric"
+            value={quantity}
+            onChange={(e) => setQuantity(e.target.value)}
+            className={`${INPUT} w-24`}
+            aria-describedby="qty-help"
+          />
+          <span id="qty-help" className="text-note text-sdc-muted">
+            {(() => {
+              const n = Number(quantity);
+              return Number.isInteger(n) && n > 1
+                ? `Counts as ${n} open positions and ${n}× one person's hiring capacity.`
+                : "One position per opening — set 2 if you need two of this role.";
+            })()}
+          </span>
         </label>
 
         <label className="flex flex-col gap-1">
