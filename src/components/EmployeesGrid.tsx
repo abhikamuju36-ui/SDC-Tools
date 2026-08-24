@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from "react";
 import { CARD_RENDER_ORDER } from "@/components/WorkforceSummaryCards";
+import { buildDepartmentCards } from "@/lib/employee-department-cards";
 import { EmployeesCards } from "@/components/EmployeesCards";
 import { WorkforceSummaryCards } from "@/components/WorkforceSummaryCards";
 import { EmployeeDetailDrawer } from "@/components/EmployeeDetailDrawer";
@@ -14,6 +15,7 @@ import { resolveEmployeeGroup } from "@/lib/employee-card-theme";
 import { resolvePlaceholderGroup, type DepartmentCard } from "@/lib/employee-department-cards";
 import {
   workforceGroupForCardKey,
+  workforceGroupLongTitle,
   groupInScope,
   isExecutionGroup,
   rollupGroup,
@@ -387,7 +389,11 @@ export function EmployeesGrid({
         const card = resolvePlaceholderGroup(p);
         return card ? rollupGroup(workforceGroupForCardKey(card.key)) === key : false;
       });
-      return { key, rows, hiring, placeholders: ph };
+      // The real card count, from the same builder EmployeesCards uses — so the
+      // container asks for exactly as much width as it will fill, rather than a
+      // guess from the number of distinct departments.
+      const cardCount = buildDepartmentCards(rows, ph).length;
+      return { key, rows, hiring, placeholders: ph, cardCount };
     }).filter((g) => g.rows.length > 0 || g.hiring.length > 0);
   }, [visible, openHiring, placeholders]);
 
@@ -418,9 +424,9 @@ export function EmployeesGrid({
     // PM no matter how much width was available.
     return {
       ...b,
+      sections,
       rows: sections.flatMap((sec) => sec.rows),
       hiring: sections.flatMap((sec) => sec.hiring),
-      placeholders: sections.flatMap((sec) => sec.placeholders),
     };
   }).filter((b) => b.rows.length > 0 || b.hiring.length > 0);
 
@@ -557,24 +563,50 @@ export function EmployeesGrid({
                 active
               </span>
             </div>
-            {/* ONE card flow for the whole band, so every department card in it
-                competes for the same row and wraps naturally. The per-group
-                GroupHeader that used to sit here is gone: it split the band into
-                one flow per workforce group, which is exactly what stopped PM
-                sitting next to Mechanical Engineering. The band header above
-                carries the total. */}
-            <EmployeesCards
-              rows={band.rows}
-              placeholders={band.placeholders}
-              canAddEmployees={canAddEmployees}
-              onSelectEmployee={selectEmployee}
-              focusDepartment={group ? focusDepartment : null}
-              hiringPositions={band.hiring}
-              onSelectHiringPosition={selectHiringPosition}
-              year={year}
-              onSelectCapacity={setCapacityDrill}
-              canAssignHiring={canAssignHiring}
-            />
+            {/* Group containers in a flex row, so several share a line when they
+                fit (2026-08-24). Each keeps its own header and its own cards, and
+                a group either fits on the current line or wraps whole — cards are
+                never interleaved between groups to fill space.
+
+                The width comes from the group's own card count: flex-basis is
+                ~17rem per card, so Project Management (1 card) asks for a narrow
+                box and Engineering (3) a wide one, and PM + Engineering pack onto
+                one line where Engineering alone would have left two thirds of it
+                empty. `flex-1` lets them then stretch to fill the row exactly, and
+                max-w-full stops a wide group overflowing a narrow screen.
+
+                No breakpoints here on purpose: the packing is whatever the widths
+                allow, and EmployeesCards now picks its column count from the
+                container it lands in rather than from the viewport. */}
+            <div className="flex flex-wrap items-start gap-x-5 gap-y-4">
+              {band.sections.map((sec) => (
+                <div
+                  key={sec.key}
+                  className="min-w-0 max-w-full flex-1"
+                  style={{ flexBasis: `${Math.max(1, sec.cardCount) * 17}rem` }}
+                >
+                  <h3 className="mb-2 border-b border-sdc-border pb-1 text-xs font-bold uppercase tracking-wider text-sdc-muted">
+                    {workforceGroupLongTitle(sec.key)}
+                    <span className="ml-2 font-normal normal-case tracking-normal text-sdc-gray-400">
+                      {sec.rows.filter((r) => r.active).length} active
+                      {countOpenings(sec.hiring) > 0 && ` · ${countOpenings(sec.hiring)} hiring`}
+                    </span>
+                  </h3>
+                  <EmployeesCards
+                    rows={sec.rows}
+                    placeholders={sec.placeholders}
+                    canAddEmployees={canAddEmployees}
+                    onSelectEmployee={selectEmployee}
+                    focusDepartment={group ? focusDepartment : null}
+                    hiringPositions={sec.hiring}
+                    onSelectHiringPosition={selectHiringPosition}
+                    year={year}
+                    onSelectCapacity={setCapacityDrill}
+                    canAssignHiring={canAssignHiring}
+                  />
+                </div>
+              ))}
+            </div>
           </section>
         ))
       )}

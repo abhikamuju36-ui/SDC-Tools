@@ -121,7 +121,24 @@ export function EmployeesCards({
   }
 
   return (
-    <div className="columns-1 gap-4 sm:columns-2 lg:columns-3 xl:columns-4">
+    // ── Column count follows the CONTAINER, not the viewport (2026-08-24) ────
+    //
+    // Was `columns-1 sm:columns-2 lg:columns-3 xl:columns-4`, which keys off the
+    // VIEWPORT. That was right while this filled the page width, and wrong the
+    // moment EmployeesGrid began rendering one of these per workforce group in a
+    // flex row: a one-card Project Management container is ~250px wide, and at an
+    // xl viewport it would still have been told to make four columns inside it.
+    //
+    // `columns-[16rem]` is a column WIDTH, so the browser fits as many ~256px
+    // columns as the container actually has room for — one in a narrow group
+    // container, three in a wide one, and it re-flows on resize with no
+    // breakpoints to keep in step with whatever widths the parent hands out.
+    // 16rem (240px at this 15px root) is the narrowest a card can be while an
+    // employee row still reads: name plus role on one line.
+    //
+    // Still columns and not a grid, for the reason in this file's header — a grid
+    // sizes every row to its tallest card and strands short ones under dead gaps.
+    <div className="columns-[16rem] gap-4">
       {cards.map((card) => {
         const activeCount = card.people.filter((p) => p.active).length;
         const inactiveCount = card.people.length - activeCount;
