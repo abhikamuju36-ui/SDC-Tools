@@ -93,7 +93,7 @@ const HIRING_ACCENT = "text-sdc-green-text";
 // Open Positions / Planned Headcount. It stays visibly separate where the
 // request asks for that — its own section in the Hiring Positions list, and its
 // own option in the Create/Edit Position form.
-const CARD_RENDER_ORDER: WorkforceGroupKey[] = [
+export const CARD_RENDER_ORDER: WorkforceGroupKey[] = [
   "pm",
   "engineering",
   "shop",

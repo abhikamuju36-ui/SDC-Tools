@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { CARD_RENDER_ORDER } from "@/components/WorkforceSummaryCards";
 import { EmployeesCards } from "@/components/EmployeesCards";
 import { WorkforceSummaryCards } from "@/components/WorkforceSummaryCards";
 import { EmployeeDetailDrawer } from "@/components/EmployeeDetailDrawer";
@@ -105,7 +106,8 @@ function GroupHeader({
   activeCount: number;
   hiringCount: number;
   departmentCount: number;
-  onCollapse: () => void;
+  /** Omitted for the always-expanded group sections — there is nothing to collapse back to. */
+  onCollapse?: () => void;
 }) {
   return (
     <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-sdc-border bg-sdc-gray-50 px-4 py-2.5">
@@ -141,9 +143,11 @@ function GroupHeader({
           )}
         </div>
       </div>
-      <button type="button" onClick={onCollapse} className="text-sm font-medium text-sdc-blue hover:underline" title="Collapse — the overview cards above stay where they are">
-        Collapse ✕
-      </button>
+      {onCollapse && (
+        <button type="button" onClick={onCollapse} className="text-sm font-medium text-sdc-blue hover:underline" title="Show every group again">
+          Show all groups ✕
+        </button>
+      )}
     </div>
   );
 }
@@ -310,45 +314,6 @@ export function EmployeesGrid({
     ).length;
   }, [scopedToTeam, q, showInactive]);
 
-  // Existing search/discipline/department/show-inactive filters apply FIRST
-  // (`visible`, unchanged from before this feature) — drilling into a
-  // workforce group or department narrows what's already been filtered, so
-  // e.g. picking "Mechanical Engineering" in the Department filter already
-  // shrinks Engineering's own Level 1 numbers to just that one department,
-  // exactly as the task's own example asks for, with no special-casing here.
-  const scopedRows = useMemo(() => {
-    if (!group) return visible;
-    return visible.filter((r) => {
-      const card = resolveEmployeeGroup(r);
-      if (!card) return false;
-      // rollupGroup so drilling into Engineering includes General Engineering.
-      return rollupGroup(workforceGroupForCardKey(card.key)) === group;
-    });
-  }, [visible, group]);
-
-  // Placeholders aren't employees, so the toolbar's filters never apply to
-  // them — but the DRILL scope still must, or a Shop placeholder would leak
-  // into an Engineering-only view as its own out-of-place card (EmployeesCards
-  // creates a card for ANY placeholder it's handed, with no idea what scope
-  // the caller intends).
-  const scopedPlaceholders = useMemo(() => {
-    if (!group) return placeholders;
-    return placeholders.filter((p) => {
-      const card = resolvePlaceholderGroup(p);
-      if (!card) return false;
-      // rollupGroup so drilling into Engineering includes General Engineering.
-      return rollupGroup(workforceGroupForCardKey(card.key)) === group;
-    });
-  }, [placeholders, group]);
-
-  // Same scoping rule applied to hiring positions, so Engineering's opened
-  // view shows only Engineering's own open positions, not the whole company's.
-  const scopedHiring = useMemo(() => {
-    if (!group) return [];
-    // Same rollup as the cards: opening the Engineering group shows General
-    // Engineering's openings too, since its card already counted them.
-    return openHiring.filter((p) => p.workforceGroup && rollupGroup(p.workforceGroup) === group);
-  }, [openHiring, group]);
 
   // Clicking the open card again collapses it — the card IS the toggle, so
   // "get back to just the overview" is the same one click that opened it.
@@ -388,6 +353,48 @@ export function EmployeesGrid({
     setSelectedEmployee(null);
     setSelectedHiringPosition(position);
   }
+
+  // ── Every group expanded by default (2026-08-24, by request) ──────────────
+  //
+  // The page used to show only the parent cards, and reaching an employee took a
+  // click into one group. Now every group renders its own section — departments
+  // and the people inside them — with no click required. The parent cards above
+  // stay as the summary and the capacity drill-through.
+  //
+  // Composition rather than new UI: EmployeesCards already renders a department
+  // card WITH its employees, so this calls it once per group instead of once for
+  // whichever group was clicked. The grouping logic is untouched — the same
+  // resolveEmployeeGroup -> workforceGroupForCardKey -> rollupGroup chain the
+  // cards use, so General Engineering still rolls into Engineering and Sales into
+  // Growth exactly as before.
+  //
+  // Ordered by CARD_RENDER_ORDER, imported from WorkforceSummaryCards rather than
+  // re-listed, so the sections appear in the same order as the cards they sit
+  // under. Groups with nothing in them after filtering are dropped rather than
+  // rendered as an empty header.
+  const groupSections = useMemo(() => {
+    const groupOf = (r: EmployeeRow) => {
+      const card = resolveEmployeeGroup(r);
+      return card ? rollupGroup(workforceGroupForCardKey(card.key)) : null;
+    };
+    return CARD_RENDER_ORDER.map((key) => {
+      const rows = visible.filter((r) => groupOf(r) === key);
+      const hiring = openHiring.filter((p) => p.workforceGroup && rollupGroup(p.workforceGroup) === key);
+      // resolvePlaceholderGroup, NOT the discipline string: a placeholder is not
+      // an employee and has its own resolution path. Getting this wrong would
+      // drop a Shop placeholder into Engineering as an out-of-place card, since
+      // EmployeesCards creates a card for any placeholder it is handed.
+      const ph = placeholders.filter((p) => {
+        const card = resolvePlaceholderGroup(p);
+        return card ? rollupGroup(workforceGroupForCardKey(card.key)) === key : false;
+      });
+      return { key, rows, hiring, placeholders: ph };
+    }).filter((g) => g.rows.length > 0 || g.hiring.length > 0);
+  }, [visible, openHiring, placeholders]);
+
+  // A parent card click now NARROWS to that one group rather than being the only
+  // way to see it — "Show all groups" in its header restores the full board.
+  const shownSections = group ? groupSections.filter((g) => g.key === group) : groupSections;
 
   const selectedEmployeeGroup = selectedEmployee ? resolveEmployeeGroup(selectedEmployee) : null;
 
@@ -504,29 +511,33 @@ export function EmployeesGrid({
             onCreate={() => setCreatingHiringPosition(true)}
           />
         </div>
-      ) : group ? (
-        <div className="mt-4">
-          <GroupHeader
-            title={workforceGroupLongTitle(group)}
-            activeCount={scopedRows.filter((r) => r.active).length}
-            hiringCount={countOpenings(scopedHiring)}
-            departmentCount={new Set(scopedRows.map((r) => resolveEmployeeGroup(r)?.key).filter(Boolean)).size}
-            onCollapse={collapse}
-          />
-          <EmployeesCards
-            rows={scopedRows}
-            placeholders={scopedPlaceholders}
-            canAddEmployees={canAddEmployees}
-            onSelectEmployee={selectEmployee}
-            focusDepartment={focusDepartment}
-            hiringPositions={scopedHiring}
-            onSelectHiringPosition={selectHiringPosition}
-            year={year}
-            onSelectCapacity={setCapacityDrill}
-            canAssignHiring={canAssignHiring}
-          />
-        </div>
-      ) : null}
+      ) : (
+        shownSections.map((sec) => (
+          <div key={sec.key} className="mt-4">
+            <GroupHeader
+              title={workforceGroupLongTitle(sec.key)}
+              activeCount={sec.rows.filter((r) => r.active).length}
+              hiringCount={countOpenings(sec.hiring)}
+              departmentCount={new Set(sec.rows.map((r) => resolveEmployeeGroup(r)?.key).filter(Boolean)).size}
+              // Only the narrowed view offers a way back out; the default board
+              // has nothing to collapse to.
+              onCollapse={group ? collapse : undefined}
+            />
+            <EmployeesCards
+              rows={sec.rows}
+              placeholders={sec.placeholders}
+              canAddEmployees={canAddEmployees}
+              onSelectEmployee={selectEmployee}
+              focusDepartment={group ? focusDepartment : null}
+              hiringPositions={sec.hiring}
+              onSelectHiringPosition={selectHiringPosition}
+              year={year}
+              onSelectCapacity={setCapacityDrill}
+              canAssignHiring={canAssignHiring}
+            />
+          </div>
+        ))
+      )}
 
       {selectedEmployee && (
         <EmployeeDetailDrawer
