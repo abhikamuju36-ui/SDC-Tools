@@ -11,7 +11,17 @@ import { CapacityDrillDrawer } from "@/components/CapacityDrillDrawer";
 import { DASH, type EmployeeRow } from "@/lib/employee-row";
 import { resolveEmployeeGroup } from "@/lib/employee-card-theme";
 import { resolvePlaceholderGroup, type DepartmentCard } from "@/lib/employee-department-cards";
-import { workforceGroupForCardKey, workforceGroupLongTitle, type WorkforceGroupKey } from "@/lib/employee-workforce-groups";
+import {
+  workforceGroupForCardKey,
+  workforceGroupLongTitle,
+  groupInScope,
+  isExecutionGroup,
+  DEFAULT_TEAM_SCOPE,
+  TEAM_SCOPE_LABEL,
+  type TeamScope,
+  type WorkforceGroupKey,
+} from "@/lib/employee-workforce-groups";
+import { countOpenings } from "@/lib/hiring-openings";
 import type { SchedulerPlaceholder } from "@/lib/scheduler-db";
 import type { HiringPosition } from "@/lib/hiring-positions";
 import { MenuBulkActions, MenuCheckbox } from "@/components/MenuStatus";
@@ -161,6 +171,13 @@ export function EmployeesGrid({
   year: number;
 }) {
   const [q, setQ] = useState("");
+  // Entire Team vs Execution Team (2026-08-24). Deliberately ONE piece of state
+  // feeding the two existing choke points below (`scopedToTeam` for people,
+  // `openHiring` for requisitions) rather than a second dataset: every count,
+  // capacity figure and KPI on this tab already derives from those two, so they
+  // all recalculate for the selected view with no separate bookkeeping and no
+  // chance of the two views disagreeing.
+  const [teamScope, setTeamScope] = useState<TeamScope>(DEFAULT_TEAM_SCOPE);
   const [showInactive, setShowInactive] = useState(false);
   const [discipline, setDiscipline] = useState("");
   const [dept, setDept] = useState<string[]>([]);
@@ -224,18 +241,45 @@ export function EmployeesGrid({
   // positions only" comment). A closed/filled position (from either source)
   // never inflates a count, regardless of what HiringPositionsList's own Job
   // Status filter is currently showing.
-  const openHiring = useMemo(() => hiring.filter((p) => p.isOpen), [hiring]);
+  const openHiring = useMemo(
+    // Scoped alongside the people (2026-08-24): an Execution Team view that
+    // still counted a Finance requisition in Open Positions and Hiring Capacity
+    // hours would contradict the cards right beside it. An UNASSIGNED position
+    // (no workforce group yet) is deliberately dropped from the execution view
+    // — it cannot be claimed for a group it has not been assigned to.
+    () => hiring.filter((p) => p.isOpen && (teamScope === "entire" || (p.workforceGroup ? groupInScope(p.workforceGroup, teamScope) : false))),
+    [hiring, teamScope],
+  );
+
+  // The scope narrowing, applied ONCE here and then used as the input to every
+  // list and count below — the search/discipline/department filters, the
+  // toolbar totals, and the department dropdown's own options. Doing it here
+  // rather than at each site is what guarantees the views can't drift apart.
+  //
+  // Routed through the same resolveEmployeeGroup -> workforceGroupForCardKey
+  // pair the cards themselves use, so "which employees are Execution Team" has
+  // exactly one answer and it is the one the Engineering/Shop/PM cards are
+  // already built from.
+  const scopedToTeam = useMemo(() => {
+    if (teamScope === "entire") return rows;
+    return rows.filter((r) => {
+      const card = resolveEmployeeGroup(r);
+      // No card at all (a hidden department) is not part of the Execution Team.
+      return card ? isExecutionGroup(workforceGroupForCardKey(card.key)) : false;
+    });
+  }, [rows, teamScope]);
 
   // Departments actually present in the data, so the dropdown can't offer a
-  // value that would filter to nothing.
+  // value that would filter to nothing — which now means "present in the
+  // CURRENT scope", or Execution Team would still offer Finance.
   const departments = useMemo(
-    () => [...new Set(rows.map((r) => r.department?.trim()).filter((d): d is string => !!d && d !== DASH))].sort(),
-    [rows],
+    () => [...new Set(scopedToTeam.map((r) => r.department?.trim()).filter((d): d is string => !!d && d !== DASH))].sort(),
+    [scopedToTeam],
   );
 
   const visible = useMemo(() => {
     const s = q.trim().toLowerCase();
-    return rows.filter((r) => {
+    return scopedToTeam.filter((r) => {
       if (!showInactive && !r.active) return false;
       if (discipline && r.discipline !== discipline) return false;
       if (dept.length > 0 && !dept.includes(r.department?.trim() ?? "")) return false;
@@ -245,9 +289,11 @@ export function EmployeesGrid({
         String(v ?? "").toLowerCase().includes(s),
       );
     });
-  }, [rows, q, showInactive, discipline, dept]);
+  }, [scopedToTeam, q, showInactive, discipline, dept]);
 
-  const activeCount = rows.filter((r) => r.active).length;
+  // Scoped, so the toolbar's "N active" agrees with the cards below it rather
+  // than always reporting the whole company.
+  const activeCount = scopedToTeam.filter((r) => r.active).length;
 
   // While searching with inactive hidden, count how many INACTIVE people match
   // so we can offer to reveal them — otherwise a departed employee is
@@ -256,12 +302,12 @@ export function EmployeesGrid({
   const hiddenInactiveMatches = useMemo(() => {
     const s = q.trim().toLowerCase();
     if (!s || showInactive) return 0;
-    return rows.filter(
+    return scopedToTeam.filter(
       (r) =>
         !r.active &&
         [r.name, r.discipline, r.positionTitle, r.supervisor, r.department].some((v) => String(v ?? "").toLowerCase().includes(s)),
     ).length;
-  }, [rows, q, showInactive]);
+  }, [scopedToTeam, q, showInactive]);
 
   // Existing search/discipline/department/show-inactive filters apply FIRST
   // (`visible`, unchanged from before this feature) — drilling into a
@@ -344,6 +390,36 @@ export function EmployeesGrid({
   return (
     <>
       <div className="mb-3 flex flex-wrap items-center gap-3">
+        {/* Team scope — first in the toolbar because it is a level ABOVE the
+            filters beside it: those narrow who you are looking at within a
+            roster, this chooses which roster. A segmented control rather than a
+            <select>, so both options and the current one are readable at a
+            glance; radios rather than buttons so it announces itself as one
+            choice of two to a screen reader. */}
+        <div role="radiogroup" aria-label="Team scope" className="flex items-center rounded-lg border border-sdc-border bg-white p-0.5">
+          {(["entire", "execution"] as const).map((scope) => {
+            const selected = teamScope === scope;
+            return (
+              <button
+                key={scope}
+                type="button"
+                role="radio"
+                aria-checked={selected}
+                onClick={() => setTeamScope(scope)}
+                title={
+                  scope === "execution"
+                    ? "Engineering, Shop and Project Management only"
+                    : "Every department, including Growth, Finance, Executive Leadership and Operations"
+                }
+                className={`rounded-md px-3 py-1.5 text-xs font-semibold motion-interactive ${
+                  selected ? "bg-sdc-blue text-white" : "text-sdc-gray-600 hover:bg-sdc-blue-light"
+                }`}
+              >
+                {TEAM_SCOPE_LABEL[scope]}
+              </button>
+            );
+          })}
+        </div>
         <div className="flex items-center gap-2.5 rounded-lg border border-sdc-border bg-white px-3.5">
           <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-sdc-gray-400">
             <circle cx="11" cy="11" r="8" />
@@ -370,10 +446,10 @@ export function EmployeesGrid({
           Show inactive
         </label>
         <span className="text-xs text-sdc-gray-400">
-          {activeCount} active{showInactive ? ` · ${rows.length - activeCount} inactive` : ""}
+          {activeCount} active{showInactive ? ` · ${scopedToTeam.length - activeCount} inactive` : ""}
           {/* Shown only when a filter is narrowing things, so the count doesn't
               contradict the roster total on an unfiltered view. */}
-          {visible.length !== (showInactive ? rows.length : activeCount) ? ` · ${visible.length} shown` : ""}
+          {visible.length !== (showInactive ? scopedToTeam.length : activeCount) ? ` · ${visible.length} shown` : ""}
         </span>
         {hiddenInactiveMatches > 0 && (
           <button
@@ -412,7 +488,7 @@ export function EmployeesGrid({
           Employees tab and the other groups are still one click away. */}
       {showHiring ? (
         <div className="mt-4">
-          <GroupHeader title="Hiring Positions" activeCount={0} hiringCount={openHiring.length} departmentCount={0} onCollapse={collapse} />
+          <GroupHeader title="Hiring Positions" activeCount={0} hiringCount={countOpenings(openHiring)} departmentCount={0} onCollapse={collapse} />
           <HiringPositionsList
             positions={hiring}
             canAssign={canAssignHiring}
@@ -428,7 +504,7 @@ export function EmployeesGrid({
           <GroupHeader
             title={workforceGroupLongTitle(group)}
             activeCount={scopedRows.filter((r) => r.active).length}
-            hiringCount={scopedHiring.length}
+            hiringCount={countOpenings(scopedHiring)}
             departmentCount={new Set(scopedRows.map((r) => resolveEmployeeGroup(r)?.key).filter(Boolean)).size}
             onCollapse={collapse}
           />

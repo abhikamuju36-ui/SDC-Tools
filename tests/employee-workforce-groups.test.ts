@@ -1,7 +1,15 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import { EMPLOYEE_TEAMS } from "../src/lib/employee-teams";
-import { WORKFORCE_GROUPS, workforceGroupForCardKey, workforceGroupTitle } from "../src/lib/employee-workforce-groups";
+import {
+  WORKFORCE_GROUPS,
+  workforceGroupForCardKey,
+  workforceGroupTitle,
+  EXECUTION_GROUP_KEYS,
+  isExecutionGroup,
+  groupInScope,
+  DEFAULT_TEAM_SCOPE,
+} from "../src/lib/employee-workforce-groups";
 import { resolveEmployeeGroup } from "../src/lib/employee-card-theme";
 
 // The task's own hierarchy, pinned down exactly (2026-08-24 revision):
@@ -162,4 +170,78 @@ test("Operations and Manufacturing Operations are different departments", () => 
     workforceGroupForCardKey(ops.key),
     workforceGroupForCardKey(resolveEmployeeGroup({ department: "Manufacturing Operations" })!.key),
   );
+});
+
+// ── Team scope: Entire Team vs Execution Team (2026-08-24) ──────────────────
+
+test("Execution Team is exactly Engineering, Shop and PM", () => {
+  // The request's definition, asserted against the DERIVED set rather than
+  // against a copy of it — EXECUTION_GROUP_KEYS is computed from which groups
+  // own delivery-team codes, so this is what catches that derivation drifting
+  // away from the spec (e.g. a back-office group accidentally given teamCodes).
+  assert.deepEqual([...EXECUTION_GROUP_KEYS].sort(), ["engineering", "pm", "shop"]);
+});
+
+test("the back-office groups and the catch-all are NOT Execution Team", () => {
+  for (const key of ["growth", "finance", "exec", "operations", "other"] as const) {
+    assert.equal(isExecutionGroup(key), false, `${key} must not be part of the Execution Team`);
+  }
+});
+
+test("every department of the three execution groups is in scope for Execution Team", () => {
+  // Walks the request's own department lists through the real resolution chain,
+  // so "Service Engineering counts under Engineering" and "Manufacturing
+  // Operations counts under Shop" hold for this view too, not just the cards.
+  const executionDepartments = [
+    "Mechanical Engineering",
+    "Controls Engineering",
+    "Service Engineering",
+    "Mechanical Build / Manufacturing",
+    "Electrical Build",
+    "Manufacturing Operations",
+    "Project Execution / Project Management",
+  ];
+  for (const department of executionDepartments) {
+    const card = resolveEmployeeGroup({ department });
+    assert.ok(card, `${department} must resolve to a card`);
+    assert.equal(groupInScope(workforceGroupForCardKey(card.key), "execution"), true, `${department} must be in the Execution Team`);
+  }
+});
+
+test("the back-office departments are excluded from Execution Team but present in Entire Team", () => {
+  for (const department of ["Growth / Business Development", "Business Development", "Sales", "Finance", "Executive Leadership", "Operations"]) {
+    const card = resolveEmployeeGroup({ department });
+    assert.ok(card, `${department} must resolve to a card`);
+    const group = workforceGroupForCardKey(card.key);
+    assert.equal(groupInScope(group, "execution"), false, `${department} must NOT be in the Execution Team`);
+    assert.equal(groupInScope(group, "entire"), true, `${department} must be in the Entire Team`);
+  }
+});
+
+test("Entire Team admits every group, including an unmapped department", () => {
+  // Which is what lets the filter sites call groupInScope unconditionally
+  // instead of branching on the scope themselves.
+  for (const g of WORKFORCE_GROUPS) assert.equal(groupInScope(g.key, "entire"), true);
+  assert.equal(groupInScope(workforceGroupForCardKey("Some Raw Department"), "entire"), true);
+});
+
+test("the default scope is Entire Team", () => {
+  assert.equal(DEFAULT_TEAM_SCOPE, "entire");
+});
+
+test("the requested roster splits into 60 execution and 79 total", () => {
+  // Same census as the per-card test above, partitioned by scope. Engineering
+  // 27 + Shop 29 + PM 4 = 60 execution; the remaining 19 are back-office.
+  let execution = 0;
+  let entire = 0;
+  for (const [department, headcount] of Object.entries(ROSTER_CENSUS)) {
+    const card = resolveEmployeeGroup({ department });
+    assert.ok(card, `${department} must resolve to a card`);
+    const group = workforceGroupForCardKey(card.key);
+    entire += headcount;
+    if (groupInScope(group, "execution")) execution += headcount;
+  }
+  assert.equal(execution, 60, "Engineering 27 + Shop 29 + PM 4");
+  assert.equal(entire, 79);
+  assert.equal(entire - execution, 19, "Growth 9 + Finance 4 + Exec 5 + Operations 1");
 });
