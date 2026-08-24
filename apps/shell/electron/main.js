@@ -256,8 +256,97 @@ async function openAppWindow(appId) {
     return { action: 'deny' };
   });
 
+  // ── An app window must never sit on an unexplained blank screen ──────────
+  //
+  // backgroundColor: '#ffffff' above is literally what a user sees when nothing
+  // ever paints, and until 2026-08-24 there was no handler for the events that
+  // mean "nothing will paint". Any load failure — refused connection, a redirect
+  // to a dead port, a timeout — left a permanently white window with no error
+  // and no way back except closing and reopening it, which is exactly the
+  // complaint that was reported.
+  //
+  // This applies to EVERY app, not just Reports. The failure mode has nothing to
+  // do with which backend is behind the window, and the other five are equally
+  // capable of being mid-restart when someone clicks their tile.
+  //
+  // The three events that each produce a blank window, and each need catching:
+  //   * did-fail-load        — the page never loaded (server down, bad redirect)
+  //   * render-process-gone  — the renderer crashed AFTER loading; the window
+  //                            keeps its size and title and goes white
+  //   * unresponsive         — the renderer is wedged in a loop; not blank
+  //                            forever, but indistinguishable to the user
+  //
+  // The recovery page is self-contained (inline styles, a plain link back to the
+  // app URL) so it cannot itself fail to render, and it names the actual error
+  // instead of apologising vaguely. The link is a normal navigation, so "Try
+  // again" works without IPC or a preload.
+  const _errPageLog = path.join(__dirname, '..', 'app-load-errors.log');
+  function _logLoadError(line) {
+    try {
+      fs.appendFileSync(_errPageLog, `[${new Date().toISOString()}] [${appId}] ${line}
+`);
+    } catch (_) { /* logging must never be the reason a window fails to recover */ }
+  }
+
+  function _showRecoveryPage(heading, detail) {
+    // Retrying goes to appInfo.url, NOT targetUrl: a targetUrl carrying a
+    // one-time SSO hop token would fail on a second use (the assertion carries a
+    // single-use nonce), so retrying with it would reliably fail the second time.
+    // The bare URL lands on the app's own session or its login form.
+    const html = `<!doctype html><meta charset="utf-8">
+      <body style="margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
+                   background:#f5f6f8;font-family:'Segoe UI',system-ui,sans-serif;color:#2b2b2b;padding:2rem">
+        <div style="max-width:30rem;background:#fff;border:1px solid #d9d9d9;border-radius:.75rem;
+                    padding:1.75rem;text-align:center;box-shadow:0 1px 3px rgba(0,0,0,.08)">
+          <h1 style="margin:0 0 .5rem;font-size:1.0625rem;color:#061d39">${heading}</h1>
+          <p style="margin:0 0 1.25rem;font-size:.875rem;line-height:1.55">${detail}</p>
+          <a href="${appInfo.url}" style="display:inline-block;background:#1574c4;color:#fff;
+             border-radius:.5rem;padding:.5rem 1rem;font-size:.875rem;font-weight:600;text-decoration:none">
+            Try again</a>
+          <p style="margin:1rem 0 0;font-size:.75rem;color:#8a8a8a">
+            If this keeps happening, the server may be restarting — wait a moment and try again.
+            Details are logged to apps/shell/app-load-errors.log.</p>
+        </div>
+      </body>`;
+    win.loadURL('data:text/html;charset=utf-8,' + encodeURIComponent(html));
+  }
+
+  win.webContents.on('did-fail-load', (event, errorCode, errorDescription, validatedURL, isMainFrame) => {
+    // Sub-frame and sub-resource failures do not blank the window, and
+    // ERR_ABORTED (-3) is what a superseded navigation reports — treating either
+    // as fatal would replace a perfectly good page with an error card.
+    if (!isMainFrame || errorCode === -3) return;
+    _logLoadError(`did-fail-load ${errorCode} "${errorDescription}" url=${validatedURL}`);
+    _showRecoveryPage(
+      `${appInfo.name} could not be reached`,
+      `The app did not respond (<code>${errorDescription}</code>). Nothing was lost.`,
+    );
+  });
+
+  win.webContents.on('render-process-gone', (event, details) => {
+    _logLoadError(`render-process-gone reason=${details.reason} exitCode=${details.exitCode}`);
+    _showRecoveryPage(
+      `${appInfo.name} stopped unexpectedly`,
+      `The window’s display process ended (<code>${details.reason}</code>). Reopening it should recover.`,
+    );
+  });
+
+  win.webContents.on('unresponsive', () => {
+    _logLoadError('renderer reported unresponsive');
+  });
+
   win.loadURL(targetUrl);
-  win.once('ready-to-show', () => win.show());
+  // ready-to-show is the right moment to reveal the window, but it is not
+  // guaranteed to arrive: a load that fails outright can leave it unfired, and
+  // then `show: false` means there is no window for the recovery page above to
+  // appear in — the click on the tile just does nothing. This backstop shows the
+  // window regardless after 10s, so a failure is always something the user can
+  // SEE and act on rather than silence.
+  let _shown = false;
+  const _reveal = () => { if (!_shown && !win.isDestroyed()) { _shown = true; win.show(); } };
+  win.once('ready-to-show', _reveal);
+  const _revealTimer = setTimeout(_reveal, 10_000);
+  win.on('closed', () => clearTimeout(_revealTimer));
 
   // Push update status so app sidebar shows "Up to date!" immediately
   win.webContents.once('did-finish-load', () => {
