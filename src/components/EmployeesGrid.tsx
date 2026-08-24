@@ -14,7 +14,6 @@ import { resolveEmployeeGroup } from "@/lib/employee-card-theme";
 import { resolvePlaceholderGroup, type DepartmentCard } from "@/lib/employee-department-cards";
 import {
   workforceGroupForCardKey,
-  workforceGroupLongTitle,
   groupInScope,
   isExecutionGroup,
   rollupGroup,
@@ -410,10 +409,20 @@ export function EmployeesGrid({
   const bands = [
     { key: "execution", title: "Execution", blurb: "Project Management, Engineering and Shop" },
     { key: "operations", title: "Operations", blurb: "Growth, Finance, Executive Leadership and Operations" },
-  ].map((b) => ({
-    ...b,
-    sections: shownSections.filter((sec) => (b.key === "execution" ? isExecutionGroup(sec.key) : !isExecutionGroup(sec.key))),
-  })).filter((b) => b.sections.length > 0);
+  ].map((b) => {
+    const sections = shownSections.filter((sec) => (b.key === "execution" ? isExecutionGroup(sec.key) : !isExecutionGroup(sec.key)));
+    // Flattened to ONE set per band, not kept per workforce group. That is what
+    // lets PM, Engineering and Shop cards share a row: EmployeesCards lays its
+    // cards out in a single CSS multi-column flow, so a separate call per group
+    // meant a separate flow per group, and Engineering could never sit beside
+    // PM no matter how much width was available.
+    return {
+      ...b,
+      rows: sections.flatMap((sec) => sec.rows),
+      hiring: sections.flatMap((sec) => sec.hiring),
+      placeholders: sections.flatMap((sec) => sec.placeholders),
+    };
+  }).filter((b) => b.rows.length > 0 || b.hiring.length > 0);
 
   const selectedEmployeeGroup = selectedEmployee ? resolveEmployeeGroup(selectedEmployee) : null;
 
@@ -533,46 +542,39 @@ export function EmployeesGrid({
       ) : (
         bands.map((band) => (
           <section key={band.key} className="mt-6">
-            {/* The band heading. Deliberately louder than GroupHeader below it —
-                a rule across the full width and uppercase tracking — so the page
-                reads as two places (execution work, business support) with the
-                workforce groups nested inside, rather than one long run of
-                equally-weighted cards. */}
+            {/* The band heading — a rule across the full width and uppercase
+                tracking, so the page reads as two places (execution work,
+                business support) rather than one long run of equally-weighted
+                cards. It is the only header in the band now: the per-group
+                headers were removed so all of a band's cards share one flow. */}
             <div className="mb-3 flex items-baseline gap-3 border-b-2 border-sdc-navy pb-1.5">
               <h2 className="text-base font-bold uppercase tracking-wider text-sdc-navy">{band.title}</h2>
               <span className="text-xs text-sdc-muted">{band.blurb}</span>
               <span className="ml-auto text-xs text-sdc-muted">
                 <span className="font-bold tabular-nums text-sdc-navy">
-                  {band.sections.reduce((n, sec) => n + sec.rows.filter((r) => r.active).length, 0)}
+                  {band.rows.filter((r) => r.active).length}
                 </span>{" "}
                 active
               </span>
             </div>
-            {band.sections.map((sec) => (
-              <div key={sec.key} className="mt-4">
-                <GroupHeader
-                  title={workforceGroupLongTitle(sec.key)}
-                  activeCount={sec.rows.filter((r) => r.active).length}
-                  hiringCount={countOpenings(sec.hiring)}
-                  departmentCount={new Set(sec.rows.map((r) => resolveEmployeeGroup(r)?.key).filter(Boolean)).size}
-                  // Only the narrowed view offers a way back out; the default board
-                  // has nothing to collapse to.
-                  onCollapse={group ? collapse : undefined}
-                />
-                <EmployeesCards
-                  rows={sec.rows}
-                  placeholders={sec.placeholders}
-                  canAddEmployees={canAddEmployees}
-                  onSelectEmployee={selectEmployee}
-                  focusDepartment={group ? focusDepartment : null}
-                  hiringPositions={sec.hiring}
-                  onSelectHiringPosition={selectHiringPosition}
-                  year={year}
-                  onSelectCapacity={setCapacityDrill}
-                  canAssignHiring={canAssignHiring}
-                />
-              </div>
-            ))}
+            {/* ONE card flow for the whole band, so every department card in it
+                competes for the same row and wraps naturally. The per-group
+                GroupHeader that used to sit here is gone: it split the band into
+                one flow per workforce group, which is exactly what stopped PM
+                sitting next to Mechanical Engineering. The band header above
+                carries the total. */}
+            <EmployeesCards
+              rows={band.rows}
+              placeholders={band.placeholders}
+              canAddEmployees={canAddEmployees}
+              onSelectEmployee={selectEmployee}
+              focusDepartment={group ? focusDepartment : null}
+              hiringPositions={band.hiring}
+              onSelectHiringPosition={selectHiringPosition}
+              year={year}
+              onSelectCapacity={setCapacityDrill}
+              canAssignHiring={canAssignHiring}
+            />
           </section>
         ))
       )}
