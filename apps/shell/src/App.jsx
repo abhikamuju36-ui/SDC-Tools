@@ -9,6 +9,32 @@ import RecentActivity from './components/RecentActivity'
 import WindowChrome from './components/WindowChrome'
 import LoginScreen from './screens/LoginScreen'
 
+// ── Version display: 2.0, not 2.0.0 (2026-08-24, by request) ───────────────
+//
+// The version is DISPLAYED as major.minor while package.json keeps a real
+// three-part semver, and that split is not stylistic — it is required.
+// electron-updater compares versions with semver, and semver rejects a
+// two-part string outright: semver.valid('2.0') is null and
+// semver.gt('2.0', '1.8.1') THROWS 'Invalid Version: 2.0' (checked, not
+// assumed). Putting "2.0" in package.json would therefore break the OTA
+// update check for every installed desktop, and electron-builder's artifact
+// naming with it. So the scheme lives here, where it is only ever read by a
+// human.
+//
+// The patch number is appended ONLY when it is non-zero: 2.0.0 shows as "2.0",
+// but a hotfix 2.0.1 shows as "2.0.1" rather than also claiming to be "2.0".
+// Hiding it would make "which version are you on?" unanswerable from the UI,
+// which is the one job this chip has.
+function formatVersion(raw) {
+  if (!raw) return ''
+  // 'dev' (the no-Electron fallback below) and any pre-release suffix pass
+  // through untouched — better an odd-looking string than a wrong one.
+  const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(String(raw).trim())
+  if (!m) return raw
+  const [, major, minor, patch] = m
+  return patch === '0' ? `${major}.${minor}` : `${major}.${minor}.${patch}`
+}
+
 const SKELETON_APPS = ['assemblies', 'readiness', 'scheduler', 'statelogic', 'calendar', 'reports'].map(id => ({
   id,
   name: {
@@ -361,7 +387,7 @@ export default function App() {
               <span className="header-user-name">{authUser.name || authUser.email}</span>
               <span className="header-user-email">{authUser.email}</span>
             </div>
-            {appVersion && <span className="version-tag">v{appVersion}</span>}
+            {appVersion && <span className="version-tag" title={`Version ${appVersion}`}>v{formatVersion(appVersion)}</span>}
           </div>
 
           <button

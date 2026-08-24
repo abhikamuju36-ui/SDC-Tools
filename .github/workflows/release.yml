@@ -4,9 +4,22 @@ name: Build & Release SDC Tools
 # How to ship a new version:
 #
 #   1. Update SDC_SERVER_HOST in apps/shell/.env to the real server hostname/IP
-#   2. Bump "version" in apps/shell/package.json  (e.g. "1.1.0" → "1.2.0")
-#   3. git commit -m "chore: release v1.2.0"
+#   2. Bump "version" in apps/shell/package.json  (e.g. "2.0.0" → "3.0.0")
+#   3. git commit -m "chore: release v3.0"
 #   4. git push origin master
+#
+# ── Versioning scheme (2026-08-24) ───────────────────────────────────────────
+# Versions are NAMED two-part — 2.0, then 3.0 — but package.json must still
+# hold a real three-part semver ("2.0.0"). That is not a style preference:
+# electron-updater compares versions with semver, and semver rejects a two-part
+# string outright — semver.valid("2.0") is null and semver.gt("2.0","1.8.1")
+# THROWS. A bare "2.0" here would break the OTA update check on every installed
+# desktop. The shell displays major.minor in its version chip (see
+# formatVersion in apps/shell/src/App.jsx), so users see "v2.0" while the
+# machinery keeps a version it can actually compare.
+#
+# A hotfix keeps the third number and SHOWS it: 2.0.1 displays as "2.0.1", so
+# "which version are you on?" stays answerable.
 #
 # GitHub Actions builds the installer and publishes it to GitHub Releases.
 # Every installed copy of SDC Tools auto-updates within ~30 minutes.
