@@ -11,6 +11,7 @@ import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 import { PartsCostSummary } from "@/components/PartsCostSummary";
 import type { PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
 import { hours as fmtHours } from "@/components/ui/format";
+import { barDomains, barHeightPct } from "@/lib/bar-scale";
 
 // The Parts Cost bullet bar (§52) joins the two hours charts in one row, so
 // its inputs travel as one prop rather than a second top-level component the
@@ -564,14 +565,41 @@ function SectionHierarchyChart({
   // BAR_H — see that constant's comment for the baseline-alignment math this
   // owes it (same +126 delta applied there).
   const BAR_H = 546;
-  const max = Math.max(1, ...rows.flatMap((r) => [r.planned, r.actual]));
-  // Strictly linear (by request, 2026-08-20) — a prior pass used a square-root
-  // curve here to keep small sections readable against the Total rows' much
-  // larger scale, but that broke the one property this chart actually needs
-  // to hold: two bars' height ratio must equal their value ratio, everywhere
-  // in the chart, not just at the endpoints. Zero still maps to zero and
-  // nothing here imposes a minimum-height floor.
-  const scalePct = (value: number) => (max <= 0 ? 0 : (Math.max(0, value) / max) * 100);
+  // ── Two domains: the detail bars, and the Total band (2026-08-24) ─────────
+  //
+  // A Total is the SUM of the sections beside it, so on one shared scale it is
+  // always the tallest bar by roughly an order of magnitude — which left every
+  // department bar at a tenth of the plot height. That is the reported problem,
+  // and BAR_H is not the lever for it: `scalePct` already resolves the tallest
+  // bar to exactly 100% with no headroom, so there is no unused whitespace above
+  // it to reclaim. Raising BAR_H (300 -> 420 -> 546, twice by request) makes
+  // every bar taller in proportion but cannot change the RATIO between a section
+  // and a sum of sections.
+  //
+  // So the Total rows no longer set the detail scale. Sections are measured
+  // against the tallest SECTION, Totals against the tallest TOTAL.
+  //
+  // Why this is not the square-root curve that was tried and reverted on
+  // 2026-08-20: that curve broke proportionality CONTINUOUSLY — every pair of
+  // bars anywhere in the chart lied about its ratio, including two sections
+  // sitting side by side. Here proportionality is exact everywhere it is
+  // meaningful to compare: within the sections (equal values give equal heights,
+  // a larger section is always proportionally taller), and within the Total band
+  // (Engineering Total against Shop Total stays honest). What is no longer
+  // comparable by height is a section against a Total — a comparison that was
+  // never useful, because one contains the other.
+  //
+  // The Total band is already set apart rather than blending in: its own grey
+  // series (TOTAL_SERIES), its own section label, and its own "Total" pill to
+  // hide it. That separation is what keeps two domains legible instead of
+  // misleading — and the value label above every bar carries the real number
+  // regardless.
+  // The domains and the height maths live in lib/bar-scale.ts so the
+  // proportionality invariants can be tested — this chart has lost them once
+  // before (a sqrt curve, reverted 2026-08-20), and tests/bar-scale.test.ts is
+  // what stops that recurring quietly.
+  const domains = barDomains(rows.map((r) => ({ planned: r.planned, actual: r.actual, isTotal: r.phase === TOTAL_PHASE })));
+  const scalePct = (value: number, isTotal: boolean) => barHeightPct(value, isTotal, domains);
   const deptRuns = groupRuns(rows, (r) => `${r.phase}|${r.group}`, (r) => r.group);
   const phaseRuns = groupRuns(rows, (r) => r.phase, (r) => r.phase);
   // §55: `minmax(0, 1fr)`, not `minmax(60px, 1fr)`, so the columns SHRINK to
@@ -712,8 +740,8 @@ function SectionHierarchyChart({
                 {has ? `${diff > 0 ? "+" : ""}${fmt(diff)}` : ""}
               </div>
               <div className="flex flex-1 items-end justify-center gap-1.5">
-                <Bar value={r.planned} color={colors.planned} heightPct={scalePct(r.planned)} grown={grown} />
-                <Bar value={r.actual} color={colors.actual} heightPct={scalePct(r.actual)} grown={grown} />
+                <Bar value={r.planned} color={colors.planned} heightPct={scalePct(r.planned, isTotal)} grown={grown} />
+                <Bar value={r.actual} color={colors.actual} heightPct={scalePct(r.actual, isTotal)} grown={grown} />
               </div>
             </div>
           );
