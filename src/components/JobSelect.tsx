@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { nextParams, notePendingParams } from "@/lib/url-params";
 import { INPUT } from "@/components/ui/classnames";
+import { groupSelectionState, nextSelectionForGroup } from "@/lib/job-select-groups";
 
 // Searchable MULTI-job picker for the Job Hour Details slicer. Writes
 // ?jobs=<jobId,jobId,…>, which the page has always aggregated.
@@ -155,6 +156,28 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
     apply(next);
   }
 
+  // ── Selecting a whole status group (2026-08-24, by request) ───────────────
+  //
+  // "☑ Active — 59" in one click, because picking 59 jobs individually is the
+  // thing this filter was slowest at.
+  //
+  // Both of these go through the SAME apply() every individual click uses, which
+  // is what makes the performance requirement fall out for free rather than
+  // needing a batching layer: apply() writes the complete next selection in one
+  // router.push, so selecting 59 jobs is one navigation and one refetch, not 59.
+  // There is deliberately no separate group-filtering path — the URL's `jobs=`
+  // list stays the single source of truth, so a group selection filters exactly
+  // as picking those same jobs by hand would.
+  //
+  // `items` is the group's FILTERED contents, so while a search is active the
+  // header acts on what is actually visible under it. Selecting "Active" having
+  // typed "coil" takes the matching Active jobs, not all 59 — which is the only
+  // reading consistent with the header's own count, since that count is filtered
+  // too.
+  // Thin wrappers over lib/job-select-groups.ts, where the rules live so they
+  // can be tested without React. This component keeps only the UI.
+  const groupState = (items: JobOpt[]) => groupSelectionState(items, selected);
+  const toggleGroup = (items: JobOpt[]) => apply(nextSelectionForGroup(items, selected, jobs));
   const chips = selected.map((id) => jobs.find((j) => j.jobId === id)).filter((j): j is JobOpt => !!j);
   const summary =
     chips.length === 0
@@ -219,28 +242,73 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
               const open = isOpen(g.name);
               return (
                 <div key={g.name}>
-                  {/* Group header — a collapse toggle, not a selectable row, so
-                      clicking a status can never change which job is selected. */}
-                  <button
-                    type="button"
-                    onClick={() => setOverrides((o) => ({ ...o, [g.name]: !open }))}
-                    aria-expanded={open}
-                    className="flex w-full items-center gap-1 rounded px-1 py-1 text-left text-xs font-semibold text-sdc-navy hover:bg-sdc-gray-100"
-                  >
-                    <svg
-                      viewBox="0 0 16 16"
-                      width="9"
-                      height="9"
-                      fill="none"
-                      stroke="currentColor"
-                      strokeWidth="2.2"
-                      className={`shrink-0 opacity-60 motion-interactive ${open ? "rotate-90" : ""}`}
+                  {/* Group header — TWO sibling controls, not one (2026-08-24).
+                      It used to be a single collapse button, with a comment
+                      saying clicking a status could never change the selection;
+                      the request asks for exactly that, so it now also carries a
+                      tri-state checkbox.
+                      Siblings rather than nested, because a <button> inside a
+                      <button> is invalid HTML and leaves the inner control
+                      unreachable by keyboard. Each has its own hit area and its
+                      own label. */}
+                  <div className="flex w-full items-center gap-1 rounded px-1 py-1 text-xs font-semibold text-sdc-navy hover:bg-sdc-gray-100">
+                    {(() => {
+                      const state = groupState(g.items);
+                      return (
+                        <button
+                          type="button"
+                          role="checkbox"
+                          // "mixed" is the ARIA tri-state — the accessible
+                          // equivalent of a DOM checkbox's `indeterminate`,
+                          // which cannot be set from markup anyway. Kept a
+                          // <button> rather than a real <input> so it matches
+                          // every other control in this menu.
+                          aria-checked={state === "all" ? "true" : state === "some" ? "mixed" : "false"}
+                          aria-label={
+                            state === "all"
+                              ? `Deselect all ${g.items.length} ${g.name} jobs`
+                              : `Select all ${g.items.length} ${g.name} jobs`
+                          }
+                          onClick={() => toggleGroup(g.items)}
+                          className="shrink-0 rounded p-0.5 hover:bg-sdc-blue-light"
+                        >
+                          <span
+                            aria-hidden="true"
+                            className={`flex h-3.5 w-3.5 items-center justify-center rounded-[3px] border text-micro font-bold leading-none ${
+                              state === "none"
+                                ? "border-sdc-border bg-white text-transparent"
+                                : "border-sdc-blue bg-sdc-blue text-white"
+                            }`}
+                          >
+                            {/* A dash for "some", a tick for "all" — the two
+                                states must be distinguishable at a glance, not
+                                just to a screen reader. */}
+                            {state === "all" ? "✓" : state === "some" ? "–" : ""}
+                          </span>
+                        </button>
+                      );
+                    })()}
+                    <button
+                      type="button"
+                      onClick={() => setOverrides((o) => ({ ...o, [g.name]: !open }))}
+                      aria-expanded={open}
+                      className="flex min-w-0 flex-1 items-center gap-1 text-left"
                     >
-                      <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
-                    </svg>
-                    <span className="truncate">{g.name}</span>
-                    <span className="ml-auto shrink-0 pl-1 font-normal text-sdc-gray-400">{g.items.length}</span>
-                  </button>
+                      <svg
+                        viewBox="0 0 16 16"
+                        width="9"
+                        height="9"
+                        fill="none"
+                        stroke="currentColor"
+                        strokeWidth="2.2"
+                        className={`shrink-0 opacity-60 motion-interactive ${open ? "rotate-90" : ""}`}
+                      >
+                        <path d="M6 3.5 L10.5 8 L6 12.5" strokeLinecap="round" strokeLinejoin="round" />
+                      </svg>
+                      <span className="truncate">{g.name}</span>
+                      <span className="ml-auto shrink-0 pl-1 font-normal text-sdc-gray-400">{g.items.length}</span>
+                    </button>
+                  </div>
                   {open && (
                     // Indented to the group's label, with a hairline rule so a
                     // long expanded group still reads as belonging to its header
