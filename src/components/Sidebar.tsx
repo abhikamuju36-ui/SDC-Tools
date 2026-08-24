@@ -259,6 +259,18 @@ const ADMIN_GROUP: NavGroup = {
       ),
     },
     {
+      href: "/admin/data-management",
+      label: "Data Management",
+      isActive: (p) => p === "/admin/data-management",
+      icon: (
+        <Icon>
+          <path d="M2 4.5 C2 3.4 4.7 2.5 8 2.5 C11.3 2.5 14 3.4 14 4.5" strokeLinecap="round" />
+          <path d="M2 4.5 V11.5 C2 12.6 4.7 13.5 8 13.5 C11.3 13.5 14 12.6 14 11.5 V4.5" strokeLinecap="round" />
+          <path d="M2 8 C2 9.1 4.7 10 8 10 C11.3 10 14 9.1 14 8" strokeLinecap="round" />
+        </Icon>
+      ),
+    },
+    {
       href: "/admin/users",
       label: "Users & Roles",
       isActive: (p) => p === "/admin/users",

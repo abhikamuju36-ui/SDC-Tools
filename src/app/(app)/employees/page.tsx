@@ -1,7 +1,5 @@
 import { prisma } from "@/lib/prisma";
 import { PageTitle } from "@/components/ui/Typography";
-import { ImportSupervisorsButton } from "@/components/ImportSupervisorsButton";
-import { ReconcileRosterButton } from "@/components/ReconcileRosterButton";
 import { EmployeesGrid } from "@/components/EmployeesGrid";
 import { DISCIPLINE_LABELS } from "@/lib/disciplines";
 import type { EmployeeRow } from "@/components/EmployeesCards";
@@ -80,20 +78,17 @@ export default async function EmployeesPage() {
 
   return (
     <div className="w-full px-8 py-10 md:px-13 md:py-11">
-      <div className="mb-1 flex flex-wrap items-start justify-between gap-4">
+      <div className="mb-1">
         <div>
           <PageTitle className="mb-1">Employees</PageTitle>
-          <p className="text-sm text-sdc-gray-600">
+          <p className="max-w-4xl text-sm text-sdc-gray-600">
             Replaces the Project Planner workbook&apos;s Employees tab. Start at the Engineering / Shop / PM workforce
             overview, then open one card to see all of that group&apos;s departments and their people right here — a
             person&apos;s own detail opens in a side panel. Deactivated employees
             keep all historical hours. Team grouping is shared live with SDC Scheduler&apos;s board — the roster here
-            is read-only, maintained through the import button and Scheduler&apos;s own board.
+            is read-only, maintained through Scheduler&apos;s own board and, for bulk roster maintenance,
+            Admin &rsaquo; Data Management.
           </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <ReconcileRosterButton />
-          <ImportSupervisorsButton />
         </div>
       </div>
 

@@ -12,9 +12,11 @@ import { fetchSchedulerTeam } from "@/lib/scheduler-db";
 // SDC_Scheduler/routes/team.js), matched by team_members.employee_id rather
 // than by name. scripts/reconcile-employee-groups.ts is the ID-based
 // successor to reconcileSchedulerRoster() below; that function stays for the
-// Employees page's "Reconcile" button, which still compares by name — it's
+// "Reconcile with Scheduler" button, which still compares by name — it's
 // read-only and non-blocking, so leaving it as a second, slightly different
 // comparison is low-risk, but the ID-based script is the one to trust.
+// That button moved off the Employees page to Admin > Data Management on
+// 2026-08-24, being a diagnostic rather than day-to-day roster work.
 //
 // The two apps share no stable key for THIS name-based comparison, so it
 // matches on the name, normalized to absorb spacing/case differences (e.g.

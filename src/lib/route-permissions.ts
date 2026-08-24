@@ -16,6 +16,9 @@ export const ROUTE_PERMISSIONS: readonly { path: string; permission: Permission 
   { path: "/audit-log", permission: "audit-log:view" },
   { path: "/job-cost-explorer", permission: "profitability:view" },
   { path: "/admin/users", permission: "users:manage" },
+  // Roster maintenance moved off the Employees page (2026-08-24). Gated on the
+  // permission its writing half needs, not the read-only half.
+  { path: "/admin/data-management", permission: "employees:edit" },
   { path: "/admin/permissions", permission: "permissions:manage" },
 ];
 
