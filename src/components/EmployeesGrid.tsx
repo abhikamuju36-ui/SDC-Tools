@@ -12,7 +12,7 @@ import { CreateHiringPositionDrawer } from "@/components/CreateHiringPositionDra
 import { CapacityDrillDrawer } from "@/components/CapacityDrillDrawer";
 import { DASH, type EmployeeRow } from "@/lib/employee-row";
 import { resolveEmployeeGroup } from "@/lib/employee-card-theme";
-import { resolvePlaceholderGroup, type DepartmentCard } from "@/lib/employee-department-cards";
+import { resolvePlaceholderGroup } from "@/lib/employee-department-cards";
 import {
   workforceGroupForCardKey,
   workforceGroupLongTitle,
@@ -196,14 +196,12 @@ export function EmployeesGrid({
   // filter state above, precisely so drilling in/out and opening/closing a
   // drawer never resets a filter — there is nothing here that unmounts on
   // navigation, only state that changes.
-  const [group, setGroup] = useState<WorkforceGroupKey | null>(null);
   // NOT a scope (2026-08-21) — purely which department card to scroll to and
   // ring once a group opens. The old third level (Overview > Engineering >
   // Controls Engineering) narrowed the view to one department, which meant
   // seeing Controls Engineering's people cost two clicks and hid its siblings;
   // now every department of the open group is on screen at once and this only
   // says where to land.
-  const [focusDepartment, setFocusDepartment] = useState<string | null>(null);
   const [showHiring, setShowHiring] = useState(false);
   const [selectedEmployee, setSelectedEmployee] = useState<EmployeeRow | null>(null);
   const [selectedHiringPosition, setSelectedHiringPosition] = useState<HiringPosition | null>(null);
@@ -318,30 +316,14 @@ export function EmployeesGrid({
 
   // Clicking the open card again collapses it — the card IS the toggle, so
   // "get back to just the overview" is the same one click that opened it.
-  function openGroup(key: WorkforceGroupKey) {
-    setShowHiring(false);
-    setFocusDepartment(null);
-    setGroup((prev) => (prev === key ? null : key));
-  }
-
-  // Clicking a department line item on an overview card opens that
-  // department's WHOLE workforce group and lands on the department — one
-  // action, one level, siblings still visible.
-  function openDepartment(groupKey: WorkforceGroupKey, card: DepartmentCard) {
-    setShowHiring(false);
-    setGroup(groupKey);
-    setFocusDepartment(card.key);
-  }
 
   function openHiringView() {
-    setGroup(null);
-    setFocusDepartment(null);
     setShowHiring((prev) => !prev);
   }
 
+  // Only the Hiring Positions view is a "view" any more — the workforce-group
+  // narrowing went with the summary cards that used to trigger it.
   function collapse() {
-    setGroup(null);
-    setFocusDepartment(null);
     setShowHiring(false);
   }
 
@@ -399,7 +381,8 @@ export function EmployeesGrid({
 
   // A parent card click now NARROWS to that one group rather than being the only
   // way to see it — "Show all groups" in its header restores the full board.
-  const shownSections = group ? groupSections.filter((g) => g.key === group) : groupSections;
+  // Every group, always — there is no longer a control that narrows to one.
+  const shownSections = groupSections;
 
   // ── Two top-level bands (2026-08-24, by request) ──────────────────────────
   //
@@ -518,12 +501,10 @@ export function EmployeesGrid({
         rows={visible}
         placeholders={placeholders}
         hiringPositions={openHiring}
-        onSelectGroup={openGroup}
-        onSelectDepartment={openDepartment}
         onSelectHiring={openHiringView}
         year={year}
         onSelectCapacity={setCapacityDrill}
-        expandedGroup={showHiring ? "hiring" : group}
+        expandedGroup={showHiring ? "hiring" : null}
       />
 
       {/* The expansion (2026-08-21) — rendered UNDER the overview cards, which
@@ -597,7 +578,7 @@ export function EmployeesGrid({
                     placeholders={sec.placeholders}
                     canAddEmployees={canAddEmployees}
                     onSelectEmployee={selectEmployee}
-                    focusDepartment={group ? focusDepartment : null}
+                    focusDepartment={null}
                     hiringPositions={sec.hiring}
                     onSelectHiringPosition={selectHiringPosition}
                     year={year}

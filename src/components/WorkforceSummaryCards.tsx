@@ -1,9 +1,9 @@
 "use client";
 
-import { useMemo, type ReactNode } from "react";
+import { useMemo } from "react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { buildDepartmentCards, type DepartmentCard } from "@/lib/employee-department-cards";
-import { WORKFORCE_GROUPS, workforceGroupForCardKey, rollupGroup, groupsRollingInto, type WorkforceGroupKey } from "@/lib/employee-workforce-groups";
+import { WORKFORCE_GROUPS, workforceGroupForCardKey, rollupGroup, type WorkforceGroupKey } from "@/lib/employee-workforce-groups";
 import type { EmployeeRow } from "@/lib/employee-row";
 import type { SchedulerPlaceholder } from "@/lib/scheduler-db";
 import type { HiringPosition } from "@/lib/hiring-positions";
@@ -11,61 +11,6 @@ import { employeeCapacityHours, hiringCapacityHours } from "@/lib/workforce-capa
 import { hasYearPolicy } from "@/lib/workforce-capacity-policy";
 import { hours as fmtHours } from "@/components/ui/format";
 import { countOpenings, openingsFor } from "@/lib/hiring-openings";
-
-// Level 1 of the Employees tab: one card per company department — Engineering,
-// Shop, PM, Growth / Business Development, Finance, Executive Leadership and
-// Operations — plus the "Hiring Positions" card (2026-08-19) rendered
-// separately from them.
-//
-// Was three cards (Engineering / Shop / PM) and an "Other" catch-all holding
-// everything else; the four back-office groups were split out of that catch-all
-// on 2026-08-24 by request. "other" still exists as the destination for an
-// unmapped department string, but renders no card while it is empty, which it
-// is on today's roster. The grouping itself lives in
-// employee-workforce-groups.ts — this component only themes and orders it. Deliberately its OWN
-// small color set, not employee-teams.ts's per-team brand colors (shared
-// with Hours/ETC — not this screen's to repaint) and not
-// employee-card-theme.ts's per-department pastels (those stay exactly as
-// they are one level down, at DepartmentCard) — this is a level ABOVE both,
-// so it gets a level of its own.
-//
-// Built from buildDepartmentCards() — the SAME function EmployeesCards.tsx
-// calls — so a group's ACTIVE headcount here is a straight sum over the
-// identical cards that level 2 will go on to render for it. Hiring counts
-// are a SEPARATE tally over `hiringPositions` (never merged into `people` —
-// the task's own "do not treat open positions as employees") — Planned is
-// the one number that adds them back together, and only for display.
-const WORKFORCE_THEME: Record<WorkforceGroupKey, { band: string; onBand: string }> = {
-  engineering: { band: "bg-sdc-navy", onBand: "text-white" },
-  shop: { band: "bg-sdc-yellow", onBand: "text-sdc-navy" },
-  // Purple (2026-08-19, by request) -- --sdc-purple (globals.css) is the dark
-  // half of the EXISTING Project Management purple already defined one level
-  // down, in employee-card-theme.ts's CARD_COLORS.pm (matched to Scheduler's
-  // own Departments board), reused here as a solid band instead of that
-  // pastel card's light-bg/dark-text style, to match this level's other
-  // bold-band cards. employee-teams.ts's own PM department color stays
-  // --sdc-blue, unchanged -- that's a third, separate palette (see this
-  // file's header comment on why the three levels don't share one).
-  pm: { band: "bg-sdc-purple", onBand: "text-white" },
-  // Required by the Record type, but never actually rendered: General
-  // Engineering rolls up into Engineering and so gets no card of its own here
-  // (see CARD_RENDER_ORDER below). Kept a real value rather than a placeholder
-  // so that if it is ever promoted to its own card it does not appear unstyled.
-  genEng: { band: "bg-sdc-blue-dark", onBand: "text-white" },
-  // The four back-office groups (2026-08-24). All four bands come from the
-  // palette tokens already in globals.css — nothing new invented, same rule
-  // the three above follow.
-  //
-  // `onBand` is chosen for CONTRAST, not by whether the color feels dark: as
-  // employee-teams.ts already measured, white on the palette's green is 2.4:1
-  // and fails outright, so green and lime take navy text exactly as the pale
-  // colors do. Blue and blue-dark are dark enough to carry white.
-  growth: { band: "bg-sdc-blue", onBand: "text-white" },
-  finance: { band: "bg-sdc-green", onBand: "text-sdc-navy" },
-  exec: { band: "bg-sdc-blue-dark", onBand: "text-white" },
-  operations: { band: "bg-sdc-lime", onBand: "text-sdc-navy" },
-  other: { band: "bg-sdc-gray-700", onBand: "text-white" },
-};
 // Hiring is deliberately NOT given a solid color band like the workforce
 // groups (2026-08-21): it isn't a group of people, it's a list of open
 // requisitions, and a fourth solid band read as a fourth department. It uses
@@ -110,9 +55,6 @@ type WorkforceSummary = {
   cards: DepartmentCard[];
 };
 
-function StatChip({ children }: { children: ReactNode }) {
-  return <span>{children}</span>;
-}
 
 // The small caps label over each region. Quiet on purpose -- it is there to
 // say "these two things are different kinds of thing", not to compete with
@@ -127,8 +69,6 @@ export function WorkforceSummaryCards({
   rows,
   placeholders,
   hiringPositions,
-  onSelectGroup,
-  onSelectDepartment,
   onSelectHiring,
   year,
   onSelectCapacity,
@@ -138,10 +78,6 @@ export function WorkforceSummaryCards({
   placeholders: SchedulerPlaceholder[];
   /** Already OPEN positions only — see EmployeesGrid.tsx's `openHiring` derivation off getHiringPositions(). */
   hiringPositions: HiringPosition[];
-  /** Drills to "all of this workforce group's departments" (Level 2). */
-  onSelectGroup: (key: WorkforceGroupKey) => void;
-  /** Drills straight to one department (Level 2, pre-narrowed) — the "or one of its departments" half of the task's own click rule. */
-  onSelectDepartment: (groupKey: WorkforceGroupKey, card: DepartmentCard) => void;
   /** Drills into the Hiring Positions list (Level 2 equivalent for that card). */
   onSelectHiring: () => void;
   /** For workforce-capacity-policy.ts/workforce-capacity.ts. */
@@ -183,16 +119,6 @@ export function WorkforceSummaryCards({
   // Hiring counts, by department key and by group-only (assigned to a group
   // but no specific department yet — a valid, expected intermediate state
   // per the task's own two-step "group, then optionally deeper" assignment).
-  const hiringByDepartment = useMemo(() => {
-    const m = new Map<string, number>();
-    for (const p of hiringPositions) {
-      if (!p.department) continue;
-      // openingsFor, not +1: a Quantity 2 position is two openings on this
-      // department's line, not one (2026-08-24).
-      m.set(p.department, (m.get(p.department) ?? 0) + openingsFor(p));
-    }
-    return m;
-  }, [hiringPositions]);
 
   const hiringByGroup = useMemo(() => {
     const m = new Map<WorkforceGroupKey, number>();
@@ -283,126 +209,24 @@ export function WorkforceSummaryCards({
         )}
       </div>
 
-      {/* Two regions, not one grid of four peers (2026-08-21): the real
-          workforce on the left, open requisitions set apart on the right past
-          a divider. Side by side from xl up; below xl the aside drops under a
-          horizontal rule instead, so the separation survives every width. */}
-      <div className="flex flex-col gap-4 xl:flex-row xl:items-start xl:gap-5">
-        <div className="min-w-0 flex-1">
-          <RegionLabel>Current Workforce</RegionLabel>
-          <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
-            {summaries.map((group) => {
-          const theme = WORKFORCE_THEME[group.key];
-          const activeCount = group.cards.reduce((s, c) => s + c.people.filter((p) => p.active).length, 0);
-          const inactiveCount = group.cards.reduce((s, c) => s + c.people.length, 0) - activeCount;
-          const leadsCount = group.cards.reduce((s, c) => s + c.people.filter((p) => p.isLead).length, 0);
-          const hiringCount = hiringByGroup.get(group.key) ?? 0;
-          const plannedCount = activeCount + hiringCount;
-          const groupPeople = group.cards.flatMap((c) => c.people.filter((p) => p.active));
-          // Every group rolling into this one, so Engineering's capacity hours
-          // include General Engineering's openings.
-          const rolledIn = groupsRollingInto(group.key);
-          const groupHiring = hiringPositions.filter((p) => p.workforceGroup && rolledIn.includes(p.workforceGroup));
-          const groupCurrentHours = hasCapacityPolicy ? employeeCapacityHours(activeCount, year) : 0;
-          const groupHiringHours = hasCapacityPolicy ? hiringCapacityHours(groupHiring, year) : 0;
-          const groupPlannedHours = groupCurrentHours + groupHiringHours;
-          return (
-            <section
-              key={group.key}
-              className={`flex flex-col overflow-hidden rounded-xl border bg-white shadow-sm ${
-                expandedGroup === group.key ? "border-sdc-blue ring-2 ring-sdc-blue/40" : "border-sdc-border"
-              }`}
-            >
-              <button
-                type="button"
-                onClick={() => onSelectGroup(group.key)}
-                aria-expanded={expandedGroup === group.key}
-                title={expandedGroup === group.key ? `Collapse ${group.title}` : `Show ${group.title}'s departments below`}
-                className={`flex flex-col gap-1 px-4 py-3 text-left motion-interactive hover:brightness-95 ${theme.band} ${theme.onBand}`}
-              >
-                <h3 className="text-sm font-bold uppercase tracking-wide">{group.title}</h3>
-                <div className="flex items-baseline gap-1 text-xs opacity-90">
-                  <span className="text-lg font-bold tabular-nums">{activeCount}</span>
-                  <span>active</span>
-                  {hiringCount > 0 && (
-                    <>
-                      <span className="mx-0.5">·</span>
-                      <span className="text-lg font-bold tabular-nums">{hiringCount}</span>
-                      <span>hiring</span>
-                      <span className="mx-0.5">·</span>
-                      <span className="text-lg font-bold tabular-nums">{plannedCount}</span>
-                      <span>planned</span>
-                    </>
-                  )}
-                </div>
-                <div className="flex items-baseline gap-2 text-xs opacity-90">
-                  <StatChip>
-                    {group.cards.length} department{group.cards.length === 1 ? "" : "s"}
-                  </StatChip>
-                  {leadsCount > 0 && <StatChip>★ {leadsCount}</StatChip>}
-                  {inactiveCount > 0 && <StatChip>{inactiveCount} inactive</StatChip>}
-                </div>
-              </button>
-              {hasCapacityPolicy && (
-                <button
-                  type="button"
-                  onClick={() =>
-                    onSelectCapacity({
-                      title: `${group.title} — Capacity`,
-                      employees: groupPeople,
-                      hiringPositions: groupHiring,
-                    })
-                  }
-                  title="See how this capacity total was built, by employee and open position"
-                  className="flex items-baseline gap-1.5 border-b border-sdc-border-soft bg-sdc-gray-50 px-4 py-1.5 text-left text-xs text-sdc-muted hover:bg-sdc-blue-light/30"
-                >
-                  <span className="font-bold tabular-nums text-sdc-navy">{fmtHours(groupCurrentHours)}</span>
-                  <span>current hrs/yr</span>
-                  {groupHiringHours > 0 && (
-                    <>
-                      <span className="text-sdc-gray-400">·</span>
-                      <span className="font-bold tabular-nums text-sdc-green-text">+{fmtHours(groupHiringHours)}</span>
-                      <span>hiring</span>
-                      <span className="text-sdc-gray-400">·</span>
-                      <span className="font-bold tabular-nums text-sdc-navy">{fmtHours(groupPlannedHours)}</span>
-                      <span>planned</span>
-                    </>
-                  )}
-                </button>
-              )}
-              <ul className="flex-1 p-1.5">
-                {group.cards.map((card) => {
-                  const cardActive = card.people.filter((p) => p.active).length;
-                  const cardHiring = hiringByDepartment.get(card.key) ?? 0;
-                  return (
-                    <li key={card.key}>
-                      <button
-                        type="button"
-                        onClick={() => onSelectDepartment(group.key, card)}
-                        className="flex w-full items-center justify-between gap-2 rounded-md px-2.5 py-1.5 text-left text-sm hover:bg-sdc-blue-light/40"
-                      >
-                        <span className="min-w-0 truncate text-sdc-navy">{card.title}</span>
-                        <span className="shrink-0 font-semibold tabular-nums text-sdc-muted">
-                          {cardActive}
-                          {cardHiring > 0 && <span className="font-normal text-sdc-green-text"> + {cardHiring} hiring</span>}
-                        </span>
-                      </button>
-                    </li>
-                  );
-                })}
-              </ul>
-            </section>
-          );
-        })}
-          </div>
-        </div>
+      {/* The per-group summary cards that used to sit here are gone (2026-08-24,
+          by request): the fully expanded department cards below now show every
+          group with its people, so a card per group above them was the same
+          information twice.
 
-        {openPositions > 0 && (
+          What is deliberately KEPT is everything those cards were not: the
+          company-wide KPI strip above (headcount / open positions / planned /
+          hrs-per-year, with its capacity drill-through) and the Planned aside
+          below, neither of which the expanded sections carry.
+
+          The aside is no longer half of a two-region row, so it is a plain block
+          rather than a flex sibling — and it keeps its own width cap so it does
+          not stretch across the page now that nothing sits beside it. */}
+      <div>        {openPositions > 0 && (
           <>
-            {/* The divider itself: a vertical rule between the two regions on
-                wide screens, a horizontal one when the aside wraps under. */}
-            <div className="h-px w-full shrink-0 bg-sdc-border xl:h-auto xl:w-px xl:self-stretch" aria-hidden />
-            <aside className="min-w-0 xl:w-64 xl:shrink-0">
+            {/* No divider any more — it separated this aside from the summary
+                cards that used to sit to its left. */}
+            <aside className="min-w-0 max-w-xs">
               <RegionLabel>Planned</RegionLabel>
               <section
                 className={`flex flex-col overflow-hidden rounded-xl border border-dashed bg-white ${
