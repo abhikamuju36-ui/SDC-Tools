@@ -90,8 +90,8 @@ export async function setRolePermission(
 
     await prisma.$executeRaw`
       INSERT INTO RolePermission (role, permission, enabled, updatedAt, updatedByEmail)
-      VALUES (${r}, ${permission}, ${enabled}, NOW(3), ${actorEmail})
-      ON DUPLICATE KEY UPDATE enabled = ${enabled}, updatedAt = NOW(3), updatedByEmail = ${actorEmail}
+      VALUES (${r}, ${permission}, ${enabled}, ${new Date()}, ${actorEmail})
+      ON DUPLICATE KEY UPDATE enabled = ${enabled}, updatedAt = ${new Date()}, updatedByEmail = ${actorEmail}
     `;
     changed.push({ role: r, enabled });
     await logAudit({

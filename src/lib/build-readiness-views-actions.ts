@@ -55,8 +55,8 @@ export async function publishBuildReadinessView(name: string, config: BuildReadi
   const json = JSON.stringify(config);
   await prisma.$executeRaw`
     INSERT INTO BuildReadinessSavedView (name, scope, owner, config, createdAt, updatedAt)
-    VALUES (${clean}, 'shared', ${owner}, ${json}, NOW(3), NOW(3))
-    ON DUPLICATE KEY UPDATE owner = VALUES(owner), config = VALUES(config), updatedAt = NOW(3)
+    VALUES (${clean}, 'shared', ${owner}, ${json}, ${new Date()}, ${new Date()})
+    ON DUPLICATE KEY UPDATE owner = VALUES(owner), config = VALUES(config), updatedAt = ${new Date()}
   `;
   await logAudit({ action: "saved_view.publish", entityType: "BuildReadinessSavedView", entityId: clean, summary: `Shared Build Readiness view "${clean}"` });
   revalidatePath("/build-readiness");
@@ -73,8 +73,8 @@ export async function setBuildReadinessTeamDefault(config: BuildReadinessViewCon
   const json = JSON.stringify(config);
   await prisma.$executeRaw`
     INSERT INTO BuildReadinessSavedView (name, scope, owner, config, createdAt, updatedAt)
-    VALUES (${DEFAULT_ROW}, 'default', ${owner}, ${json}, NOW(3), NOW(3))
-    ON DUPLICATE KEY UPDATE owner = VALUES(owner), config = VALUES(config), updatedAt = NOW(3)
+    VALUES (${DEFAULT_ROW}, 'default', ${owner}, ${json}, ${new Date()}, ${new Date()})
+    ON DUPLICATE KEY UPDATE owner = VALUES(owner), config = VALUES(config), updatedAt = ${new Date()}
   `;
   await logAudit({ action: "saved_view.set_default", entityType: "BuildReadinessSavedView", summary: "Set the Build Readiness Team Default view" });
   revalidatePath("/build-readiness");

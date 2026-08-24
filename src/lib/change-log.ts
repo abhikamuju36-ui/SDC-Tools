@@ -165,7 +165,7 @@ export async function recordChanges(
         VALUES
           (${actor.userId}, ${actor.userEmail}, ${actor.userName}, ${opts.action},
            ${c.entityType ?? null}, ${c.entityId !== undefined ? String(c.entityId) : null},
-           ${summary}, NULL, NOW(),
+           ${summary}, NULL, ${new Date()},
            ${c.tab}, ${c.rowRef}, ${c.columnName}, ${c.previousValue}, ${c.newValue},
            ${c.changeType}, ${APP_VERSION}, ${changeId})`;
     }

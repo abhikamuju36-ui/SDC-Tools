@@ -207,8 +207,8 @@ export async function syncJobCostInventorySnapshots(): Promise<string | { skip: 
         for (const r of rows) {
           await prisma.$executeRaw`
             INSERT INTO JobCostInventorySnapshot (jobId, asOfDate, salesPrice, percentComplete, sourceFile, sourceSheet, syncedAt)
-            VALUES (${r.jobId}, ${asOfDate}, ${r.salesPrice}, ${r.percentComplete}, ${fileName}, ${ws.name}, NOW(3))
-            ON DUPLICATE KEY UPDATE salesPrice=${r.salesPrice}, percentComplete=${r.percentComplete}, sourceFile=${fileName}, sourceSheet=${ws.name}, syncedAt=NOW(3)`;
+            VALUES (${r.jobId}, ${asOfDate}, ${r.salesPrice}, ${r.percentComplete}, ${fileName}, ${ws.name}, ${new Date()})
+            ON DUPLICATE KEY UPDATE salesPrice=${r.salesPrice}, percentComplete=${r.percentComplete}, sourceFile=${fileName}, sourceSheet=${ws.name}, syncedAt=${new Date()}`;
           rowsUpserted++;
         }
       }

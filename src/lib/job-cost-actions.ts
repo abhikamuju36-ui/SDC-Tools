@@ -86,8 +86,8 @@ export async function saveDefaultRate(formData: FormData): Promise<void> {
 
   await prisma.$executeRaw`
     INSERT INTO JobCostDefaultRate (id, engRate, shopRate, pmPct, mfgPct, updatedAt, updatedById)
-    VALUES (1, ${engRate}, ${shopRate}, ${pmPct}, ${mfgPct}, NOW(3), ${updatedById})
-    ON DUPLICATE KEY UPDATE engRate=${engRate}, shopRate=${shopRate}, pmPct=${pmPct}, mfgPct=${mfgPct}, updatedAt=NOW(3), updatedById=${updatedById}`;
+    VALUES (1, ${engRate}, ${shopRate}, ${pmPct}, ${mfgPct}, ${new Date()}, ${updatedById})
+    ON DUPLICATE KEY UPDATE engRate=${engRate}, shopRate=${shopRate}, pmPct=${pmPct}, mfgPct=${mfgPct}, updatedAt=${new Date()}, updatedById=${updatedById}`;
 
   await recordChanges([
     { tab: TAB, rowRef: "Default rates", columnName: "Rate Matrix", previousValue: null, newValue: `Eng $${engRate}/hr, Shop $${shopRate}/hr, PM ${pmPct}%, Mfg ${mfgPct}%`, changeType: "edited" },
@@ -113,8 +113,8 @@ export async function saveYearRateOverride(formData: FormData): Promise<void> {
   } else {
     await prisma.$executeRaw`
       INSERT INTO JobCostYearRate (year, engRate, shopRate, pmPct, mfgPct, updatedAt, updatedById)
-      VALUES (${year}, ${engRate}, ${shopRate}, ${pmPct}, ${mfgPct}, NOW(3), ${updatedById})
-      ON DUPLICATE KEY UPDATE engRate=${engRate}, shopRate=${shopRate}, pmPct=${pmPct}, mfgPct=${mfgPct}, updatedAt=NOW(3), updatedById=${updatedById}`;
+      VALUES (${year}, ${engRate}, ${shopRate}, ${pmPct}, ${mfgPct}, ${new Date()}, ${updatedById})
+      ON DUPLICATE KEY UPDATE engRate=${engRate}, shopRate=${shopRate}, pmPct=${pmPct}, mfgPct=${mfgPct}, updatedAt=${new Date()}, updatedById=${updatedById}`;
   }
 
   await recordChanges([
@@ -159,7 +159,7 @@ export async function saveJobHourAllocation(jobId: string, eng: HourAllocationEn
     for (const r of rows) {
       await tx.$executeRaw`
         INSERT INTO JobCostHourAllocation (jobId, type, year, hours, updatedAt, updatedById)
-        VALUES (${jobId}, ${r.type}, ${r.year}, ${r.hours}, NOW(3), ${updatedById})`;
+        VALUES (${jobId}, ${r.type}, ${r.year}, ${r.hours}, ${new Date()}, ${updatedById})`;
     }
   });
 

@@ -435,7 +435,7 @@ export async function recordSubmission(input: {
     VALUES
       (${input.submissionId}, ${input.month}, ${year}, ${monthNumber}, ${input.userId}, ${input.userName},
        ${input.status}, ${APP_VERSION}, ${JSON.stringify(input.sections)}, ${validation}, ${input.failureReason},
-       ${input.confirmedAt ?? null}, ${input.startedAt ?? null}, ${input.completedAt ?? null}, NOW())
+       ${input.confirmedAt ?? null}, ${input.startedAt ?? null}, ${input.completedAt ?? null}, ${new Date()})
     ON DUPLICATE KEY UPDATE
       status = VALUES(status), validation = VALUES(validation), failureReason = VALUES(failureReason),
       appVersion = VALUES(appVersion), sections = VALUES(sections), userId = VALUES(userId),

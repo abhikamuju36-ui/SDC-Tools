@@ -132,8 +132,8 @@ export async function getEtcAllocationsForProject(projectId: string): Promise<Et
 export async function setEtcAllocation(projectId: string, forecastMonth: string, amount: number, note: string | null, actorEmail: string | null): Promise<void> {
   await prisma.$executeRaw`
     INSERT INTO CashFlowEtcAllocation (projectId, forecastMonth, amount, note, updatedByEmail, updatedAt, createdAt)
-    VALUES (${projectId}, ${forecastMonth}, ${amount}, ${note}, ${actorEmail}, NOW(3), NOW(3))
-    ON DUPLICATE KEY UPDATE amount = ${amount}, note = ${note}, updatedByEmail = ${actorEmail}, updatedAt = NOW(3)
+    VALUES (${projectId}, ${forecastMonth}, ${amount}, ${note}, ${actorEmail}, ${new Date()}, ${new Date()})
+    ON DUPLICATE KEY UPDATE amount = ${amount}, note = ${note}, updatedByEmail = ${actorEmail}, updatedAt = ${new Date()}
   `;
 }
 
@@ -166,7 +166,7 @@ export async function setForecastOverride(
 ): Promise<void> {
   await prisma.$executeRaw`
     INSERT INTO CashFlowForecastOverride (projectId, category, forecastMonth, amount, note, updatedByEmail, updatedAt, createdAt)
-    VALUES (${projectId}, ${category}, ${forecastMonth}, ${amount}, ${note}, ${actorEmail}, NOW(3), NOW(3))
-    ON DUPLICATE KEY UPDATE amount = ${amount}, note = ${note}, updatedByEmail = ${actorEmail}, updatedAt = NOW(3)
+    VALUES (${projectId}, ${category}, ${forecastMonth}, ${amount}, ${note}, ${actorEmail}, ${new Date()}, ${new Date()})
+    ON DUPLICATE KEY UPDATE amount = ${amount}, note = ${note}, updatedByEmail = ${actorEmail}, updatedAt = ${new Date()}
   `;
 }

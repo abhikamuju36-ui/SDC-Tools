@@ -51,8 +51,8 @@ export async function setHiringAssignment(
   // below, and vice versa.
   await prisma.$executeRaw`
     INSERT INTO HiringPositionAssignment (positionSourceId, workforceGroup, department, updatedByEmail, updatedAt, createdAt)
-    VALUES (${positionSourceId}, ${workforceGroup}, ${department}, ${actorEmail}, NOW(3), NOW(3))
-    ON DUPLICATE KEY UPDATE workforceGroup = ${workforceGroup}, department = ${department}, updatedByEmail = ${actorEmail}, updatedAt = NOW(3)
+    VALUES (${positionSourceId}, ${workforceGroup}, ${department}, ${actorEmail}, ${new Date()}, ${new Date()})
+    ON DUPLICATE KEY UPDATE workforceGroup = ${workforceGroup}, department = ${department}, updatedByEmail = ${actorEmail}, updatedAt = ${new Date()}
   `;
 }
 
@@ -88,8 +88,8 @@ export async function setHiringExpectedStartDate(
 ): Promise<void> {
   await prisma.$executeRaw`
     INSERT INTO HiringPositionAssignment (positionSourceId, workforceGroup, department, expectedStartDate, updatedByEmail, updatedAt, createdAt)
-    VALUES (${positionSourceId}, ${currentWorkforceGroup}, ${currentDepartment}, ${expectedStartDate}, ${actorEmail}, NOW(3), NOW(3))
-    ON DUPLICATE KEY UPDATE expectedStartDate = ${expectedStartDate}, updatedByEmail = ${actorEmail}, updatedAt = NOW(3)
+    VALUES (${positionSourceId}, ${currentWorkforceGroup}, ${currentDepartment}, ${expectedStartDate}, ${actorEmail}, ${new Date()}, ${new Date()})
+    ON DUPLICATE KEY UPDATE expectedStartDate = ${expectedStartDate}, updatedByEmail = ${actorEmail}, updatedAt = ${new Date()}
   `;
 }
 
@@ -123,8 +123,8 @@ export async function setHiringPositionVisibility(
 ): Promise<void> {
   await prisma.$executeRaw`
     INSERT INTO HiringPositionAssignment (positionSourceId, workforceGroup, department, expectedStartDate, isVisible, updatedByEmail, updatedAt, createdAt)
-    VALUES (${positionSourceId}, ${currentWorkforceGroup}, ${currentDepartment}, ${currentExpectedStartDate}, ${isVisible}, ${actorEmail}, NOW(3), NOW(3))
-    ON DUPLICATE KEY UPDATE isVisible = ${isVisible}, updatedByEmail = ${actorEmail}, updatedAt = NOW(3)
+    VALUES (${positionSourceId}, ${currentWorkforceGroup}, ${currentDepartment}, ${currentExpectedStartDate}, ${isVisible}, ${actorEmail}, ${new Date()}, ${new Date()})
+    ON DUPLICATE KEY UPDATE isVisible = ${isVisible}, updatedByEmail = ${actorEmail}, updatedAt = ${new Date()}
   `;
 }
 
@@ -198,7 +198,7 @@ export async function insertCreatedHiringPosition(fields: CreateHiringPositionFi
       INSERT INTO HiringPositionCreated
         (title, jobStatus, workforceGroup, department, workLocDescription, remote, internal, expectedStartDate, quantity, createdByEmail, updatedByEmail, createdAt, updatedAt)
       VALUES
-        (${fields.title}, ${fields.jobStatus}, ${fields.workforceGroup}, ${fields.department}, ${fields.workLocDescription}, ${fields.remote}, ${fields.internal}, ${fields.expectedStartDate}, ${fields.quantity}, ${fields.actorEmail}, ${fields.actorEmail}, NOW(3), NOW(3))
+        (${fields.title}, ${fields.jobStatus}, ${fields.workforceGroup}, ${fields.department}, ${fields.workLocDescription}, ${fields.remote}, ${fields.internal}, ${fields.expectedStartDate}, ${fields.quantity}, ${fields.actorEmail}, ${fields.actorEmail}, ${new Date()}, ${new Date()})
     `;
     const rows = await tx.$queryRaw<CreatedHiringPositionRow[]>`
       SELECT id, title, jobStatus, workforceGroup, department, workLocDescription, remote, internal, expectedStartDate, isVisible, quantity, filledCount, createdByEmail, updatedByEmail, createdAt, updatedAt
@@ -229,7 +229,7 @@ export async function updateCreatedHiringPosition(id: number, fields: UpdateHiri
     UPDATE HiringPositionCreated
        SET title = ${fields.title}, jobStatus = ${fields.jobStatus}, workforceGroup = ${fields.workforceGroup},
            department = ${fields.department}, expectedStartDate = ${fields.expectedStartDate}, quantity = ${fields.quantity},
-           updatedByEmail = ${fields.actorEmail}, updatedAt = NOW(3)
+           updatedByEmail = ${fields.actorEmail}, updatedAt = ${new Date()}
      WHERE id = ${id}
   `;
 }
@@ -244,7 +244,7 @@ export async function updateCreatedHiringPosition(id: number, fields: UpdateHiri
 export async function updateCreatedHiringPositionVisibility(id: number, isVisible: boolean, actorEmail: string | null): Promise<void> {
   await prisma.$executeRaw`
     UPDATE HiringPositionCreated
-       SET isVisible = ${isVisible}, updatedByEmail = ${actorEmail}, updatedAt = NOW(3)
+       SET isVisible = ${isVisible}, updatedByEmail = ${actorEmail}, updatedAt = ${new Date()}
      WHERE id = ${id}
   `;
 }
@@ -271,8 +271,8 @@ export async function setHiringQuantity(
 ): Promise<void> {
   await prisma.$executeRaw`
     INSERT INTO HiringPositionAssignment (positionSourceId, workforceGroup, department, quantity, updatedByEmail, updatedAt, createdAt)
-    VALUES (${positionSourceId}, ${currentWorkforceGroup}, ${currentDepartment}, ${quantity}, ${actorEmail}, NOW(3), NOW(3))
-    ON DUPLICATE KEY UPDATE quantity = ${quantity}, updatedByEmail = ${actorEmail}, updatedAt = NOW(3)
+    VALUES (${positionSourceId}, ${currentWorkforceGroup}, ${currentDepartment}, ${quantity}, ${actorEmail}, ${new Date()}, ${new Date()})
+    ON DUPLICATE KEY UPDATE quantity = ${quantity}, updatedByEmail = ${actorEmail}, updatedAt = ${new Date()}
   `;
 }
 
@@ -285,15 +285,15 @@ export async function setHiringFilledCount(
 ): Promise<void> {
   await prisma.$executeRaw`
     INSERT INTO HiringPositionAssignment (positionSourceId, workforceGroup, department, filledCount, updatedByEmail, updatedAt, createdAt)
-    VALUES (${positionSourceId}, ${currentWorkforceGroup}, ${currentDepartment}, ${filledCount}, ${actorEmail}, NOW(3), NOW(3))
-    ON DUPLICATE KEY UPDATE filledCount = ${filledCount}, updatedByEmail = ${actorEmail}, updatedAt = NOW(3)
+    VALUES (${positionSourceId}, ${currentWorkforceGroup}, ${currentDepartment}, ${filledCount}, ${actorEmail}, ${new Date()}, ${new Date()})
+    ON DUPLICATE KEY UPDATE filledCount = ${filledCount}, updatedByEmail = ${actorEmail}, updatedAt = ${new Date()}
   `;
 }
 
 export async function updateCreatedHiringPositionFilledCount(id: number, filledCount: number, actorEmail: string | null): Promise<void> {
   await prisma.$executeRaw`
     UPDATE HiringPositionCreated
-       SET filledCount = ${filledCount}, updatedByEmail = ${actorEmail}, updatedAt = NOW(3)
+       SET filledCount = ${filledCount}, updatedByEmail = ${actorEmail}, updatedAt = ${new Date()}
      WHERE id = ${id}
   `;
 }
