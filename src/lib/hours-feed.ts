@@ -12,6 +12,7 @@ import {
 import { punchSources, type PaylocitySource } from "@/lib/paylocity-sources";
 import { aggregateUndefined, countsAsUndefined, type UndefinedReason } from "@/lib/undefined-hours-rules";
 import { prisma } from "@/lib/prisma";
+import { buildJobLabelIndex } from "@/lib/job-label";
 
 // ── THE hours feed (§42.8, §42.14) ──────────────────────────────────────────
 //
@@ -120,9 +121,16 @@ export { countsAsUndefined, aggregateUndefined };
 // The job numbers the app knows about, so a numerically-valid job it has never heard
 // of is reported rather than silently dropped (§42.7). Read once per feed rather than
 // per row.
-async function knownJobNumbers(): Promise<Set<string>> {
-  const jobs = await prisma.job.findMany({ select: { jobId: true } });
-  return new Set(jobs.map((j) => j.jobId));
+async function jobMaster(): Promise<{ known: Set<string>; byLabel: Map<string, string> }> {
+  const jobs = await prisma.job.findMany({ select: { jobId: true, jobName: true } });
+  return {
+    known: new Set(jobs.map((j) => j.jobId)),
+    // Label -> jobId for the job cells that carry a NAME rather than a number.
+    // Built from the job master itself, so creating a "2026 Service" job is all
+    // it takes for those punches to start resolving — no code change, which is
+    // the point (see lib/job-label.ts).
+    byLabel: buildJobLabelIndex(jobs),
+  };
 }
 
 /**
@@ -133,7 +141,7 @@ async function knownJobNumbers(): Promise<Set<string>> {
  * valid dataset in place rather than write something partial.
  */
 export async function readHoursFeed(opts?: { onlyMonth?: string }): Promise<HoursFeed> {
-  const known = await knownJobNumbers();
+  const { known, byLabel } = await jobMaster();
 
   // ── One file per punch year (2026-08-21) ────────────────────────────────
   //
@@ -160,6 +168,7 @@ export async function readHoursFeed(opts?: { onlyMonth?: string }): Promise<Hour
       read: await readPaylocityWorkbook({
         path: source.path,
         knownJobNumbers: known,
+        jobIdByLabel: byLabel,
         onlyMonth: wanted,
         ownsYear: source.ownsYear,
       }),

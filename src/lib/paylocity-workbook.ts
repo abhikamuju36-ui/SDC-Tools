@@ -11,6 +11,7 @@ import {
 import { isTotalControlFunctionId, normalizeFunctionId } from "@/lib/paylocity-canonical";
 import { normalizeSectionId } from "@/lib/paylocity-standard-rules";
 import type { JobHoursRow } from "@/lib/job-hours-source";
+import { resolveJobLabel } from "@/lib/job-label";
 import { normalizeJobNumber as normalizeJobId } from "@/lib/job-filters";
 // The Undefined Hours definition, from the one module that owns it. Imported for use
 // here AND re-exported below, so callers can reach it either way but there is still
@@ -413,6 +414,12 @@ export async function readPaylocityWorkbook(opts?: {
   path?: string;
   resolve?: (rawSection: string) => string | null;
   knownJobNumbers?: ReadonlySet<string>;
+  // Label -> jobId for the job cells that are a NAME rather than a number
+  // ("2025 SERVICE", "2023_SER"). Built from the Job table by the caller with
+  // lib/job-label.ts's own normalizer, so both sides key identically. Omitted
+  // means "do not attempt name matching" and the old numeric-only behaviour
+  // stands.
+  jobIdByLabel?: ReadonlyMap<string, string>;
   // Restrict to one month, for the callers that only ever touch one (the ETC page's
   // Refresh). The whole file is still parsed — it is one 746 KB read, ~1s — but
   // everything outside the month is discarded before it reaches the caller.
@@ -492,6 +499,7 @@ export async function readPaylocityWorkbook(opts?: {
 
   const resolve = opts?.resolve;
   const known = opts?.knownJobNumbers;
+  const jobIdByLabel = opts?.jobIdByLabel;
   const wantMonth = opts?.onlyMonth;
   const ownsYear = opts?.ownsYear;
 
@@ -653,16 +661,32 @@ export async function readPaylocityWorkbook(opts?: {
       reject("MISSING_JOB_ID", "(blank)");
       continue;
     }
+    // Two ways a cell names a job, converging on one `jobId`.
+    let jobId: string;
     if (!Number.isFinite(jobNum)) {
-      reject("JOB_NOT_FOUND", rawJob);
-      continue;
-    }
-    const jobId = normalizeJobNumber(rawJob);
-    // Numerically fine but the app has no such job. Distinct from the above: this is
-    // a job that needs creating or a typo, not a Paylocity coding category.
-    if (known && !known.has(jobId)) {
-      reject("JOB_NOT_FOUND", rawJob);
-      continue;
+      // A NAME, not a number. Paylocity carries standing overhead categories
+      // ("2025 SERVICE", "2023_SER") that were never given a job number, and
+      // every one used to be rejected right here — 871.92h of Service across four
+      // years, including 781.75h whose Job row already existed (jobId 10001,
+      // "2025 Service") and was simply never matched to its label.
+      //
+      // Resolved by NAME against the job master, never by numeric prefix: job 2026
+      // IS "2026 Spare Parts", so keying on the leading 2026 would merge Service
+      // hours into Spare Parts. See lib/job-label.ts.
+      const byLabel = jobIdByLabel ? resolveJobLabel(rawJob, jobIdByLabel) : null;
+      if (!byLabel) {
+        reject("JOB_NOT_FOUND", rawJob);
+        continue;
+      }
+      jobId = byLabel;
+    } else {
+      jobId = normalizeJobNumber(rawJob);
+      // Numerically fine but the app has no such job. Distinct from the above: this
+      // is a job that needs creating or a typo, not a Paylocity coding category.
+      if (known && !known.has(jobId)) {
+        reject("JOB_NOT_FOUND", rawJob);
+        continue;
+      }
     }
 
     // Pool tally from the RAW phase/function — the aliases fold warranty away and two
