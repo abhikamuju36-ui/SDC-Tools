@@ -18,6 +18,9 @@ const CARD_COLORS: Record<string, CardColors> = {
   build: { bg: "#fed7aa", text: "#7c2d12" },
   wire: { bg: "#fef08a", text: "#713f12" },
   service: { bg: "#99f6e4", text: "#134e4a" },
+  // General Engineering (2026-08-24). A blue, keeping it visually in the
+  // Engineering family it rolls up into, but distinct from Mechanical's.
+  geneng: { bg: "#c7d2fe", text: "#1e3a8a" },
   mfgops: { bg: "#c7d2fe", text: "#312e81" },
   growth: { bg: "#fecdd3", text: "#881337" },
   finance: { bg: "#d9f99d", text: "#365314" },

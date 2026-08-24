@@ -16,6 +16,7 @@ import {
   workforceGroupLongTitle,
   groupInScope,
   isExecutionGroup,
+  rollupGroup,
   DEFAULT_TEAM_SCOPE,
   TEAM_SCOPE_LABEL,
   type TeamScope,
@@ -320,7 +321,8 @@ export function EmployeesGrid({
     return visible.filter((r) => {
       const card = resolveEmployeeGroup(r);
       if (!card) return false;
-      return workforceGroupForCardKey(card.key) === group;
+      // rollupGroup so drilling into Engineering includes General Engineering.
+      return rollupGroup(workforceGroupForCardKey(card.key)) === group;
     });
   }, [visible, group]);
 
@@ -334,7 +336,8 @@ export function EmployeesGrid({
     return placeholders.filter((p) => {
       const card = resolvePlaceholderGroup(p);
       if (!card) return false;
-      return workforceGroupForCardKey(card.key) === group;
+      // rollupGroup so drilling into Engineering includes General Engineering.
+      return rollupGroup(workforceGroupForCardKey(card.key)) === group;
     });
   }, [placeholders, group]);
 
@@ -342,7 +345,9 @@ export function EmployeesGrid({
   // view shows only Engineering's own open positions, not the whole company's.
   const scopedHiring = useMemo(() => {
     if (!group) return [];
-    return openHiring.filter((p) => p.workforceGroup === group);
+    // Same rollup as the cards: opening the Engineering group shows General
+    // Engineering's openings too, since its card already counted them.
+    return openHiring.filter((p) => p.workforceGroup && rollupGroup(p.workforceGroup) === group);
   }, [openHiring, group]);
 
   // Clicking the open card again collapses it — the card IS the toggle, so

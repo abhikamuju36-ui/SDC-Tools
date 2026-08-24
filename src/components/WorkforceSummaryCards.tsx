@@ -3,7 +3,7 @@
 import { useMemo, type ReactNode } from "react";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { buildDepartmentCards, type DepartmentCard } from "@/lib/employee-department-cards";
-import { WORKFORCE_GROUPS, workforceGroupForCardKey, type WorkforceGroupKey } from "@/lib/employee-workforce-groups";
+import { WORKFORCE_GROUPS, workforceGroupForCardKey, rollupGroup, groupsRollingInto, type WorkforceGroupKey } from "@/lib/employee-workforce-groups";
 import type { EmployeeRow } from "@/lib/employee-row";
 import type { SchedulerPlaceholder } from "@/lib/scheduler-db";
 import type { HiringPosition } from "@/lib/hiring-positions";
@@ -47,6 +47,11 @@ const WORKFORCE_THEME: Record<WorkforceGroupKey, { band: string; onBand: string 
   // --sdc-blue, unchanged -- that's a third, separate palette (see this
   // file's header comment on why the three levels don't share one).
   pm: { band: "bg-sdc-purple", onBand: "text-white" },
+  // Required by the Record type, but never actually rendered: General
+  // Engineering rolls up into Engineering and so gets no card of its own here
+  // (see CARD_RENDER_ORDER below). Kept a real value rather than a placeholder
+  // so that if it is ever promoted to its own card it does not appear unstyled.
+  genEng: { band: "bg-sdc-blue-dark", onBand: "text-white" },
   // The four back-office groups (2026-08-24). All four bands come from the
   // palette tokens already in globals.css — nothing new invented, same rule
   // the three above follow.
@@ -81,6 +86,13 @@ const HIRING_ACCENT = "text-sdc-green-text";
 // Delivery teams first, in the order the request listed them, then the
 // back-office departments, then "other" (which renders nothing unless an
 // unmapped department turns up — see the filter in `summaries`).
+// "genEng" is deliberately ABSENT (2026-08-24): General Engineering rolls up
+// into Engineering, whose card therefore already includes it
+// ("Engineering Total = Engineering + General Engineering"). Giving it a card
+// here as well would both fragment the Engineering view and double-count it in
+// Open Positions / Planned Headcount. It stays visibly separate where the
+// request asks for that — its own section in the Hiring Positions list, and its
+// own option in the Create/Edit Position form.
 const CARD_RENDER_ORDER: WorkforceGroupKey[] = [
   "pm",
   "engineering",
@@ -148,7 +160,9 @@ export function WorkforceSummaryCards({
     const cards = buildDepartmentCards(rows, placeholders);
     const byGroup = new Map<WorkforceGroupKey, DepartmentCard[]>();
     for (const card of cards) {
-      const key = workforceGroupForCardKey(card.key);
+      // rollupGroup: a General Engineering department card belongs under the
+      // Engineering card, not a card of its own.
+      const key = rollupGroup(workforceGroupForCardKey(card.key));
       const list = byGroup.get(key);
       if (list) list.push(card);
       else byGroup.set(key, [card]);
@@ -184,7 +198,10 @@ export function WorkforceSummaryCards({
     const m = new Map<WorkforceGroupKey, number>();
     for (const p of hiringPositions) {
       if (!p.workforceGroup) continue;
-      m.set(p.workforceGroup, (m.get(p.workforceGroup) ?? 0) + openingsFor(p));
+      // Credited to the ROLLUP group: a General Engineering opening counts
+      // toward the Engineering card's hiring total.
+      const key = rollupGroup(p.workforceGroup);
+      m.set(key, (m.get(key) ?? 0) + openingsFor(p));
     }
     return m;
   }, [hiringPositions]);
@@ -282,7 +299,10 @@ export function WorkforceSummaryCards({
           const hiringCount = hiringByGroup.get(group.key) ?? 0;
           const plannedCount = activeCount + hiringCount;
           const groupPeople = group.cards.flatMap((c) => c.people.filter((p) => p.active));
-          const groupHiring = hiringPositions.filter((p) => p.workforceGroup === group.key);
+          // Every group rolling into this one, so Engineering's capacity hours
+          // include General Engineering's openings.
+          const rolledIn = groupsRollingInto(group.key);
+          const groupHiring = hiringPositions.filter((p) => p.workforceGroup && rolledIn.includes(p.workforceGroup));
           const groupCurrentHours = hasCapacityPolicy ? employeeCapacityHours(activeCount, year) : 0;
           const groupHiringHours = hasCapacityPolicy ? hiringCapacityHours(groupHiring, year) : 0;
           const groupPlannedHours = groupCurrentHours + groupHiringHours;
@@ -415,7 +435,10 @@ export function WorkforceSummaryCards({
                   </button>
                 )}
                 <ul className="flex-1 p-1.5">
-                  {WORKFORCE_GROUPS.filter((g) => g.key !== "other").map((g) => {
+                  {/* Rolled-up groups are skipped: their openings are credited
+                      to the group they roll into, so a General Engineering row
+                      here would always read 0 and imply there were none. */}
+                  {WORKFORCE_GROUPS.filter((g) => g.key !== "other" && !g.rollsUpTo).map((g) => {
                     const count = hiringByGroup.get(g.key) ?? 0;
                     if (count === 0) return null;
                     return (

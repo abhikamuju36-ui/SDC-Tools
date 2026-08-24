@@ -1,4 +1,4 @@
-// The seven delivery teams, in the order the work moves through them —
+// The delivery teams, in the order the work moves through them —
 // PM → ME → CE → Build → Wire → MFG → Service. That sequence is the point: it's
 // how the shop actually runs, and it's the same spine as the ETC grid's phase
 // bands, so the roster now reads in the same order as everything else here.
@@ -96,6 +96,42 @@ export const EMPLOYEE_TEAMS: EmployeeTeam[] = [
     theme: { band: "bg-sdc-lime", ...ON_LIGHT }, // Lime Green
   },
   { code: "Service", name: "Service Engineering", departments: ["Service Engineering", "Service"], disciplines: ["Service Engineering"], schedulerCode: "service", theme: { band: "bg-sdc-border", ...ON_LIGHT } }, // Gray
+  // ── General Engineering (2026-08-24) — a HIRING destination, not a roster ──
+  //
+  // For engineering openings that aren't tied to the Mechanical/Controls/
+  // Service structure (an Application & AI Manager, cross-functional roles).
+  // Its own workforce group in employee-workforce-groups.ts, which rolls up
+  // into Engineering for Engineering-level totals.
+  //
+  // Listed here because this array is what supplies the hiring form's
+  // Department dropdown and hiring-actions.ts's VALID_DEPARTMENTS — so a
+  // General Engineering position needs an entry here to be selectable and
+  // saveable at all.
+  //
+  // `disciplines` is deliberately EMPTY, and no existing department spelling is
+  // claimed. teamFor() resolves team code → department string → discipline, so
+  // an empty discipline list plus a department string nothing currently uses
+  // means this can capture NOBODY: verified against the live roster
+  // (2026-08-24) that no employee has any department, discipline or team
+  // matching "General"/"gen". That is what satisfies the request's "do not
+  // change existing employee department assignments" and "do not move current
+  // Mechanical, Controls or Service Engineering employees into General
+  // Engineering" — it is not a promise about intent, it is arithmetically
+  // unreachable for every current row.
+  //
+  // Adding an eighth entry is safe for this array's three non-hiring consumers:
+  // etc-departments.ts keeps its own separate list by design (see its header),
+  // and hours-filters.ts/HoursDetailPanel only use EMPLOYEE_TEAMS.indexOf for
+  // SORT ORDER among teams employees actually belong to — with nobody here, it
+  // never appears.
+  {
+    code: "GenEng",
+    name: "General Engineering",
+    departments: ["General Engineering"],
+    disciplines: [],
+    schedulerCode: "geneng",
+    theme: { band: "bg-sdc-blue-dark", ...ON_DARK },
+  },
 ];
 
 // Built once from the table above rather than hand-maintained alongside it.

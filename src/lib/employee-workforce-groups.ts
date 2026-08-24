@@ -13,6 +13,7 @@
 
 export type WorkforceGroupKey =
   | "engineering"
+  | "genEng"
   | "shop"
   | "pm"
   | "growth"
@@ -42,6 +43,21 @@ export type WorkforceGroupDef = {
    * keys are Scheduler's vocabulary and which are this app's own.
    */
   cardKeys?: string[];
+  /**
+   * Aggregates into this group for group-level totals (2026-08-24).
+   *
+   * General Engineering is a separate, selectable workforce group for HIRING —
+   * it gets its own option in the Create/Edit Position form and its own section
+   * in the Hiring Positions list — while every Engineering-level total counts it
+   * as Engineering: "Engineering Total = Engineering + General Engineering".
+   *
+   * A rollup rather than simply making it an Engineering department, because the
+   * request needs both halves: separately selectable AND summed. And a rollup
+   * rather than special-casing "genEng" at each total, because the summing sites
+   * then never name it — they call rollupGroup() and stay correct if another
+   * group is ever rolled up the same way.
+   */
+  rollsUpTo?: WorkforceGroupKey;
 };
 
 // ── The company's departments, as seven cards (2026-08-24, by request) ──────
@@ -73,6 +89,11 @@ export type WorkforceGroupDef = {
 //   Engineering 27 · Shop 29 · PM 4 · Growth 9 · Finance 4 · Exec 5 · Operations 1
 export const WORKFORCE_GROUPS: WorkforceGroupDef[] = [
   { key: "engineering", title: "Engineering", teamCodes: ["mech", "controls", "service"] },
+  // Rolls up into Engineering for totals; stays its own group for hiring
+  // selection and display. Its single department is "geneng"
+  // (employee-teams.ts), which no employee can currently resolve to — this
+  // group exists for openings, not for moving anybody.
+  { key: "genEng", title: "General Engineering", teamCodes: ["geneng"], rollsUpTo: "engineering" },
   { key: "shop", title: "Shop", teamCodes: ["build", "wire", "mfgops"] },
   { key: "pm", title: "PM", longTitle: "Project Management", teamCodes: ["pm"] },
   { key: "growth", title: "Growth / Business Development", teamCodes: [], cardKeys: ["growth", "sales"] },
@@ -170,4 +191,28 @@ export function isExecutionGroup(key: WorkforceGroupKey): boolean {
  */
 export function groupInScope(key: WorkforceGroupKey, scope: TeamScope): boolean {
   return scope === "entire" || isExecutionGroup(key);
+}
+
+// ── Rollup: which group a total should credit (2026-08-24) ──────────────────
+//
+// Identity for every group except General Engineering, which credits
+// Engineering. Call this at any site that AGGREGATES — hiring counts, capacity
+// hours, planning KPIs — and NOT at sites that display a position's own group
+// (the Create/Edit form's options, the Hiring Positions list's sections), which
+// must keep General Engineering visibly separate.
+//
+// That split is the whole design: `rollupGroup` for arithmetic, the raw
+// `workforceGroup` for identity.
+export function rollupGroup(key: WorkforceGroupKey): WorkforceGroupKey {
+  return WORKFORCE_GROUPS.find((g) => g.key === key)?.rollsUpTo ?? key;
+}
+
+/**
+ * Every group that rolls INTO the given one, including itself — so
+ * "Engineering" answers [engineering, genEng] and everything else answers just
+ * itself. Lets a caller filter a list by "is this mine, counting rollups"
+ * without knowing which groups roll up where.
+ */
+export function groupsRollingInto(key: WorkforceGroupKey): WorkforceGroupKey[] {
+  return WORKFORCE_GROUPS.filter((g) => g.key === key || g.rollsUpTo === key).map((g) => g.key);
 }

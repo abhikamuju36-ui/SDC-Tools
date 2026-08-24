@@ -9,7 +9,7 @@ import { EMPLOYEE_TEAMS } from "@/lib/employee-teams";
 import type { HiringPosition } from "@/lib/hiring-positions";
 import { HiringStatusPill } from "@/components/HiringStatusPill";
 import { MANUAL_JOB_STATUSES, hiringStatusStyle, manualJobStatusOf } from "@/lib/hiring-position-status";
-import { openingsSummary } from "@/lib/hiring-openings";
+import { countOpenings, openingsSummary } from "@/lib/hiring-openings";
 
 // Level 2 for the "Hiring Positions" card (2026-08-19) — every position
 // (workbook + manually created), bucketed by its current workforce group
@@ -155,7 +155,10 @@ export function HiringPositionsList({
           <section key={bucket.key} className="overflow-hidden rounded-xl border border-sdc-border bg-white shadow-sm">
             <header className="flex items-center justify-between gap-2 border-b border-sdc-border bg-sdc-gray-50 px-3.5 py-2">
               <h3 className="text-sm font-bold text-sdc-navy">{bucket.title}</h3>
-              <span className="text-xs font-semibold tabular-nums text-sdc-muted">{bucket.positions.length}</span>
+              {/* Openings, not rows — a section holding one ×2 requisition is
+                  two openings. The per-row ×N badges below explain any gap
+                  between this figure and the number of rows. */}
+              <span className="text-xs font-semibold tabular-nums text-sdc-muted">{countOpenings(bucket.positions)}</span>
             </header>
             {/* Column headers for the rows below -- the requested
                 "Position | Status | assignment" reading order, with Status
