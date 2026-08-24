@@ -378,6 +378,24 @@ async function upsertSnapshot(jobId: string, jobName: string, customer: string |
     partsUncovered: 0, partsOnOrder: 0, partsPastDue: 0, partsDueSoon7d: 0,
     materialValueTotal: 0, materialValueAtRisk: 0, nextUnlockDate: null as string | null,
   };
+  // ── computedAt is a JS Date, never NOW(3) (2026-08-24) ────────────────────
+  //
+  // Reported as "PO Tracking data does not appear to be up to date". It was
+  // current; the TIMESTAMP was wrong. MySQL NOW(3) returns the session time zone
+  // (SYSTEM = UTC-4 on this server) while Prisma reads a DATETIME column back as
+  // UTC, so a refresh that had just finished stored 14:00 local into a field the
+  // app then treated as 14:00Z. BuildReadinessDrillViews renders that through
+  // toLocaleString(), converting to local a second time, so a 2:00pm refresh
+  // displayed as 10:00am — four hours stale, every time.
+  //
+  // Measured on this database: NOW(3) 14:04:10 vs UTC_TIMESTAMP(3) 18:04:10.
+  //
+  // Not a new discovery for this codebase, which is the frustrating part:
+  // refresh-service.ts hit the same thing and its claimLock comment already
+  // spells it out ("NOW(3) is the MySQL SESSION's timezone while a JS Date is
+  // sent as UTC ... every freshly written startedAt compared as four hours old").
+  // That file was fixed; this one was missed. A JS Date parameter is the
+  // established fix, so it is what is used here.
   const detailJson = JSON.stringify(c.detail);
   await prisma.$executeRaw`
     INSERT INTO BuildReadinessJobSnapshot
@@ -385,7 +403,7 @@ async function upsertSnapshot(jobId: string, jobName: string, customer: string |
        partsUncovered, partsOnOrder, partsPastDue, partsDueSoon7d, materialValueTotal, materialValueAtRisk, nextUnlockDate, detailJson, computedAt)
     VALUES
       (${jobId}, ${jobName}, ${customer}, ${status}, ${c.overallReadinessPct}, ${c.requiredQtyTotal}, ${c.coveredQtyTotal}, ${c.assembliesTotal}, ${c.assembliesReady}, ${c.assembliesPartial}, ${c.assembliesBlocked},
-       ${c.partsUncovered}, ${c.partsOnOrder}, ${c.partsPastDue}, ${c.partsDueSoon7d}, ${c.materialValueTotal}, ${c.materialValueAtRisk}, ${c.nextUnlockDate ? new Date(c.nextUnlockDate) : null}, ${detailJson}, NOW(3))
+       ${c.partsUncovered}, ${c.partsOnOrder}, ${c.partsPastDue}, ${c.partsDueSoon7d}, ${c.materialValueTotal}, ${c.materialValueAtRisk}, ${c.nextUnlockDate ? new Date(c.nextUnlockDate) : null}, ${detailJson}, ${new Date()})
     ON DUPLICATE KEY UPDATE
       jobName = VALUES(jobName), customer = VALUES(customer), status = VALUES(status),
       overallReadinessPct = VALUES(overallReadinessPct), requiredQtyTotal = VALUES(requiredQtyTotal), coveredQtyTotal = VALUES(coveredQtyTotal),
@@ -405,13 +423,17 @@ async function bumpMeta(fields: Partial<{ status: string; startedAt: Date; compl
     values.push(v);
   }
   if (sets.length === 0) return;
-  await prisma.$executeRawUnsafe(`UPDATE BuildReadinessRefreshMeta SET ${sets.join(", ")}, updatedAt = NOW(3) WHERE id = 1`, ...values);
+  await prisma.$executeRawUnsafe(
+    `UPDATE BuildReadinessRefreshMeta SET ${sets.join(", ")}, updatedAt = ? WHERE id = 1`,
+    ...values,
+    new Date(),
+  );
 }
 
 async function incrementMetaDone(failed: boolean): Promise<void> {
   await prisma.$executeRaw`
     UPDATE BuildReadinessRefreshMeta
-    SET jobsDone = jobsDone + 1, jobsFailed = jobsFailed + ${failed ? 1 : 0}, updatedAt = NOW(3)
+    SET jobsDone = jobsDone + 1, jobsFailed = jobsFailed + ${failed ? 1 : 0}, updatedAt = ${new Date()}
     WHERE id = 1
   `;
 }
