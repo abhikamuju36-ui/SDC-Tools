@@ -266,6 +266,27 @@ button { cursor: pointer; }
   white-space: nowrap;
 }
 
+/* The application's own wordmark, beside the corporate one (2026-08-24).
+   Separated by a rule rather than more whitespace, so at a glance the header
+   reads as two facts — company, then app — instead of one long run of text.
+   Deliberately quieter than .header-title: the company name stays the primary
+   mark, and this identifies the window. */
+.header-product {
+  font-family: 'Montserrat', sans-serif;
+  font-weight: 700;
+  font-size: 12.5px;
+  letter-spacing: 1.6px;
+  text-transform: uppercase;
+  color: var(--blue, #1574C4);
+  padding-left: 14px;
+  margin-left: 2px;
+  border-left: 1px solid var(--border);
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  white-space: nowrap;
+}
+
 [data-theme="dark"] .header-title { color: #fff; }
 [data-theme="dark"] .header-subtitle { color: rgba(255,255,255,0.4); }
 [data-theme="dark"] .header-brand { border-right-color: rgba(255,255,255,0.08); }

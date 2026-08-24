@@ -314,6 +314,14 @@ export default function App() {
             <div className="header-title">Steven Douglas Corp.</div>
             <div className="header-subtitle">Engineering Excellence · Trusted Partnerships</div>
           </div>
+          {/* The product name (2026-08-24). The header identified the COMPANY but
+              never the application — "SDC Tools" appeared only in the OS title bar,
+              so the launcher never said what it was. Set as its own wordmark rather
+              than folded into the line above, because the two are different things:
+              one is who we are, one is which app this is. Same Montserrat treatment
+              as the corporate wordmark it sits beside, so it reads as part of the
+              same lockup and not as a heading. */}
+          <div className="header-product">SDC Tools</div>
         </div>
 
 
