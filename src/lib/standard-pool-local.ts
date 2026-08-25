@@ -122,11 +122,22 @@ export async function newProjectsEnteringMonth(month: string): Promise<NewPoolPr
     POOL_CATEGORIES.map((c) => [POOL_QUOTED_SECTION[c], c] as const),
   );
 
+  // Grouped by jobId once, rather than rescanning all of `est` inside the
+  // per-job loop below. That inner `if (e.jobId !== job.id) continue` made this
+  // O(entering x est) — every entering job walked every estimate row of every
+  // other entering job to find its own handful. Same rows, same order, same
+  // sums; only the lookup changed.
+  const estByJobId = new Map<number, typeof est>();
+  for (const e of est) {
+    const bucket = estByJobId.get(e.jobId);
+    if (bucket) bucket.push(e);
+    else estByJobId.set(e.jobId, [e]);
+  }
+
   const out: NewPoolProject[] = [];
   for (const job of entering) {
     const hours = Object.fromEntries(POOL_CATEGORIES.map((c) => [c, 0])) as Record<PoolCategory, number>;
-    for (const e of est) {
-      if (e.jobId !== job.id) continue;
+    for (const e of estByJobId.get(job.id) ?? []) {
       const category = sectionToCategory.get(e.section);
       if (!category) continue;
       hours[category] += Number(e.quotedHours);

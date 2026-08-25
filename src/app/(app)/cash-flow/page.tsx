@@ -15,6 +15,20 @@ export default async function CashFlowPage({
   await requireEltOnly();
   const { as, compare } = await searchParams;
 
+  // Started HERE, before the asOf/compareAsOf resolution below, because neither
+  // of these depends on either of them — and both used to sit inside the
+  // Promise.all at the bottom, which meant they could not begin until
+  // resolveAsOf() and getLatestSnapshotSummary() had both finished in sequence.
+  // That was two round-trips of dead time on a page measured at ~1.26s.
+  // They are awaited in the same Promise.all as before, so a rejection still
+  // surfaces there and still fails the render; the `.catch` is only to stop Node
+  // reporting an unhandled rejection in the window before that await, if the
+  // resolution below throws first.
+  const estimatesPromise = getProjectEstimates();
+  const snapshotsPromise = listSnapshots();
+  estimatesPromise.catch(() => {});
+  snapshotsPromise.catch(() => {});
+
   const asOf = await resolveAsOf(as);
 
   // `compare=none` is an explicit "don't compare"; leaving it off entirely
@@ -33,10 +47,10 @@ export default async function CashFlowPage({
   }
 
   const [estimates, lines, compareLines, snapshots] = await Promise.all([
-    getProjectEstimates(),
+    estimatesPromise,
     getCashFlowLines(asOf),
     compareAsOf ? getCashFlowLines(compareAsOf) : Promise.resolve(null),
-    listSnapshots(),
+    snapshotsPromise,
   ]);
 
   return (
