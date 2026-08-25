@@ -438,8 +438,10 @@
 
 /* -- Cell semantics --------------------------------------------------------
    The four states an editable grid must distinguish. */
+/* Transparent, not --surface: an editable cell must not paint over its row's
+   hover / selected tint. The inset ring is the affordance, not the fill. */
 .sdc-cell--editable {
-  background: var(--surface);
+  background: transparent;
   cursor: text;
   box-shadow: inset 0 0 0 1px var(--border);
 }
@@ -463,6 +465,13 @@
 }
 .sdc-cell--readonly { background: transparent; color: var(--text-2); }
 
+/* Row state outranks cell fill, so selecting or hovering a row is still
+   legible across calculated and locked columns. */
+.sdc-table tbody tr:hover td.sdc-cell--calculated,
+.sdc-table tbody tr:hover td.sdc-cell--locked { background: var(--surface-hover); }
+.sdc-table tbody tr[aria-selected="true"] td.sdc-cell--calculated,
+.sdc-table tbody tr[aria-selected="true"] td.sdc-cell--locked { background: var(--sdc-blue-tint); }
+
 /* Sortable header */
 .sdc-table th[aria-sort] { cursor: pointer; user-select: none; }
 .sdc-table th[aria-sort]:hover { color: var(--text); }
@@ -478,6 +487,8 @@
   gap: var(--sp-1);
   border-bottom: 1px solid var(--border);
   overflow-x: auto;
+  overflow-y: hidden;   /* the tabs' -1px margin would otherwise force a
+                           stray vertical scrollbar on the strip */
   scrollbar-width: thin;
 }
 .sdc-tab {

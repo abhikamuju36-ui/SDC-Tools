@@ -180,10 +180,15 @@
    Dark theme
    Both [data-theme="dark"] and .dark are honored - apps in this repo use both
    conventions (shell uses data-theme on <html>, Tailwind apps use .dark).
+   Scoped to <html>/<body> deliberately: a bare [data-theme="dark"] selector
+   matches ANY element carrying the attribute, so an embedding host's wrapper
+   div can flip an entire app dark. That is not theoretical - it happened
+   while verifying this file in the preview pane.
    ========================================================================== */
 :root[data-theme="dark"],
 :root.dark,
-[data-theme="dark"] {
+body[data-theme="dark"],
+body.dark {
   --surface:        #111827;
   --surface-sunken: #0D1520;
   --surface-hover:  #18212F;
