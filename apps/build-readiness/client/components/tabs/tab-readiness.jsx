@@ -706,12 +706,12 @@ function AssemblyList({ data }) {
           </div>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn-secondary btn-sm" onClick={handleExpandAll}>Expand All</button>
-          <button className="btn-secondary btn-sm" onClick={handleCollapseAll}>Collapse All</button>
+          <button className="sdc-btn sdc-btn--secondary sdc-btn--sm" onClick={handleExpandAll}>Expand All</button>
+          <button className="sdc-btn sdc-btn--secondary sdc-btn--sm" onClick={handleCollapseAll}>Collapse All</button>
         </div>
       </div>
 
-      <div className="card" style={{ overflow: "hidden" }}>
+      <div className="sdc-card" style={{ overflow: "hidden" }}>
         {filteredSpecs.map(spec => (
           <div key={spec.spec}>
             <div style={{ padding: "8px 14px", background: "var(--bg-sunken)", borderBottom: "1px solid var(--border-subtle)" }}>

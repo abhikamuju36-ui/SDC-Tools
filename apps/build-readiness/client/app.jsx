@@ -42,7 +42,7 @@ class ErrorBoundary extends React.Component {
             }}>{this.state.info.componentStack}</pre>
           )}
           <button
-            className="btn btn-primary"
+            className="sdc-btn sdc-btn--primary"
             onClick={() => this.setState({ error: null, info: null })}
           >
             Try Again
@@ -468,16 +468,16 @@ function App() {
   if (error) {
     return (
       <div style={{ height: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)' }}>
-        <div style={{ textAlign: 'center', maxWidth: 420 }}>
-          <div style={{ fontSize: 36, marginBottom: 16 }}>⚠️</div>
-          <div className="eyebrow" style={{ color: 'var(--threat)' }}>Could Not Load Job #{jobId}</div>
-          <p style={{ color: 'var(--ink-3)', margin: '12px 0 24px', fontSize: 14 }}>{error}</p>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'center' }}>
-            <button className="btn btn-primary" onClick={() => { setError(null); setData(null); setFetchKey(k => k + 1); }}>
+        <div className="sdc-state sdc-state--error">
+          <div className="sdc-state__icon" aria-hidden="true">&#9888;</div>
+          <p className="sdc-state__title">Could not load Job #{jobId}</p>
+          <p className="sdc-state__body">{error}</p>
+          <div className="sdc-state__actions">
+            <button className="sdc-btn sdc-btn--primary" onClick={() => { setError(null); setData(null); setFetchKey(k => k + 1); }}>
               Retry
             </button>
-            <button className="btn" onClick={() => { setJobId(null); setError(null); setData(null); }}>
-              ← Back to Search
+            <button className="sdc-btn sdc-btn--secondary" onClick={() => { setJobId(null); setError(null); setData(null); }}>
+              Back to search
             </button>
           </div>
         </div>
@@ -488,18 +488,17 @@ function App() {
   // ── Loading (also covers the one-tick gap before useEffect sets loading=true) ──
   if (loading || !data) {
     return (
-      <div style={{
-        height: '100vh', display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center',
-        background: 'linear-gradient(135deg, var(--bg) 0%, var(--bg-sunken) 100%)', color: 'var(--ink-3)',
-      }}>
-        <div style={{ position: 'relative', width: 72, height: 72, marginBottom: 28 }}>
-          <div className="spinner" style={{ width: '100%', height: '100%', border: '3px solid var(--bg-sunken)', borderTopColor: 'var(--sdc-blue)', borderRadius: '50%' }} />
-          <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
-            <img src="assets/sdc-logo-blue.png" style={{ height: 22, opacity: 0.7 }} onError={e => e.target.style.display = 'none'} />
+      <div style={{ height: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg)' }}>
+        <div className="sdc-state" role="status" aria-live="polite">
+          <div style={{ position: 'relative', width: 72, height: 72, marginBottom: 'var(--sp-4)' }}>
+            <div className="spinner" style={{ width: '100%', height: '100%', border: '3px solid var(--bg-sunken)', borderTopColor: 'var(--sdc-blue)', borderRadius: '50%' }} />
+            <div style={{ position: 'absolute', top: '50%', left: '50%', transform: 'translate(-50%, -50%)' }}>
+              <img src="assets/sdc-logo-blue.png" alt="" style={{ height: 22, opacity: 0.7 }} onError={e => e.target.style.display = 'none'} />
+            </div>
           </div>
+          <p className="sdc-state__title">Loading project</p>
+          <p className="sdc-state__body">Retrieving live data for Job #{jobId}&hellip;</p>
         </div>
-        <div className="mono" style={{ fontSize: 11, letterSpacing: '0.18em', fontWeight: 600, color: 'var(--ink)' }}>LOADING PROJECT</div>
-        <div style={{ fontSize: 12, color: 'var(--ink-4)', marginTop: 6 }}>Retrieving live data for Job #{jobId}…</div>
       </div>
     );
   }
@@ -525,7 +524,7 @@ function App() {
                 {item.label}
               </span>
               {item.count > 0 && (
-                <span className={`badge badge-${item.countAccent === 'threat' ? 'threat' : 'pending'}`} style={{ height: 16, fontSize: 9.5 }}>
+                <span className={`rail-count rail-count--${item.countAccent === 'threat' ? 'threat' : 'pending'}`}>
                   {item.count}
                 </span>
               )}

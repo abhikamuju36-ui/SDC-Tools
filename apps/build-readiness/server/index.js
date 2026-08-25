@@ -86,4 +86,8 @@ function startServer({ port } = {}) {
 }
 
 if (require.main === module) startServer();
-module.exports = { startServer };
+// `app` is exported alongside startServer so the server can be mounted on a
+// specific host (e.g. loopback-only for local verification) or wrapped in
+// tests. startServer() hardcodes 0.0.0.0. Mirrors apps/assemblies, which
+// already exports both.
+module.exports = { startServer, app };

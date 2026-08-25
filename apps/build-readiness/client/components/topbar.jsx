@@ -34,7 +34,7 @@ function TopBar({ jobId, setJobId, job, setActiveTab, loading }) {
           <button className="load-btn" onClick={onLoad}>Load</button>
         </div>
         <div style={{ width: 1, height: 22, background: "var(--border)" }}/>
-        <button className="btn btn-ghost" style={{ height: 34, gap: 8 }}>
+        <button className="sdc-btn sdc-btn--ghost" style={{ height: 34, gap: 8 }}>
           <IconSearch size={13}/>
           <span style={{ color: "var(--ink-4)" }}>Search anywhere…</span>
           <span className="kbd">⌘K</span>

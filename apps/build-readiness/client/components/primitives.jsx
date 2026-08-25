@@ -39,24 +39,31 @@ export const IconExternal     = (p) => <Icon {...p} d={<><path d="M11 2h3v3M14 2
 
 // ---- Status badge ----
 export function StatusBadge({ status }) {
+  // Maps to the shared @sdc/design-system badge primitives. Every badge in
+  // this app funnels through here, so the whole set stays consistent with the
+  // rest of the platform from one place.
+  //
+  // sdc-badge renders a status dot before the label, so statuses are never
+  // communicated by colour alone. The icons below are kept where they add
+  // meaning beyond the dot (a tick for received, a clock for pending).
   const map = {
-    "RCVD":      { cls: "badge-ready",   ico: <IconCheck size={10} sw={2} />, label: "RCVD" },
-    "PEND":      { cls: "badge-pending", ico: <IconClock size={10} />, label: "PEND" },
-    "NO PO":     { cls: "badge-threat",  ico: <IconCircleX size={10} />, label: "NO PO" },
-    "ORD":       { cls: "badge-blue",    ico: null, label: "ORD" },
-    "PO":        { cls: "badge-blue",    ico: null, label: "PO" },
-    "PAST DUE":  { cls: "badge-threat",  ico: null, label: "PAST DUE" },
-    "LATE/EXP":  { cls: "badge-threat",  ico: null, label: "LATE/EXP" },
-    "EOR SOON":  { cls: "badge-pending", ico: null, label: "EOR SOON" },
-    "OVERDUE":   { cls: "badge-threat",  ico: null, label: "OVERDUE" },
-    "LONG-LEAD": { cls: "badge-blue",    ico: null, label: "LONG-LEAD" },
-    "DUE":       { cls: "badge-pending", ico: null, label: "DUE" },
-    "VEND":      { cls: "badge-pending", ico: null, label: "VEND" },
-    "OPEN":      { cls: "badge-blue",    ico: null, label: "OPEN" },
-    "RECEIVED":  { cls: "badge-ready",  ico: <IconCheck size={10} sw={2} />, label: "RECEIVED" },
+    "RCVD":      { cls: "sdc-badge--success", ico: <IconCheck size={10} sw={2} /> },
+    "RECEIVED":  { cls: "sdc-badge--success", ico: <IconCheck size={10} sw={2} /> },
+    "PEND":      { cls: "sdc-badge--warning", ico: <IconClock size={10} /> },
+    "NO PO":     { cls: "sdc-badge--danger",  ico: <IconCircleX size={10} /> },
+    "ORD":       { cls: "sdc-badge--info" },
+    "PO":        { cls: "sdc-badge--info" },
+    "PAST DUE":  { cls: "sdc-badge--danger" },
+    "LATE/EXP":  { cls: "sdc-badge--danger" },
+    "EOR SOON":  { cls: "sdc-badge--warning" },
+    "OVERDUE":   { cls: "sdc-badge--danger" },
+    "LONG-LEAD": { cls: "sdc-badge--info" },
+    "DUE":       { cls: "sdc-badge--warning" },
+    "VEND":      { cls: "sdc-badge--warning" },
+    "OPEN":      { cls: "sdc-badge--info" },
   };
-  const m = map[status] || { cls: "badge-neutral", label: status };
-  return <span className={`badge ${m.cls}`}>{m.ico}{m.label}</span>;
+  const m = map[status] || { cls: "" };
+  return <span className={`sdc-badge ${m.cls}`.trim()}>{m.ico}{status}</span>;
 }
 
 // ---- Health ring ----

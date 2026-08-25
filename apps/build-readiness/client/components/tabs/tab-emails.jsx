@@ -31,10 +31,10 @@ function EmailsTab({ data, job }) {
           </div>
         </div>
         <div style={{ display: 'flex', gap: 8 }}>
-          <button className="btn-secondary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: 12 }} onClick={onCopyAll}>
+          <button className="sdc-btn sdc-btn--secondary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 12px', fontSize: 12 }} onClick={onCopyAll}>
             <IconCopy size={14} /> {copied === 'all' ? 'Copied' : 'Copy All'}
           </button>
-          <button className="btn-primary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: 12 }}>
+          <button className="sdc-btn sdc-btn--primary" style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '6px 14px', fontSize: 12 }}>
             <IconSparkle size={14} /> Send Wave
           </button>
         </div>
@@ -85,10 +85,10 @@ function EmailRow({ e, job, open, onToggle }) {
         </span>
 
         {/* Actions */}
-        <button className="btn-secondary" onClick={(ev) => { ev.stopPropagation(); onToggle(); }} style={{ padding: '4px 10px', fontSize: 11, gap: 4 }}>
+        <button className="sdc-btn sdc-btn--secondary" onClick={(ev) => { ev.stopPropagation(); onToggle(); }} style={{ padding: '4px 10px', fontSize: 11, gap: 4 }}>
           <IconMail size={12} /> {open ? 'Close' : 'Preview'}
         </button>
-        <button className="btn-secondary" onClick={onCopy} style={{ padding: '4px 10px', fontSize: 11, gap: 4 }}>
+        <button className="sdc-btn sdc-btn--secondary" onClick={onCopy} style={{ padding: '4px 10px', fontSize: 11, gap: 4 }}>
           <IconCopy size={12} /> {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
@@ -107,11 +107,11 @@ function EmailRow({ e, job, open, onToggle }) {
             }}>{body}</pre>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn-secondary" onClick={onCopy}>
+            <button className="sdc-btn sdc-btn--secondary" onClick={onCopy}>
               <IconCopy size={14} /> {copied ? 'Copied to Clipboard' : 'Copy Email Body'}
             </button>
             <a href={`mailto:${(e.contacts || []).join(',')}?subject=${encodeURIComponent(`SDC Job ${job?.id||''} — Expedite Request`)}&body=${encodeURIComponent(body)}`}
-               className="btn-primary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', fontSize: 13, borderRadius: 6 }}
+               className="sdc-btn sdc-btn--primary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', fontSize: 13, borderRadius: 6 }}
                onClick={ev => ev.stopPropagation()}>
               <IconMail size={14} stroke="white" /> Open in Mail Client
             </a>

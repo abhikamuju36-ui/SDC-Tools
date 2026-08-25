@@ -365,7 +365,7 @@ function PoDrawer({ po, supplier, onClose }) {
 
         {/* Footer */}
         <div style={{ padding: '12px 24px', borderTop: '1px solid var(--border)', background: 'var(--bg)', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
-          <button className="btn-secondary" onClick={onClose} style={{ fontSize: 13, padding: '7px 18px' }}>Close</button>
+          <button className="sdc-btn sdc-btn--secondary" onClick={onClose} style={{ fontSize: 13, padding: '7px 18px' }}>Close</button>
         </div>
       </div>
     </>
@@ -549,10 +549,10 @@ function EmailRow({ e, job, open, onToggle }) {
         <span className="mono" style={{ fontSize: 11, color: e.contacts?.length ? 'var(--fg-3)' : 'var(--threat)', textAlign: 'right', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {e.contacts?.length ? e.contacts.join(', ') : 'No contact email in ERP'}
         </span>
-        <button className="btn-secondary" onClick={ev => { ev.stopPropagation(); onToggle(); }} style={{ padding: '4px 10px', fontSize: 11, gap: 4 }}>
+        <button className="sdc-btn sdc-btn--secondary" onClick={ev => { ev.stopPropagation(); onToggle(); }} style={{ padding: '4px 10px', fontSize: 11, gap: 4 }}>
           <IconMail size={12} /> {open ? 'Close' : 'Preview'}
         </button>
-        <button className="btn-secondary" onClick={onCopy} style={{ padding: '4px 10px', fontSize: 11, gap: 4 }}>
+        <button className="sdc-btn sdc-btn--secondary" onClick={onCopy} style={{ padding: '4px 10px', fontSize: 11, gap: 4 }}>
           <IconCopy size={12} /> {copied ? 'Copied' : 'Copy'}
         </button>
       </div>
@@ -566,9 +566,9 @@ function EmailRow({ e, job, open, onToggle }) {
             <pre className="mono" style={{ margin: 0, padding: 16, fontSize: 12, lineHeight: 1.6, color: 'var(--fg-1)', whiteSpace: 'pre-wrap', background: 'transparent' }}>{body}</pre>
           </div>
           <div style={{ display: 'flex', gap: 10 }}>
-            <button className="btn-secondary" onClick={onCopy}><IconCopy size={14} /> {copied ? 'Copied to Clipboard' : 'Copy Email Body'}</button>
+            <button className="sdc-btn sdc-btn--secondary" onClick={onCopy}><IconCopy size={14} /> {copied ? 'Copied to Clipboard' : 'Copy Email Body'}</button>
             <a href={`mailto:${(e.contacts || []).join(',')}?subject=${encodeURIComponent(`SDC Job ${job?.id || ''} — Expedite Request`)}&body=${encodeURIComponent(body)}`}
-               className="btn-primary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', fontSize: 13, borderRadius: 6 }}
+               className="sdc-btn sdc-btn--primary" style={{ textDecoration: 'none', display: 'flex', alignItems: 'center', gap: 8, padding: '8px 16px', fontSize: 13, borderRadius: 6 }}
                onClick={ev => ev.stopPropagation()}>
               <IconMail size={14} stroke="white" /> Open in Mail Client
             </a>
@@ -593,7 +593,7 @@ function EmailsPanel({ emails, job }) {
         <span style={{ fontSize: 12, color: 'var(--fg-2)', flex: 1 }}>
           {emails.length} supplier follow-ups ready · <span style={{ color: 'var(--threat-ink)', fontWeight: 600 }}>{overdueCount} overdue</span> · auto-drafted from open POs
         </span>
-        <button className="btn-secondary" onClick={onCopyAll} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', fontSize: 12 }}>
+        <button className="sdc-btn sdc-btn--secondary" onClick={onCopyAll} style={{ display: 'flex', alignItems: 'center', gap: 6, padding: '5px 12px', fontSize: 12 }}>
           <IconCopy size={13}/> {copied === 'all' ? 'Copied' : 'Copy All'}
         </button>
       </div>

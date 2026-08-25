@@ -408,7 +408,7 @@ function TimelineRibbon({ job, poActions, onDrillDown }) {
   const gaugeColor = bsDays < 0 ? '#dc2626' : bsDays < 7 ? '#ca8a04' : 'var(--sdc-blue)';
 
   return (
-    <div className="card" style={{ padding: '20px 24px 20px', marginBottom: 24, background: 'var(--bg-raised)' }}>
+    <div className="sdc-card" style={{ padding: '20px 24px 20px', marginBottom: 24, background: 'var(--bg-raised)' }}>
 
       {/* ── V2 Header: 3-column grid ── */}
       <div style={{ display: 'grid', gridTemplateColumns: 'auto 1fr auto', alignItems: 'center', gap: 24, paddingBottom: 14, borderBottom: '1px solid var(--border-subtle)' }}>

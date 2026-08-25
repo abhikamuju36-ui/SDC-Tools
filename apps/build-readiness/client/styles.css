@@ -125,24 +125,7 @@ input { font-family: inherit; }
   box-shadow: var(--shadow-sm);
 }
 
-.btn-secondary {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--bg-raised);
-  border: 1px solid var(--border);
-  border-radius: var(--r-sm);
-  padding: 6px 12px;
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--ink-2);
-  transition: all 0.15s;
-}
-.btn-secondary:hover {
-  background: var(--bg-hover);
-  border-color: var(--border-strong);
-  color: var(--ink);
-}
+/* .btn-secondary retired -> .sdc-btn.sdc-btn--secondary */
 
 /* ============ APP SHELL ============ */
 .app {
@@ -338,54 +321,35 @@ input { font-family: inherit; }
   padding: 24px 32px 64px;
 }
 
-/* ---- BUTTON ---- */
-.btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--t-sm);
-  font-weight: 500;
-  padding: 6px 12px;
-  height: 30px;
-  border-radius: var(--r-md);
-  border: 1px solid var(--border);
-  background: var(--bg-raised);
-  color: var(--ink-2);
-  transition: all 0.12s;
-}
-.btn:hover { background: var(--bg-hover); border-color: var(--border-strong); }
-.btn-primary {
-  background: var(--sdc-blue);
-  color: white;
-  border-color: var(--sdc-blue);
-}
-.btn-primary:hover { background: var(--sdc-blue-hover); border-color: var(--sdc-blue-hover); }
-.btn-ghost { border-color: transparent; background: transparent; }
-.btn-ghost:hover { background: var(--bg-hover); }
-.btn-sm { height: 26px; padding: 4px 9px; font-size: var(--t-xs); }
-.btn-danger { color: var(--threat-ink); border-color: var(--border); }
-.btn-danger:hover { background: var(--threat-soft); border-color: var(--threat); }
+/* ---- BUTTONS ----
+   Retired in favour of @sdc/design-system's .sdc-btn primitives. This file
+   previously carried TWO different button geometries - .btn at 30px tall with
+   --r-md, and .btn-secondary with no fixed height and a different padding and
+   radius - so two buttons side by side did not line up. Both now map to the
+   single shared 34px control height. */
 
 /* ---- BADGES ---- */
-.badge {
+/* Status badges now come from @sdc/design-system (.sdc-badge*), applied in
+   components/primitives.jsx. The old .badge/.badge-* rules are retired.
+
+   The rail count chip is NOT a status badge - it is a numeric count, and the
+   shared badge would render a status dot before the number. So it keeps its
+   own small rule. */
+.rail-count {
   display: inline-flex;
   align-items: center;
-  gap: 4px;
-  font-size: var(--t-xs);
-  font-weight: 600;
-  letter-spacing: 0.04em;
-  text-transform: uppercase;
-  padding: 2px 7px;
-  border-radius: 3px;
-  font-family: var(--font-mono);
-  height: 18px;
-  white-space: nowrap;
+  justify-content: center;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 5px;
+  border-radius: var(--radius-pill);
+  font-size: 9.5px;
+  font-weight: var(--fw-bold);
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
 }
-.badge-ready { background: var(--ready-soft); color: var(--ready-ink); }
-.badge-pending { background: var(--pending-soft); color: var(--pending-ink); }
-.badge-threat { background: var(--threat-soft); color: var(--threat-ink); }
-.badge-neutral { background: var(--neutral-soft); color: var(--ink-2); }
-.badge-blue { background: var(--sdc-blue-soft); color: var(--sdc-blue-ink); }
+.rail-count--threat  { background: var(--threat-soft);  color: var(--threat-ink); }
+.rail-count--pending { background: var(--pending-soft); color: var(--pending-ink); }
 
 .dot-led {
   display: inline-block;
