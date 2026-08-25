@@ -1,0 +1,247 @@
+/* ============================================================================
+   SDC Tools — Shared Design Tokens
+   ----------------------------------------------------------------------------
+   Single source of truth for color, type, spacing, radius, elevation and motion
+   across every SDC app (shell, Scheduler, ETC Planner, Assemblies, Build
+   Readiness, State Logic, Calendar).
+
+   This file INVENTS almost nothing. It is a merge of the two most mature token
+   sets already shipping in this repo:
+     - apps/shell/src/index.css        : brand palette + light/dark theming
+     - SDC_Scheduler/public/styles.css : type scale, weight scale, radius,
+                                         elevation, motion
+   The only genuinely new addition is the spacing scale (--sp-*): no app had
+   one, and standardizing spacing was an explicit requirement.
+
+   ADOPTION: apps should NOT mass-rename their existing CSS variables. Import
+   this file first, then alias local names to these tokens in the app's own
+   :root (see packages/design-system/README.md). That converges the visuals
+   without touching component code.
+   ========================================================================== */
+
+:root {
+  /* -- Brand palette ------------------------------------------------------
+     SDC 2026 Brand Guide, section 04. Do not introduce blues outside this
+     ramp - three apps had drifted to #2563EB / #1E5DD8 / #0066CC. */
+  --sdc-navy:       #061D39;
+  --sdc-blue:       #1574C4;   /* primary: CTAs, links, active states */
+  --sdc-blue-600:   #1265AC;   /* hover */
+  --sdc-blue-700:   #0E548E;   /* pressed */
+  --sdc-blue-light: #AACEE8;
+  --sdc-blue-tint:  #E8F1F9;   /* selected rows, soft fills */
+  --sdc-green:      #74C415;
+  --sdc-lime:       #BEFA4F;
+  --sdc-yellow:     #FFDE51;
+  --sdc-gray:       #D9D9D9;
+  --sdc-black:      #231F20;
+
+  /* -- Surfaces -----------------------------------------------------------
+     Cool neutrals. Assemblies and Build Readiness had drifted to a WARM
+     stone ramp (#FAFAF9 / #FAFAF7), which reads dingy next to the navy. */
+  --surface:        #FFFFFF;   /* cards, panels, modals */
+  --surface-sunken: #F7F9FC;   /* table headers, inset wells */
+  --surface-hover:  #F1F5FA;
+  --bg-page:        #F4F6FA;   /* app background */
+  --bg-raised:      #FFFFFF;
+
+  /* -- Borders ------------------------------------------------------------*/
+  --border:        #E2E6EE;    /* dividers inside a surface */
+  --border-strong: #CFD5E0;    /* card outlines, input borders */
+  --border-subtle: #EEF1F6;
+
+  /* -- Text ---------------------------------------------------------------*/
+  --text:        #061D39;      /* primary */
+  --text-2:      #3D4A60;      /* secondary / labels */
+  --text-3:      #74809A;      /* muted / metadata */
+  --text-4:      #A3ADC2;      /* placeholder, disabled */
+  --text-invert: #FFFFFF;
+  --text-link:   var(--sdc-blue);
+
+  /* -- Status -------------------------------------------------------------
+     Each status has fg / bg / border so badges never rely on color alone. */
+  --success:        #2F7D33;
+  --success-bg:     #E7F4E8;
+  --success-border: #BFE0C1;
+  --warning:        #B45309;
+  --warning-bg:     #FFF7E6;
+  --warning-border: #F5D99B;
+  --danger:         #B42318;
+  --danger-bg:      #FEE4E2;
+  --danger-border:  #F3B4AE;
+  --info:           var(--sdc-blue);
+  --info-bg:        var(--sdc-blue-tint);
+  --info-border:    var(--sdc-blue-light);
+  --neutral:        #5B6577;
+  --neutral-bg:     #EEF1F6;
+  --neutral-border: #D7DDE7;
+
+  /* Process/health dots (shell) */
+  --c-running:  #16A34A;
+  --c-starting: #D97706;
+  --c-error:    #DC2626;
+  --c-stopped:  #94A3B8;
+
+  /* -- Typography ---------------------------------------------------------
+     Montserrat is the platform face (shell + Scheduler). Assemblies had
+     drifted to Inter. */
+  --font-ui:   'Montserrat', 'Segoe UI', system-ui, -apple-system, sans-serif;
+  --font-mono: ui-monospace, 'JetBrains Mono', 'SF Mono', Consolas, Menlo, monospace;
+
+  /* Type scale - use these, never raw px */
+  --fs-2xs:      9px;   /* micro badges */
+  --fs-xs:      10px;   /* timestamps, uppercase eyebrow labels */
+  --fs-sm:      11px;   /* secondary / metadata */
+  --fs-md:      12px;   /* table cells, form inputs */
+  --fs-base:    13px;   /* body default */
+  --fs-lg:      14px;   /* emphasized labels, app body default */
+  --fs-xl:      16px;   /* section sub-headers */
+  --fs-2xl:     20px;   /* card / panel headings */
+  --fs-3xl:     24px;   /* page titles */
+  --fs-display: 36px;   /* large KPI numbers */
+
+  /* Weight scale - base is 500, matching the Scheduler's deliberate bump */
+  --fw-normal:    500;
+  --fw-medium:    500;
+  --fw-semibold:  600;
+  --fw-bold:      700;
+  --fw-extrabold: 800;
+
+  --lh-tight:   1.25;  /* headings, KPI numbers */
+  --lh-base:    1.5;   /* body */
+  --lh-relaxed: 1.65;  /* prose blocks */
+
+  /* -- Spacing (4px base) -------------------------------------------------
+     The one new scale. Use for padding, gap and margin everywhere. */
+  --sp-0:  0;
+  --sp-1:  4px;
+  --sp-2:  8px;
+  --sp-3:  12px;
+  --sp-4:  16px;
+  --sp-5:  20px;
+  --sp-6:  24px;
+  --sp-8:  32px;
+  --sp-10: 40px;
+  --sp-12: 48px;
+  --sp-16: 64px;
+
+  /* Layout rhythm - page gutters and max content width, so every app frames
+     its content identically. */
+  --page-gutter:    var(--sp-6);
+  --page-gutter-sm: var(--sp-4);
+  --section-gap:    var(--sp-6);
+  --card-pad:       var(--sp-5);
+  --content-max:    1600px;
+
+  /* Control heights - one ladder for buttons, inputs and selects, so a
+     button and the input beside it always line up. */
+  --control-h-sm: 28px;
+  --control-h:    34px;
+  --control-h-lg: 40px;
+
+  /* -- Radius -------------------------------------------------------------*/
+  --radius-xs:    4px;
+  --radius-sm:    6px;
+  --radius-md:    8px;  /* default: buttons, inputs */
+  --radius-lg:   10px;  /* cards */
+  --radius-xl:   12px;
+  --radius-2xl:  14px;  /* modals */
+  --radius-pill: 999px;
+
+  /* -- Elevation ----------------------------------------------------------
+     Navy-tinted, never neutral black. */
+  --shadow-xs:      0 1px 2px rgba(6,29,57,0.06);
+  --shadow-sm:      0 2px 8px rgba(6,29,57,0.07);
+  --shadow-card:    0 2px 8px rgba(6,29,57,0.07), 0 1px 2px rgba(6,29,57,0.04);
+  --shadow-lifted:  0 4px 14px rgba(6,29,57,0.11);
+  --shadow-popover: 0 8px 24px rgba(6,29,57,0.14), 0 2px 6px rgba(6,29,57,0.06);
+  --shadow-modal:   0 20px 52px rgba(6,29,57,0.20), 0 4px 12px rgba(6,29,57,0.08);
+
+  /* Focus ring - one visible, brand-correct ring for the whole platform.
+     Accessibility requirement: never remove outline without applying this. */
+  --focus-ring:        0 0 0 3px rgba(21,116,196,0.35);
+  --focus-ring-danger: 0 0 0 3px rgba(180,35,24,0.32);
+
+  /* -- Motion -------------------------------------------------------------*/
+  --t-fast: 0.12s ease;
+  --t-base: 0.15s ease;
+  --t-slow: 0.24s ease;
+
+  /* -- Z-index ladder -----------------------------------------------------
+     Apps had ad-hoc values up to 99999; this is the agreed ordering. */
+  --z-sticky:   10;
+  --z-dropdown: 100;
+  --z-drawer:   200;
+  --z-modal:    300;
+  --z-toast:    400;
+  --z-tooltip:  500;
+}
+
+/* ============================================================================
+   Dark theme
+   Both [data-theme="dark"] and .dark are honored - apps in this repo use both
+   conventions (shell uses data-theme on <html>, Tailwind apps use .dark).
+   ========================================================================== */
+:root[data-theme="dark"],
+:root.dark,
+[data-theme="dark"] {
+  --surface:        #111827;
+  --surface-sunken: #0D1520;
+  --surface-hover:  #18212F;
+  --bg-page:        #080F1A;
+  --bg-raised:      #111827;
+
+  --border:        rgba(255,255,255,0.08);
+  --border-strong: rgba(255,255,255,0.14);
+  --border-subtle: rgba(255,255,255,0.05);
+
+  --text:        #E2E8F0;
+  --text-2:      #94A3B8;
+  --text-3:      #64748B;
+  --text-4:      #475569;
+  --text-invert: #061D39;
+
+  --sdc-blue-tint: rgba(21,116,196,0.16);
+
+  --success:        #4ADE80;
+  --success-bg:     rgba(74,222,128,0.12);
+  --success-border: rgba(74,222,128,0.28);
+  --warning:        #FBBF24;
+  --warning-bg:     rgba(251,191,36,0.12);
+  --warning-border: rgba(251,191,36,0.28);
+  --danger:         #F87171;
+  --danger-bg:      rgba(248,113,113,0.12);
+  --danger-border:  rgba(248,113,113,0.28);
+  --neutral:        #94A3B8;
+  --neutral-bg:     rgba(255,255,255,0.06);
+  --neutral-border: rgba(255,255,255,0.12);
+
+  --shadow-xs:      0 1px 2px rgba(0,0,0,0.40);
+  --shadow-sm:      0 2px 8px rgba(0,0,0,0.42);
+  --shadow-card:    0 2px 8px rgba(0,0,0,0.42), 0 1px 2px rgba(0,0,0,0.30);
+  --shadow-lifted:  0 4px 14px rgba(0,0,0,0.48);
+  --shadow-popover: 0 8px 24px rgba(0,0,0,0.55), 0 2px 6px rgba(0,0,0,0.35);
+  --shadow-modal:   0 20px 52px rgba(0,0,0,0.62), 0 4px 12px rgba(0,0,0,0.40);
+
+  --focus-ring: 0 0 0 3px rgba(170,206,232,0.42);
+}
+
+/* ============================================================================
+   Accessibility baseline
+   ========================================================================== */
+
+/* A visible focus ring everywhere, for keyboard users only. Apps must not
+   `outline: none` without restoring this. */
+:where(a, button, input, select, textarea, summary, [tabindex]):focus-visible {
+  outline: none;
+  box-shadow: var(--focus-ring);
+  border-radius: var(--radius-sm);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

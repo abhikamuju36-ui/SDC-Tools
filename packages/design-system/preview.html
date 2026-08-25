@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SDC Design System — Preview</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="./tokens.css">
+<link rel="stylesheet" href="./primitives.css">
+<style>
+  *, *::before, *::after { box-sizing: border-box; }
+  body {
+    margin: 0;
+    font-family: var(--font-ui);
+    font-size: var(--fs-lg);
+    line-height: var(--lh-base);
+    background: var(--bg-page);
+    color: var(--text);
+    -webkit-font-smoothing: antialiased;
+  }
+  .demo-bar {
+    position: sticky; top: 0; z-index: var(--z-sticky);
+    display: flex; align-items: center; gap: var(--sp-3);
+    padding: var(--sp-3) var(--sp-6);
+    background: var(--sdc-navy); color: #fff;
+    box-shadow: var(--shadow-sm);
+  }
+  .demo-bar h1 { margin: 0; font-size: var(--fs-lg); font-weight: var(--fw-semibold); letter-spacing: .04em; }
+  .demo-swatches { display: grid; grid-template-columns: repeat(auto-fill, minmax(120px,1fr)); gap: var(--sp-2); }
+  .sw { border-radius: var(--radius-md); overflow: hidden; border: 1px solid var(--border); background: var(--surface); }
+  .sw i { display: block; height: 44px; }
+  .sw span { display: block; padding: var(--sp-1) var(--sp-2); font-size: var(--fs-2xs); font-weight: var(--fw-semibold); color: var(--text-3); }
+  .demo-note { font-size: var(--fs-sm); color: var(--text-3); margin: 0 0 var(--sp-3); }
+</style>
+</head>
+<body>
+
+<div class="demo-bar">
+  <h1>SDC DESIGN SYSTEM</h1>
+  <span class="sdc-spacer"></span>
+  <button class="sdc-btn sdc-btn--sm sdc-btn--secondary" id="themeBtn">Toggle dark</button>
+</div>
+
+<div class="sdc-page">
+
+  <!-- PAGE HEADER -->
+  <div class="sdc-page__header">
+    <div class="sdc-page__heading">
+      <h2 class="sdc-page__title">Primitives preview</h2>
+      <p class="sdc-page__subtitle">Every shared component, rendered from tokens only.</p>
+    </div>
+    <div class="sdc-toolbar">
+      <button class="sdc-btn sdc-btn--icon sdc-btn--ghost" aria-label="Refresh data">&#8635;</button>
+      <button class="sdc-btn sdc-btn--secondary">Export</button>
+      <button class="sdc-btn sdc-btn--primary">Save changes</button>
+    </div>
+  </div>
+
+  <!-- COLOUR -->
+  <section class="sdc-section">
+    <h3 class="sdc-section__title">Brand &amp; status</h3>
+    <div class="demo-swatches">
+      <div class="sw"><i style="background:var(--sdc-navy)"></i><span>navy 061D39</span></div>
+      <div class="sw"><i style="background:var(--sdc-blue)"></i><span>blue 1574C4</span></div>
+      <div class="sw"><i style="background:var(--sdc-blue-light)"></i><span>blue-light</span></div>
+      <div class="sw"><i style="background:var(--sdc-green)"></i><span>green</span></div>
+      <div class="sw"><i style="background:var(--sdc-lime)"></i><span>lime</span></div>
+      <div class="sw"><i style="background:var(--sdc-yellow)"></i><span>yellow</span></div>
+      <div class="sw"><i style="background:var(--success)"></i><span>success</span></div>
+      <div class="sw"><i style="background:var(--warning)"></i><span>warning</span></div>
+      <div class="sw"><i style="background:var(--danger)"></i><span>danger</span></div>
+    </div>
+  </section>
+
+  <!-- BUTTONS -->
+  <section class="sdc-section">
+    <h3 class="sdc-section__title">Buttons</h3>
+    <div class="sdc-card"><div class="sdc-card__body sdc-stack">
+      <div class="sdc-row">
+        <button class="sdc-btn sdc-btn--primary">Primary</button>
+        <button class="sdc-btn sdc-btn--secondary">Secondary</button>
+        <button class="sdc-btn sdc-btn--ghost">Ghost</button>
+        <button class="sdc-btn sdc-btn--danger">Delete</button>
+        <button class="sdc-btn sdc-btn--danger-quiet">Delete (quiet)</button>
+        <button class="sdc-btn sdc-btn--primary" disabled>Disabled</button>
+      </div>
+      <div class="sdc-row">
+        <button class="sdc-btn sdc-btn--sm sdc-btn--primary">Small</button>
+        <button class="sdc-btn sdc-btn--primary">Default</button>
+        <button class="sdc-btn sdc-btn--lg sdc-btn--primary">Large</button>
+        <span class="sdc-btn-group">
+          <button class="sdc-btn sdc-btn--secondary">Day</button>
+          <button class="sdc-btn sdc-btn--secondary">Week</button>
+          <button class="sdc-btn sdc-btn--secondary">Month</button>
+        </span>
+      </div>
+      <div class="sdc-row">
+        <button class="sdc-btn sdc-btn--icon sdc-btn--secondary" aria-label="Add">+</button>
+        <button class="sdc-btn sdc-btn--icon sdc-btn--ghost" aria-label="Settings">&#9881;</button>
+        <button class="sdc-btn sdc-btn--icon sdc-btn--ghost">?</button>
+        <span class="demo-note" style="margin:0">&#8592; that last one has no aria-label, so the dev guard outlines it red</span>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- KPI -->
+  <section class="sdc-section">
+    <h3 class="sdc-section__title">KPI strip</h3>
+    <div class="sdc-kpi-strip">
+      <div class="sdc-kpi"><span class="sdc-kpi__label">Total hours</span><span class="sdc-kpi__value">12,480</span><span class="sdc-kpi__delta sdc-kpi__delta--up">&#9650; 4.2%</span></div>
+      <div class="sdc-kpi"><span class="sdc-kpi__label">ETC remaining</span><span class="sdc-kpi__value">3,204</span><span class="sdc-kpi__delta sdc-kpi__delta--down">&#9660; 1.8%</span></div>
+      <div class="sdc-kpi"><span class="sdc-kpi__label">Open POs</span><span class="sdc-kpi__value">87</span><span class="sdc-kpi__delta sdc-kpi__delta--flat">no change</span></div>
+      <div class="sdc-kpi sdc-kpi--link" tabindex="0"><span class="sdc-kpi__label">At risk</span><span class="sdc-kpi__value">6</span><span class="sdc-kpi__delta sdc-kpi__delta--down">drill through &#8594;</span></div>
+    </div>
+  </section>
+
+  <!-- FILTERS -->
+  <section class="sdc-section">
+    <h3 class="sdc-section__title">Filter bar</h3>
+    <div class="sdc-filter-bar">
+      <input class="sdc-input sdc-filter-bar__search" placeholder="Search projects&hellip;">
+      <select class="sdc-select" style="width:auto"><option>All departments</option></select>
+      <select class="sdc-select" style="width:auto"><option>All statuses</option></select>
+      <span class="sdc-spacer"></span>
+      <div class="sdc-chips">
+        <span class="sdc-chip"><span class="sdc-chip__label">Dept:</span> Controls <button class="sdc-chip__remove" aria-label="Remove department filter">&times;</button></span>
+        <span class="sdc-chip"><span class="sdc-chip__label">Status:</span> Active <button class="sdc-chip__remove" aria-label="Remove status filter">&times;</button></span>
+        <button class="sdc-filter-clear">Clear all</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- TABLE -->
+  <section class="sdc-section">
+    <h3 class="sdc-section__title">Table &amp; cell semantics</h3>
+    <p class="demo-note">Editable cells are outlined, calculated cells are italic on a sunken ground, locked cells carry a padlock — never colour alone.</p>
+    <div class="sdc-card"><div class="sdc-card__body sdc-card__body--flush">
+      <div class="sdc-table-wrap" style="max-height:260px">
+        <table class="sdc-table">
+          <thead><tr>
+            <th aria-sort="ascending">Job</th><th>Description</th><th>Status</th>
+            <th class="sdc-num">Budget hrs</th><th class="sdc-num">Actual hrs</th><th class="sdc-num">ETC</th><th class="sdc-num">Variance</th>
+          </tr></thead>
+          <tbody>
+            <tr aria-selected="true">
+              <td>24-1187</td><td class="sdc-wrap">Palletizer cell retrofit</td>
+              <td><span class="sdc-badge sdc-badge--success">On track</span></td>
+              <td class="sdc-num sdc-cell--editable">1,200</td><td class="sdc-num sdc-cell--readonly">840</td>
+              <td class="sdc-num sdc-cell--editable">360</td><td class="sdc-num sdc-cell--calculated">0</td>
+            </tr>
+            <tr>
+              <td>24-1201</td><td class="sdc-wrap">Conveyor line B controls upgrade</td>
+              <td><span class="sdc-badge sdc-badge--warning">At risk</span></td>
+              <td class="sdc-num sdc-cell--editable">2,400</td><td class="sdc-num sdc-cell--readonly">2,180</td>
+              <td class="sdc-num sdc-cell--editable">420</td><td class="sdc-num sdc-cell--calculated">-200</td>
+            </tr>
+            <tr>
+              <td>23-0944</td><td class="sdc-wrap">End-of-line case packer</td>
+              <td><span class="sdc-badge sdc-badge--danger">Over budget</span></td>
+              <td class="sdc-num sdc-cell--locked">900</td><td class="sdc-num sdc-cell--readonly">1,120</td>
+              <td class="sdc-num sdc-cell--locked">0</td><td class="sdc-num sdc-cell--calculated">-220</td>
+            </tr>
+            <tr>
+              <td>25-0012</td><td class="sdc-wrap">Robotic palletizing study</td>
+              <td><span class="sdc-badge sdc-badge--info">Quoting</span></td>
+              <td class="sdc-num sdc-cell--editable">160</td><td class="sdc-num sdc-cell--readonly">12</td>
+              <td class="sdc-num sdc-cell--editable">148</td><td class="sdc-num sdc-cell--calculated">0</td>
+            </tr>
+          </tbody>
+          <tfoot><tr>
+            <td colspan="3">Totals</td>
+            <td class="sdc-num">4,660</td><td class="sdc-num">4,152</td><td class="sdc-num">928</td><td class="sdc-num">-420</td>
+          </tr></tfoot>
+        </table>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- FORM -->
+  <section class="sdc-section">
+    <h3 class="sdc-section__title">Form</h3>
+    <div class="sdc-card"><div class="sdc-card__body">
+      <fieldset class="sdc-fieldset">
+        <legend class="sdc-fieldset__legend">Project details</legend>
+        <div class="sdc-form-grid">
+          <div class="sdc-field">
+            <label class="sdc-label" data-required for="f1">Job number</label>
+            <input class="sdc-input" id="f1" value="24-1187">
+          </div>
+          <div class="sdc-field">
+            <label class="sdc-label" for="f2">Customer <span class="sdc-label__optional">(optional)</span></label>
+            <input class="sdc-input" id="f2" placeholder="Search customers&hellip;">
+          </div>
+          <div class="sdc-field">
+            <label class="sdc-label" data-required for="f3">Department</label>
+            <select class="sdc-select" id="f3"><option>Controls</option><option>Mechanical</option></select>
+          </div>
+          <div class="sdc-field">
+            <label class="sdc-label" data-required for="f4">Budget hours</label>
+            <input class="sdc-input" id="f4" value="-40" aria-invalid="true" aria-describedby="f4e">
+            <span class="sdc-field__error" id="f4e">Budget hours must be greater than zero</span>
+          </div>
+          <div class="sdc-field">
+            <label class="sdc-label" for="f5">Start date</label>
+            <input class="sdc-input" id="f5" type="date">
+            <span class="sdc-field__hint">Defaults to the next Monday.</span>
+          </div>
+          <div class="sdc-field">
+            <label class="sdc-label" for="f6">Disabled</label>
+            <input class="sdc-input" id="f6" value="Locked by workflow" disabled>
+          </div>
+          <div class="sdc-field sdc-field--full">
+            <label class="sdc-label" for="f7">Scope notes</label>
+            <textarea class="sdc-textarea" id="f7" placeholder="Optional notes&hellip;"></textarea>
+          </div>
+        </div>
+      </fieldset>
+    </div>
+    <div class="sdc-card__footer sdc-toolbar sdc-toolbar--end">
+      <span class="sdc-modal__footer-note">Last saved 4 minutes ago</span>
+      <button class="sdc-btn sdc-btn--secondary">Cancel</button>
+      <button class="sdc-btn sdc-btn--primary">Save project</button>
+    </div>
+    </div>
+  </section>
+
+  <!-- TABS + BADGES -->
+  <section class="sdc-section">
+    <h3 class="sdc-section__title">Tabs &amp; badges</h3>
+    <div class="sdc-card"><div class="sdc-card__body">
+      <div class="sdc-tabs" role="tablist">
+        <button class="sdc-tab" role="tab" aria-selected="true">Readiness</button>
+        <button class="sdc-tab" role="tab" aria-selected="false">Purchase orders</button>
+        <button class="sdc-tab" role="tab" aria-selected="false">Cost</button>
+        <button class="sdc-tab" role="tab" aria-selected="false">Emails</button>
+      </div>
+      <div class="sdc-row" style="margin-top:var(--sp-4); flex-wrap:wrap">
+        <span class="sdc-badge">Draft</span>
+        <span class="sdc-badge sdc-badge--info">Quoting</span>
+        <span class="sdc-badge sdc-badge--success">Released</span>
+        <span class="sdc-badge sdc-badge--warning">At risk</span>
+        <span class="sdc-badge sdc-badge--danger">Blocked</span>
+      </div>
+    </div></div>
+  </section>
+
+  <!-- STATES -->
+  <section class="sdc-section">
+    <h3 class="sdc-section__title">Loading, empty &amp; error states</h3>
+    <div class="sdc-card-grid" style="--card-min:300px">
+      <div class="sdc-card"><div class="sdc-card__body">
+        <div class="sdc-skeleton sdc-skeleton--title"></div>
+        <div class="sdc-skeleton sdc-skeleton--text"></div>
+        <div class="sdc-skeleton sdc-skeleton--text" style="width:80%"></div>
+        <div class="sdc-skeleton sdc-skeleton--text" style="width:60%"></div>
+        <div class="sdc-row" style="margin-top:var(--sp-4)"><span class="sdc-spinner"></span><span class="demo-note" style="margin:0">Loading job hours&hellip;</span></div>
+      </div></div>
+
+      <div class="sdc-card"><div class="sdc-card__body">
+        <div class="sdc-state sdc-state--inline">
+          <div class="sdc-state__icon">&#128269;</div>
+          <p class="sdc-state__title">No projects match these filters</p>
+          <p class="sdc-state__body">Try removing the department filter, or clear all filters to start over.</p>
+          <div class="sdc-state__actions"><button class="sdc-btn sdc-btn--sm sdc-btn--secondary">Clear all filters</button></div>
+        </div>
+      </div></div>
+
+      <div class="sdc-card"><div class="sdc-card__body">
+        <div class="sdc-state sdc-state--inline sdc-state--error">
+          <div class="sdc-state__icon">&#9888;</div>
+          <p class="sdc-state__title">Couldn&rsquo;t load job hours</p>
+          <p class="sdc-state__body">The Paylocity sync timed out. Your other data is unaffected.</p>
+          <div class="sdc-state__actions"><button class="sdc-btn sdc-btn--sm sdc-btn--primary">Retry</button></div>
+        </div>
+      </div></div>
+    </div>
+
+    <div class="sdc-stack" style="margin-top:var(--sp-4)">
+      <div class="sdc-alert sdc-alert--info"><div class="sdc-alert__body"><span class="sdc-alert__title">Heads up.</span> Hours shown are through last Friday.</div></div>
+      <div class="sdc-alert sdc-alert--warning"><div class="sdc-alert__body"><span class="sdc-alert__title">Stale data.</span> Last sync was 3 days ago.</div></div>
+      <div class="sdc-alert"><div class="sdc-alert__body"><span class="sdc-alert__title">Save failed.</span> Two fields need attention before this can be saved.</div></div>
+    </div>
+  </section>
+
+  <!-- MODAL -->
+  <section class="sdc-section">
+    <h3 class="sdc-section__title">Modal</h3>
+    <button class="sdc-btn sdc-btn--secondary" id="openModal">Open modal</button>
+  </section>
+
+</div>
+
+<div class="sdc-overlay" id="overlay" hidden>
+  <div class="sdc-modal" role="dialog" aria-modal="true" aria-labelledby="mt">
+    <div class="sdc-modal__header">
+      <h4 class="sdc-modal__title" id="mt">Edit project</h4>
+      <button class="sdc-modal__close" aria-label="Close dialog" id="closeModal">&times;</button>
+    </div>
+    <div class="sdc-modal__body">
+      <div class="sdc-form-grid">
+        <div class="sdc-field"><label class="sdc-label" data-required for="m1">Job number</label><input class="sdc-input" id="m1" value="24-1187"></div>
+        <div class="sdc-field"><label class="sdc-label" for="m2">Owner</label><input class="sdc-input" id="m2" value="A. Kamuju"></div>
+        <div class="sdc-field sdc-field--full"><label class="sdc-label" for="m3">Notes</label><textarea class="sdc-textarea" id="m3"></textarea></div>
+      </div>
+      <p class="demo-note" style="margin-top:var(--sp-4)">Only this body scrolls — the header and footer stay pinned, so Save is never scrolled out of reach.</p>
+    </div>
+    <div class="sdc-modal__footer">
+      <span class="sdc-modal__footer-note">Draft saved locally</span>
+      <button class="sdc-btn sdc-btn--secondary" id="cancelModal">Cancel</button>
+      <button class="sdc-btn sdc-btn--primary">Save</button>
+    </div>
+  </div>
+</div>
+
+<script>
+  const root = document.documentElement;
+  document.getElementById('themeBtn').onclick = (e) => {
+    const dark = root.getAttribute('data-theme') === 'dark';
+    root.setAttribute('data-theme', dark ? 'light' : 'dark');
+    e.target.textContent = dark ? 'Toggle dark' : 'Toggle light';
+  };
+  const ov = document.getElementById('overlay');
+  document.getElementById('openModal').onclick  = () => ov.hidden = false;
+  document.getElementById('closeModal').onclick = () => ov.hidden = true;
+  document.getElementById('cancelModal').onclick= () => ov.hidden = true;
+  ov.onclick = (e) => { if (e.target === ov) ov.hidden = true; };
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') ov.hidden = true; });
+</script>
+</body>
+</html>

@@ -1,0 +1,853 @@
+/* ============================================================================
+   SDC Tools — Shared UI Primitives
+   ----------------------------------------------------------------------------
+   Framework-agnostic component classes built entirely on tokens.css. Plain CSS
+   so every stack in this repo can use them: vanilla (Scheduler), Vite/React
+   (Assemblies, State Logic, Calendar, shell), esbuild/React (Build Readiness)
+   and Next/Tailwind (ETC Planner).
+
+   All classes are `sdc-` prefixed to guarantee no collision with the class
+   names already shipping in each app. Adopting a primitive is therefore always
+   additive and reversible - you swap a class name, you never fight specificity.
+
+   Requires: tokens.css (import it first).
+   ========================================================================== */
+
+/* ============================================================================
+   1. BUTTONS
+   One geometry ladder, five intents. Height comes from --control-h so a button
+   always lines up with the input next to it.
+   ========================================================================== */
+.sdc-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  height: var(--control-h);
+  padding: 0 var(--sp-4);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+  transition: background var(--t-fast), border-color var(--t-fast),
+              color var(--t-fast), box-shadow var(--t-fast);
+  user-select: none;
+}
+.sdc-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.sdc-btn:disabled,
+.sdc-btn[aria-disabled="true"] {
+  opacity: 0.5;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
+/* Intents ------------------------------------------------------------------*/
+.sdc-btn--primary {
+  background: var(--sdc-blue);
+  border-color: var(--sdc-blue);
+  color: #fff;
+}
+.sdc-btn--primary:hover  { background: var(--sdc-blue-600); border-color: var(--sdc-blue-600); }
+.sdc-btn--primary:active { background: var(--sdc-blue-700); border-color: var(--sdc-blue-700); }
+
+.sdc-btn--secondary {
+  background: var(--surface);
+  border-color: var(--border-strong);
+  color: var(--text-2);
+}
+.sdc-btn--secondary:hover  { background: var(--surface-hover); color: var(--text); }
+.sdc-btn--secondary:active { background: var(--surface-sunken); }
+
+.sdc-btn--ghost {
+  background: transparent;
+  border-color: transparent;
+  color: var(--text-2);
+}
+.sdc-btn--ghost:hover { background: var(--surface-hover); color: var(--text); }
+
+.sdc-btn--danger {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+.sdc-btn--danger:hover  { filter: brightness(0.92); }
+.sdc-btn--danger:focus-visible { box-shadow: var(--focus-ring-danger); }
+
+/* A destructive action that should not shout until hovered - use in toolbars
+   and row menus, where a solid red button would dominate the layout. */
+.sdc-btn--danger-quiet {
+  background: transparent;
+  border-color: var(--border-strong);
+  color: var(--danger);
+}
+.sdc-btn--danger-quiet:hover {
+  background: var(--danger-bg);
+  border-color: var(--danger-border);
+}
+
+/* Sizes --------------------------------------------------------------------*/
+.sdc-btn--sm { height: var(--control-h-sm); padding: 0 var(--sp-3); font-size: var(--fs-sm); }
+.sdc-btn--lg { height: var(--control-h-lg); padding: 0 var(--sp-5); font-size: var(--fs-base); }
+
+/* Icon-only. Square, and REQUIRES an accessible name - see the a11y rule at
+   the bottom of this file, which visibly flags any that are missing one. */
+.sdc-btn--icon { width: var(--control-h); padding: 0; }
+.sdc-btn--icon.sdc-btn--sm { width: var(--control-h-sm); }
+.sdc-btn--icon.sdc-btn--lg { width: var(--control-h-lg); }
+
+.sdc-btn--block { width: 100%; }
+
+/* Button group - joins adjacent buttons into one control */
+.sdc-btn-group { display: inline-flex; }
+.sdc-btn-group .sdc-btn { border-radius: 0; margin-left: -1px; }
+.sdc-btn-group .sdc-btn:first-child {
+  border-radius: var(--radius-md) 0 0 var(--radius-md); margin-left: 0;
+}
+.sdc-btn-group .sdc-btn:last-child {
+  border-radius: 0 var(--radius-md) var(--radius-md) 0;
+}
+.sdc-btn-group .sdc-btn:focus-visible { position: relative; z-index: 1; }
+
+/* Toolbar - the standard right-aligned action cluster for page headers and
+   card headers. Keeps action placement predictable across apps. */
+.sdc-toolbar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+}
+.sdc-toolbar--end { justify-content: flex-end; }
+.sdc-toolbar__spacer { flex: 1 1 auto; }
+
+/* ============================================================================
+   2. FORM CONTROLS
+   Labels above fields, consistent 34px height, explicit optional/required.
+   ========================================================================== */
+.sdc-field { display: flex; flex-direction: column; gap: var(--sp-1); min-width: 0; }
+
+.sdc-label {
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
+  letter-spacing: 0.01em;
+}
+/* Required marker: a red asterisk AND the word, so it is not colour-only. */
+.sdc-label[data-required]::after {
+  content: " *";
+  color: var(--danger);
+  font-weight: var(--fw-bold);
+}
+.sdc-label__optional {
+  margin-left: var(--sp-1);
+  font-weight: var(--fw-normal);
+  color: var(--text-3);
+  font-size: var(--fs-xs);
+}
+
+.sdc-input,
+.sdc-select,
+.sdc-textarea {
+  width: 100%;
+  min-width: 0;
+  height: var(--control-h);
+  padding: 0 var(--sp-3);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-normal);
+  color: var(--text);
+  transition: border-color var(--t-fast), box-shadow var(--t-fast);
+}
+.sdc-textarea { height: auto; min-height: 76px; padding: var(--sp-2) var(--sp-3); line-height: var(--lh-base); resize: vertical; }
+.sdc-select { padding-right: var(--sp-8); cursor: pointer; appearance: none;
+  background-image: url("data:image/svg+xml;charset=utf-8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath fill='none' stroke='%2374809A' stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' d='M3 4.5L6 7.5L9 4.5'/%3E%3C/svg%3E");
+  background-repeat: no-repeat;
+  background-position: right var(--sp-3) center;
+}
+
+.sdc-input::placeholder,
+.sdc-textarea::placeholder { color: var(--text-4); }
+
+.sdc-input:hover,
+.sdc-select:hover,
+.sdc-textarea:hover { border-color: var(--text-4); }
+
+.sdc-input:focus,
+.sdc-select:focus,
+.sdc-textarea:focus {
+  outline: none;
+  border-color: var(--sdc-blue);
+  box-shadow: var(--focus-ring);
+}
+
+.sdc-input:disabled,
+.sdc-select:disabled,
+.sdc-textarea:disabled {
+  background: var(--surface-sunken);
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+
+/* Invalid state: red border AND an error message below - never colour alone. */
+.sdc-input[aria-invalid="true"],
+.sdc-select[aria-invalid="true"],
+.sdc-textarea[aria-invalid="true"] { border-color: var(--danger); }
+.sdc-input[aria-invalid="true"]:focus,
+.sdc-select[aria-invalid="true"]:focus,
+.sdc-textarea[aria-invalid="true"]:focus { box-shadow: var(--focus-ring-danger); }
+
+.sdc-field__hint  { font-size: var(--fs-xs); color: var(--text-3); }
+.sdc-field__error {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--danger);
+}
+.sdc-field__error::before { content: "!"; /* icon-free glyph so this works with no icon font */
+  display: inline-grid; place-items: center;
+  width: 13px; height: 13px; border-radius: 50%;
+  background: var(--danger); color: #fff; font-size: 9px; font-weight: var(--fw-bold);
+}
+
+/* Form layout - a responsive grid so forms stop being one tall column of
+   full-width inputs with dead space either side. */
+.sdc-form-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: var(--sp-4) var(--sp-4);
+}
+.sdc-form-grid > .sdc-field--full { grid-column: 1 / -1; }
+
+/* Logical grouping inside a long form */
+.sdc-fieldset { border: 0; padding: 0; margin: 0; }
+.sdc-fieldset + .sdc-fieldset { margin-top: var(--sp-6); }
+.sdc-fieldset__legend {
+  padding: 0 0 var(--sp-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+/* ============================================================================
+   3. CARDS
+   ========================================================================== */
+.sdc-card {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--shadow-card);
+  min-width: 0;   /* lets cards shrink inside grids instead of overflowing */
+}
+.sdc-card--flat  { box-shadow: none; }
+.sdc-card--sunken{ background: var(--surface-sunken); box-shadow: none; }
+
+.sdc-card__header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--card-pad);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.sdc-card__title {
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+  margin: 0;
+}
+.sdc-card__body   { padding: var(--card-pad); }
+.sdc-card__footer {
+  padding: var(--sp-3) var(--card-pad);
+  border-top: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
+}
+/* A card whose body is a table needs no body padding */
+.sdc-card__body--flush { padding: 0; }
+
+/* Card grid - equal-height, equal-width cards that reflow. Fixes the
+   "uneven card sizes" problem without per-app one-off grids. */
+.sdc-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(var(--card-min, 280px), 1fr));
+  gap: var(--sp-4);
+  align-items: stretch;
+}
+
+/* ============================================================================
+   4. KPI STRIP
+   One metric hierarchy: label above, value dominant, delta below.
+   ========================================================================== */
+.sdc-kpi-strip {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: var(--sp-3);
+}
+.sdc-kpi {
+  display: flex;
+  flex-direction: column;
+  gap: var(--sp-1);
+  padding: var(--sp-4) var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  min-width: 0;
+}
+.sdc-kpi__label {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sdc-kpi__value {
+  font-size: var(--fs-3xl);
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-tight);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;   /* numbers stop jittering on refresh */
+}
+.sdc-kpi__value--lg { font-size: var(--fs-display); }
+.sdc-kpi__delta {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  font-variant-numeric: tabular-nums;
+}
+.sdc-kpi__delta--up   { color: var(--success); }
+.sdc-kpi__delta--down { color: var(--danger); }
+.sdc-kpi__delta--flat { color: var(--text-3); }
+
+/* Clickable KPI (drill-through) must look clickable */
+.sdc-kpi--link { cursor: pointer; transition: border-color var(--t-fast), box-shadow var(--t-fast); }
+.sdc-kpi--link:hover { border-color: var(--sdc-blue-light); box-shadow: var(--shadow-lifted); }
+.sdc-kpi--link:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+
+/* ============================================================================
+   5. BADGES / STATUS
+   Never colour-alone: every status badge carries a dot plus a text label, and
+   the border reinforces the hue for colour-blind users.
+   ========================================================================== */
+.sdc-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: 20px;
+  padding: 0 var(--sp-2);
+  border: 1px solid var(--neutral-border);
+  border-radius: var(--radius-pill);
+  background: var(--neutral-bg);
+  color: var(--neutral);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  white-space: nowrap;
+}
+.sdc-badge::before {
+  content: "";
+  width: 6px; height: 6px; border-radius: 50%;
+  background: currentColor;
+  flex: none;
+}
+.sdc-badge--nodot::before { display: none; }
+
+.sdc-badge--success { background: var(--success-bg); color: var(--success); border-color: var(--success-border); }
+.sdc-badge--warning { background: var(--warning-bg); color: var(--warning); border-color: var(--warning-border); }
+.sdc-badge--danger  { background: var(--danger-bg);  color: var(--danger);  border-color: var(--danger-border); }
+.sdc-badge--info    { background: var(--info-bg);    color: var(--info);    border-color: var(--info-border); }
+
+/* ============================================================================
+   6. TABLES
+   Sticky header, tabular numerals, and an explicit vocabulary for editable vs
+   calculated vs locked cells.
+   ========================================================================== */
+.sdc-table-wrap {
+  width: 100%;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+  background: var(--surface);
+}
+/* When the table lives directly inside a card, the card owns the border */
+.sdc-card__body--flush > .sdc-table-wrap { border: 0; border-radius: 0; }
+
+.sdc-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-size: var(--fs-md);
+  color: var(--text);
+}
+.sdc-table th,
+.sdc-table td {
+  height: 36px;                      /* one row height platform-wide */
+  padding: 0 var(--sp-3);
+  text-align: left;
+  border-bottom: 1px solid var(--border-subtle);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.sdc-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: var(--z-sticky);
+  background: var(--surface-sunken);
+  border-bottom: 1px solid var(--border-strong);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+}
+.sdc-table tbody tr:hover td { background: var(--surface-hover); }
+.sdc-table tbody tr[aria-selected="true"] td { background: var(--sdc-blue-tint); }
+.sdc-table tbody tr:last-child td { border-bottom: 0; }
+
+/* Numeric columns: right-aligned, tabular, monospace-stable */
+.sdc-table .sdc-num,
+.sdc-table th.sdc-num { text-align: right; font-variant-numeric: tabular-nums; }
+
+/* Let a specific column wrap instead of truncating (e.g. description) */
+.sdc-table .sdc-wrap { white-space: normal; }
+
+/* Totals / subtotals row */
+.sdc-table tfoot td,
+.sdc-table tr.sdc-total td {
+  background: var(--surface-sunken);
+  font-weight: var(--fw-bold);
+  border-top: 2px solid var(--border-strong);
+  border-bottom: 0;
+}
+.sdc-table tfoot td { position: sticky; bottom: 0; z-index: var(--z-sticky); }
+
+/* -- Cell semantics --------------------------------------------------------
+   The four states an editable grid must distinguish. */
+.sdc-cell--editable {
+  background: var(--surface);
+  cursor: text;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.sdc-cell--editable:hover  { box-shadow: inset 0 0 0 1px var(--sdc-blue-light); }
+.sdc-cell--editable:focus-within { box-shadow: inset 0 0 0 2px var(--sdc-blue); }
+
+.sdc-cell--calculated {
+  background: var(--surface-sunken);
+  color: var(--text-2);
+  font-style: italic;   /* not colour-alone: calculated cells read differently */
+}
+.sdc-cell--locked {
+  background: var(--surface-sunken);
+  color: var(--text-3);
+  cursor: not-allowed;
+}
+.sdc-cell--locked::after {
+  content: " \1F512";   /* padlock, so "locked" is not conveyed by shade alone */
+  font-size: var(--fs-2xs);
+  opacity: 0.55;
+}
+.sdc-cell--readonly { background: transparent; color: var(--text-2); }
+
+/* Sortable header */
+.sdc-table th[aria-sort] { cursor: pointer; user-select: none; }
+.sdc-table th[aria-sort]:hover { color: var(--text); }
+.sdc-table th[aria-sort="ascending"]::after  { content: " \25B2"; font-size: var(--fs-2xs); }
+.sdc-table th[aria-sort="descending"]::after { content: " \25BC"; font-size: var(--fs-2xs); }
+
+/* ============================================================================
+   7. TABS
+   ========================================================================== */
+.sdc-tabs {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-1);
+  border-bottom: 1px solid var(--border);
+  overflow-x: auto;
+  scrollbar-width: thin;
+}
+.sdc-tab {
+  appearance: none;
+  background: none;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  padding: var(--sp-3) var(--sp-3);
+  font-family: var(--font-ui);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semibold);
+  color: var(--text-3);
+  white-space: nowrap;
+  cursor: pointer;
+  transition: color var(--t-fast), border-color var(--t-fast);
+  /* reserve the active weight so the row does not shift when a tab activates */
+  margin-bottom: -1px;
+}
+.sdc-tab:hover { color: var(--text); }
+.sdc-tab[aria-selected="true"] {
+  color: var(--sdc-blue);
+  border-bottom-color: var(--sdc-blue);
+}
+.sdc-tab:focus-visible { outline: none; box-shadow: var(--focus-ring); border-radius: var(--radius-sm) var(--radius-sm) 0 0; }
+
+/* ============================================================================
+   8. MODALS & DRAWERS
+   Consistent widths, a header that always has a close button, and a footer
+   whose actions are always visible (never scrolled out of reach).
+   ========================================================================== */
+.sdc-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: var(--z-modal);
+  display: grid;
+  place-items: center;
+  padding: var(--sp-6);
+  background: rgba(6, 29, 57, 0.42);   /* context stays visible behind */
+  backdrop-filter: blur(2px);
+}
+
+.sdc-modal {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  max-width: var(--modal-w, 560px);
+  max-height: min(86vh, 900px);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-2xl);
+  box-shadow: var(--shadow-modal);
+  overflow: hidden;
+}
+.sdc-modal--sm { --modal-w: 420px; }
+.sdc-modal--lg { --modal-w: 760px; }
+.sdc-modal--xl { --modal-w: 1040px; }
+
+.sdc-modal__header {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-3);
+  padding: var(--sp-4) var(--sp-5);
+  border-bottom: 1px solid var(--border);
+  flex: none;
+}
+.sdc-modal__title {
+  flex: 1 1 auto;
+  margin: 0;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semibold);
+  color: var(--text);
+}
+.sdc-modal__close {
+  flex: none;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  display: grid;
+  place-items: center;
+  background: none;
+  border: 0;
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  font-size: var(--fs-xl);
+  line-height: 1;
+  cursor: pointer;
+}
+.sdc-modal__close:hover { background: var(--surface-hover); color: var(--text); }
+
+/* Only the body scrolls - the header and footer stay pinned. */
+.sdc-modal__body {
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  padding: var(--sp-5);
+}
+.sdc-modal__footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-5);
+  border-top: 1px solid var(--border);
+  background: var(--surface-sunken);
+  flex: none;
+}
+/* Secondary info (e.g. "last saved") pushed left of the action buttons */
+.sdc-modal__footer-note { margin-right: auto; font-size: var(--fs-sm); color: var(--text-3); }
+
+/* Drawer / side panel - same anatomy, docked right */
+.sdc-drawer {
+  position: fixed;
+  top: 0; right: 0; bottom: 0;
+  z-index: var(--z-drawer);
+  display: flex;
+  flex-direction: column;
+  width: min(var(--drawer-w, 460px), 100vw);
+  background: var(--surface);
+  border-left: 1px solid var(--border);
+  box-shadow: var(--shadow-modal);
+}
+.sdc-drawer--lg { --drawer-w: 640px; }
+.sdc-drawer .sdc-modal__body { padding: var(--sp-5); }
+
+/* ============================================================================
+   9. FILTERS
+   One filter bar pattern, with visible active-filter chips and a clear-all.
+   ========================================================================== */
+.sdc-filter-bar {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  flex-wrap: wrap;
+  padding: var(--sp-3) var(--sp-4);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-lg);
+}
+.sdc-filter-bar__search { flex: 1 1 220px; min-width: 180px; max-width: 360px; }
+
+/* Active filter chips: users can always see AND remove what is filtering. */
+.sdc-chips { display: flex; align-items: center; gap: var(--sp-1); flex-wrap: wrap; }
+.sdc-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--sp-1);
+  height: 24px;
+  padding: 0 var(--sp-1) 0 var(--sp-2);
+  background: var(--sdc-blue-tint);
+  border: 1px solid var(--info-border);
+  border-radius: var(--radius-pill);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semibold);
+  color: var(--sdc-blue-700);
+  white-space: nowrap;
+}
+.sdc-chip__label { opacity: 0.75; font-weight: var(--fw-normal); }
+.sdc-chip__remove {
+  width: 16px; height: 16px;
+  display: grid; place-items: center;
+  border: 0; border-radius: 50%;
+  background: transparent;
+  color: inherit;
+  font-size: 12px; line-height: 1;
+  cursor: pointer;
+}
+.sdc-chip__remove:hover { background: rgba(6,29,57,0.10); }
+
+.sdc-filter-clear {
+  background: none;
+  border: 0;
+  padding: 0 var(--sp-1);
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semibold);
+  color: var(--sdc-blue);
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 2px;
+}
+
+/* Multi-select dropdown panel */
+.sdc-filter-panel {
+  position: absolute;
+  z-index: var(--z-dropdown);
+  min-width: 240px;
+  max-width: 340px;
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-popover);
+  overflow: hidden;
+}
+.sdc-filter-panel__search { padding: var(--sp-2); border-bottom: 1px solid var(--border-subtle); }
+/* Bounded height so a 400-item list scrolls instead of running off-screen */
+.sdc-filter-panel__list { max-height: 280px; overflow-y: auto; padding: var(--sp-1); }
+.sdc-filter-panel__footer {
+  display: flex; justify-content: space-between; gap: var(--sp-2);
+  padding: var(--sp-2); border-top: 1px solid var(--border-subtle);
+  background: var(--surface-sunken);
+}
+.sdc-option {
+  display: flex;
+  align-items: center;
+  gap: var(--sp-2);
+  padding: var(--sp-1) var(--sp-2);
+  border-radius: var(--radius-sm);
+  font-size: var(--fs-md);
+  color: var(--text-2);
+  cursor: pointer;
+  user-select: none;
+}
+.sdc-option:hover { background: var(--surface-hover); color: var(--text); }
+.sdc-option input { flex: none; accent-color: var(--sdc-blue); }
+/* Group header row with its own select-all checkbox */
+.sdc-option--group {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-3);
+  margin-top: var(--sp-1);
+}
+
+/* ============================================================================
+   10. PAGE HEADER
+   Every page opens the same way: title left, actions right, optional meta.
+   ========================================================================== */
+.sdc-page { padding: var(--page-gutter); max-width: var(--content-max); margin: 0 auto; }
+.sdc-page__header {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-4);
+  margin-bottom: var(--section-gap);
+}
+.sdc-page__heading { flex: 1 1 auto; min-width: 0; }
+.sdc-page__title {
+  margin: 0;
+  font-size: var(--fs-3xl);
+  font-weight: var(--fw-bold);
+  line-height: var(--lh-tight);
+  color: var(--text);
+}
+.sdc-page__subtitle { margin: var(--sp-1) 0 0; font-size: var(--fs-base); color: var(--text-3); }
+.sdc-section { margin-bottom: var(--section-gap); }
+.sdc-section__title {
+  margin: 0 0 var(--sp-3);
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-bold);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--text-3);
+}
+
+@media (max-width: 900px) {
+  .sdc-page { padding: var(--page-gutter-sm); }
+  .sdc-page__header { flex-direction: column; align-items: stretch; }
+}
+
+/* ============================================================================
+   11. LOADING / EMPTY / ERROR STATES
+   No data-driven view should ever be a blank white rectangle.
+   ========================================================================== */
+
+/* Skeletons - shape-preserving, so layout does not jump when data lands. */
+.sdc-skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--surface-sunken);
+  border-radius: var(--radius-sm);
+}
+.sdc-skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.55), transparent);
+  animation: sdc-shimmer 1.3s infinite;
+}
+:root[data-theme="dark"] .sdc-skeleton::after,
+:root.dark .sdc-skeleton::after {
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,0.07), transparent);
+}
+@keyframes sdc-shimmer { 100% { transform: translateX(100%); } }
+
+.sdc-skeleton--text  { height: 12px; margin: 6px 0; }
+.sdc-skeleton--title { height: 20px; width: 40%; margin: 8px 0; }
+.sdc-skeleton--row   { height: 36px; margin: 0 0 1px; border-radius: 0; }
+.sdc-skeleton--card  { height: 96px; border-radius: var(--radius-lg); }
+
+.sdc-spinner {
+  width: 18px; height: 18px;
+  border: 2px solid var(--border-strong);
+  border-top-color: var(--sdc-blue);
+  border-radius: 50%;
+  animation: sdc-spin 0.7s linear infinite;
+}
+@keyframes sdc-spin { to { transform: rotate(360deg); } }
+
+/* Shared shell for empty / error / loading messages */
+.sdc-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--sp-2);
+  padding: var(--sp-12) var(--sp-6);
+  text-align: center;
+  color: var(--text-3);
+}
+.sdc-state--inline { padding: var(--sp-6) var(--sp-4); }
+.sdc-state__icon  { font-size: 28px; line-height: 1; opacity: 0.65; }
+.sdc-state__title {
+  margin: 0;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semibold);
+  color: var(--text-2);
+}
+.sdc-state__body { margin: 0; font-size: var(--fs-md); max-width: 46ch; }
+.sdc-state__actions { margin-top: var(--sp-3); display: flex; gap: var(--sp-2); }
+
+.sdc-state--error .sdc-state__icon  { color: var(--danger); opacity: 1; }
+.sdc-state--error .sdc-state__title { color: var(--danger); }
+
+/* Inline error banner - for a failure that should not blank the whole view */
+.sdc-alert {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--sp-2);
+  padding: var(--sp-3) var(--sp-4);
+  border: 1px solid var(--danger-border);
+  border-left-width: 3px;
+  border-radius: var(--radius-md);
+  background: var(--danger-bg);
+  color: var(--danger);
+  font-size: var(--fs-md);
+  font-weight: var(--fw-medium);
+}
+.sdc-alert--warning { border-color: var(--warning-border); background: var(--warning-bg); color: var(--warning); }
+.sdc-alert--info    { border-color: var(--info-border);    background: var(--info-bg);    color: var(--sdc-blue-700); }
+.sdc-alert--success { border-color: var(--success-border); background: var(--success-bg); color: var(--success); }
+.sdc-alert__body    { flex: 1 1 auto; min-width: 0; }
+.sdc-alert__title   { font-weight: var(--fw-bold); }
+
+/* ============================================================================
+   12. UTILITIES
+   Deliberately tiny - this is not a utility framework.
+   ========================================================================== */
+.sdc-visually-hidden {
+  position: absolute !important;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.sdc-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
+.sdc-num-tabular { font-variant-numeric: tabular-nums; }
+.sdc-stack   { display: flex; flex-direction: column; gap: var(--sp-3); }
+.sdc-row     { display: flex; align-items: center; gap: var(--sp-2); }
+.sdc-spacer  { flex: 1 1 auto; }
+
+/* ============================================================================
+   13. DEV-TIME ACCESSIBILITY GUARD
+   An icon-only button with no accessible name is invisible to screen readers
+   and impossible to spot by eye. This makes it impossible to MISS: any
+   .sdc-btn--icon lacking aria-label / aria-labelledby / title gets a red
+   dashed outline. It changes nothing for correctly-labelled buttons.
+   ========================================================================== */
+.sdc-btn--icon:not([aria-label]):not([aria-labelledby]):not([title]) {
+  outline: 2px dashed var(--danger);
+  outline-offset: 2px;
+}
