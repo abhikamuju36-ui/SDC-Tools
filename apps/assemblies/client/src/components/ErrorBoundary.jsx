@@ -31,7 +31,7 @@ export default class ErrorBoundary extends Component {
           </pre>
           <button
             onClick={() => this.setState({ error: null })}
-            style={{ padding: '8px 20px', borderRadius: 6, border: 'none', background: '#2563eb', color: '#fff', cursor: 'pointer' }}
+            style={{ padding: '8px 20px', borderRadius: 6, border: 'none', background: 'var(--sdc-blue)', color: '#fff', cursor: 'pointer' }}
           >
             Try again
           </button>

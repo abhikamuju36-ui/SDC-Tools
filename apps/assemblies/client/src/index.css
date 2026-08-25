@@ -1,66 +1,62 @@
 /* SDC Assemblies Library — Design System */
+/* Shared platform tokens. Must precede @tailwind (CSS @import ordering). */
+@import "../../../../packages/design-system/tokens.css";
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
   color-scheme: light;
-  --sdc-blue: #2563EB;
-  --sdc-blue-ink: #0B4C86;
-  --sdc-blue-tint: #EAF3FB;
-  --sdc-blue-tint-2: #D6E7F5;
 
-  --bg: #FAFAF9;        /* stone-50 warm */
-  --bg-alt: #F5F5F4;    /* stone-100 */
-  --surface: #FFFFFF;
-  --surface-active: #FFFFFF;
-  --border: #E7E5E4;    /* stone-200 */
-  --border-strong: #D6D3D1;
-  --ink: #1C1917;       /* stone-900 */
-  --ink-2: #44403C;     /* stone-700 */
-  --ink-3: #78716C;     /* stone-500 */
-  --ink-4: #A8A29E;     /* stone-400 */
+  /* ------------------------------------------------------------------
+     Bridge to @sdc/design-system. Local names are kept so the ~30 component
+     files referencing them need no edit; each now resolves to the shared
+     token. Names that collide with a shared token (--surface, --border,
+     --border-strong, --sdc-blue, --sdc-blue-tint, --font-mono) are simply
+     dropped - the shared definition already supplies the right value.
 
-  --amber: #C2831A;
-  --amber-tint: #FAF3E2;
-  --green: #1E8A5A;
-  --green-tint: #E6F3EC;
-  --red: #B42318;
+     What this changes visually:
+       - primary blue  #2563EB -> #1574C4 (brand). Note tailwind.config.js
+         already declared brand.blue #1574c4, so this file was contradicting
+         the app's own Tailwind theme.
+       - neutral ramp  warm stone -> the cool navy-derived ramp, which is
+         what the brand navy actually sits against.
+       - UI font       Inter -> Montserrat (the platform face).
+     ------------------------------------------------------------------ */
+  --sdc-blue-ink:    var(--sdc-blue-700);
+  --sdc-blue-tint-2: var(--sdc-blue-light);
 
-  --radius: 6px;
-  --radius-sm: 4px;
+  --bg:             var(--bg-page);
+  --bg-alt:         var(--surface-sunken);
+  --surface-active: var(--surface);
 
-  --font-sans: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --font-mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --ink:   var(--text);
+  --ink-2: var(--text-2);
+  --ink-3: var(--text-3);
+  --ink-4: var(--text-4);
 
-  --shadow-sm: 0 1px 2px rgba(17, 24, 39, 0.04);
-  --shadow-md: 0 2px 4px rgba(17, 24, 39, 0.04), 0 4px 12px rgba(17, 24, 39, 0.06);
-  --shadow-lg: 0 8px 24px rgba(17, 24, 39, 0.08), 0 2px 6px rgba(17, 24, 39, 0.04);
+  --amber:       var(--warning);
+  --amber-tint:  var(--warning-bg);
+  --green:       var(--success);
+  --green-tint:  var(--success-bg);
+  --red:         var(--danger);
+
+  --radius:    var(--radius-sm);
+  --radius-sm: var(--radius-xs);
+
+  --font-sans: var(--font-ui);
+
+  --shadow-sm: var(--shadow-xs);
+  --shadow-md: var(--shadow-card);
+  --shadow-lg: var(--shadow-popover);
 }
 
 html[data-theme='dark'] {
+  /* The aliases above resolve lazily, so every one of them follows the shared
+     dark tokens automatically. Only genuinely app-specific overrides remain. */
   color-scheme: dark;
-  --bg: #0C0A09;
-  --bg-alt: #1C1917;
-  --surface: #171717;
-  --surface-active: #262626;
-  --border: #292524;
-  --border-strong: #44403C;
-  --ink: #FAFAF9;
-  --ink-2: #E7E5E4;
-  --ink-3: #A8A29E;
-  --ink-4: #57534E;
-
-  --sdc-blue-tint: #111827;
-  --sdc-blue-tint-2: #1F2937;
-  --sdc-blue-ink: #60A5FA;
-
-  --amber-tint: #451a03;
-  --green-tint: #064e3b;
-
-  --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.5);
-  --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.6);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.7);
+  --sdc-blue-ink: var(--sdc-blue-light);   /* blue-700 is unreadable on dark */
 }
 
 * { box-sizing: border-box; }
@@ -224,7 +220,7 @@ option {
 .search-container:focus-within { 
   border-color: var(--sdc-blue); 
   background: var(--surface); 
-  box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.1); 
+  box-shadow: var(--focus-ring);   /* was a hardcoded #2563EB ring */
 }
 .search-container input { 
   border: 0; 

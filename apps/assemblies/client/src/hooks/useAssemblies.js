@@ -2,17 +2,28 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import API_BASE from '../utils/apiBase';
 
 async function fetchWithRetry(url, opts, retries = 3) {
+  // Hold the last 5xx so a persistently-failing server still yields a real
+  // Response. Without this the loop could fall through and return undefined,
+  // and the caller's `res.ok` then threw "Cannot read properties of undefined
+  // (reading 'ok')" — a raw TypeError shown to users in place of the actual
+  // error whenever the API was down.
+  let lastResponse = null;
+
   for (let i = 0; i < retries; i++) {
     try {
       const r = await fetch(url, opts);
       if (r.ok || r.status < 500) return r;
+      lastResponse = r;
     } catch (e) {
       // Always propagate abort errors immediately — don't retry
       if (e.name === 'AbortError') throw e;
-      if (i === retries - 1) throw e;
+      if (i === retries - 1 && !lastResponse) throw e;
     }
     await new Promise(r => setTimeout(r, 1000 * (i + 1)));
   }
+
+  if (lastResponse) return lastResponse;
+  throw new Error('Cannot reach the server. Check your connection and try again.');
 }
 
 export default function useAssemblies({ search, searchFields = ['description'], categories, jobIds, preferences, sdcStandards, imageFilter, modelFilter, libraries, statusFilter, updatedAfter, updatedBefore, sortBy, sortOrder, page, limit = 20 }) {
