@@ -116,20 +116,22 @@ function AssemblyRow({
           style={{ accentColor: 'var(--sdc-blue)', cursor: 'pointer', width: 14, height: 14 }}
         />
       </td>
-      <td><span className="pn-cell" onClick={(e) => { e.stopPropagation(); onEdit(a); }}>{cleanValue(a.partno)}</span></td>
-      {showCol('file_name') && <td className="muted mono" style={{ fontSize: 11.5 }}>{cleanValue(a.file_name)}</td>}
+      <td style={{ maxWidth: 260, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={cleanValue(a.partno)}>
+        <span className="pn-cell" onClick={(e) => { e.stopPropagation(); onEdit(a); }}>{cleanValue(a.partno)}</span>
+      </td>
+      {showCol('file_name') && <td className="muted mono" style={{ fontSize: 11.5, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={cleanValue(a.file_name)}>{cleanValue(a.file_name)}</td>}
       <td style={{ textAlign: 'center' }}><span className="muted mono" style={{ fontSize: 12 }}>{cleanValue(splitJobId(a.job_id).num || a.job_id)}</span></td>
       {showCol('job_name') && <td style={{ maxWidth: 160, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', color: 'var(--ink-2)' }}>{cleanValue(a.job_name || splitJobId(a.job_id).name)}</td>}
       <td style={{ maxWidth: 320, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         <Highlight text={cleanValue(a.description)} search={search} />
       </td>
-      <td style={{ textAlign: 'center' }}>
+      {showCol('category') && <td style={{ textAlign: 'center' }}>
         {a.category ? (
           <span className={`badge badge-${categoryColor}`} style={{ fontSize: 10 }}>
             {toTitleCase(a.category)}
           </span>
         ) : <span className="muted">---</span>}
-      </td>
+      </td>}
       <td style={{ textAlign: 'center' }}>
         {a.model_link ? (
           <button

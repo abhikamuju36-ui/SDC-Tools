@@ -10,7 +10,7 @@ export const STORAGE_KEYS = {
   FILTER_PRESETS: 'sdc-filter-presets',
 };
 
-export const loadVisibleCols = (defaultCols = ['file_name', 'job_name']) => {
+export const loadVisibleCols = (defaultCols = ['job_name']) => {
   try {
     const saved = localStorage.getItem(STORAGE_KEYS.VISIBLE_COLS);
     if (saved) return new Set(JSON.parse(saved));

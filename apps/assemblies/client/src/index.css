@@ -1121,11 +1121,14 @@ html[data-theme='dark'] .dropdown-menu {
   border-radius: 4px;
 }
 
-.dropdown-item.fixed {
+/* NB: this class must NOT be called "fixed" - Tailwind ships a .fixed utility
+   (position: fixed) and the collision pulled every locked row out of flow, so
+   all six stacked on one another and .fixed-cols-list collapsed to height 0. */
+.dropdown-item.is-locked {
   cursor: default;
   opacity: 0.7;
 }
-.dropdown-item.fixed:hover { background: none; }
+.dropdown-item.is-locked:hover { background: none; }
 
 /* ── Thumbnail hover preview (#3) ──────────────────────────────────────── */
 .thumb-hover-preview {

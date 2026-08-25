@@ -70,7 +70,7 @@ export default function AssemblyTable({
             <SortHeader field="job_id" label="Job ID" align="center" width={90} />
             {show('job_name')   && <SortHeader field="job_name" label="Job Name" />}
             <SortHeader field="description" label="Description" />
-            <SortHeader field="category" label="Category" align="center" width={140} />
+            {show('category')   && <SortHeader field="category" label="Category" align="center" width={140} />}
             <th style={{ textAlign: 'center', width: 100 }}>Model</th>
             <th style={{ textAlign: 'center', width: 80 }}>Image</th>
             {show('comments')   && <SortHeader field="comments" label="Comments" />}

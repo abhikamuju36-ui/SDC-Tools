@@ -7,6 +7,7 @@ import { saveVisibleCols } from '../utils/storage';
 const TOGGLEABLE_COLS = [
   { key: 'file_name',  label: 'File Name' },
   { key: 'job_name',   label: 'Job Name' },
+  { key: 'category',   label: 'Category' },
   { key: 'comments',   label: 'Comments' },
   { key: 'updated_at', label: 'Updated' },
   { key: 'updated_by', label: 'Owner' },
@@ -16,7 +17,6 @@ const FIXED_COLS = [
   { label: 'Part Number' },
   { label: 'Job ID' },
   { label: 'Description' },
-  { label: 'Category' },
   { label: 'Model' },
   { label: 'Image' },
   { label: 'SDC Standard' },
@@ -48,7 +48,7 @@ export default function ColumnPicker({ visible, setVisible }) {
       <div className="dropdown-section">FIXED COLUMNS</div>
       <div className="fixed-cols-list">
         {FIXED_COLS.map(c => (
-          <div key={c.label} className="dropdown-item fixed">
+          <div key={c.label} className="dropdown-item is-locked">
             <svg width="14" height="14" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth={2} style={{ opacity: 0.4 }}>
               <rect x="3" y="11" width="18" height="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>
             </svg>
