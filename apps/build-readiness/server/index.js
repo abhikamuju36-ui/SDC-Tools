@@ -46,6 +46,14 @@ const staticDir = hasDistBuild ? distDir : clientDir;
 
 console.log(`[readiness] Serving frontend from: ${staticDir}`);
 
+// Shared design tokens live outside this app, in packages/design-system. They
+// are mounted over HTTP rather than CSS-@imported so they resolve in BOTH
+// serving modes above - a relative @import would only be inlined by the Vite
+// build, and would 404 in the raw-client/ fallback, stripping every token.
+app.use('/design-system', express.static(
+  path.join(__dirname, '..', '..', '..', 'packages', 'design-system')
+));
+
 app.use(express.static(staticDir));
 app.use(express.json());
 

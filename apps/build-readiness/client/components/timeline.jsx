@@ -180,7 +180,7 @@ function TimelineDrawer({ marker, buildStart, onClose, onDrillDown }) {
         <div style={{ padding: '12px 24px', borderTop: '1px solid #f0f0f0', display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexShrink: 0 }}>
           {onDrillDown && (
             <button onClick={() => { onClose(); onDrillDown(marker.items.map(e => e.po?.poId).filter(Boolean)); }}
-              style={{ fontSize: 12, color: '#2563eb', fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
+              style={{ fontSize: 12, color: 'var(--sdc-blue)', fontWeight: 500, background: 'none', border: 'none', cursor: 'pointer', padding: 0 }}>
               View in Procurement →
             </button>
           )}
