@@ -35,9 +35,16 @@ const SYNC_SOURCE_COUNT = SYNC_SOURCES.length;
 // do, because no step writes them.
 
 // A pass that dies mid-flight (process killed, deploy) must not hold the lock forever.
-// Longer than any observed pass — the slowest measured is a few seconds — but short
-// enough that a stuck lock clears itself within a working session.
-const LOCK_TIMEOUT_MS = 15 * 60 * 1000;
+//
+// This is now a HEARTBEAT timeout, not a pass-duration timeout: the holder re-stamps
+// `startedAt` every LOCK_HEARTBEAT_MS while it lives (see startLockHeartbeat), so this
+// only has to exceed the heartbeat interval by enough to absorb a missed beat, a slow
+// DB write, or the event loop being blocked by an Excel parse. It no longer has to be
+// "longer than any possible pass", which is what forced it to 15 minutes and left the
+// UI on "Refreshing…" for 15 minutes after every killed pass.
+//
+// 60s = 12 missed beats. Well clear of any observed stall, and 15x faster to recover.
+const LOCK_TIMEOUT_MS = 60 * 1000;
 
 export type RefreshOutcome =
   | {
@@ -100,6 +107,48 @@ async function releaseLock(refreshId: string): Promise<void> {
   // Scoped to OUR refreshId: if the stale-timeout already handed the lock to somebody
   // else, this must not release theirs.
   await prisma.$executeRaw`UPDATE RefreshLock SET holder = NULL, startedAt = NULL WHERE id = 1 AND holder = ${refreshId}`;
+}
+
+// ── Why the lock is a heartbeat and not just a timestamp (2026-08-25) ────────
+//
+// `startedAt` used to be written once, at acquisition, and the only recovery from a
+// pass that died holding the lock was LOCK_TIMEOUT_MS. That made a killed pass show
+// as "Refreshing…" for the whole timeout with nothing actually running — measured
+// twice on 2026-08-25:
+//
+//   09:09:03  process boots (PM2 autorestart after free-port killed it)
+//   09:09:04  it starts a refresh on startup and takes the lock
+//   09:09:16  `pm2 startOrRestart` restarts it again, killing the pass 12s in
+//   09:09:16 → 09:24:04  lock held by a dead process; UI says "Refreshing…"
+//
+// That is not a rare event: a deploy restarts the process by definition, the pass is
+// ~17s, and free-port + PM2-on-Windows commonly produces a DOUBLE restart — so the
+// window is hit on most deploys. §"always exit Refreshing… on success or failure"
+// cannot hold with a 15-minute-only recovery.
+//
+// A heartbeat fixes it without needing to know whether a holder is alive: the holder
+// re-stamps `startedAt` every few seconds, so "startedAt is old" comes to mean "the
+// holder stopped breathing" rather than "the pass started a while ago". That lets
+// LOCK_TIMEOUT_MS drop from 15 minutes to a value just above the heartbeat, and it
+// stays correct if this app is ever run as more than one instance — unlike clearing
+// the lock on startup, which assumes a single instance (see acquireLock's note).
+const LOCK_HEARTBEAT_MS = 5_000;
+
+function startLockHeartbeat(refreshId: string): () => void {
+  const timer = setInterval(() => {
+    // Scoped to our refreshId exactly like releaseLock: if the lock was already
+    // stolen from us, this must not stamp — and must not resurrect our claim.
+    void prisma
+      .$executeRaw`UPDATE RefreshLock SET startedAt = ${new Date()} WHERE id = 1 AND holder = ${refreshId}`
+      .catch((err) => {
+        // A missed beat is survivable — the next one is 5s away and the timeout is
+        // far wider. Never allowed to fail the refresh it is only observing.
+        console.error("[refresh] lock heartbeat failed:", err);
+      });
+  }, LOCK_HEARTBEAT_MS);
+  // Must not be a reason for the process to stay alive on shutdown.
+  timer.unref?.();
+  return () => clearInterval(timer);
 }
 
 // Is a refresh running right now? Used by the button to explain itself rather than
@@ -248,6 +297,10 @@ export async function refreshAllData(input: {
     return { ok: false, reason: "locked", runningSince: lock.since?.toISOString() ?? null, holder: lock.holder };
   }
 
+  // Started immediately after acquiring and stopped on BOTH exit paths below, so the
+  // lock is only ever "breathing" for exactly as long as this pass is actually running.
+  const stopHeartbeat = startLockHeartbeat(refreshId);
+
   const startedAt = new Date();
   try {
     await openRun({
@@ -318,6 +371,8 @@ export async function refreshAllData(input: {
       steps: [],
       failureDetail: message,
     }).catch(() => {});
+    // Before releaseLock, so the heartbeat cannot re-stamp a lock we are giving up.
+    stopHeartbeat();
     await releaseLock(refreshId);
     await logAudit({
       action: "refresh.all",
@@ -346,6 +401,8 @@ export async function refreshAllData(input: {
     failureDetail: failed.length === 0 ? null : failed.map((f) => `${f.label}: ${f.detail}`).join(" | "),
   }).catch((err) => console.error("[refresh] could not close the run record:", err));
 
+  // Before releaseLock, so the heartbeat cannot re-stamp a lock we are giving up.
+  stopHeartbeat();
   await releaseLock(refreshId);
 
   // ── Tell everyone (§25.9) ─────────────────────────────────────────────────
