@@ -22,7 +22,7 @@ export const APP_VERSION = '1.2.3';
 
 // ─── Tweaks defaults ─────────────────────────────────────────────────────────
 export const TWEAK_DEFAULTS = {
-  accent: '#0066CC',
+  accent: '#1574C4',
   theme: 'light',
   weekStart: 1,
   density: 'normal',
@@ -34,7 +34,7 @@ export const TWEAK_DEFAULTS = {
 
 // ─── Accent swatches ─────────────────────────────────────────────────────────
 export const ACCENT_SWATCHES = [
-  { name: 'SDC Blue', value: '#0066CC', ink: '#0052A3', soft: '#D6E8FA' },
+  { name: 'SDC Blue', value: '#1574C4', ink: '#0E548E', soft: '#E8F1F9' },
   { name: 'Navy',     value: '#2E4A7A', ink: '#1B3258', soft: '#D7DFEE' },
   { name: 'Teal',     value: '#0B7285', ink: '#095F6E', soft: '#C8EAF0' },
   { name: 'Forest',   value: '#3C7D5C', ink: '#255A40', soft: '#D3E7DA' },

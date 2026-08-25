@@ -1043,7 +1043,7 @@ function EventModal({ mode, event, date, allEvents, onClose, onSave, onDelete, t
                 <div className="field">
                   <label>Custom color</label>
                   <div className="color-row">
-                    <input type="color" className="color-pick" value={form.color||'#0066CC'} onChange={e=>up('color',e.target.value)}/>
+                    <input type="color" className="color-pick" value={form.color||'#1574C4'} onChange={e=>up('color',e.target.value)}/>
                     {form.color&&<button className="btn btn-sm" onClick={()=>up('color','')}>Use category color</button>}
                   </div>
                 </div>
@@ -1583,7 +1583,7 @@ function ImportExportModal({ allEvents, userEvents, onImport, onClearPaylocity, 
 
 // ─── Tweaks panel ─────────────────────────────────────────────
 const ACCENT_SWATCHES=[
-  {name:'SDC Blue',value:'#0066CC',ink:'#0052A3',soft:'#D6E8FA'},
+  {name:'SDC Blue',value:'#1574C4',ink:'#0E548E',soft:'#E8F1F9'},
   {name:'Navy',    value:'#2E4A7A',ink:'#1B3258',soft:'#D7DFEE'},
   {name:'Teal',    value:'#0B7285',ink:'#095F6E',soft:'#C8EAF0'},
   {name:'Forest',  value:'#3C7D5C',ink:'#255A40',soft:'#D3E7DA'},
@@ -2259,7 +2259,7 @@ class ErrorBoundary extends React.Component {
 
 // ─── App ──────────────────────────────────────────────────────
 const TWEAK_DEFAULTS = /*EDITMODE-BEGIN*/{
-  "accent":"#0066CC","theme":"light","weekStart":1,"density":"normal","showWeekends":true,"sidebarWidth":300,"timezone":"","showWeekNumbers":false
+  "accent":"#1574C4","theme":"light","weekStart":1,"density":"normal","showWeekends":true,"sidebarWidth":300,"timezone":"","showWeekNumbers":false
 }/*EDITMODE-END*/;
 
 // ─── AppShell — handles auth, shows login or calendar ─────────

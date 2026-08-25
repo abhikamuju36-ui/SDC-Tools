@@ -3,51 +3,68 @@
    ============================================================ */
 
 :root {
-  --accent: #0066CC;
-  --accent-ink: #0052A3;
-  --accent-soft: #D6E8FA;
-  --accent-glow: rgba(0,102,204,0.18);
+  /* ------------------------------------------------------------------
+     Bridge to @sdc/design-system (loaded via /design-system/tokens.css,
+     mounted by server/server.js). Local names are kept so the ~25 component
+     files referencing them need no edit. This one stylesheet serves BOTH
+     frontends: src/main.jsx imports it for the Vite build, and the legacy
+     frontend/index.html links it directly.
 
-  --ink: #1A2332;
-  --ink-2: #2E3F54;
-  --ink-3: #5A6E84;
-  --ink-4: #9AAFC6;
-  --line: #E2E8F0;
-  --line-strong: #C8D4E0;
-  --bg: #FFFFFF;
-  --bg-elev: #FFFFFF;
-  --bg-tint: #F5F7FA;
-  --bg-section: #F0F4F8;
+     What this changes visually:
+       - accent #0066CC -> #1574C4 (brand)
+       - neutral ramp -> the shared cool navy-derived ramp
+       - UI font Inter -> Montserrat (the platform face)
 
-  --side-bg: #0A1628;
-  --side-bg-elev: #111F35;
-  --side-bg-hover: #162640;
-  --side-ink: #E8EEF5;
-  --side-ink-2: #A8BDD0;
-  --side-ink-3: #6A8499;
-  --side-line: rgba(255,255,255,0.08);
+     The --cat-* event category colours below are deliberately NOT bridged:
+     they are a categorical palette that must stay mutually distinguishable,
+     and they are surfaced to users as fixed category meanings.
+     ------------------------------------------------------------------ */
+  --accent:      var(--sdc-blue);
+  --accent-ink:  var(--sdc-blue-700);
+  --accent-soft: var(--sdc-blue-tint);
+  --accent-glow: rgba(21, 116, 196, 0.18);
+
+  --ink:          var(--text);
+  --ink-2:        var(--text-2);
+  --ink-3:        var(--text-3);
+  --ink-4:        var(--text-4);
+  --line:         var(--border);
+  --line-strong:  var(--border-strong);
+  --bg:           var(--surface);
+  --bg-elev:      var(--surface);
+  --bg-tint:      var(--surface-sunken);
+  --bg-section:   var(--bg-page);
+
+  /* Dark sidebar - app-specific chrome, anchored to the brand navy */
+  --side-bg:          var(--sdc-navy);
+  --side-bg-elev:     #0E2B4E;
+  --side-bg-hover:    #14375F;
+  --side-ink:         #E8EEF5;
+  --side-ink-2:       var(--sdc-blue-light);
+  --side-ink-3:       #6A8499;
+  --side-line:        rgba(255,255,255,0.08);
   --side-line-strong: rgba(255,255,255,0.14);
 
+  /* Event category colours - intentionally left as a categorical palette */
   --cat-holiday:  #C0392B; --cat-holiday-bg:  #FBEAE8;
   --cat-payday:   #27AE60; --cat-payday-bg:   #E3F5EB;
   --cat-birthday: #8E44AD; --cat-birthday-bg: #F0E6F6;
-  --cat-meeting:  #0066CC; --cat-meeting-bg:  #D6E8FA;
+  --cat-meeting:  #1574C4; --cat-meeting-bg:  #E8F1F9;
   --cat-company:  #D35400; --cat-company-bg:  #FDEBD0;
   --cat-deadline: #922B21; --cat-deadline-bg: #FADBD8;
   --cat-personal: #1A7A4A; --cat-personal-bg: #D5F0E3;
   --cat-vacation: #16A085; --cat-vacation-bg: #E8F8F5;
 
-  --radius: 8px;
-  --radius-sm: 5px;
-  --shadow-sm: 0 1px 3px rgba(10,22,40,0.08);
-  --shadow-md: 0 4px 16px rgba(10,22,40,0.12), 0 1px 4px rgba(10,22,40,0.06);
-  --shadow-lg: 0 20px 60px rgba(10,22,40,0.22), 0 6px 16px rgba(10,22,40,0.10);
+  --radius:    var(--radius-md);
+  --radius-sm: var(--radius-sm);
+  --shadow-sm: var(--shadow-xs);
+  --shadow-md: var(--shadow-card);
+  --shadow-lg: var(--shadow-modal);
 
-  --cell-min: 130px;
-  --density-pad: 10px;
-  --font-sans: 'Inter','Barlow',ui-sans-serif,system-ui,sans-serif;
-  --font-display: 'Inter','Barlow Condensed',sans-serif;
-  --font-mono: 'JetBrains Mono',ui-monospace,monospace;
+  --cell-min:     130px;
+  --density-pad:  10px;
+  --font-sans:    var(--font-ui);
+  --font-display: var(--font-ui);
 }
 
 [data-theme='dark'] {
@@ -483,21 +500,21 @@ a { color:var(--accent); }
   gap: 12px;
   width: 100%;
   padding: 13px 20px;
-  background: #0066CC;
+  background: var(--sdc-blue);
   color: #fff;
   border-radius: 8px;
   font-size: 15px;
   font-weight: 600;
   text-decoration: none;
   transition: background .15s, box-shadow .15s;
-  box-shadow: 0 2px 8px rgba(0,102,204,0.35);
+  box-shadow: 0 2px 8px rgba(21,116,196,0.35);
 }
-.btn-microsoft:hover { background: #0052A3; box-shadow: 0 4px 14px rgba(0,102,204,0.45); color: #fff; }
+.btn-microsoft:hover { background: var(--sdc-blue-700); box-shadow: 0 4px 14px rgba(21,116,196,0.45); color: #fff; }
 
 .login-spinner {
   width: 36px; height: 36px;
   border: 3px solid rgba(255,255,255,0.15);
-  border-top-color: #0066CC;
+  border-top-color: var(--sdc-blue);
   border-radius: 50%;
   animation: spin .8s linear infinite;
 }

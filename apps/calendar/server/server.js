@@ -89,6 +89,15 @@ app.get('/health',     (_req, res) => res.json({ status: 'ok', service: 'calenda
 app.get('/api/health', (_req, res) => res.json({ status: 'ok', time: new Date().toISOString() }));
 
 // ── Serve static calendar files ───────────────────────────
+// Shared design tokens live outside this app, in packages/design-system.
+// Mounted over HTTP rather than CSS-@imported because STATIC_DIR falls back
+// from dist/ to the legacy frontend/ folder: a relative @import would only be
+// inlined by the Vite build and would 404 in that fallback, stripping every
+// token. This resolves in both modes.
+app.use('/design-system', express.static(
+  path.join(__dirname, '..', '..', '..', 'packages', 'design-system')
+));
+
 app.use(express.static(STATIC_DIR));
 
 // In production the Vite build outputs to dist/ (publicDir:false), so icons/

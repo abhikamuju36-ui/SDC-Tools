@@ -374,7 +374,7 @@ function EventModal({ mode, event, date, allEvents, onClose, onSave, onDelete, t
                 <div className="field">
                   <label>Custom color</label>
                   <div className="color-row">
-                    <input type="color" className="color-pick" value={form.color||'#0066CC'} onChange={e=>up('color',e.target.value)}/>
+                    <input type="color" className="color-pick" value={form.color||'#1574C4'} onChange={e=>up('color',e.target.value)}/>
                     {form.color&&<button className="btn btn-sm" onClick={()=>up('color','')}>Use category color</button>}
                   </div>
                 </div>
