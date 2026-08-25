@@ -51,8 +51,8 @@ the steady-state (pass 2–3) values, which varied by <10%.
 | `/audit-log` | 8 ms | 63 ms | 232 KB | ✅ |
 | `/hours` | 9 ms | 132 ms | 205 KB | ✅ |
 | `/etc` | 9 ms | ~200 ms | 659 KB | ✅ |
-| `/quoted` | 9 ms | ~240 ms | **1,018 KB** | ⚠️ payload |
-| `/build-readiness` | 8 ms | ~280 ms | **5,489 KB** | ❌ payload |
+| `/quoted` | 9 ms | ~240 ms | 1,018 KB | ✅ markup, not data — see F4 |
+| `/build-readiness` | 8 ms | ~280 ms | **5,489 KB** → ~1,916 KB after F1 | ⚠️ payload |
 | `/tm` | 8 ms | 398 ms | 36 KB | ✅ |
 | `/job-hours` | 9 ms | 234 ms | 428 KB | ✅ |
 | `/job-cost-explorer` | 9 ms | ~600 ms | 120 KB | ⚠️ time |
@@ -91,7 +91,7 @@ reasonable envelope for what it does.
 
 | Process | RSS | CPU | Heap used / total | Restarts | `max_memory_restart` |
 |---|---|---|---|---|---|
-| sdc-etc-planner | 236.9 MB | 2.5 % | 184.8 / 191.0 MiB | 0 | **none** ⚠️ |
+| sdc-etc-planner | 236.9 MB | 2.5 % | 184.8 / 191.0 MiB | 0 | **none** → 600 M (F3) |
 | sdc-scheduler | 50.3 MB | 1.1 % | 57.8 / 60.7 MiB | 2 | 400 M |
 | sdc-readiness | 48.3 MB | 0.2 % | 31.4 / 34.1 MiB | 0 | 300 M |
 | sdc-statelogic | 48.0 MB | 0.1 % | 15.2 / 19.8 MiB | 0 | 300 M |
@@ -123,6 +123,9 @@ here, so a normal `akamuju` session gets `EPERM` on `\\.\pipe\rpc.sock`. See
 assemblies and **~15,000 part-level line items** (15,445 `qty` fields, 17,293
 `expectedDate` fields, 2,760 `poNumber` fields).
 
+**Status: FIXED** — `detailJson` 5,433 KB → 1,860 KB (−65.8%). See "Resolution"
+at the end of this finding.
+
 **Root cause:** `getBuildReadinessData()`
 (`src/lib/build-readiness-actions.ts:113`) selects `detailJson` for *every* row
 of `BuildReadinessJobSnapshot` with no `WHERE` clause, parses it into `detail`,
@@ -130,29 +133,63 @@ and `build-readiness/page.tsx` hands the entire result to the
 `BuildReadinessDashboard` client component as `initialData` — so all of it is
 serialized into the RSC payload on every page load.
 
-The bulk is `JobDetail.upcoming`. `build-readiness-sync.ts:340` writes
-`incomingParts: [{ pn, qty }]` — **always a single-element array** — meaning one
-`UpcomingDeliveryEntry` per part, ~15,000 of them, each additionally repeating
-`jobId`, `jobName` and `assemblyLabel` that its parent job row already carries.
+Measured composition of `detailJson` over all 50 rows:
 
-**Why it isn't simply removable:** `detail` is genuinely read across *all* jobs,
-not only on drill-in — `BuildReadinessFilters.tsx:312` builds the supplier filter
-list from `j.detail.vendors`, `BuildReadinessInsights.tsx:134,146,255` aggregates
-blockers and assemblies cross-job, and `BuildReadinessDrillViews.tsx:401`
-flat-maps blockers across jobs. Deleting the field breaks those panels.
+| Sub-array | Size | Entries | Share |
+|---|---|---|---|
+| `vendors` | **3,832 KB** | 1,313 | **70.5%** |
+| `assemblies` | 649 KB | 1,638 | 11.9% |
+| `blockers` | 616 KB | 1,806 | 11.3% |
+| `upcoming` | 333 KB | 912 | 6.1% |
 
-**Fix (designed, not yet implemented):** move those cross-job aggregations
-server-side and ship summary rows + small aggregates, fetching one job's full
-`detail` on drill-in (precedent already exists in
-`build-readiness-assembly-actions.ts`). Secondary, near-free win: drop the
-redundant `jobId`/`jobName` from `UpcomingDeliveryEntry` and `BlockerEntry`, and
-flatten `incomingParts` to scalar `pn`/`qty`.
+`vendors` at ~3 KB per entry was the whole problem, and all of it was
+`Vendor.pos[].lines` — `PoLineDetail[]`, every individual PO line, 14,560 of them
+across 3,909 PO groups. **Nothing reads it.** Every consumer of `vendors` uses
+`v.name` plus a PO's `poId`/`itemCount`/`received`/`pct` and no more:
+`computeSupplierRisk()` (`build-readiness-forecast.ts:161`), `SupplierDrillView`,
+and the supplier filter's option list.
 
-**Expected:** 5,489 KB → under ~200 KB (>95% reduction).
-**Risk:** the aggregations feed displayed operational figures. Requires
-before/after equality checking on every panel, so it deserves its own pass.
+**Resolution (implemented):** `JobDetail.vendors` is now `SnapshotVendor[]`, whose
+PO type is `Omit<PoLineGroup, "lines">`. The projection is applied on the write
+path (`build-readiness-sync.ts`, so it is no longer stored) *and* on the read path
+(`safeParseDetail` in `build-readiness-actions.ts`, so snapshots written before
+this change are trimmed on read rather than staying large until the next full
+refresh).
 
-### F2 — `/cash-flow` takes ~1.26 s ❌ (mostly inherent)
+Doing it at the *type* level is the point: had any consumer needed `lines`, the
+`Omit` would have failed to compile. It typechecks clean, which is the proof the
+change is behaviour-identical. It also means a future consumer that needs
+per-line detail gets a compile error rather than silently restoring a 3.8 MB
+payload — and the right answer then is to fetch that job's lines on demand, which
+`build-readiness-po-actions.ts` already does.
+
+**Measured result**, computed by applying the projection to the live production
+rows:
+
+| | Before | After | Δ |
+|---|---|---|---|
+| `vendors` | 3,832 KB | 259 KB | **−93.2%** |
+| `detailJson` total | 5,433 KB | 1,860 KB | **−65.8%** |
+
+**Still outstanding:** the remaining ~1,860 KB is `assemblies` + `blockers` +
+`upcoming` (~1,598 KB), and unlike `vendors.lines` these *are* genuinely read
+across all jobs at first paint — `BuildReadinessInsights` renders unconditionally
+(`BuildReadinessDashboard.tsx:282`) and aggregates them, `BuildReadinessFilters`
+builds its option lists from them, and `BuildReadinessDrillViews.tsx:401`
+flat-maps blockers cross-job. Cutting those requires moving the aggregations
+server-side and lazy-loading per-job detail — real work, and it changes code that
+produces displayed operational figures, so it needs its own pass with before/after
+equality checks on every panel. A cheaper partial: `UpcomingDeliveryEntry` and
+`BlockerEntry` each repeat `jobId`/`jobName` that their parent row already
+carries, and `sync.ts:340` writes `incomingParts` as an always-single-element
+array that could be flattened to scalar `pn`/`qty`.
+
+**Note:** the default view does not need any of it. The main table
+(`BuildReadinessDashboard.tsx:202-270`) and the KPI strip (`:155-166`) read only
+scalar snapshot fields. The dependency is entirely the Insights panel and the
+filter option lists.
+
+### F2 — `/cash-flow` takes ~1.26 s — waterfall FIXED, rest inherent ⚠️
 
 **Root cause:** two sequential awaits precede the parallel block —
 `resolveAsOf(as)` then `getLatestSnapshotSummary()` — and only then does the
@@ -167,7 +204,7 @@ MSSQL query, which cannot be cached without showing a stale financial forecast
 
 **Priority:** low — one page, ELT-only audience, latency largely inherent.
 
-### F3 — `sdc-etc-planner` has no `max_memory_restart` ⚠️
+### F3 — `sdc-etc-planner` has no `max_memory_restart` — FIXED ✅
 
 **Root cause:** `ecosystem.config.js` sets `max_memory_restart` on all seven
 other PM2 apps but omits it on `sdc-etc-planner` — which is by far the largest
@@ -176,11 +213,22 @@ process (236.9 MB, 5× any other). If it ever leaks, nothing restarts it.
 **Fix:** add `max_memory_restart: '600M'` (~2.5× current RSS, leaving headroom
 for the 17.7 s refresh pass). One-line, low risk.
 
-### F4 — `/quoted` ships 1,018 KB ⚠️
+### F4 — `/quoted` ships 1,018 KB — investigated, NOT a defect ✅
 
-Not yet root-caused. Same investigation shape as F1.
+Root-caused and dismissed. It is not over-fetched data, it is grid *markup*: the
+1,016 KB payload contains 5,362 `className` and 5,123 `children` occurrences and
+10,167 Tailwind utility strings, against only 54 `customer` and 55 `startDate`
+values. That is the serialized React tree for a genuinely large server-rendered
+table (jobs × 17 sections, each cell carrying its own classes) — not a payload
+carrying anything unused, which is what made F1 a bug.
 
-### F5 — `newProjectsEnteringMonth` over-fetches and rescans 🔹
+Reducing it would mean virtualizing the grid, i.e. converting a server-rendered
+table into a client one. That trades a 240 ms server-rendered first paint for a
+JS-dependent one, which §10's "do not lazy-load critical UI if it makes the app
+feel slower" warns against. At 1 MB delivered in ~240 ms it is inside the §18
+navigation budget. **No action.**
+
+### F5 — `newProjectsEnteringMonth` over-fetches and rescans — partly FIXED ✅
 
 `src/lib/standard-pool-local.ts:105` loads **every** typed job with a
 `startDate`, then discards all but one month's worth in JS
@@ -222,11 +270,22 @@ Recorded so they are not re-investigated:
 
 ## 3. Where effort should go
 
-1. **F1** — the only finding worth a dedicated refactor. >95% payload cut on the
-   heaviest page.
-2. **F3** — one line, do it with anything else.
-3. **F5**, **F2** waterfall — small, safe, cheap.
-4. **F4** — root-cause it; likely the same shape as F1.
+**Done in this pass:** F1 (−65.8% on the heaviest payload), F3, F5, and F2's
+waterfall. F4 was investigated and dismissed as a non-defect.
+
+**Next, in value order:**
+
+1. **F1 remainder** — the surviving ~1,860 KB is `assemblies`/`blockers`/
+   `upcoming`, genuinely read cross-job at first paint by the Insights panel.
+   Cutting it means moving those aggregations server-side and lazy-loading
+   per-job detail. This is the one remaining item worth a dedicated refactor,
+   and it needs before/after equality checks on every panel because it touches
+   code producing displayed operational figures.
+2. **A concurrent-user load test** — see §5. Every figure here is single-session
+   at ~1.5 req/min, so this is the largest blind spot, not a refinement.
+3. **A client render/hydration trace** on `/build-readiness` and `/etc`. Given
+   §0, remaining user-perceived slowness most likely lives here, and payload
+   figures alone cannot see it.
 
 Explicitly *not* worth doing: a general memoization sweep, a bundle-splitting
 pass, or an N+1 hunt. §2's non-findings show those are done or deliberate.

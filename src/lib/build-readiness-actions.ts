@@ -81,7 +81,22 @@ export async function refreshBuildReadinessProject(jobId: string): Promise<void>
 function safeParseDetail(raw: string): JobDetail {
   try {
     const d = JSON.parse(raw) as Partial<JobDetail>;
-    return { assemblies: d.assemblies ?? [], vendors: d.vendors ?? [], blockers: d.blockers ?? [], upcoming: d.upcoming ?? [] };
+    return {
+      assemblies: d.assemblies ?? [],
+      // Re-projected rather than passed through, so a row written BEFORE the
+      // sync stopped storing `lines` (build-readiness-sync.ts) is trimmed on
+      // read too. Without this, the payload would stay at its old size for
+      // every existing snapshot until the next full refresh overwrote it —
+      // and any legacy row would quietly carry 3 KB/vendor of dead weight
+      // forever. Picking the four fields explicitly also means a stored row
+      // cannot smuggle extra keys into the RSC payload.
+      vendors: (d.vendors ?? []).map((v) => ({
+        name: v.name,
+        pos: (v.pos ?? []).map(({ poId, itemCount, received, pct }) => ({ poId, itemCount, received, pct })),
+      })),
+      blockers: d.blockers ?? [],
+      upcoming: d.upcoming ?? [],
+    };
   } catch {
     return { assemblies: [], vendors: [], blockers: [], upcoming: [] };
   }

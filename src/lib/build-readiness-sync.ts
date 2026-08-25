@@ -346,8 +346,18 @@ export function classifyJobBom(bom: JobBom, jobId: string, jobName: string, now:
       onOrder: u.part.status === "ordered",
     }));
 
+  // `lines` (every individual PO line) is dropped here rather than stored and
+  // shipped: it was 70.5% of the whole snapshot and no consumer reads it. See
+  // build-readiness-types.ts's SnapshotVendor for the measurements and for what
+  // to do if per-line detail is ever genuinely needed. Names and the PO
+  // rollup counts every consumer DOES read are preserved exactly.
+  const vendors = bom.vendors.map((v) => ({
+    name: v.name,
+    pos: v.pos.map(({ poId, itemCount, received, pct }) => ({ poId, itemCount, received, pct })),
+  }));
+
   return {
-    detail: { assemblies, vendors: bom.vendors, blockers, upcoming },
+    detail: { assemblies, vendors, blockers, upcoming },
     overallReadinessPct,
     requiredQtyTotal: Math.round(requiredQtyTotal),
     coveredQtyTotal: Math.round(coveredQtyTotal),

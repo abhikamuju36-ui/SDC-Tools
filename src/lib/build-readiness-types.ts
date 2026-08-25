@@ -4,7 +4,32 @@
 // (build-readiness-actions.ts, build-readiness-forecast.ts) import from here so
 // the two sides can never quietly disagree about shape.
 
-import type { ReleaseStatus, Vendor } from "./job-bom";
+import type { ReleaseStatus, PoLineGroup } from "./job-bom";
+
+// ── Why the snapshot's vendors are NOT job-bom's `Vendor` (2026-08-25) ───────
+//
+// getJobBom() returns Vendor.pos as PoLineGroup[], and each PoLineGroup carries
+// `lines: PoLineDetail[]` — every individual PO line. The snapshot used to store
+// that verbatim, and /build-readiness hands the whole parsed snapshot to a client
+// component, so all of it was serialized into the RSC payload on every load.
+//
+// Measured 2026-08-25, over 50 snapshot rows:
+//
+//   vendors      3832 KB    1313 entries   70.5% of detailJson
+//   assemblies    649 KB    1638 entries   11.9%
+//   blockers      616 KB    1806 entries   11.3%
+//   upcoming      333 KB     912 entries    6.1%
+//
+// ~3 KB per vendor, and it was all `lines`. Nothing reads it: every consumer of
+// vendors uses `v.name` and a PO's poId/itemCount/received/pct only —
+// computeSupplierRisk() (build-readiness-forecast.ts), SupplierDrillView, and
+// the supplier filter's option list. So this omits `lines` at the type level
+// rather than by convention: if a future consumer does need per-line detail, it
+// will fail to compile here instead of silently restoring a 3.8 MB payload, and
+// the right answer will be to fetch that job's lines on demand (see
+// build-readiness-po-actions.ts, which already does exactly that).
+export type SnapshotPoLineGroup = Omit<PoLineGroup, "lines">;
+export type SnapshotVendor = { name: string; pos: SnapshotPoLineGroup[] };
 
 export type BlockerReason =
   | "no_po"
@@ -86,7 +111,7 @@ export type UpcomingDeliveryEntry = {
 
 export type JobDetail = {
   assemblies: AssemblyDetail[];
-  vendors: Vendor[];
+  vendors: SnapshotVendor[];
   blockers: BlockerEntry[];
   upcoming: UpcomingDeliveryEntry[];
 };
