@@ -244,6 +244,19 @@ module.exports = {
       watch:         false,
       max_restarts:  10,
       restart_delay: 3000,
+      // The other 6 apps have carried a memory ceiling since they were added;
+      // this one never did, and it is by far the largest process — measured
+      // 2026-08-25 at 236.9 MB RSS (184.8/191.0 MiB heap), roughly 5x any
+      // other app here. So the one process most able to leak was the only one
+      // with nothing to catch it.
+      //
+      // 600M is ~2.5x the measured steady state, which leaves room for the
+      // hourly 9-source refresh pass (17.7s, holds the Paylocity workbook
+      // parse in memory) to spike well above baseline without tripping a
+      // restart mid-write. Raise it if a legitimate refresh ever trips it —
+      // don't raise it to paper over an actual leak. See docs/PERFORMANCE.md
+      // §1d for the baseline to compare against.
+      max_memory_restart: '600M',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs:    true,
     },
