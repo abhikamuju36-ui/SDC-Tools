@@ -131,6 +131,36 @@ async function checkAndUpdate() {
     // 1. Fetch latest refs from remote
     run('git fetch origin');
 
+    // 1b. Only sync when the remote is strictly AHEAD of us.
+    //
+    //     getLocalHead() vs remote SHA (step 0) only tells us the two DIFFER,
+    //     not which way. If local HEAD carries commits the remote does not
+    //     have - someone working on a feature branch in this tree, or a local
+    //     commit not yet pushed - then "different" means we are AHEAD, and
+    //     syncing walks us backwards with two destructive effects:
+    //
+    //       * step 4 diffs HEAD against the remote, sees every file those
+    //         local commits ADDED as absent from the remote, fails to check
+    //         it out, and falls into the "deleted in remote" branch, which
+    //         fs.unlinkSync()s the file off disk;
+    //       * step 5 then moves the branch ref back with git reset --soft.
+    //
+    //     That is real data loss, and it happened: on 2026-08-25 this deleted
+    //     a feature branch's new files and reset its ref (log line
+    //     "Updates available (5d0f69f -> 4c7995a). Pulling selectively...").
+    //     The commit survived only because git keeps unreferenced objects.
+    //
+    //     merge-base --is-ancestor exits non-zero when HEAD is NOT an
+    //     ancestor of the remote, i.e. exactly the ahead/diverged case.
+    try {
+      run(`git merge-base --is-ancestor HEAD origin/${GITHUB_BRANCH}`);
+    } catch {
+      log('Local HEAD is ahead of or diverged from ' +
+          `origin/${GITHUB_BRANCH} - skipping update so local work is not destroyed.`);
+      isUpdating = false;
+      return;
+    }
+
     // 2. List all files that changed between local HEAD and remote
     let changedFiles = [];
     try {
