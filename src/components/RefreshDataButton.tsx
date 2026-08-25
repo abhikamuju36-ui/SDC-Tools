@@ -5,6 +5,7 @@ import { refreshApplicationData, refreshStatus } from "@/lib/refresh-actions";
 import { useToast } from "@/components/ui/Toast";
 import { flushEtcAutosave, isEtcDirty } from "@/lib/etc-dirty-tracker";
 import { usePendingWatchdog } from "@/components/usePendingWatchdog";
+import { suppressThrottledLiveRefresh } from "@/components/LiveRefresh";
 
 // ── The ONE refresh control (§25.2) ──────────────────────────────────────────
 //
@@ -102,7 +103,41 @@ export function RefreshDataButton({
       // refresh had eaten it. Same courtesy the submission and the export do.
       if (isEtcDirty()) await flushEtcAutosave();
 
-      const outcome = await refreshApplicationData();
+      // Armed BEFORE the action, because the change event this pass publishes arrives
+      // while the action is still open — see suppressThrottledLiveRefresh. Released on
+      // every path below, including the throws, so a failed refresh can never leave
+      // this tab deaf to other people's changes.
+      const releaseSuppression = suppressThrottledLiveRefresh();
+      let outcome: Awaited<ReturnType<typeof refreshApplicationData>>;
+      try {
+        outcome = await refreshApplicationData();
+      } catch (err) {
+        // ── The one path that used to leave the spinner turning (§9) ──────────
+        //
+        // A server action can reject rather than return — a dropped connection mid-pass,
+        // a serialization failure, a process restart while the request is open. There
+        // was no catch here, so the rejection escaped the transition as an unhandled
+        // rejection: nothing told the user, and the only thing that eventually released
+        // the control was the 5-minute watchdog.
+        //
+        // Caught and reported, so the button exits "Refreshing…" the moment the request
+        // fails and says why. The watchdog stays as the backstop for the case this
+        // cannot see — a promise that never settles at all.
+        releaseSuppression({ replay: true });
+        toast(
+          `Refresh could not complete — ${err instanceof Error ? err.message : String(err)}. ` +
+            `Some sources may have been updated; the hourly schedule will run the full pass again.`,
+          "error",
+          { critical: true },
+        );
+        setOthersRunningSince(null);
+        return;
+      }
+      // `replay` only when this click did NOT already refresh us. refreshApplicationData
+      // calls revalidatePath on success, so an ok outcome has made this tab current and
+      // the suppressed event was genuinely redundant. A refused or failed one has not,
+      // and the event it swallowed may have been another user's finished pass.
+      releaseSuppression({ replay: !outcome.ok });
       setOthersRunningSince(null);
 
       if (!outcome.ok) {

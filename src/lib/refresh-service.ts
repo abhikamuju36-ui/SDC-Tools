@@ -193,6 +193,40 @@ export async function currentRefresh(): Promise<RefreshProgress> {
   return { running: true, since: row.startedAt, stage, done: steps.length, total: SYNC_SOURCE_COUNT, steps };
 }
 
+// ── Runs that never finished (2026-08-25) ───────────────────────────────────
+//
+// A pass killed mid-flight leaves its RefreshRun row saying `status = 'running'` with
+// a NULL completedAt, forever. Three of them were sitting in the table when this was
+// written, from the double restart every deploy used to cause (see the deploy script's
+// own note), and the oldest was three days old.
+//
+// They are not harmless. `currentRefresh` reads the newest 'running' row to name the
+// stage a live pass is on, so a stale one is a stale stage waiting to be shown; the
+// refresh history on the dashboard shows passes that never ended; and "did the last
+// refresh work?" has no answer for the row that matters.
+//
+// Called only while THIS pass holds the lock, which is what makes it safe: the lock is
+// exclusive, so no other pass can be legitimately running, so every other 'running'
+// row is by definition abandoned. That is a stronger guarantee than any age cutoff —
+// but the cutoff is applied anyway, and generously, so that a row belonging to a pass
+// which somehow outlived its own lock is left alone rather than mislabelled.
+async function closeAbandonedRuns(): Promise<void> {
+  try {
+    const cutoff = new Date(Date.now() - LOCK_TIMEOUT_MS);
+    const closed = await prisma.$executeRaw`
+      UPDATE RefreshRun
+         SET status = 'failed',
+             completedAt = ${new Date()},
+             failureDetail = 'Abandoned — the process running this pass stopped before it finished. Closed by a later refresh.'
+       WHERE status = 'running' AND startedAt < ${cutoff}`;
+    if (closed > 0) console.warn(`[refresh] closed ${closed} abandoned run record(s) left by a killed pass`);
+  } catch (err) {
+    // Bookkeeping. A refresh must not fail because it could not tidy up after an
+    // earlier one.
+    console.error("[refresh] could not close abandoned run records:", err);
+  }
+}
+
 // ── The record ──────────────────────────────────────────────────────────────
 
 async function openRun(input: {
@@ -300,6 +334,10 @@ export async function refreshAllData(input: {
   // Started immediately after acquiring and stopped on BOTH exit paths below, so the
   // lock is only ever "breathing" for exactly as long as this pass is actually running.
   const stopHeartbeat = startLockHeartbeat(refreshId);
+
+  // Holding the lock is proof no other pass is alive, so anything still calling itself
+  // "running" is a corpse. Buried here rather than left to accumulate.
+  await closeAbandonedRuns();
 
   const startedAt = new Date();
   try {

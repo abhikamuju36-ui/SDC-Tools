@@ -166,7 +166,62 @@ const THROTTLE_MS = 5_000;
 let lastThrottledAt = 0;
 let trailingTimer: ReturnType<typeof setTimeout> | null = null;
 
+// ── One click, one re-render (§6, §7) ───────────────────────────────────────
+//
+// The application refresh makes this tab current by TWO independent routes at once,
+// and only needs one of them:
+//
+//   1. refreshApplicationData() calls revalidatePath for every page that shows
+//      refreshed figures, so the server action's own response re-renders the route the
+//      clicker is looking at — and, just as importantly, invalidates the client router
+//      cache for the routes they are not, so navigating to Monthly ETC afterwards does
+//      not serve a pre-refresh copy.
+//   2. the pass calls recordChanges, which publishes a change event with no cellKey, so
+//      every connected tab takes the throttled route refresh. That is what updates
+//      OTHER people's screens without them reloading.
+//
+// For everyone else, (2) is the only route and is exactly right. For the person who
+// clicked, (2) is a second full render of the heaviest route in the app — on Monthly
+// ETC an 854 KB payload and a ~600ms server render — landing on top of the one (1) is
+// already doing, for a page (1) has by then made current.
+//
+// So the clicker suppresses (2) for the span of their own refresh, and keeps (1),
+// because (1) is the one that also fixes the other routes' caches.
+//
+// ── Why a counter and not a timer ─────────────────────────────────────────
+//
+// A "ignore refreshes for the next N seconds" window would be a guess about when the
+// event arrives, and the event arrives BEFORE the action resolves — recordChanges runs
+// while the server action is still open. So suppression is armed before the action is
+// called and released when it settles, which brackets the event by construction
+// instead of by timing.
+//
+// Nothing is dropped. `release` reports whether anything was actually suppressed, so a
+// caller whose refresh did NOT end up calling revalidatePath — a click refused because
+// somebody else's pass held the lock, or one that failed — can replay the single
+// refresh it swallowed. That case is real: the other user's pass publishes the event
+// this tab needs, and (1) never ran for it.
+let suppressDepth = 0;
+let suppressedWhileArmed = 0;
+
+export function suppressThrottledLiveRefresh(): (opts?: { replay?: boolean }) => void {
+  suppressDepth++;
+  const armedAt = suppressedWhileArmed;
+  let released = false;
+  return ({ replay = false } = {}) => {
+    if (released) return; // idempotent: a caller may release on both a normal and an error path
+    released = true;
+    suppressDepth--;
+    const swallowed = suppressedWhileArmed - armedAt;
+    if (replay && swallowed > 0) refreshNow?.();
+  };
+}
+
 export function requestThrottledLiveRefresh(): void {
+  if (suppressDepth > 0) {
+    suppressedWhileArmed++;
+    return;
+  }
   const now = Date.now();
   if (now - lastThrottledAt >= THROTTLE_MS) {
     lastThrottledAt = now;

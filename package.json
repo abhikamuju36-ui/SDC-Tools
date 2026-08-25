@@ -9,7 +9,7 @@
     "build": "next build",
     "start": "next start -p 4006",
     "free-port": "node scripts/free-port.mjs 4006",
-    "deploy": "next build && node scripts/free-port.mjs 4006 && pm2 restart sdc-etc-planner",
+    "deploy": "next build && pm2 stop sdc-etc-planner && node scripts/free-port.mjs 4006 && pm2 start sdc-etc-planner",
     "lint": "eslint",
     "test": "tsx -r ./scripts/shim-server-only.cjs --test tests/*.test.ts"
   },

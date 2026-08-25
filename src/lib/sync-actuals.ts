@@ -8,6 +8,8 @@
 // BI to explain numbers that never came from there. DEVLOG entries and commits
 // before that date still say sync-powerbi.ts.
 
+import { createHash } from "crypto";
+
 import { prisma } from "@/lib/prisma";
 import { VALID_JOB_TYPES, etcActiveJobFilter } from "@/lib/job-filters";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION, JOB_DASHBOARD_HOURS_CODES, mapPunchToColumns } from "@/lib/sections";
@@ -50,6 +52,16 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
   jobsNotFound: number;
   rowsSkippedOverridden: number;
   detailRowsWritten: number;
+  // Buckets whose stored contents were already exactly what this pass would have
+  // written, so they were not rewritten. Reported rather than hidden: this is the
+  // difference between "the refresh did nothing" and "the refresh confirmed nothing
+  // changed", and only the second one is true.
+  detailBucketsUnchanged: number;
+  // Buckets whose stored rows had drifted from what the digest claimed, and were
+  // rewritten from the source. Normally 0; anything else means something outside this
+  // sync had edited the punch table, and the pass healed it.
+  detailBucketsRepaired: number;
+  detailBuckets: number;
 }> {
   // Falls back to readHoursFeed (the Paylocity Excel files) rather than the Power BI
   // model (2026-08-21) — Power BI is no longer an hours source anywhere.
@@ -120,6 +132,27 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
   });
   const overriddenSet = new Set(overriddenRows.map((o) => `${o.jobId}::${o.month}`));
 
+  // ── Write only the rollups whose figure actually moved (2026-08-25) ───────
+  //
+  // This loop was 954 sequential upserts per pass — one round-trip per (job, month) —
+  // and on a normal refresh almost every one of them wrote the same number back. Same
+  // finding as the punch rows below, one grain up.
+  //
+  // So the current values are read once, in one query, and only a genuine difference
+  // is written. `source` is part of the comparison, not just `actualHours`: a row
+  // still labelled "power_bi" from the pre-Paylocity era has to be rewritten even
+  // when its figure happens to match, which is the self-healing the note below
+  // describes.
+  const existingRows = await prisma.jobMonthlyActualHours.findMany({
+    where: { jobId: { in: jobRows.map((j) => j.id) } },
+    select: { jobId: true, month: true, actualHours: true, source: true },
+  });
+  const existing = new Map(existingRows.map((e) => [`${e.jobId}::${e.month}`, e]));
+
+  // The rows this pass confirmed, whether or not their figure moved — see the bulk
+  // `syncedAt` stamp after the loop.
+  const confirmed: { jobId: number; month: string }[] = [];
+
   for (const [key, hours] of byJobMonth) {
     const [jobId, monthStr] = key.split("::");
     const job = jobByJobId.get(jobId);
@@ -131,6 +164,15 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
       rowsSkippedOverridden++;
       continue;
     }
+
+    confirmed.push({ jobId: job.id, month: monthStr });
+    const prior = existing.get(`${job.id}::${monthStr}`);
+    // Compared through the Decimal column's own precision, not on the raw float:
+    // `hours` is a JS number summed from punches and the column is Decimal(10,2), so
+    // 130.44999999999999 and the stored 130.45 are the same value and must not read
+    // as a change. Comparing Number(prior.actualHours) against `hours` directly would
+    // rewrite most rows every pass and defeat the whole point.
+    if (prior && prior.source === "paylocity_excel" && Number(prior.actualHours) === round2(hours)) continue;
 
     await prisma.jobMonthlyActualHours.upsert({
       where: { jobId_month: { jobId: job.id, month: monthStr } },
@@ -147,11 +189,38 @@ export async function syncActualHours(prefetched?: HoursExport): Promise<{
     rowsUpserted++;
   }
 
-  const detailRowsWritten = await syncJobHoursDetail(rows, jobByJobId);
+  // ── The freshness stamp still has to advance (§43) ────────────────────────
+  //
+  // Monthly ETC reads MAX(JobMonthlyActualHours.syncedAt) as its "hours last synced"
+  // line. Skipping the unchanged upserts above would have frozen that timestamp, so
+  // the page would have reported hours as hours old immediately after a refresh that
+  // had just confirmed them current — trading a slow refresh for a lying header.
+  //
+  // `syncedAt` means "this figure was verified against the source at this time", and
+  // that is true of every row the loop reached, changed or not. One updateMany stamps
+  // the whole confirmed set in a single round-trip, so the honest timestamp costs one
+  // statement rather than the 954 it used to ride along with.
+  if (confirmed.length > 0) {
+    const now = new Date();
+    await prisma.jobMonthlyActualHours.updateMany({
+      where: { OR: confirmed.map((c) => ({ jobId: c.jobId, month: c.month })) },
+      data: { syncedAt: now },
+    });
+  }
+
+  const detail = await syncJobHoursDetail(rows, jobByJobId);
 
   await syncHoursRefreshedThrough(rows);
 
-  return { rowsUpserted, jobsNotFound, rowsSkippedOverridden, detailRowsWritten };
+  return {
+    rowsUpserted,
+    jobsNotFound,
+    rowsSkippedOverridden,
+    detailRowsWritten: detail.written,
+    detailBucketsUnchanged: detail.unchanged,
+    detailBucketsRepaired: detail.repaired,
+    detailBuckets: detail.buckets,
+  };
 }
 
 // Punch-level rows behind those rollups — one per employee/day/job/section —
@@ -178,7 +247,7 @@ export async function syncJobHoursDetail(
   // is now the only hours source; scripts writing the same replace-by-(job, month)
   // shape from somewhere else pass their own label rather than inheriting a wrong one.
   source = "paylocity_excel",
-): Promise<number> {
+): Promise<{ written: number; unchanged: number; repaired: number; buckets: number }> {
   // job pk + month -> the rows for it
   const byJobMonth = new Map<string, { jobPk: number; month: string; rows: JobHoursRow[] }>();
   for (const r of rows) {
@@ -191,8 +260,12 @@ export async function syncJobHoursDetail(
     else byJobMonth.set(key, { jobPk: job.id, month, rows: [r] });
   }
 
-  let written = 0;
-  for (const { jobPk, month, rows: monthRows } of byJobMonth.values()) {
+  // ── What each bucket WOULD contain, before deciding to write it ───────────
+  //
+  // The payload is built for every bucket either way — it is pure in-memory work over
+  // rows already parsed, and it is what the digest has to be taken over. Only the
+  // WRITE is conditional.
+  const planned = [...byJobMonth.values()].map(({ jobPk, month, rows: monthRows }) => {
     // Collapse to the true punch grain before writing: the export is already one row
     // per employee/day/job/raw-pair, but a person can book the same raw pair twice in
     // a day (two separate punches). `section` IS the raw pair now (2026-08-21), so it
@@ -217,36 +290,205 @@ export async function syncJobHoursDetail(
         });
     }
 
+    const data = [...merged.values()].map((m) => {
+      // The approved Section+Function rule book, applied ONCE here and stored as
+      // real columns — this is what makes every page's Group By a plain SQL
+      // GROUP BY rather than a per-page recomputation. Pure function of the raw
+      // pair, so re-running this write with an updated rule book (via a resync)
+      // is the only thing that ever changes it — never a page-level guess.
+      const c = classifyPunch(m.rawSection, m.rawFunction);
+      return {
+        jobId: jobPk,
+        section: m.section,
+        month,
+        workDate: m.workDate,
+        employeeId: m.employeeId,
+        hours: round2(m.hours),
+        rawSection: m.rawSection,
+        rawFunction: m.rawFunction,
+        standardDepartment: c.department,
+        standardTaskDescription: c.taskDescription,
+        mappingStatus: c.mappingStatus,
+        source,
+      };
+    });
+
+    return { jobPk, month, data, digest: digestBucket(data) };
+  });
+
+  // ── Rewrite only the buckets that actually moved (2026-08-25) ─────────────
+  //
+  // This loop used to run one delete-then-insert transaction per bucket
+  // unconditionally. Measured on the live database: 1,146 buckets, 28,972 rows,
+  // 10.5s — 84% of the hours step and 60% of the entire 17.4s refresh — and twelve of
+  // the twenty months it rewrote are closed 2025 history whose source workbook has not
+  // been saved since 2026-06-03. The overwhelming majority of that work deleted rows
+  // and inserted byte-identical replacements.
+  //
+  // The skip is decided by a digest of the payload ABOVE, which includes every column
+  // that would be written — the classifyPunch outputs among them. So this cannot go
+  // stale against a rule-book change: a different classification is a different
+  // payload is a different digest is a rewrite. See the JobHoursBucket model.
+  //
+  // What is deliberately NOT skipped: a bucket with no stored digest. "Unknown" is
+  // treated as changed, so the first pass after this deploy, after a manual repair
+  // script, or on a brand-new job writes exactly as it always did.
+  //
+  // This does NOT weaken the §42.5 rule that an unchanged FILE is still re-imported.
+  // That rule exists because the file is not the only input — a job created since the
+  // last pass turns JOB_NOT_FOUND rows into attributable hours, and a reopened month
+  // needs its hours written again. Both of those change the payload of the buckets
+  // they affect, so both still write. What is skipped here is only work whose result
+  // is provably identical, decided per bucket rather than per file.
+  const jobPks = [...new Set(planned.map((p) => p.jobPk))];
+  // One read of the whole working set, not one per bucket — the same reason the job
+  // and overridden lookups above are batched.
+  const stored = new Map<string, string>();
+  if (jobPks.length > 0) {
+    const digests = await prisma.jobHoursBucket.findMany({
+      where: { jobId: { in: jobPks } },
+      select: { jobId: true, month: true, digest: true },
+    });
+    for (const d of digests) stored.set(`${d.jobId}::${d.month}`, d.digest);
+  }
+
+  // ── The digest is not allowed to be the only witness ──────────────────────
+  //
+  // A digest says what the last WRITE intended. It cannot see the table, so on its own
+  // it would trust a claim about rows that may since have been changed by something
+  // else — a repair script, a hand-run UPDATE, a half-applied migration. The old
+  // unconditional rewrite was self-healing against all of that for free, and giving
+  // that up to make the pass fast would be trading correctness for speed.
+  //
+  // Caught by scripts/tmp-correct.ts during this change, not reasoned about
+  // afterwards: with the digest as sole witness, a row edited behind the sync's back
+  // survived every subsequent pass instead of being repaired on the next one.
+  //
+  // So the stored rows get a say too, in ONE grouped aggregate over the whole table
+  // rather than a read per bucket — count and total hours per (job, month). A bucket
+  // is skipped only when the digest matches AND the rows on disk still have the shape
+  // that digest was computed over. Either witness disagreeing means rewrite.
+  //
+  // Cost: one indexed GROUP BY (~60ms against 29k rows) per pass, against the 10.5s of
+  // delete-and-reinsert it replaces.
+  const onDisk = new Map<string, { rows: number; hours: number }>();
+  {
+    const agg = await prisma.$queryRaw<{ jobId: number; month: string; n: bigint; h: unknown }[]>`
+      SELECT jobId, month, COUNT(*) AS n, COALESCE(SUM(hours), 0) AS h
+        FROM JobHoursDetail
+       GROUP BY jobId, month`;
+    for (const a of agg) onDisk.set(`${a.jobId}::${a.month}`, { rows: Number(a.n), hours: Number(a.h) });
+  }
+
+  let written = 0;
+  let unchanged = 0;
+  let repaired = 0;
+  for (const { jobPk, month, data, digest } of planned) {
+    const key = `${jobPk}::${month}`;
+    if (stored.get(key) === digest) {
+      // The digest matches, so the SOURCE has not moved. Now check the table agrees
+      // with it before trusting the skip. Totals are compared at the column's own
+      // Decimal(10,2) precision — the stored sum is exact to the cent, so the intended
+      // one has to be rounded the same way rather than compared as a raw float.
+      const disk = onDisk.get(key);
+      const wantRows = data.length;
+      const wantHours = round2(data.reduce((t, d) => t + d.hours, 0));
+      if (disk && disk.rows === wantRows && round2(disk.hours) === wantHours) {
+        unchanged++;
+        continue;
+      }
+      // The digest claimed a state the rows are not in. Fall through and rewrite,
+      // which restores the bucket to the source — and say so, because a bucket that
+      // needed repairing is worth knowing about rather than silently fixing.
+      repaired++;
+      console.warn(
+        `[sync-actuals] job ${jobPk} ${month}: stored punch rows disagree with the digest ` +
+          `(on disk ${disk ? `${disk.rows} rows/${round2(disk.hours)}h` : "absent"}, expected ${wantRows} rows/${wantHours}h) — rewriting from the source`,
+      );
+    }
     await prisma.$transaction([
       prisma.jobHoursDetail.deleteMany({ where: { jobId: jobPk, month } }),
-      prisma.jobHoursDetail.createMany({
-        data: [...merged.values()].map((m) => {
-          // The approved Section+Function rule book, applied ONCE here and stored as
-          // real columns — this is what makes every page's Group By a plain SQL
-          // GROUP BY rather than a per-page recomputation. Pure function of the raw
-          // pair, so re-running this write with an updated rule book (via a resync)
-          // is the only thing that ever changes it — never a page-level guess.
-          const c = classifyPunch(m.rawSection, m.rawFunction);
-          return {
-            jobId: jobPk,
-            section: m.section,
-            month,
-            workDate: m.workDate,
-            employeeId: m.employeeId,
-            hours: round2(m.hours),
-            rawSection: m.rawSection,
-            rawFunction: m.rawFunction,
-            standardDepartment: c.department,
-            standardTaskDescription: c.taskDescription,
-            mappingStatus: c.mappingStatus,
-            source,
-          };
-        }),
+      prisma.jobHoursDetail.createMany({ data }),
+      // In the SAME transaction as the rows, so the digest can never claim a state the
+      // rows are not in. A crash between the two would otherwise leave a digest saying
+      // "already written" over rows that were deleted and never replaced — silently
+      // missing punches, which the skip would then preserve on every later pass
+      // instead of healing.
+      prisma.jobHoursBucket.upsert({
+        where: { jobId_month: { jobId: jobPk, month } },
+        update: { digest, rows: data.length, syncedAt: new Date() },
+        create: { jobId: jobPk, month, digest, rows: data.length },
       }),
     ]);
-    written += merged.size;
+    written += data.length;
   }
-  return written;
+  return { written, unchanged, repaired, buckets: planned.length };
+}
+
+// The digest the skip decision rests on: sha256 over every column of every row the
+// bucket would contain, in punch-grain order.
+//
+// Sorted explicitly rather than relying on Map insertion order — that order follows
+// the order rows happen to appear in the workbook, so an identical bucket exported in
+// a different row order would otherwise digest differently and force a pointless
+// rewrite. Sorting on the unique key (section, workDate, employeeId) is exactly the
+// grain the @@unique constraint declares, so it is total.
+//
+// `hours` is stringified via toFixed(2) to match the Decimal(10,2) column: 8 and 8.00
+// are the same stored value and must be the same digest.
+function digestBucket(
+  data: {
+    section: string;
+    workDate: Date;
+    employeeId: string;
+    hours: number;
+    rawSection: string;
+    rawFunction: string;
+    standardDepartment: string;
+    standardTaskDescription: string;
+    mappingStatus: string;
+    source: string;
+  }[],
+): string {
+  const lines = data
+    .map((d) =>
+      [
+        d.section,
+        d.workDate.toISOString().slice(0, 10),
+        d.employeeId,
+        d.hours.toFixed(2),
+        d.rawSection,
+        d.rawFunction,
+        d.standardDepartment,
+        d.standardTaskDescription,
+        d.mappingStatus,
+        d.source,
+      ].join("\u0001"),
+    )
+    .sort();
+  const h = createHash("sha256");
+  // The row count first, so a bucket that is a strict prefix of another cannot
+  // collide with it on the concatenated text alone.
+  h.update(`${lines.length}\n`);
+  for (const l of lines) h.update(`${l}\n`);
+  return h.digest("hex");
+}
+
+// Drop the cached digests for a set of jobs (or all of them), so the next refresh
+// rewrites those buckets from the source instead of trusting the cache.
+//
+// For anything that writes or deletes JobHoursDetail rows behind syncJobHoursDetail's
+// back — purge-stale-hours-rows.ts, the resync utilities. Editing rows without doing
+// this leaves a digest asserting a state the table is no longer in, and the skip would
+// then preserve the damage on every subsequent pass rather than healing it.
+export async function invalidateJobHoursDigests(jobIds?: number[]): Promise<number> {
+  // Two calls rather than one with a conditional argument: deleteMany's argument type
+  // makes `where` required once it is present at all, so the ternary does not narrow.
+  const r =
+    jobIds == null
+      ? await prisma.jobHoursBucket.deleteMany()
+      : await prisma.jobHoursBucket.deleteMany({ where: { jobId: { in: jobIds } } });
+  return r.count;
 }
 
 // Actual hours worked per job PER SECTION for `month`, overwriting

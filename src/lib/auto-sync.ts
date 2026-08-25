@@ -126,6 +126,53 @@ export type SyncRunResult = {
 // hourly schedule passes nothing and behaves exactly as it did.
 export type SyncProgress = (stage: string | null, done: SyncStepResult[]) => void | Promise<void>;
 
+// ── One slow source may not hold the whole refresh (§10) ─────────────────────
+//
+// Every step already has its own try/catch, so a source that FAILS is isolated. A
+// source that never answers was not: an upstream socket that accepts the connection
+// and then goes quiet has no failure to catch, so the step waited on it forever, the
+// lane behind it never ran, and the button sat on "Refreshing…" with a stage name that
+// was accurate and useless.
+//
+// This turns "no answer" into a failure, which rule 2 already knows how to handle: the
+// step records it, stamps its freshness row, and the pass carries on and reports which
+// source timed out — the outcome §10 asks for, where Paylocity/ETO/Employees complete
+// and only the dead source is named.
+//
+// 45s is deliberately far above any measured step (the slowest observed is 2.6s) and
+// chosen against the button's own 300s ceiling: the longer lane holds five steps, so
+// even the pathological case where every one of them times out finishes inside the
+// window the UI is willing to wait, rather than being killed by it and reported as a
+// dead refresh.
+//
+// The abandoned work is NOT cancelled — a promise cannot be. It is only stopped from
+// being waited on, and whatever it eventually does is harmless: the step has already
+// been recorded as failed, and every write in this pass is an idempotent upsert or a
+// replace-by-key, so a late completion cannot corrupt what the next pass writes.
+const STEP_TIMEOUT_MS = 45_000;
+
+function withTimeout<T>(label: string, run: () => Promise<T>): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(
+      () => reject(new Error(`${label} did not respond within ${STEP_TIMEOUT_MS / 1000}s — abandoned so the rest of the refresh could finish`)),
+      STEP_TIMEOUT_MS,
+    );
+    // Must not hold the process open on shutdown, the same reason the lock heartbeat
+    // unrefs its timer.
+    timer.unref?.();
+    run().then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      },
+    );
+  });
+}
+
 export async function runAllSyncs(
   trigger: SyncTrigger,
   onProgress?: SyncProgress,
@@ -146,7 +193,18 @@ export async function runAllSyncs(
   const { isMonthLocked } = await import("@/lib/etc");
 
   const startedAt = new Date();
-  const steps: SyncStepResult[] = [];
+  // ── Recorded by source, reported in declaration order (2026-08-25) ────────
+  //
+  // Was a plain array that each step pushed to. That was the same thing as
+  // "completion order" only while the pass was strictly sequential; now that the two
+  // lanes below run concurrently, push order is a race and the log would reorder
+  // itself between passes for no reason.
+  //
+  // So completion is recorded against the source, and every reader — the progress
+  // callback, the log, the returned result — gets SYNC_SOURCES order, which is the
+  // order the dashboard's Data Sync card already lists them in.
+  const done = new Map<string, SyncStepResult>();
+  const steps = () => SYNC_SOURCES.map((s) => done.get(s.source)).filter((x): x is SyncStepResult => x != null);
   const refreshId = attribution?.refreshId ?? null;
   const userName = attribution?.userName ?? null;
   // Filled in by the hours steps, written to the import record at the end (§42.20).
@@ -184,7 +242,7 @@ export async function runAllSyncs(
     // step that just finished while the pass sat in the next one's external call —
     // which is the state people read as "stuck".
     try {
-      await onProgress?.(label, steps);
+      await onProgress?.(label, steps());
     } catch {
       /* progress reporting must never be able to fail a refresh */
     }
@@ -194,20 +252,20 @@ export async function runAllSyncs(
     const t0 = Date.now();
     const took = () => Date.now() - t0;
     try {
-      const detail = await run();
+      const detail = await withTimeout(label, run);
       if (detail === null) {
-        steps.push({ source, label, status: "skipped", detail: "nothing to do", ms: took() });
+        done.set(source, { source, label, status: "skipped", detail: "nothing to do", ms: took() });
         return;
       }
       if (typeof detail === "object") {
         const ms = took();
         await recordSyncNote(source, detail.skip);
-        steps.push({ source, label, status: "skipped", detail: detail.skip, ms });
+        done.set(source, { source, label, status: "skipped", detail: detail.skip, ms });
         return;
       }
       const ms = took();
       if (stamp) await recordSyncSuccess(source, new Date());
-      steps.push({ source, label, status: "ok", detail, ms });
+      done.set(source, { source, label, status: "ok", detail, ms });
     } catch (err) {
       const ms = took();
       const message = err instanceof Error ? err.message : String(err);
@@ -217,7 +275,7 @@ export async function runAllSyncs(
       // is why the pass felt slow.
       console.error(`[auto-sync] ${label} failed after ${ms}ms:`, err);
       await recordSyncFailure(err, source);
-      steps.push({ source, label, status: "failed", detail: message, ms });
+      done.set(source, { source, label, status: "failed", detail: message, ms });
     }
   }
 
@@ -241,137 +299,188 @@ export async function runAllSyncs(
   const hoursImport = async () => (cached ??= await beginPaylocityImport(importCtx));
   const hoursExport = async () => (await hoursImport()).feed;
 
-  // Hours first: they're the figures the whole app is judged on, and the parts
-  // and mirror steps below are independent of them.
-  await step("hours_actual", labelFor("hours_actual"), false, async () => {
-    const imported = await hoursImport();
-    const r = await syncActualHours(imported.feed);
-    importTotals.rowsInserted = r.detailRowsWritten;
-    importTotals.rowsUpdated = r.rowsUpserted;
-    return (
-      `${imported.feed.provenance.note} ` +
-      `${r.rowsUpserted} upserted, ${r.detailRowsWritten} punch rows, ${r.jobsNotFound} jobs not found, ` +
-      `${r.rowsSkippedOverridden} overridden preserved` +
-      // §42.16: a refresh that processed the same file again must not imply new data
-      // arrived. Said here so it reaches the refresh record and the completion
-      // message rather than only the log.
-      (imported.changed ? "" : " — SAME FILE VERSION as the last import, no new data")
-    );
-  });
-
-  // ── Undefined Hours, as its own stage (§42.10, §42.14 stage 10) ───────────
+  // ── Two lanes, run concurrently (§8) ─────────────────────────────────────
   //
-  // Writes the per-month totals the KPI card reads AND the punch-level rows the
-  // drill-through shows, from one pass over one import, in one transaction. That is
-  // what makes `KPI = sum of drill rows` structural rather than coincidental — see
-  // lib/unattributed-hours.ts for the defect this replaces.
-  await step("undefined_hours", labelFor("undefined_hours"), true, async () => {
-    const imported = await hoursImport();
-    const wb = imported.feed.provenance.workbook;
-    const r = await recordUndefinedHours(imported.feed.rejected, {
-      importId: importCtx.importId,
-      sourceFile: wb?.fileName ?? "power_bi",
-    });
-    undefinedResult = { kpiRows: r.kpiRows, kpiHours: r.kpiHours };
-    return `${r.kpiHours.toFixed(2)}h across ${r.kpiRows} entries counted; ${r.storedRows} rejection rows stored with reasons`;
-  });
-
-  await step("etc_hours_worked", labelFor("etc_hours_worked"), false, async () => {
-    if (!month) return null; // no open month — see rule notes above
-    const r = await syncHoursWorked(month, (await hoursExport()).rows);
-    return (
-      `${r.rowsUpdated} updated, ${r.rowsSkipped} skipped` +
-      // Called out rather than folded into "updated": a zeroed row means the
-      // source dropped hours it used to report, which is worth noticing.
-      (r.rowsZeroed > 0 ? `, ${r.rowsZeroed} zeroed (no longer in the export)` : "")
-    );
-  });
-
-  await step("parts_cost", labelFor("parts_cost"), true, async () => {
-    if (!month) return null;
-    const r = await syncPartsCost(month);
-    return `${r.rowsUpserted} upserted`;
-  });
-
-  // Parts Cost Actual on the Projects grid — cumulative invoiced parts spend per
-  // job, from the same TotalETO query the ETC month's "Money Spent" uses, so the
-  // column and that row can't tell different stories. Manager-entered until
-  // 2026-08-03; now pulled, per the policy that Jessica enters the QUOTED figures
-  // and the app pulls the actuals.
-  await step("parts_cost_actual", labelFor("parts_cost_actual"), true, async () => {
-    const r = await syncPartsCostActual();
-    return `${r.jobsUpdated} jobs updated, ${r.jobsNotFound} TotalETO ids with no app job`;
-  });
-
-  // Job Cost Explorer's monthly inventory snapshots (%Complete/Sales $) — reads
-  // Lisa's workbook directly, same lazy-import reason as the rest of this file
-  // (fs is a Node built-in the Edge-runtime instrumentation.ts import can't load).
-  await step("job_cost_inventory", labelFor("job_cost_inventory"), true, async () => {
-    const { syncJobCostInventorySnapshots } = await import("@/lib/job-cost-inventory-sync");
-    return await syncJobCostInventorySnapshots();
-  });
-
-  // The Standard Fees pool ledger — the four PM/Warranty/MFG blocks on the ETC
-  // page. Computed from the app's own data (standard-pool-local.ts), not Power
-  // BI.
+  // These nine steps used to run one after another, and most of them had no reason
+  // to. Measured on 2026-08-25 after the punch-write fix: the pass was 7,436ms, of
+  // which the hours chain accounted for 3,631ms and the five steps that know nothing
+  // about hours accounted for 3,750ms. Run in sequence that is the SUM; run
+  // concurrently it is the MAX, which is most of four seconds back for no change in
+  // what any step does.
   //
-  // It used to call syncCategoryPoolsFromPowerBi, and for the month people are
-  // actually working in that could never succeed: upstream publishes ETC
-  // periods roughly two months behind, so this step found no period, correctly
-  // wrote nothing, and said so — every six hours, indefinitely. The panel spent
-  // the whole month showing the previous month's figures "as an estimate", and
-  // because no row existed for the month, the manual pulled-hours cell had
-  // nowhere to save to and was read-only.
+  // ── Why two lanes and not nine parallel steps ────────────────────────────
   //
-  // All three drivers now come from feeds already refreshed by this same pass:
-  // the prior month's closing balance (local), quoted hours for jobs starting
-  // this month, and punches from the Paylocity export. The quoted-hours
-  // definition was verified exact against Power BI's own measure across 32
-  // cells before being trusted — see standard-pool-local.ts.
+  // Because the dependencies are real, and because the concurrency that helps is
+  // concurrency across DIFFERENT SYSTEMS.
   //
-  // The manual decisions — Hours being pulled this month, and Rate — are
-  // preserved for any row that already exists; only the drivers and the figures
-  // derived from them are rewritten. A new month's row gets the sheet's own
-  // documented defaults.
-  await step("standard_pools", labelFor("standard_pools"), true, async () => {
-    if (!month) return null;
-    // Same rule the Refresh button applies, from one definition — a submitted
-    // sheet is frozen, and an archived month's pools anchor every later month's
-    // starting balance.
-    const blocked = await poolRefreshBlockedBy(month);
-    if (blocked) return null;
-    // Reuses this pass's single parse of the export rather than re-reading a
-    // ~12,600-row workbook.
-    const r = await computeCategoryPoolsLocally(month, (await hoursExport()).poolHours);
-    // Written either way — Hours Worked is simply 0 — but a month with no
-    // punches yet is stated rather than reported as a clean success, the same
-    // way the old Power-BI-had-no-period case was.
-    if (r.noPunchData) {
-      return { skip: `${r.poolsUpserted} pools computed for ${month}, but no punches in the pool sections yet — Hours Worked is 0.` };
-    }
-    return `${r.poolsUpserted} pools computed locally`;
-  });
+  // Lane A is the hours chain. Its steps genuinely depend on each other: all four read
+  // the ONE parse of the Paylocity workbooks (`hoursImport`, memoised below), and
+  // running them together would mean several of them racing to be the first to
+  // trigger that parse — so the memoisation that saved a second per pass would be
+  // defeated by the parallelism meant to save time.
+  //
+  // Lane B is Total ETO and the job-cost workbook. Its steps stay sequential WITHIN
+  // the lane on purpose: four of them talk to the same Total ETO SQL Server over one
+  // mssql pool, and firing them at once is how a fast source becomes a contended one.
+  // Nothing here is trying to make Total ETO answer four questions at a time.
+  //
+  // So exactly one new pair of things runs at once — local Excel + MySQL against
+  // remote SQL Server — which is the pair with no shared resource to contend over.
+  //
+  // Rule 2 (failures are isolated) is unchanged and is what makes this safe: `step`
+  // catches per step and records the failure, so neither lane can reject and neither
+  // can take the other down. Promise.all over two never-rejecting lanes cannot
+  // reject. Rule 1 is unchanged too — `month` was resolved once, above, before either
+  // lane starts, so both lanes see the same month exactly as before.
+  await Promise.all([
+    (async () => {
+      // Hours first: they're the figures the whole app is judged on, and the parts
+      // and mirror steps below are independent of them.
+      await step("hours_actual", labelFor("hours_actual"), false, async () => {
+        const imported = await hoursImport();
+        const r = await syncActualHours(imported.feed);
+        importTotals.rowsInserted = r.detailRowsWritten;
+        importTotals.rowsUpdated = r.rowsUpserted;
+        return (
+          `${imported.feed.provenance.note} ` +
+          `${r.rowsUpserted} upserted, ${r.detailRowsWritten} punch rows in ` +
+          // Which buckets were rewritten and which were already correct (2026-08-25).
+          // Stated because it is the number that explains the pass's duration: a refresh
+          // that rewrote 3 of 1,146 buckets is fast for a REASON, and a reader comparing
+          // a 4s pass against the old 17s one needs to see that reason rather than
+          // wonder what was skipped.
+          `${r.detailBuckets - r.detailBucketsUnchanged}/${r.detailBuckets} job-months (${r.detailBucketsUnchanged} already current` +
+          // Only mentioned when it happened. A repair means something outside this sync
+          // had edited the punch table and the pass corrected it — silent would be wrong,
+          // but so would a permanent "0 repaired" that trains the reader to ignore it.
+          `${r.detailBucketsRepaired > 0 ? `, ${r.detailBucketsRepaired} REPAIRED after drifting` : ""}), ` +
+          `${r.jobsNotFound} jobs not found, ` +
+          `${r.rowsSkippedOverridden} overridden preserved` +
+          // §42.16: a refresh that processed the same file again must not imply new data
+          // arrived. Said here so it reaches the refresh record and the completion
+          // message rather than only the log.
+          (imported.changed ? "" : " — SAME FILE VERSION as the last import, no new data")
+        );
+      });
 
-  // The TotalETO job mirror (customer, estimate/actual hour totals). Was
-  // button-only, which is why a job's mirrored figures could sit weeks behind the
-  // hours shown beside them. Manual Customer edits survive it —
-  // customerManuallyEdited — so running it unattended can't overwrite a
-  // manager's correction.
-  await step("totaleto_jobs", labelFor("totaleto_jobs"), true, async () => {
-    const r = await syncFromTotalEto();
-    return `${r.jobsUpdated} jobs updated, ${r.skippedNoType} skipped (not app-tracked)`;
-  });
+      // ── Undefined Hours, as its own stage (§42.10, §42.14 stage 10) ───────────
+      //
+      // Writes the per-month totals the KPI card reads AND the punch-level rows the
+      // drill-through shows, from one pass over one import, in one transaction. That is
+      // what makes `KPI = sum of drill rows` structural rather than coincidental — see
+      // lib/unattributed-hours.ts for the defect this replaces.
+      await step("undefined_hours", labelFor("undefined_hours"), true, async () => {
+        const imported = await hoursImport();
+        const wb = imported.feed.provenance.workbook;
+        const r = await recordUndefinedHours(imported.feed.rejected, {
+          importId: importCtx.importId,
+          sourceFile: wb?.fileName ?? "power_bi",
+        });
+        undefinedResult = { kpiRows: r.kpiRows, kpiHours: r.kpiHours };
+        return `${r.kpiHours.toFixed(2)}h across ${r.kpiRows} entries counted; ${r.storedRows} rejection rows stored with reasons`;
+      });
 
-  // Cash Flow Forecast snapshot — see cash-flow-capture.ts's own header for
-  // the full extraction->normalize->dedup->store chain. `userName` (a manual
-  // click's display name) or "system@auto-sync" (the scheduled tick) is
-  // recorded as the snapshot's createdBy, matching logAudit()'s own
-  // "system@auto-sync" convention for unattended runs.
-  await step("cash_flow_snapshot", labelFor("cash_flow_snapshot"), true, async () => {
-    const { captureCashFlowSnapshot } = await import("@/lib/cash-flow-capture");
-    const r = await captureCashFlowSnapshot(userName ?? "system@auto-sync");
-    return r.captured ? `snapshot #${r.snapshotId} captured, ${r.lineCount} lines (${r.reason})` : `no new snapshot — ${r.reason}`;
-  });
+      await step("etc_hours_worked", labelFor("etc_hours_worked"), false, async () => {
+        if (!month) return null; // no open month — see rule notes above
+        const r = await syncHoursWorked(month, (await hoursExport()).rows);
+        return (
+          `${r.rowsUpdated} updated, ${r.rowsSkipped} skipped` +
+          // Called out rather than folded into "updated": a zeroed row means the
+          // source dropped hours it used to report, which is worth noticing.
+          (r.rowsZeroed > 0 ? `, ${r.rowsZeroed} zeroed (no longer in the export)` : "")
+        );
+      });
+
+      // The Standard Fees pool ledger — the four PM/Warranty/MFG blocks on the ETC
+      // page. Computed from the app's own data (standard-pool-local.ts), not Power
+      // BI.
+      //
+      // It used to call syncCategoryPoolsFromPowerBi, and for the month people are
+      // actually working in that could never succeed: upstream publishes ETC
+      // periods roughly two months behind, so this step found no period, correctly
+      // wrote nothing, and said so — every six hours, indefinitely. The panel spent
+      // the whole month showing the previous month's figures "as an estimate", and
+      // because no row existed for the month, the manual pulled-hours cell had
+      // nowhere to save to and was read-only.
+      //
+      // All three drivers now come from feeds already refreshed by this same pass:
+      // the prior month's closing balance (local), quoted hours for jobs starting
+      // this month, and punches from the Paylocity export. The quoted-hours
+      // definition was verified exact against Power BI's own measure across 32
+      // cells before being trusted — see standard-pool-local.ts.
+      //
+      // The manual decisions — Hours being pulled this month, and Rate — are
+      // preserved for any row that already exists; only the drivers and the figures
+      // derived from them are rewritten. A new month's row gets the sheet's own
+      // documented defaults.
+      await step("standard_pools", labelFor("standard_pools"), true, async () => {
+        if (!month) return null;
+        // Same rule the Refresh button applies, from one definition — a submitted
+        // sheet is frozen, and an archived month's pools anchor every later month's
+        // starting balance.
+        const blocked = await poolRefreshBlockedBy(month);
+        if (blocked) return null;
+        // Reuses this pass's single parse of the export rather than re-reading a
+        // ~12,600-row workbook.
+        const r = await computeCategoryPoolsLocally(month, (await hoursExport()).poolHours);
+        // Written either way — Hours Worked is simply 0 — but a month with no
+        // punches yet is stated rather than reported as a clean success, the same
+        // way the old Power-BI-had-no-period case was.
+        if (r.noPunchData) {
+          return { skip: `${r.poolsUpserted} pools computed for ${month}, but no punches in the pool sections yet — Hours Worked is 0.` };
+        }
+        return `${r.poolsUpserted} pools computed locally`;
+      });
+    })(),
+
+    (async () => {
+      await step("parts_cost", labelFor("parts_cost"), true, async () => {
+        if (!month) return null;
+        const r = await syncPartsCost(month);
+        return `${r.rowsUpserted} upserted`;
+      });
+
+      // Parts Cost Actual on the Projects grid — cumulative invoiced parts spend per
+      // job, from the same TotalETO query the ETC month's "Money Spent" uses, so the
+      // column and that row can't tell different stories. Manager-entered until
+      // 2026-08-03; now pulled, per the policy that Jessica enters the QUOTED figures
+      // and the app pulls the actuals.
+      await step("parts_cost_actual", labelFor("parts_cost_actual"), true, async () => {
+        const r = await syncPartsCostActual();
+        return `${r.jobsUpdated} jobs updated, ${r.jobsNotFound} TotalETO ids with no app job`;
+      });
+
+      // Job Cost Explorer's monthly inventory snapshots (%Complete/Sales $) — reads
+      // Lisa's workbook directly, same lazy-import reason as the rest of this file
+      // (fs is a Node built-in the Edge-runtime instrumentation.ts import can't load).
+      await step("job_cost_inventory", labelFor("job_cost_inventory"), true, async () => {
+        const { syncJobCostInventorySnapshots } = await import("@/lib/job-cost-inventory-sync");
+        return await syncJobCostInventorySnapshots();
+      });
+
+      // The TotalETO job mirror (customer, estimate/actual hour totals). Was
+      // button-only, which is why a job's mirrored figures could sit weeks behind the
+      // hours shown beside them. Manual Customer edits survive it —
+      // customerManuallyEdited — so running it unattended can't overwrite a
+      // manager's correction.
+      await step("totaleto_jobs", labelFor("totaleto_jobs"), true, async () => {
+        const r = await syncFromTotalEto();
+        return `${r.jobsUpdated} jobs updated, ${r.skippedNoType} skipped (not app-tracked)`;
+      });
+
+      // Cash Flow Forecast snapshot — see cash-flow-capture.ts's own header for
+      // the full extraction->normalize->dedup->store chain. `userName` (a manual
+      // click's display name) or "system@auto-sync" (the scheduled tick) is
+      // recorded as the snapshot's createdBy, matching logAudit()'s own
+      // "system@auto-sync" convention for unattended runs.
+      await step("cash_flow_snapshot", labelFor("cash_flow_snapshot"), true, async () => {
+        const { captureCashFlowSnapshot } = await import("@/lib/cash-flow-capture");
+        const r = await captureCashFlowSnapshot(userName ?? "system@auto-sync");
+        return r.captured ? `snapshot #${r.snapshotId} captured, ${r.lineCount} lines (${r.reason})` : `no new snapshot — ${r.reason}`;
+      });
+    })(),
+  ]);
+
 
   // The Scheduler roster's discipline grouping used to be pulled here every
   // hour by name match — retired 2026-08-13. Employee.team is now written
@@ -393,29 +502,48 @@ export async function runAllSyncs(
   }
 
   const ms = Date.now() - startedAt.getTime();
-  const failed = steps.filter((s) => s.status === "failed");
+  const finalSteps = steps();
+  const failed = finalSteps.filter((s) => s.status === "failed");
   // One line per pass, listing every step — a log you can read at a glance to see
   // which feeds are current, instead of five unrelated lines per tick.
   console.log(
     `[auto-sync] ${trigger} pass in ${ms}ms${month ? ` (month ${month})` : " (no open month)"}: ` +
-      steps.map((s) => `${s.source}=${s.status}/${s.ms}ms`).join(" "),
+      finalSteps.map((s) => `${s.source}=${s.status}/${s.ms}ms`).join(" "),
   );
 
-  // Slowest first, with each step's share of the pass — so the bottleneck is the
-  // first thing on screen rather than something to be worked out by hand from
-  // nine numbers in source order. `unaccounted` is the pass total minus the sum
-  // of the steps: the orchestration overhead (progress callbacks, the freshness
-  // writes, closing the import record). If it is ever large, the cost is NOT in
-  // the sources and this breakdown would otherwise hide that.
-  const summed = steps.reduce((s, x) => s + x.ms, 0);
-  const slowest = [...steps].sort((a, b) => b.ms - a.ms);
-  console.log(`[auto-sync]   breakdown (slowest first, ${summed}ms in steps, ${ms - summed}ms unaccounted):`);
+  // Slowest first, so the bottleneck is the first thing on screen rather than
+  // something to be worked out by hand from nine numbers in source order.
+  //
+  // ── No percentages, and no "unaccounted", since the lanes overlap ─────────
+  //
+  // This block used to print each step's share of the pass and the pass total minus
+  // the sum of the steps. Both were correct only while the steps ran one at a time.
+  // With two concurrent lanes the sum of the steps EXCEEDS the wall clock, so the
+  // shares added up to about 160% and "unaccounted" printed as -3,637ms — a number
+  // with no meaning that would send the next reader looking for time that was never
+  // lost.
+  //
+  // So the sum is labelled as what it now is (work done, across lanes) and set against
+  // the wall clock, which is the only honest way to state both. The gap between them
+  // is the concurrency win, and printing it that way makes a regression in the
+  // overlap visible instead of hiding it in a percentage.
+  const summed = finalSteps.reduce((s, x) => s + x.ms, 0);
+  const slowest = [...finalSteps].sort((a, b) => b.ms - a.ms);
+  console.log(
+    `[auto-sync]   breakdown (slowest first; ${summed}ms of work across 2 concurrent lanes, ${ms}ms wall clock, ` +
+      `${summed > ms ? `${summed - ms}ms saved by overlap` : "no overlap gain"}):`,
+  );
   for (const s of slowest) {
-    const pct = ms > 0 ? ((s.ms / ms) * 100).toFixed(1) : "0.0";
-    console.log(`[auto-sync]     ${String(s.ms).padStart(6)}ms  ${pct.padStart(5)}%  ${s.source} (${s.status})`);
+    console.log(`[auto-sync]     ${String(s.ms).padStart(6)}ms  ${s.source} (${s.status})`);
   }
+  // A step's own number now includes time spent waiting for the event loop while the
+  // OTHER lane was doing CPU-bound work, so it is a wall-clock duration and not a
+  // cost. Worth stating where the numbers are printed: measured on 2026-08-25,
+  // parts_cost reads 186ms run alone and 2,188ms run beside the Paylocity Excel parse,
+  // and nothing about parts_cost changed. Compare a step against ITSELF across passes,
+  // not against a step in the other lane.
 
   for (const f of failed) console.error(`[auto-sync]   ${f.source}: ${f.detail}`);
 
-  return { trigger, startedAt, ms, month, steps };
+  return { trigger, startedAt, ms, month, steps: finalSteps };
 }

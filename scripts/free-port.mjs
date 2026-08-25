@@ -19,6 +19,32 @@
 // Deliberately dependency-free (no `kill-port` from npx): a deploy step that has to reach
 // the network to free a local socket is a deploy step that fails when the network does.
 
+// ── Why the deploy stops PM2 FIRST (2026-08-25) ──────────────────────────────
+//
+// The deploy was `next build && free-port && pm2 restart`, and that sequence booted the
+// app TWICE on every deploy. free-port kills the listening process; PM2, which is still
+// supervising it, sees its child die and autorestarts it — boot #1. Then `pm2 restart`
+// runs and boots it again — boot #2, killing boot #1 a few seconds in.
+//
+// That is not cosmetic, because the app runs a full refresh on startup. Boot #1 took the
+// refresh lock and was killed mid-pass, leaving the lock held by a dead process and its
+// RefreshRun row saying "running" forever. Measured in the PM2 log on 2026-08-25:
+//
+//   09:09:03  boot #1 (PM2 autorestart after free-port killed the old process)
+//   09:09:04  boot #1 takes the refresh lock and starts a pass
+//   09:09:16  boot #2 (`pm2 restart`) — kills the pass 12s in, lock still held
+//
+// and the same pattern again at 08:52:28/08:52:40 and 09:20:28/09:20:45. Until the lock
+// timeout expired, every user's Refresh Data button reported a refresh already in
+// progress that nothing was actually running — the "stuck on Refreshing…" complaint,
+// caused by the deploy rather than by the refresh.
+//
+// `pm2 stop` before free-port is what breaks the cycle: a stopped process is not
+// autorestarted when it dies, so free-port's kill produces no boot at all and `pm2
+// start` produces exactly one. free-port is still needed and still runs between them —
+// PM2 on this box does not reliably kill the server, which is the whole reason this
+// file exists.
+
 import { execFileSync } from "node:child_process";
 
 const port = Number(process.argv[2]);

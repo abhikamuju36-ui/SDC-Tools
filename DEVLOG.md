@@ -5996,3 +5996,241 @@ too. Release status is **per edge**, so a nested Assembly Only still holds insid
   this session had no credentials. Everything changed here is server-side data shaping,
   covered by the live reconciliation above; the UI changes are additive status/badge/tooltip
   work on already-exercised render paths.
+
+---
+
+## 67. `Refresh Data` took 17s and could sit on "Refreshing…" for 15 minutes — the punch table was rewritten in full on every pass (2026-08-25)
+
+The complaint was that Refresh Data was slow and sometimes stuck. Those turned out to
+be two unrelated causes, and an earlier optimisation pass had addressed neither, because
+neither had been measured. So this started with measurement and a regression hunt rather
+than another round of plausible-looking improvements.
+
+### Where the time actually went
+
+`RefreshRun.durationMs` is recorded for every pass, so the regression is in the database
+rather than a matter of recollection:
+
+| date | passes | avg | min |
+|---|---|---|---|
+| 2026-08-10 → 08-20 | ~470 | 8.0–11.9s | ~7.5s |
+| **2026-08-21** | 45 | **15.3s** | 8.9s |
+| 2026-08-22 → 08-25 | ~110 | 17.0–19.8s | 16.2s |
+
+The step breakdown (added in `ddc823b`, and it earned itself here) put 12,499ms of a
+17,446ms pass in `hours_actual` alone — 72%. Splitting that step further:
+
+```
+readFile (both workbooks, OneDrive)        3ms   -- locally cached, not a network read
+sha256 (both)                              1ms
+ExcelJS parse, Current_Job_Hours.xlsx    818ms
+ExcelJS parse, Job_Hours_2025.xlsx      1070ms
+readHoursFeed total                     1814ms
+syncActualHours (the DATABASE write)   10553ms   <-- here
+```
+
+So it was never the Excel parsing, never OneDrive, and never Power BI. It was
+`syncJobHoursDetail`, which grouped the feed into (job, month) buckets and ran one
+`deleteMany` + `createMany` transaction per bucket, unconditionally:
+
+* **1,146 buckets**, so 1,146 sequential round-trips
+* **28,972 rows** deleted and re-inserted, every pass, hourly, all day
+* spanning **20 months** — twelve of them closed 2025 history whose source workbook
+  (`Job_Hours_2025.xlsx`) had not been saved since **2026-06-03**
+
+Almost every one of those transactions deleted rows and inserted byte-identical
+replacements.
+
+### The regression
+
+`387bf1a` (2026-08-21, "store the raw Paylocity punch pair as the punch grain") added
+`Job_Hours_2025.xlsx` as a second authoritative punch source. That was the right change
+and is not being reverted — it is what stopped 587.20h of overlapping hours being
+double-counted. But it roughly doubled what the unconditional rewrite had to do:
+~21k feed rows became ~49k, ~600 buckets became 1,146. The rewrite had been quietly
+wasteful for weeks; that commit made it the dominant cost.
+
+Note the shape of this: the regression was not in the code that changed. It was in code
+that had been written for a smaller input and never revisited when the input doubled.
+
+### The fix — rewrite only what moved
+
+`JobHoursBucket` stores a sha256 per (job, month) over the **full row payload as it
+would be written**, including the `classifyPunch` outputs. That last part is what makes
+it safe with no version constant for anybody to remember to bump: change the rule book
+and a punch classifies differently, so the payload differs, so the digest differs, so
+the bucket is rewritten. There is no way to alter what would be stored without altering
+the digest of what would be stored.
+
+The digest is written **in the same transaction as the rows**. A crash between the two
+would otherwise leave a digest claiming "written" over rows that were deleted and never
+replaced — silently missing punches that the skip would then preserve on every later
+pass instead of healing.
+
+**The digest is not allowed to be the only witness.** A digest states what the last
+write intended; it cannot see the table. The old unconditional rewrite was self-healing
+against out-of-band edits for free, and giving that up for speed would be exactly the
+trade this app should not make. So a bucket is skipped only when the digest matches
+**and** one grouped `SELECT jobId, month, COUNT(*), SUM(hours) GROUP BY` agrees with
+what the digest was computed over. Either witness disagreeing means rewrite, with a
+warning naming the bucket.
+
+That cross-check was not foresight. The first version trusted the digest alone, and the
+verification script written alongside it tampered with a row and found the corruption
+survived every subsequent pass. One grouped aggregate (~60ms over 29k rows) buys back
+the self-healing the unconditional rewrite had.
+
+The same finding applied one grain up: the `JobMonthlyActualHours` rollup was 954
+sequential upserts per pass, almost all writing the same number back. Now the current
+values are read in one query and only a genuine difference is written — with `source`
+part of the comparison, so a row still labelled `power_bi` from the pre-Paylocity era is
+still rewritten even when its figure happens to match.
+
+Skipping those upserts had a trap in it: Monthly ETC reads
+`MAX(JobMonthlyActualHours.syncedAt)` as its "hours last synced" line, so skipping would
+have frozen that timestamp and made the page report hours as stale immediately after a
+refresh had confirmed them current — trading a slow refresh for a lying header.
+`syncedAt` means "verified against the source at this time", which is true of every row
+the loop reached, so one `updateMany` stamps the whole confirmed set in a single
+round-trip.
+
+**§42.5 is unchanged.** An unchanged FILE is still fully re-imported, because the file
+is not the only input — a job created since the last pass turns `JOB_NOT_FOUND` rows
+into attributable hours, and a reopened month needs its hours written again. Both change
+the payload of the buckets they affect, so both still write. What is skipped is only
+work whose result is provably identical, decided per bucket rather than per file.
+
+### The fix — two lanes
+
+Nine steps ran one after another and most had no reason to. The hours chain is 3,631ms;
+the five steps that know nothing about hours are 3,750ms. In sequence that is the sum.
+
+Two lanes, not nine parallel steps, because the dependencies are real and the
+concurrency that helps is concurrency across *different systems*. Lane A is the hours
+chain — its four steps all read the one memoised parse, and running them together would
+have several of them racing to trigger that parse, defeating the memoisation with the
+parallelism meant to save time. Lane B is Total ETO plus the job-cost workbook, and
+stays sequential *within* the lane on purpose: four of its steps share one mssql pool,
+and firing them at once is how a fast source becomes a contended one. So exactly one new
+pair runs at once — local Excel + MySQL against remote SQL Server — the pair with no
+shared resource to contend over.
+
+This bought 1.1s, not the 3.6s the arithmetic promised, and the reason is worth
+recording: Node is single-threaded and lane A's dominant cost is CPU-bound Excel
+parsing, so lane B cannot make progress during it. Measured, `parts_cost` reads 186ms
+run alone and 2,188ms run beside the parse — and nothing about `parts_cost` changed.
+
+That also broke the breakdown log, which had been printing each step's share of the pass
+and "unaccounted" time. Under overlap the shares summed to ~160% and unaccounted printed
+as **-3,637ms** — a number with no meaning that would send the next reader hunting for
+time that was never lost. It now states work-across-lanes against wall clock and names
+the overlap saving, and says outright that a step's number is a wall-clock duration
+rather than a cost, so steps are compared against themselves across passes.
+
+### The 15 minutes of "Refreshing…" — a deploy bug, not a refresh bug
+
+Separate cause, and the one behind "stuck". The deploy was:
+
+```
+next build && free-port 4006 && pm2 restart sdc-etc-planner
+```
+
+which booted the app **twice** every deploy. `free-port` kills the listening process;
+PM2, still supervising it, sees its child die and autorestarts it (boot #1); then
+`pm2 restart` boots it again (boot #2), killing boot #1 seconds in. The app runs a full
+refresh on startup, so boot #1 took the refresh lock and was killed mid-pass, leaving
+the lock held by a dead process. From the PM2 log:
+
+```
+09:09:03  boot #1 (PM2 autorestart after free-port killed the old process)
+09:09:04  boot #1 takes the refresh lock and starts a pass
+09:09:16  boot #2 (pm2 restart) — kills the pass 12s in, lock still held
+```
+
+and again at 08:52:28/08:52:40 and 09:20:28/09:20:45. Until the lock timeout expired,
+every user's Refresh Data button reported a refresh in progress that nothing was
+running. `847d72a` had already cut that window from 15 minutes to 60s with a lock
+heartbeat; this removes the cause. `pm2 stop` before `free-port` means the kill produces
+no boot at all, and `pm2 start` produces exactly one.
+
+Nine `RefreshRun` rows were still sitting at `status = 'running'` with a NULL
+`completedAt`, the oldest three days old — one corpse per killed pass, accumulating.
+They are not inert: `currentRefresh` reads the newest 'running' row to name the stage a
+live pass is on. A pass now buries them while holding the lock, which is what makes it
+safe — the lock is exclusive, so any other 'running' row is by definition abandoned.
+
+### One click, one re-render
+
+A single click made this tab current by two routes at once and needed one. The server
+action's `revalidatePath` re-renders the current route *and* invalidates the client
+router cache for the others, so navigating to Monthly ETC afterwards does not serve a
+pre-refresh copy. Separately, the pass publishes a cellKey-less change event, so every
+tab takes the throttled route refresh — which is exactly right for everyone else, and
+for the clicker is a second full render of the heaviest route in the app (854 KB, ~600ms
+server render) landing on top of the one already in flight.
+
+So the clicker suppresses the event for the span of their own refresh and keeps
+`revalidatePath`, which is the route that also fixes the other pages' caches. A counter
+rather than a time window, because the event arrives *before* the action resolves —
+`recordChanges` runs while the action is still open — so suppression is armed before the
+call and released when it settles, bracketing the event by construction instead of by
+timing. Nothing is dropped: `release({ replay })` replays the single swallowed refresh
+when this click did *not* end up calling `revalidatePath` — a click refused because
+somebody else held the lock, or one that failed. That case is real, and it is the other
+user's pass this tab needs to hear about.
+
+### Two more ways "Refreshing…" could outlive the refresh
+
+* **A source that never answers.** Every step already had its own try/catch, so a source
+  that *fails* was isolated. A source that accepts the connection and goes quiet has no
+  failure to catch, so the step waited forever and the lane behind it never ran. A 45s
+  per-step ceiling turns "no answer" into a failure, which rule 2 already knows how to
+  handle — the pass carries on and names the source that timed out. 45s is far above the
+  slowest observed step (2.6s) and chosen against the button's own 300s ceiling: even
+  the pathological case where all five of the longer lane's steps time out finishes
+  inside the window the UI will wait.
+* **A server action that rejects rather than returns.** There was no catch in the button,
+  so a dropped connection mid-pass escaped the transition as an unhandled rejection:
+  nothing told the user, and only the 5-minute watchdog eventually released the control.
+  Now caught and reported. The watchdog stays as the backstop for a promise that never
+  settles at all.
+
+### Result
+
+| | before | after |
+|---|---|---|
+| full pass | 17,446ms | **6,211ms** |
+| `hours_actual` step | 12,499ms | 2,560ms |
+| punch buckets rewritten (no source change) | 1,146 / 1,146 | **0 / 1,146** |
+| punch rows deleted + re-inserted | 28,972 | **0** |
+| rollup upserts | 954 | 0 |
+| route re-renders per click (clicking tab) | 2 | 1 |
+| stuck-lock window after a deploy | up to 15 min | none (the double boot is gone) |
+| abandoned `RefreshRun` rows | 9 | 0 |
+
+Faster than the pre-regression baseline (~8s), with the 2025 archive still read and the
+double-counting guard still in place.
+
+Correctness was verified rather than assumed: `JobHoursDetail` holds the same 28,972
+rows totalling the same 149,285.22h; all 954 rollups match an independent recomputation
+from the feed; a deliberately tampered bucket is detected, rewritten and restored
+exactly; and the pass returns to zero rewrites immediately afterwards. All 1,479 unit
+tests and `scripts/refresh-smoke.ts --run` pass, the latter reporting all nine sources
+ok and the lock released.
+
+### What was NOT done, and why
+
+* **Hours stay on Paylocity.** Nothing here moves labor hours back to Power BI. The
+  bottleneck was never the file — it was 1,814ms of a 17,446ms pass.
+* **`387bf1a` was not reverted.** The 2025 archive is why 587.20h of overlapping hours
+  are not double-counted. The rewrite it exposed was fixed instead.
+* **Cross-pass caching of the parsed workbooks is still on the table** (~1.8s). It needs
+  a cache key covering the job master, since job creation must invalidate it (§42.5),
+  and the rows would have to be copied out to stop a downstream in-place edit corrupting
+  the cache. Deliberately left as a measured, named opportunity rather than bundled in
+  here half-checked.
+* **Refresh scope was audited and is already correct.** `SYNC_SOURCES` is nine sources,
+  all belonging to this app. The refresh does not touch other SDC Tools apps, Project
+  Scheduler, hiring, or procurement, and the Scheduler roster pull was retired
+  2026-08-13. `revalidatePath` names five specific pages; there is no global
+  revalidation and nothing rebuilds or remounts the application.

@@ -51,7 +51,7 @@ async function main() {
 
   const candidates = await prisma.jobHoursDetail.findMany({
     where: { rawSection: "", rawFunction: "" },
-    select: { id: true, month: true, workDate: true, employeeId: true, section: true, hours: true, job: { select: { jobId: true } } },
+    select: { id: true, jobId: true, month: true, workDate: true, employeeId: true, section: true, hours: true, job: { select: { jobId: true } } },
     orderBy: [{ month: "asc" }],
   });
   console.log(`rows with no raw identity: ${candidates.length}`);
@@ -94,7 +94,21 @@ async function main() {
   const result = await prisma.jobHoursDetail.deleteMany({ where: { id: { in: orphans.map((r) => r.id) } } });
   const after = Number((await prisma.jobHoursDetail.aggregate({ _sum: { hours: true } }))._sum.hours ?? 0);
 
+  // ── The refresh's per-bucket digests have to be told (2026-08-25) ─────────
+  //
+  // syncJobHoursDetail skips rewriting a (job, month) bucket whose stored digest still
+  // matches what it would write. Deleting rows here without clearing those digests
+  // would leave the cache asserting a state the table is no longer in.
+  //
+  // The refresh would in fact still heal it — it cross-checks every skipped bucket's row
+  // count and hours total against the table and rewrites on any disagreement — but that
+  // presents as unexplained drift, with a warning logged per bucket. Clearing the
+  // digests here says "this was us, deliberately", and the next pass just rewrites.
+  const { invalidateJobHoursDigests } = await import("../src/lib/sync-actuals");
+  const dropped = await invalidateJobHoursDigests([...new Set(orphans.map((r) => r.jobId))]);
+
   console.log(`\ndeleted ${result.count} row(s)`);
+  console.log(`  cleared ${dropped} punch-bucket digest(s) so the next refresh rewrites them`);
   console.log(`  total hours ${f2(before)} -> ${f2(after)} (removed ${f2(before - after)}h)`);
   const expected = Math.abs(before - after - orphanHours) < 0.01;
   console.log(`  ${expected ? "OK  " : "FAIL"}  removed exactly the orphaned hours (expected ${f2(orphanHours)}h)`);

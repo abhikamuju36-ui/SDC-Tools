@@ -180,6 +180,7 @@ model Job {
   tasks               JobTask[]
   monthlyActualHours  JobMonthlyActualHours[]
   hoursDetail         JobHoursDetail[]
+  hoursBuckets        JobHoursBucket[]
   executionRate       ExecutionRate?
   standardSheetSnapshots StandardSheetSnapshot[]
   projectRelease      ProjectRelease?
@@ -233,6 +234,43 @@ model ProjectRelease {
 // 2026-07-30 — leavers), and dropping their hours to satisfy a foreign key would
 // silently lose time that the rollups DO count. Resolved to a name at read time
 // via Employee.paylocityId, falling back to showing the raw id.
+// ── What a (job, month) bucket of punch rows currently CONTAINS (2026-08-25) ──
+//
+// A content digest per (job, month), written by syncJobHoursDetail alongside the rows
+// themselves, so the next refresh can tell an unchanged bucket from a changed one and
+// rewrite only what actually moved.
+//
+// Why this exists, measured: the punch write was 1,146 sequential
+// delete-then-insert transactions rewriting all 28,972 rows on EVERY pass — 10.5s of
+// a 17.4s refresh, the single largest cost in the app. Twelve of the twenty months it
+// rewrote are closed 2025 history whose source workbook has not been saved since
+// 2026-06-03, so almost all of that work reproduced byte-identical rows.
+//
+// The digest covers the FULL row payload as it would be written — including the
+// classifyPunch outputs (standardDepartment, standardTaskDescription, mappingStatus)
+// and the `source` label. That is deliberate and is what makes this safe without a
+// version constant anybody has to remember to bump: change the rule book and the
+// classification of a punch changes, so the digest changes, so the bucket is
+// rewritten. There is no way to alter what would be stored without altering the
+// digest of what would be stored.
+//
+// Cascades with the job, so a deleted job cannot leave a digest behind that would let
+// a later job reusing the primary key skip a write it needs.
+model JobHoursBucket {
+  jobId    Int
+  job      Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  month    String   // "2026-07", matching JobHoursDetail.month
+  // sha256 over the bucket's rows, sorted by the punch-grain key. Hex, so 64 chars.
+  digest   String   @db.Char(64)
+  // Rows the digest was computed over. Not used for the skip decision — the digest
+  // alone decides that — but it makes a stale digest obvious when reading the table
+  // by hand, which is the first thing anybody debugging a missing punch will do.
+  rows     Int
+  syncedAt DateTime @default(now())
+
+  @@id([jobId, month])
+}
+
 model JobHoursDetail {
   id         Int      @id @default(autoincrement())
   jobId      Int
