@@ -101,6 +101,16 @@ export type SyncStepResult = {
   label: string;
   status: "ok" | "failed" | "skipped";
   detail: string;
+  // Wall-clock ms this step's own `run()` took. Added 2026-08-25: the pass has
+  // logged only its TOTAL since it was written (~17s, every hour, all day), which
+  // is enough to know the pass is slow and useless for knowing WHICH part is —
+  // and the sources differ by orders of magnitude (one Excel parse vs four
+  // separate Total ETO round-trips). Optimizing without this is guesswork.
+  //
+  // Measured, not derived from the progress callback: onProgress fires BEFORE
+  // each step, so differencing its timestamps would attribute every step's cost
+  // to the one after it.
+  ms: number;
 };
 
 export type SyncRunResult = {
@@ -178,24 +188,36 @@ export async function runAllSyncs(
     } catch {
       /* progress reporting must never be able to fail a refresh */
     }
+    // Timed around `run()` only — not around the recordSync* write or the
+    // progress callback, so a step's number is the cost of its own work and
+    // stays comparable between steps.
+    const t0 = Date.now();
+    const took = () => Date.now() - t0;
     try {
       const detail = await run();
       if (detail === null) {
-        steps.push({ source, label, status: "skipped", detail: "nothing to do" });
+        steps.push({ source, label, status: "skipped", detail: "nothing to do", ms: took() });
         return;
       }
       if (typeof detail === "object") {
+        const ms = took();
         await recordSyncNote(source, detail.skip);
-        steps.push({ source, label, status: "skipped", detail: detail.skip });
+        steps.push({ source, label, status: "skipped", detail: detail.skip, ms });
         return;
       }
+      const ms = took();
       if (stamp) await recordSyncSuccess(source, new Date());
-      steps.push({ source, label, status: "ok", detail });
+      steps.push({ source, label, status: "ok", detail, ms });
     } catch (err) {
+      const ms = took();
       const message = err instanceof Error ? err.message : String(err);
-      console.error(`[auto-sync] ${label} failed:`, err);
+      // Timing a FAILED step matters as much as a successful one: a source that
+      // fails after a 30s socket timeout and one that fails instantly on a bad
+      // credential look identical in the log without this, and only the first
+      // is why the pass felt slow.
+      console.error(`[auto-sync] ${label} failed after ${ms}ms:`, err);
       await recordSyncFailure(err, source);
-      steps.push({ source, label, status: "failed", detail: message });
+      steps.push({ source, label, status: "failed", detail: message, ms });
     }
   }
 
@@ -376,8 +398,23 @@ export async function runAllSyncs(
   // which feeds are current, instead of five unrelated lines per tick.
   console.log(
     `[auto-sync] ${trigger} pass in ${ms}ms${month ? ` (month ${month})` : " (no open month)"}: ` +
-      steps.map((s) => `${s.source}=${s.status}`).join(" "),
+      steps.map((s) => `${s.source}=${s.status}/${s.ms}ms`).join(" "),
   );
+
+  // Slowest first, with each step's share of the pass — so the bottleneck is the
+  // first thing on screen rather than something to be worked out by hand from
+  // nine numbers in source order. `unaccounted` is the pass total minus the sum
+  // of the steps: the orchestration overhead (progress callbacks, the freshness
+  // writes, closing the import record). If it is ever large, the cost is NOT in
+  // the sources and this breakdown would otherwise hide that.
+  const summed = steps.reduce((s, x) => s + x.ms, 0);
+  const slowest = [...steps].sort((a, b) => b.ms - a.ms);
+  console.log(`[auto-sync]   breakdown (slowest first, ${summed}ms in steps, ${ms - summed}ms unaccounted):`);
+  for (const s of slowest) {
+    const pct = ms > 0 ? ((s.ms / ms) * 100).toFixed(1) : "0.0";
+    console.log(`[auto-sync]     ${String(s.ms).padStart(6)}ms  ${pct.padStart(5)}%  ${s.source} (${s.status})`);
+  }
+
   for (const f of failed) console.error(`[auto-sync]   ${f.source}: ${f.detail}`);
 
   return { trigger, startedAt, ms, month, steps };
