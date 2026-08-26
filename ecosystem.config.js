@@ -230,11 +230,19 @@ module.exports = {
     // `pm2 logs sdc-etc-planner --err` for EADDRINUSE before trusting it.
     {
       name:          'sdc-etc-planner',
-      // `next start` — serves the production build in .next. Invoke the Next
-      // CLI directly so PM2 manages a single node process (no npm shim).
-      script:        'node_modules/next/dist/bin/next',
-      args:          'start -p 4006',
-      interpreter:   'node',
+      // Serves the production build in .next. Still a single node process (no
+      // npm shim) — scripts/start.mjs preflights and then loads Next's own bin
+      // in-process, so PM2 supervises the real server exactly as before.
+      //
+      // ⚠️  Do NOT point this back at 'node_modules/next/dist/bin/next'.
+      // It was that until 2026-08-26, and it made PM2's entry point a file
+      // inside the directory npm deletes on every install. An install
+      // interrupted on 2026-08-25 20:03 removed it, and the app then
+      // MODULE_NOT_FOUND crash-looped 139 times over ~12 hours with no alert.
+      // scripts/start.mjs is tracked in git, so it cannot go missing that way,
+      // and it reinstalls a wiped node_modules instead of dying. Full writeup
+      // in that file's header.
+      script:        'scripts/start.mjs',
       cwd:           'D:\\AI Projects\\Centrailized library\\sdc-etc-planner',
       env: {
         PORT:             '4006',
@@ -243,7 +251,18 @@ module.exports = {
       },
       watch:         false,
       max_restarts:  10,
-      restart_delay: 3000,
+      // min_uptime is what makes max_restarts mean anything. Without it PM2
+      // treats each 3-second crash as a fresh incident, resets the counter, and
+      // retries forever — the ↺139 above. With it, a process that dies before
+      // 90s counts toward the 10, after which PM2 stops and marks the app
+      // `errored`: a status that looks wrong at a glance instead of one that
+      // looks merely restarty. 90s (not the usual 5s) because a self-heal boot
+      // legitimately spends ~60-90s inside npm ci before it ever listens.
+      min_uptime:    '90s',
+      // Backoff instead of a flat 3s: a genuinely broken app stops generating a
+      // log line every three seconds, so the real first error stays readable
+      // rather than buried under hours of identical stack traces.
+      exp_backoff_restart_delay: 3000,
       // The other 6 apps have carried a memory ceiling since they were added;
       // this one never did, and it is by far the largest process — measured
       // 2026-08-25 at 236.9 MB RSS (184.8/191.0 MiB heap), roughly 5x any
