@@ -15,7 +15,6 @@ import { SortableTh, SortableColumnHeader } from "@/components/ui/SortableHeader
 import { sortRows, type SortColumns } from "@/lib/table-sort";
 import { useStableNow } from "@/lib/use-stable-now";
 import {
-  DAY,
   STATUS_ROW_BG,
   COST_BASIS_NOTE,
   isEstimatedCost,
@@ -34,6 +33,7 @@ import {
   type StatusKey,
 } from "@/lib/po-detail";
 import { PoPanel, ReleaseBadge, SupplierAvatar, Stat, ALL_COLS, partsListSortColumns, PartRowCells, type ColKey } from "@/components/procurement/PoDetailPanel";
+import { computeRiskCards, dueMs, earliestRequired, groupPartsByPo } from "@/lib/procurement-risk";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Procurement drawer — the Build Readiness "Procurement" view, ported to the
@@ -125,39 +125,6 @@ function loadPersisted(): Partial<PersistedState> {
   } catch {
     return {};
   }
-}
-
-// Groups a FlatPart[] list into one row per (supplier, PO) pair — the same
-// Map<supplier, Map<poKey, parts[]>> → makePoGroup pattern PartsCardView's own
-// vendor grouping already uses (see its `vendorGroups` useMemo), just
-// flattened: the risk cards (2026-08-14, by request — "group by PO instead
-// of individual parts") want one flat list of PO rows, not a vendor-then-PO
-// tree. A part with no PO number groups under NO_PO_KEY per supplier, same
-// as everywhere else in this file — there's no real PO to split those out
-// by, so every no-PO part for one supplier lands in ONE row (which is
-// exactly the "No PO / Unassigned" grouping the request asks for; the No
-// Purchase Order card's own eligibility already guarantees `poNumber` is
-// null for every part it passes in here).
-//
-// Preserves the INPUT array's own order within each group's first
-// appearance (a `Map` iterates in insertion order) — a caller that passes an
-// already date-sorted list (the risk cards' delivery/upcoming arrays, both
-// sorted by due date ascending before reaching here) gets PO rows that come
-// out sorted by their own earliest due date too, for free: the first part
-// belonging to a given PO, in an already-sorted array, can only be the
-// earliest one for that PO, since any earlier-due part sharing the same PO
-// would already have appeared (and created the group) before it.
-function groupPartsByPo(parts: FlatPart[]): { supplier: string; po: PoGroup }[] {
-  const byKey = new Map<string, { supplier: string; poKey: string; parts: FlatPart[] }>();
-  for (const p of parts) {
-    const supplier = p.supplier ?? "Unknown supplier";
-    const poKey = p.poNumber ?? NO_PO_KEY;
-    const key = `${supplier} ${poKey}`;
-    const bucket = byKey.get(key);
-    if (bucket) bucket.parts.push(p);
-    else byKey.set(key, { supplier, poKey, parts: [p] });
-  }
-  return [...byKey.values()].map((b) => ({ supplier: b.supplier, po: makePoGroup(b.poKey, b.parts) }));
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1807,20 +1774,6 @@ function SidePanel({ title, subtitle, onClose, children }: { title: string; subt
 
 // ── Risk panels: Delivery Slip · No Purchase Order · Upcoming Deliveries ─────
 
-function startOfTodayMs(now: number): number {
-  const d = new Date(now);
-  d.setHours(0, 0, 0, 0);
-  return d.getTime();
-}
-function dueMs(p: FlatPart): number {
-  const d = p.expectedDate || p.requiredDate;
-  if (!d) return NaN;
-  return new Date(d).getTime();
-}
-function reqMs(p: FlatPart): number {
-  return p.requiredDate ? new Date(p.requiredDate).getTime() : NaN;
-}
-
 // ── The three risk cards' shared header shell ───────────────────────────────
 //
 // One string, used by all three, because "keep the three headers aligned on the
@@ -1890,19 +1843,6 @@ const PANEL_HEADER_ROW =
 const PANEL_HEADER_GROUP =
   "contents @[470px]:flex @[470px]:flex-wrap @[470px]:items-center @[470px]:gap-x-4 @[470px]:gap-y-1";
 
-// Earliest required date among a group of parts — the No Purchase Order
-// card's own primary date (there's no PO to hang an Expected date off), and
-// the Required half of the other two cards' PO rows. Not part of PoGroup /
-// makePoGroup: those are shared with the Card view and PoPanel, neither of
-// which needs a required-date rollup, so this stays local to the risk cards.
-function earliestRequired(poParts: FlatPart[]): string | null {
-  let acc: string | null = null;
-  for (const p of poParts) {
-    if (p.requiredDate && (!acc || p.requiredDate < acc)) acc = p.requiredDate;
-  }
-  return acc;
-}
-
 // One row per (supplier, PO) group — both the compact cards' own primary row
 // and the "See all" side panel's table (2026-08-14, by request — "group by
 // PO instead of individual parts"). `relevantDate` is precomputed per card's
@@ -1960,106 +1900,10 @@ function RiskCards({
     setSeeAll(mode);
   };
 
-  const risk = useMemo(() => {
-    const today = startOfTodayMs(now);
-
-    // Delivery Slip — upcoming/overdue deliveries: has a PO, not received, due
-    // date <= today + 7 days (by request). No lower bound — an item due a
-    // month ago hasn't stopped needing attention just because it aged out of
-    // a 7-day-late window; it used to (a `today - 7*DAY` floor dropped
-    // anything overdue by more than a week), which is exactly backwards for a
-    // card whose whole point is surfacing what's late. Sorted ascending by
-    // due date (unchanged), so the oldest overdue item leads.
-    const slipEnd = today + 8 * DAY; // exclusive: "+7 days" is the last included calendar day
-    const delivery = parts
-      .filter((p) => {
-        if (!p.poNumber || p.st.key === "received") return false;
-        const t = dueMs(p);
-        return Number.isFinite(t) && t < slipEnd;
-      })
-      .sort((a, b) => dueMs(a) - dueMs(b));
-    const lateParts = delivery.filter((p) => Number.isFinite(dueMs(p)) && dueMs(p) < today);
-    const deliveryAvgLate = lateParts.length
-      ? Math.round(lateParts.reduce((s, p) => s + Math.ceil((today - dueMs(p)) / DAY), 0) / lateParts.length)
-      : 0;
-    const deliveryOldest = delivery.reduce<string | null>((acc, p) => {
-      if (!p.requiredDate) return acc;
-      return !acc || p.requiredDate < acc ? p.requiredDate : acc;
-    }, null);
-    // Grouped by (supplier, PO) — `delivery` is already sorted by due date
-    // ascending, so (per groupPartsByPo's own comment) these rows come out
-    // sorted by their own earliest due date too, with no extra sort needed.
-    const deliveryPos = groupPartsByPo(delivery);
-    // the readiness summary use (no PO, no stock pull, no process schedule,
-    // BOM release status already applied, not on hold). `parts` is already
-    // deduped by item id (job-bom-rules.ts's own unique-requirement counting),
-    // so this card's total can never disagree with either of those again —
-    // it used to check `!p.poNumber` directly, which counted stock/process-
-    // covered parts as missing and re-deduped by part number on top.
-    const noPo = parts.filter(isUncoveredPart);
-    const weekEnd = today + 7 * DAY;
-    let noPoThisWeek = 0;
-    let noPoOldest: string | null = null;
-    for (const p of noPo) {
-      const t = reqMs(p);
-      if (Number.isFinite(t) && t <= weekEnd) noPoThisWeek++;
-      if (p.requiredDate && (!noPoOldest || p.requiredDate < noPoOldest)) noPoOldest = p.requiredDate;
-    }
-    // Grouped by supplier (every part here has `poNumber === null` by
-    // isUncoveredPart's own definition, so groupPartsByPo's PO half always
-    // resolves to NO_PO_KEY — one row per supplier, exactly the "No PO /
-    // Unassigned" grouping asked for). `noPo` isn't date-sorted (unlike
-    // delivery/upcoming), so these rows are explicitly sorted oldest-
-    // required-first, same read as the card's own `noPoOldest` stat.
-    const noPoPos = groupPartsByPo(noPo).sort((a, b) => {
-      const ra = earliestRequired(a.po.parts);
-      const rb = earliestRequired(b.po.parts);
-      if (ra == null && rb == null) return 0;
-      if (ra == null) return 1;
-      if (rb == null) return -1;
-      return ra < rb ? -1 : ra > rb ? 1 : 0;
-    });
-    // Part-mode equivalent of noPoPos' own ordering — individual parts
-    // (rather than one row per supplier), oldest required date first, same
-    // read as `noPoOldest`.
-    const noPoSorted = [...noPo].sort((a, b) => {
-      const ra = a.requiredDate;
-      const rb = b.requiredDate;
-      if (ra == null && rb == null) return 0;
-      if (ra == null) return 1;
-      if (rb == null) return -1;
-      return ra < rb ? -1 : ra > rb ? 1 : 0;
-    });
-
-    // Upcoming — not received, due tomorrow through ~8 weeks out.
-    const upStart = today + 1 * DAY;
-    const upEnd = today + 57 * DAY;
-    const upcoming = parts
-      .filter((p) => {
-        if (p.st.key === "received") return false;
-        const t = dueMs(p);
-        return Number.isFinite(t) && t >= upStart && t < upEnd;
-      })
-      .sort((a, b) => dueMs(a) - dueMs(b));
-    const weekData = Array.from({ length: 8 }, (_, i) => {
-      const w = i + 1;
-      const wStart = today + ((w - 1) * 7 + 1) * DAY;
-      const wEnd = today + (w * 7 + 1) * DAY;
-      const wParts = upcoming.filter((p) => {
-        const t = dueMs(p);
-        return Number.isFinite(t) && t >= wStart && t < wEnd;
-      });
-      return { week: w, parts: wParts, count: wParts.length };
-    });
-
-    // Grouped over the FULL 8-week upcoming set (not just the selected
-    // week) — this is what "See all" shows, same as `risk.upcoming` always
-    // was, so opening it still surfaces every upcoming PO regardless of
-    // which week button is active on the compact card underneath it.
-    const upcomingAllPos = groupPartsByPo(upcoming);
-
-    return { delivery, deliveryAvgLate, deliveryOldest, deliveryPos, noPo, noPoThisWeek, noPoOldest, noPoPos, noPoSorted, upcoming, upcomingAllPos, weekData };
-  }, [parts, now]);
+  // Every rule behind these three cards lives in procurement-risk.ts, which
+  // is also what /api/integration/jobs/[jobId]/procurement serves to the Build
+  // Readiness app — one implementation, two consumers.
+  const risk = useMemo(() => computeRiskCards(parts, now), [parts, now]);
 
   const selectedWeek = risk.weekData.find((w) => w.week === upcomingWeek) ?? risk.weekData[0];
   // Memoized so its reference is stable across renders once the selected
