@@ -43,89 +43,98 @@ const ColHandle = ({ onMouseDown }) => (
   />
 );
 
-function RiskPartsPanel({ nopo, poActions }) {
+// ── Delivery Slip · No Purchase Order · Upcoming Deliveries ─────────────────
+//
+// Every number and every row in these three cards comes from the SDC Projects
+// Reports app, via /api/procurement/:jobId → its
+// /api/integration/jobs/:jobId/procurement. Nothing here derives eligibility,
+// counts a window or picks a date: this component lays out a payload.
+//
+// That is deliberate. These cards used to be computed right here from
+// `poActions` (this app's PO action list) and `nopo` (bomTree.js's
+// findNoPoParts), and all three disagreed with the Reports app's Job Hours
+// Details page — which is the accepted source of truth for these insights —
+// for every job:
+//
+//   • Delivery Slip only looked at [today-7d, today+1d), so anything more than
+//     a week overdue silently left the card whose job is surfacing late work.
+//     The rule is "has a PO, not received, due on or before today+7d", with no
+//     lower bound at all.
+//   • No Purchase Order counted `POQty === 0`, which treats an inventory pull
+//     or an in-house process schedule as a procurement gap and ignores BOM
+//     release status entirely — so it invented missing sub-parts underneath
+//     assemblies that were bought whole.
+//   • Upcoming Deliveries only ever saw parts that already had a PO line, and
+//     its week picker was cumulative (4W = weeks 1-4) where the reference
+//     shows one week at a time.
+//
+// See server/services/plannerClient.js for why the fix was to read the Reports
+// app rather than to port its BOM rules into this codebase a second time.
+//
+// `procurement` is `{ available: false, reason }` whenever the Reports app is
+// unreachable, unconfigured, in demo mode, or has no BOM for the job. There is
+// no fallback to the old local arithmetic on purpose — a confidently wrong
+// number is worse than a visibly absent one, and having two implementations is
+// what caused this in the first place.
+function RiskPartsPanel({ procurement }) {
   const [slipCollapsed,     setSlipCollapsed]     = useState(false);
   const [nopCollapsed,      setNopCollapsed]       = useState(false);
   const [upcomingCollapsed, setUpcomingCollapsed]  = useState(false);
-  const [upcomingWeeks,     setUpcomingWeeks]      = useState(2);
+  // Which single week of Upcoming Deliveries is on screen. Weeks are per-week
+  // buckets, not cumulative — week 4 is "due in week 4", matching the
+  // reference. Defaults to week 1.
+  const [upcomingWeek,      setUpcomingWeek]       = useState(1);
   const slip     = useColResize([110, 200, 68, 68, 72, 70]);
   const nop      = useColResize([110, 200, 70, 40, 70]);
   const upcoming = useColResize([76, 130, 240, 110, 90, 80, 80, 80]);
 
   const todayStart = useMemo(() => { const d = new Date(); d.setHours(0,0,0,0); return d; }, []);
 
-  const slipping = useMemo(() => {
-    const windowStart = new Date(todayStart); windowStart.setDate(windowStart.getDate() - 7); // 7 days ago
-    const windowEnd   = new Date(todayStart); windowEnd.setDate(windowEnd.getDate() + 1);     // end of today
-    const parts = [];
-    [...(poActions?.critical || []), ...(poActions?.warning || []), ...(poActions?.onTrack || [])].forEach(entry => {
-      (entry.po?.parts || []).forEach(p => {
-        if ((p.received || 0) >= (p.qty || 0) && (p.qty || 0) > 0) return;
-        const dueDate = p.dueDate ? new Date(p.dueDate) : null;
-        if (!dueDate || dueDate < windowStart || dueDate >= windowEnd) return;
-        parts.push({ ...p, supplier: entry.supplier, poId: entry.po.poId, poDate: entry.po.poDate });
-      });
-    });
-    return parts.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-  }, [poActions, todayStart]);
+  const risk = procurement?.available ? procurement.risk : null;
 
-  const slipStats = useMemo(() => {
-    let totalLate = 0, lateCount = 0, oldestReq = null;
-    slipping.forEach(p => {
-      const due = new Date(p.dueDate);
-      if (due < todayStart) { totalLate += Math.round((todayStart - due) / 86400000); lateCount++; }
-      const req = p.requiredDate ? new Date(p.requiredDate) : null;
-      if (req && (!oldestReq || req < oldestReq)) oldestReq = req;
-    });
-    return {
-      avgLate:   lateCount > 0 ? `+${Math.round(totalLate / lateCount)}d` : '—',
-      hasLate:   lateCount > 0,
-      oldestReq: oldestReq ? oldestReq.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—',
-    };
-  }, [slipping, todayStart]);
+  const slipping = risk?.deliverySlip.parts ?? [];
+  const nopoParts = risk?.noPo.parts ?? [];
 
-  const nopStats = useMemo(() => {
-    const weekEnd = new Date(todayStart); weekEnd.setDate(weekEnd.getDate() + 7);
-    let thisWeek = 0, oldestReq = null;
-    nopo.forEach(p => {
-      const req = p.requiredDate ? new Date(p.requiredDate) : null;
-      if (!req) return;
-      if (req <= weekEnd) thisWeek++;
-      if (!oldestReq || req < oldestReq) oldestReq = req;
-    });
-    return {
-      thisWeek,
-      oldestReq: oldestReq ? oldestReq.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—',
-    };
-  }, [nopo, todayStart]);
+  const weeks = risk?.upcoming.weeks ?? [];
+  const selectedWeek = weeks.find(w => w.week === upcomingWeek) ?? weeks[0] ?? null;
+  const upcomingParts = selectedWeek?.parts ?? [];
 
-  const upcomingParts = useMemo(() => {
-    const windowStart = new Date(todayStart); windowStart.setDate(windowStart.getDate() + 1);
-    const windowEnd   = new Date(todayStart); windowEnd.setDate(windowEnd.getDate() + upcomingWeeks * 7 + 1);
-    const parts = [];
-    [...(poActions?.critical || []), ...(poActions?.warning || []), ...(poActions?.onTrack || [])].forEach(entry => {
-      (entry.po?.parts || []).forEach(p => {
-        if ((p.received || 0) >= (p.qty || 0) && (p.qty || 0) > 0) return;
-        const dueDate = p.dueDate ? new Date(p.dueDate) : null;
-        if (!dueDate || dueDate < windowStart || dueDate >= windowEnd) return;
-        parts.push({ ...p, supplier: entry.supplier, poId: entry.po.poId, poDate: entry.po.poDate });
-      });
-    });
-    return parts.sort((a, b) => new Date(a.dueDate) - new Date(b.dueDate));
-  }, [poActions, todayStart, upcomingWeeks]);
+  // The date a part is measured against — the PO line's Expected date when it
+  // has one, else the BOM's Required date. Same fallback the Reports app's own
+  // rule uses (procurement-risk.ts `dueMs`), so a row's shown date can never
+  // disagree with the window that selected it.
+  const dueOf = p => p.expectedDate || p.requiredDate;
 
   const upcomingStats = useMemo(() => {
-    const suppliers = new Set(upcomingParts.map(p => p.supplier)).size;
-    const nearest = upcomingParts.length > 0 ? upcomingParts[0].dueDate : null;
-    return { suppliers, nearest };
+    // Blank suppliers excluded, matching the reference's own
+    // `.filter(Boolean)` — an unnamed supplier is missing data, not a supplier.
+    const suppliers = new Set(upcomingParts.map(p => p.supplier).filter(Boolean)).size;
+    const dues = upcomingParts.map(p => dueOf(p)).filter(Boolean).sort();
+    return { suppliers, nearest: dues[0] ?? null };
   }, [upcomingParts]);
 
-  const fmtDate = d => d ? new Date(d).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
+  // `YYYY-MM-DD` day strings from the API. Parsed as local noon rather than
+  // passed to `new Date('2026-08-26')`, which JS reads as UTC midnight and
+  // renders as the previous day for anyone west of Greenwich.
+  const parseDay = d => {
+    if (!d) return null;
+    const [y, m, day] = String(d).slice(0, 10).split('-').map(Number);
+    if (!y || !m || !day) return null;
+    return new Date(y, m - 1, day, 12, 0, 0, 0);
+  };
+  const fmtDate = d => {
+    const t = parseDay(d);
+    return t ? t.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) : '—';
+  };
+  const money = v => (v > 0
+    ? `$${Number(v).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`
+    : '—');
 
   const CARD   = { background: 'var(--bg-raised)', border: '1px solid var(--border-subtle)', borderRadius: 8, overflow: 'hidden' };
   const HDR_BASE = { display: 'grid', gap: 10, padding: '8px 14px 7px', fontSize: 10, fontWeight: 600, letterSpacing: '0.08em', color: 'var(--ink-4)', textTransform: 'uppercase', background: 'var(--bg-sunken)', borderBottom: '1px solid var(--border-subtle)' };
   const ROW_BASE = { display: 'grid', gap: 10, padding: '7px 14px', alignItems: 'center', borderBottom: '1px solid var(--border-subtle)', fontSize: 12 };
   const CELL_H   = { position: 'relative', overflow: 'hidden' };
+  const EMPTY    = { padding: '20px 14px', textAlign: 'center', color: 'var(--ink-4)', fontSize: 12 };
 
   const Stat = ({ label, value, valueColor }) => (
     <span style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 0 }}>
@@ -140,6 +149,26 @@ function RiskPartsPanel({ nopo, poActions }) {
     </button>
   );
 
+  // Shown in every card's body when the Reports app couldn't be read, with the
+  // actual reason rather than a bare dash — an empty card and an unavailable
+  // card mean completely different things to whoever is chasing a part.
+  const Unavailable = () => (
+    <div style={{ ...EMPTY, lineHeight: 1.5 }}>
+      Unavailable — {procurement?.reason || 'the SDC Projects Reports app could not be reached.'}
+    </div>
+  );
+
+  const dash = '—';
+  const slipStats = risk
+    ? { parts: risk.deliverySlip.partCount,
+        avgLate: risk.deliverySlip.avgLateDays > 0 ? `+${risk.deliverySlip.avgLateDays}d` : dash,
+        hasLate: risk.deliverySlip.avgLateDays > 0,
+        oldestReq: fmtDate(risk.deliverySlip.oldestRequired) }
+    : { parts: dash, avgLate: dash, hasLate: false, oldestReq: dash };
+  const nopStats = risk
+    ? { parts: risk.noPo.partCount, thisWeek: risk.noPo.thisWeek, oldestReq: fmtDate(risk.noPo.oldestRequired) }
+    : { parts: dash, thisWeek: dash, oldestReq: dash };
+
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, margin: '12px 0' }}>
     <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 12 }}>
@@ -152,7 +181,7 @@ function RiskPartsPanel({ nopo, poActions }) {
             Delivery Slip
           </span>
           <span />
-          <Stat label="Parts"    value={slipping.length} valueColor="#b8861b" />
+          <Stat label="Parts"    value={slipStats.parts} valueColor="#b8861b" />
           <Stat label="Avg Late" value={slipStats.avgLate} valueColor={slipStats.hasLate ? '#c43e1c' : 'var(--ink-3)'} />
           <Stat label="Oldest Req" value={slipStats.oldestReq} />
           <HideBtn collapsed={slipCollapsed} onToggle={() => setSlipCollapsed(c => !c)} />
@@ -165,20 +194,23 @@ function RiskPartsPanel({ nopo, poActions }) {
               ))}
             </div>
             <div style={{ maxHeight: 150, overflowY: 'auto' }}>
-              {slipping.length === 0
-                ? <div style={{ padding: '20px 14px', textAlign: 'center', color: 'var(--ink-4)', fontSize: 12 }}>No parts due today or overdue in last 7 days</div>
-                : slipping.map((p, i) => (
-                  <div key={i} className="row-hover" style={{ ...ROW_BASE, gridTemplateColumns: slip.template }}>
-                    <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--sdc-blue)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.partNumber}</span>
-                    <span style={{ fontSize: 12, letterSpacing: '0.02em', textTransform: 'uppercase', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.partDesc}</span>
+              {!risk
+                ? <Unavailable />
+                : slipping.length === 0
+                ? <div style={EMPTY}>Nothing overdue or due in the next 7 days</div>
+                : slipping.map(p => {
+                  const due = parseDay(dueOf(p));
+                  return (
+                  <div key={p.id} className="row-hover" style={{ ...ROW_BASE, gridTemplateColumns: slip.template }}>
+                    <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--sdc-blue)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.pn}</span>
+                    <span style={{ fontSize: 12, letterSpacing: '0.02em', textTransform: 'uppercase', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.desc}</span>
                     <span className="mono" style={{ color: 'var(--ink-3)', fontSize: 11, whiteSpace: 'nowrap' }}>{fmtDate(p.requiredDate)}</span>
-                    <span className="mono" style={{ fontWeight: 600, color: new Date(p.dueDate) < todayStart ? '#c43e1c' : 'var(--ink-2)', fontSize: 11, whiteSpace: 'nowrap' }}>{fmtDate(p.dueDate)}</span>
-                    <span className="mono" style={{ color: 'var(--ink-3)', fontSize: 11, whiteSpace: 'nowrap' }}>{p.poDate ? fmtDate(p.poDate) : '—'}</span>
-                    <span className="mono" style={{ textAlign: 'right', fontSize: 11, color: p.price > 0 ? 'var(--ink-2)' : 'var(--ink-4)' }}>
-                      {p.price > 0 ? `$${Number(p.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
-                    </span>
+                    <span className="mono" style={{ fontWeight: 600, color: due && due < todayStart ? '#c43e1c' : 'var(--ink-2)', fontSize: 11, whiteSpace: 'nowrap' }}>{fmtDate(dueOf(p))}</span>
+                    <span className="mono" style={{ color: 'var(--ink-3)', fontSize: 11, whiteSpace: 'nowrap' }}>{fmtDate(p.poDate)}</span>
+                    <span className="mono" style={{ textAlign: 'right', fontSize: 11, color: p.unitPrice > 0 ? 'var(--ink-2)' : 'var(--ink-4)' }}>{money(p.unitPrice)}</span>
                   </div>
-                ))
+                  );
+                })
               }
             </div>
           </>
@@ -193,7 +225,7 @@ function RiskPartsPanel({ nopo, poActions }) {
             No Purchase Order
           </span>
           <span />
-          <Stat label="Parts"     value={nopo.length}       valueColor="#c43e1c" />
+          <Stat label="Parts"     value={nopStats.parts}    valueColor="#c43e1c" />
           <Stat label="This Week" value={nopStats.thisWeek} />
           <Stat label="Oldest Req" value={nopStats.oldestReq} />
           <HideBtn collapsed={nopCollapsed} onToggle={() => setNopCollapsed(c => !c)} />
@@ -206,17 +238,17 @@ function RiskPartsPanel({ nopo, poActions }) {
               ))}
             </div>
             <div style={{ maxHeight: 150, overflowY: 'auto' }}>
-              {nopo.length === 0
-                ? <div style={{ padding: '20px 14px', textAlign: 'center', color: 'var(--ink-4)', fontSize: 12 }}>All parts have purchase orders</div>
-                : nopo.map((p, i) => (
-                  <div key={i} className="row-hover" style={{ ...ROW_BASE, gridTemplateColumns: nop.template }}>
-                    <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--sdc-blue)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.pn || p.id}</span>
+              {!risk
+                ? <Unavailable />
+                : nopoParts.length === 0
+                ? <div style={EMPTY}>Every requirement is covered</div>
+                : nopoParts.map(p => (
+                  <div key={p.id} className="row-hover" style={{ ...ROW_BASE, gridTemplateColumns: nop.template }}>
+                    <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--sdc-blue)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.pn}</span>
                     <span style={{ fontSize: 12, letterSpacing: '0.02em', textTransform: 'uppercase', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.desc}</span>
                     <span className="mono" style={{ color: 'var(--ink-3)', fontSize: 11, whiteSpace: 'nowrap' }}>{fmtDate(p.requiredDate)}</span>
                     <span className="mono" style={{ textAlign: 'right', fontWeight: 600, color: 'var(--ink-2)', fontSize: 12 }}>{p.qty}</span>
-                    <span className="mono" style={{ textAlign: 'right', fontSize: 11, color: p.unitPrice > 0 ? 'var(--ink-2)' : 'var(--ink-4)' }}>
-                      {p.unitPrice > 0 ? `$${Number(p.unitPrice).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
-                    </span>
+                    <span className="mono" style={{ textAlign: 'right', fontSize: 11, color: p.unitPrice > 0 ? 'var(--ink-2)' : 'var(--ink-4)' }}>{money(p.unitPrice)}</span>
                   </div>
                 ))
               }
@@ -234,21 +266,27 @@ function RiskPartsPanel({ nopo, poActions }) {
           <span style={{ width: 18, height: 18, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: '#e0f5fa', color: '#0d7490', borderRadius: 4, fontWeight: 800, fontSize: 11 }}>→</span>
           Upcoming Deliveries
         </span>
-        {/* Week selector pills */}
+        {/* Week selector pills — one bucket per week (W1 = due in the next 7
+            days, W2 = the 7 days after that, …), not cumulative. Buckets and
+            their counts both come from the Reports app, so the pill row is
+            however many weeks it serves. */}
         <div style={{ display: 'flex', gap: 4 }}>
-          {[1, 2, 3, 4, 6, 8].map(w => (
-            <button key={w} onClick={() => setUpcomingWeeks(w)} style={{
+          {(weeks.length ? weeks : [{ week: 1, count: null }]).map(w => (
+            <button key={w.week} onClick={() => setUpcomingWeek(w.week)} title={`Due in week ${w.week}`} style={{
               padding: '3px 9px', fontSize: 11, fontWeight: 600, borderRadius: 5, cursor: 'pointer', border: 'none',
-              background: upcomingWeeks === w ? '#0d7490' : 'var(--bg-sunken)',
-              color: upcomingWeeks === w ? '#fff' : 'var(--ink-3)',
+              background: upcomingWeek === w.week ? '#0d7490' : 'var(--bg-sunken)',
+              color: upcomingWeek === w.week ? '#fff' : 'var(--ink-3)',
               transition: 'all 0.15s',
-            }}>{w}W</button>
+            }}>
+              W{w.week}
+              {w.count ? <span style={{ marginLeft: 4, opacity: 0.75, fontWeight: 500 }}>{w.count}</span> : null}
+            </button>
           ))}
         </div>
         <span />
-        <Stat label="Parts"     value={upcomingParts.length} valueColor="#0d7490" />
-        <Stat label="Suppliers" value={upcomingStats.suppliers} />
-        <Stat label="Nearest"   value={upcomingStats.nearest ? fmtDate(upcomingStats.nearest) : '—'} />
+        <Stat label="Parts"     value={risk ? upcomingParts.length : dash} valueColor="#0d7490" />
+        <Stat label="Suppliers" value={risk ? upcomingStats.suppliers : dash} />
+        <Stat label="Nearest"   value={risk ? fmtDate(upcomingStats.nearest) : dash} />
         <HideBtn collapsed={upcomingCollapsed} onToggle={() => setUpcomingCollapsed(c => !c)} />
       </div>
       {!upcomingCollapsed && (
@@ -259,26 +297,27 @@ function RiskPartsPanel({ nopo, poActions }) {
             ))}
           </div>
           <div style={{ maxHeight: 220, overflowY: 'auto' }}>
-            {upcomingParts.length === 0
-              ? <div style={{ padding: '20px 14px', textAlign: 'center', color: 'var(--ink-4)', fontSize: 12 }}>No parts due in the next {upcomingWeeks} week{upcomingWeeks > 1 ? 's' : ''}</div>
-              : upcomingParts.map((p, i) => {
-                  const daysAway = Math.ceil((new Date(p.dueDate) - todayStart) / 86400000);
-                  const urgColor = daysAway <= 7 ? '#b8861b' : daysAway <= 14 ? '#0d7490' : 'var(--ink-3)';
+            {!risk
+              ? <Unavailable />
+              : upcomingParts.length === 0
+              ? <div style={EMPTY}>Nothing due in week {upcomingWeek}</div>
+              : upcomingParts.map(p => {
+                  const due = parseDay(dueOf(p));
+                  const daysAway = due ? Math.ceil((due - todayStart) / 86400000) : null;
+                  const urgColor = daysAway == null ? 'var(--ink-3)' : daysAway <= 7 ? '#b8861b' : daysAway <= 14 ? '#0d7490' : 'var(--ink-3)';
                   return (
-                    <div key={i} className="row-hover" style={{ ...ROW_BASE, gridTemplateColumns: upcoming.template }}>
-                      <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: p.poId ? 'var(--ink-2)' : 'var(--ink-4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.poId || '—'}</span>
-                      <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--sdc-blue)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.partNumber}</span>
-                      <span style={{ fontSize: 12, letterSpacing: '0.02em', textTransform: 'uppercase', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.partDesc}</span>
+                    <div key={p.id} className="row-hover" style={{ ...ROW_BASE, gridTemplateColumns: upcoming.template }}>
+                      <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: p.poNumber ? 'var(--ink-2)' : 'var(--ink-4)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.poNumber || '—'}</span>
+                      <span className="mono" style={{ fontSize: 11, fontWeight: 600, color: 'var(--sdc-blue)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.pn}</span>
+                      <span style={{ fontSize: 12, letterSpacing: '0.02em', textTransform: 'uppercase', color: 'var(--ink)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.desc}</span>
                       <span style={{ fontSize: 11, color: 'var(--ink-3)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.supplier || '—'}</span>
                       <span className="mono" style={{ fontWeight: 700, color: urgColor, fontSize: 11, whiteSpace: 'nowrap' }}>
-                        {fmtDate(p.dueDate)}
-                        <span style={{ fontSize: 9, fontWeight: 400, color: 'var(--ink-4)', marginLeft: 4 }}>in {daysAway}d</span>
+                        {fmtDate(dueOf(p))}
+                        {daysAway != null && <span style={{ fontSize: 9, fontWeight: 400, color: 'var(--ink-4)', marginLeft: 4 }}>in {daysAway}d</span>}
                       </span>
                       <span className="mono" style={{ color: 'var(--ink-3)', fontSize: 11, whiteSpace: 'nowrap' }}>{fmtDate(p.requiredDate)}</span>
-                      <span className="mono" style={{ color: 'var(--ink-3)', fontSize: 11, whiteSpace: 'nowrap' }}>{p.poDate ? fmtDate(p.poDate) : '—'}</span>
-                      <span className="mono" style={{ textAlign: 'right', fontSize: 11, color: p.price > 0 ? 'var(--ink-2)' : 'var(--ink-4)' }}>
-                        {p.price > 0 ? `$${Number(p.price).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : '—'}
-                      </span>
+                      <span className="mono" style={{ color: 'var(--ink-3)', fontSize: 11, whiteSpace: 'nowrap' }}>{fmtDate(p.poDate)}</span>
+                      <span className="mono" style={{ textAlign: 'right', fontSize: 11, color: p.unitPrice > 0 ? 'var(--ink-2)' : 'var(--ink-4)' }}>{money(p.unitPrice)}</span>
                     </div>
                   );
                 })
@@ -299,7 +338,7 @@ function ReadinessTab({ data, onDrillDown, highlightPoIds = [], onClearHighlight
     <div style={{ display: 'flex', flexDirection: 'column', gap: 0 }}>
       <TimelineRibbon job={job} poActions={data.poActions} onDrillDown={onDrillDown} />
 
-      <RiskPartsPanel nopo={data.nopo} poActions={data.poActions} />
+      <RiskPartsPanel procurement={data.procurement} />
 
       {/* Vendor Cards — always shown at bottom */}
       <div style={{ marginTop: 4 }}>

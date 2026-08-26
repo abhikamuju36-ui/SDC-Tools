@@ -106,6 +106,12 @@ function frontendMap(raw) {
       else                             mapped.job.kpis.blocked++;
     });
   });
+  // Local fallback only. In the app this KPI prefers the SDC Projects Reports
+  // app's own No-Purchase-Order count (see client/app.jsx and
+  // server/services/plannerClient.js) and drops to this figure only when that
+  // app is unreachable. This suite runs offline against cached demo data with
+  // no Reports app in the picture, so it exercises exactly that fallback —
+  // which is what the tests below are about.
   mapped.job.kpis.noPO = mapped.nopo.length;
   return mapped;
 }
@@ -887,7 +893,13 @@ function runGanttMappingTests(poRows1083, poActions1083) {
         `ready(${ready}) + close(${close}) + blocked(${blocked}) != assemblies(${assemblies})`);
     });
 
-    test('fe: KPI.noPO = length of deduplicated nopo array', () => {
+    // Guards the OFFLINE FALLBACK path only — see the note in the frontend
+    // mapper above. With the Reports app reachable, kpis.noPO is its
+    // `noPo.partCount` (a different and correct number: this local derivation
+    // ignores BOM release status and counts inventory pulls / in-house process
+    // schedules as procurement gaps). Do not read this test as a claim that
+    // the two agree.
+    test('fe: KPI.noPO = length of deduplicated nopo array (Reports app unavailable)', () => {
       eq(fe1083.job.kpis.noPO, fe1083.nopo.length,
         `kpis.noPO(${fe1083.job.kpis.noPO}) != nopo.length(${fe1083.nopo.length})`);
     });

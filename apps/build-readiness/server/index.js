@@ -16,6 +16,7 @@ if (process.env.ETO_HOST && process.env.ETO_HOST !== 'your-server-here') {
 const bomRoutes = require('./routes/bom');
 const readinessRoutes = require('./routes/readiness');
 const emailRoutes = require('./routes/emails');
+const procurementRoutes = require('./routes/procurement');
 const checkRoutes = require('./routes/check');
 const { requireSdcSession } = require('./sdcSessionAuth');
 
@@ -61,6 +62,7 @@ app.use('/api/check', checkRoutes);
 app.use('/api/bom', bomRoutes);
 app.use('/api/readiness', readinessRoutes);
 app.use('/api/emails', emailRoutes);
+app.use('/api/procurement', procurementRoutes);
 
 // Unmatched /api/* — return JSON 404 so callers get a structured error instead
 // of silently receiving the SPA HTML (which is what the catch-all below sends).

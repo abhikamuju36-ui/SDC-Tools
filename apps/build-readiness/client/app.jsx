@@ -374,9 +374,18 @@ function App() {
         }
         return res.json();
       }),
-      fetch(`/api/emails/${jobId}`).then(res => res.ok ? res.json() : { emails: [] })
+      fetch(`/api/emails/${jobId}`).then(res => res.ok ? res.json() : { emails: [] }),
+      // Delivery Slip / No Purchase Order / Upcoming Deliveries, computed by
+      // the SDC Projects Reports app (see server/routes/procurement.js). Its
+      // own route already answers 200 with { available: false, reason } for
+      // every failure mode, so this .catch only covers the request itself
+      // never completing; either way the three cards render an explicit
+      // unavailable state and the rest of the report is unaffected.
+      fetch(`/api/procurement/${jobId}`)
+        .then(res => res.ok ? res.json() : { available: false, reason: `Build Readiness server error ${res.status}.` })
+        .catch(e => ({ available: false, reason: e.message })),
     ])
-      .then(([raw, rawEmails]) => {
+      .then(([raw, rawEmails, procurement]) => {
         const mapped = {
           job: {
             id: raw.project.ProjectID,
@@ -435,6 +444,7 @@ function App() {
             ...p,
             parent: (p.parentPN ? `${p.parentPN} ` : '') + (p.parentDesc || p.parentPN || 'Loose Parts'),
           }))),
+          procurement,
         };
 
         mapped.readiness.forEach(s => {
@@ -445,8 +455,19 @@ function App() {
             else mapped.job.kpis.blocked++;
           });
         });
-        // Use globally-deduplicated noPo count — machine stats double-count shared parts
-        mapped.job.kpis.noPO = mapped.nopo.length;
+        // No-PO count. The Reports app's figure wins whenever it is available:
+        // it is what the Readiness tab's No Purchase Order card shows, and
+        // `mapped.nopo` is the old local derivation (bomTree.js findNoPoParts),
+        // which counts inventory pulls and in-house process schedules as gaps
+        // and ignores BOM release status — see server/services/plannerClient.js.
+        // Leaving the two side by side would have the same app contradict
+        // itself between this KPI, the PO tab's subtitle and that card.
+        // Falls back to the local count only when the Reports app is
+        // unreachable, so the KPI degrades to a rough number rather than to
+        // nothing.
+        mapped.job.kpis.noPO = procurement?.available
+          ? procurement.risk.noPo.partCount
+          : mapped.nopo.length;
 
         setData(mapped);
         saveRecentJob(String(jobId), mapped.job.name);

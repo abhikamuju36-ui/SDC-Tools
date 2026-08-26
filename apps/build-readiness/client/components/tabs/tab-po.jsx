@@ -73,7 +73,7 @@ function PoTab({ data, highlightPoIds = [], onClearHighlight }) {
         <div>
           <h1 style={{ fontSize: 24, fontWeight: 700, color: 'var(--fg-0)', margin: 0, letterSpacing: '-0.02em' }}>Procurement</h1>
           <div style={{ fontSize: 13, color: 'var(--fg-2)', marginTop: 4 }}>
-            Proactive procurement view · {data.nopo.length} parts with no PO · {lateCount} POs running late
+            Proactive procurement view · {data.procurement?.available ? data.procurement.risk.noPo.partCount : data.nopo.length} parts with no PO · {lateCount} POs running late
           </div>
         </div>
         <div className="search" style={{ width: 240, height: 32 }}>
