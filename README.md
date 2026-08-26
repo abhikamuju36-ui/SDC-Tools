@@ -76,8 +76,7 @@ pm2 startup   # follow printed command to auto-start on boot
 
 | Poller | Watches | Interval | Manual trigger |
 |--------|---------|----------|----------------|
-| Monorepo (`sdc-main-updater.js`) | `abhikamuju36-ui/SDC-Tools` `master` | 5 min | — |
-| Build Readiness | `abhikamuju36-ui/Build_Readiness_Report` (separate repo) | 2 min | `POST :4012/trigger` |
+| Monorepo (`sdc-main-updater.js`) — incl. Assemblies, **Build Readiness**, Calendar | `abhikamuju36-ui/SDC-Tools` `master` | 5 min | — |
 | SDC Scheduler | `danbelliveau2/SDC_Scheduler` `main` | 2 min | `POST :4013/trigger` |
 | State Logic Builder | `danbelliveau2/state_logic_builder` GitHub Releases | 5 min | `POST :4014/trigger` |
 

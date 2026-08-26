@@ -51,11 +51,14 @@ module.exports = {
   apps: [
 
     // ── SDC Updater Hub ──────────────────────────────────────────────────────
-    // Runs all 4 auto-updaters (monorepo, BRR, scheduler, statelogic) in one
+    // Runs all 3 auto-updaters (monorepo, scheduler, statelogic) in one
     // process — see scripts/sdc-updater-hub.js for why this is safe (each
     // updater's own error handling is unchanged; only merged the OS process).
     // Replaces the old separate sdc-updater / sdc-brr-updater /
     // sdc-scheduler-updater / sdc-statelogic-updater PM2 apps.
+    // The BRR updater was retired 2026-08-26 (it pulled Build Readiness from a
+    // stale separate repo and wiped the app's directories); apps/build-readiness
+    // is now deployed by sdc-main-updater like the other monorepo apps.
     // Electron shell gets OTA updates separately via electron-updater + release.yml.
     {
       name:          'sdc-updater-hub',

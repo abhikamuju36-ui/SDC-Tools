@@ -204,11 +204,37 @@ async function checkAndUpdate() {
       run('npm install');
     }
 
-    // 7. Rebuild Assemblies Library frontend only if its sources changed
-    const assembliesChanged = monorepoFiles.some(f => f.startsWith('apps/assemblies/'));
-    if (assembliesChanged) {
-      log('Assemblies Library changed — rebuilding frontend…');
-      run('npm run build --prefix apps/assemblies');
+    // 7. Rebuild any owned app whose frontend sources changed.
+    //
+    //    Both of these serve a Vite bundle out of client/dist, which is
+    //    gitignored — so checking the SOURCE out in step 4 is only half a
+    //    deploy. Without the build the app keeps serving the previous bundle
+    //    and the change is invisible to users, which is exactly the failure
+    //    seen on 2026-08-25 (apps/assemblies served a 2026-06-08 bundle,
+    //    carrying the pre-brand blue, while its source on disk was current).
+    //
+    //    Build Readiness was added here on 2026-08-26, when
+    //    apps/build-readiness/scripts/sdc-brr-updater.js was retired — see
+    //    sdc-updater-hub.js for why it had to go. Rebuilding the client was
+    //    the one useful thing that updater did, so it moved here rather than
+    //    being lost; without it, retiring it would have traded a destructive
+    //    updater for a silently stale bundle.
+    const FRONTEND_BUILDS = [
+      { prefix: 'apps/assemblies/', name: 'Assemblies Library' },
+      { prefix: 'apps/build-readiness/', name: 'Build Readiness' },
+    ];
+    for (const { prefix, name } of FRONTEND_BUILDS) {
+      if (!monorepoFiles.some(f => f.startsWith(prefix))) continue;
+      log(`${name} changed — rebuilding frontend…`);
+      // Non-fatal: a build failure must not abort the deploy before step 8's
+      // restart, or a server-side fix would be stranded by an unrelated
+      // frontend error. The app keeps its previous bundle and the failure is
+      // logged loudly.
+      try {
+        run(`npm run build --prefix ${prefix.slice(0, -1)}`);
+      } catch (buildErr) {
+        log(`  ${name} frontend build FAILED: ${buildErr.message} — serving the previous bundle.`);
+      }
     }
 
     // 8. Restart only the apps this updater owns.

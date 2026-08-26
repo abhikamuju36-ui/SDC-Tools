@@ -141,12 +141,11 @@ GitHub Actions (windows-latest runner) — .github/workflows/release.yml
 
 ### Backend servers (live, no shell release needed)
 
-One PM2 process, `sdc-updater-hub`, runs four independent pollers in a single Node process (merged from four separate PM2 apps for operational simplicity — each poller's own error handling is unchanged):
+One PM2 process, `sdc-updater-hub`, runs three independent pollers in a single Node process (merged from separate PM2 apps for operational simplicity — each poller's own error handling is unchanged):
 
 | Poller | Watches | Interval | Manual trigger | Scope of what it overwrites |
 |---|---|---|---|---|
-| `sdc-main-updater.js` | `abhikamuju36-ui/SDC-Tools` (this monorepo's `master`) | 5 min | — | Everything **except** paths owned by the two updaters below; selective `git checkout` per changed file, `git reset --soft`; restarts `sdc-assemblies`, `sdc-readiness`, `sdc-calendar` |
-| `sdc-brr-updater.js` (inside `apps/build-readiness/scripts/`) | `abhikamuju36-ui/Build_Readiness_Report` (separate repo) | 2 min | `POST :4012/trigger` | `client/`, `server/{routes,services,lib}/`, `tests/`; restarts `sdc-readiness` |
+| `sdc-main-updater.js` | `abhikamuju36-ui/SDC-Tools` (this monorepo's `master`) | 5 min | — | Everything **except** paths owned by the two updaters below; selective `git checkout` per changed file, `git reset --soft`; rebuilds the Assemblies and Build Readiness Vite bundles when their sources change; restarts `sdc-assemblies`, `sdc-readiness`, `sdc-calendar`. Only fast-forwards — it skips the update when local `HEAD` is ahead of or diverged from the remote |
 | `server-auto-update.js` (inside `SDC_Scheduler/scripts/`) | `danbelliveau2/SDC_Scheduler` `main` | 2 min | `POST :4013/trigger` | **Whole repo**, `git reset --hard origin/main` — any local uncommitted change here is destroyed within 2 minutes |
 | `server-auto-update.js` (inside `apps/state-logic/scripts/`) | `danbelliveau2/state_logic_builder` GitHub *Releases* (not every commit) | 5 min | `POST :4014/trigger` | `src/`, `public/`, `index.html` only — `server.js`/DB files/`.env` preserved |
 

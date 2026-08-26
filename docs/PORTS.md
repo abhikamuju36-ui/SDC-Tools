@@ -26,7 +26,6 @@ The Electron shell itself is a desktop client, not a server — it has no produc
 | Port | Purpose | Owner |
 |-----:|---------|-------|
 | 4100 | Read-only MCP database server | `SDC_Scheduler/mcp/sdc-db-server.mjs` |
-| 4012 | Manual trigger — `POST /trigger` re-checks Build Readiness's external repo immediately | `apps/build-readiness/scripts/sdc-brr-updater.js` (runs inside `sdc-updater-hub`) |
 | 4013 | Manual trigger — `POST /trigger` re-checks SDC Scheduler's external repo immediately | `SDC_Scheduler/scripts/server-auto-update.js` (runs inside `sdc-updater-hub`) |
 | 4014 | Manual trigger — `POST /trigger` re-checks State Logic Builder's external repo immediately | `apps/state-logic/scripts/server-auto-update.js` (runs inside `sdc-updater-hub`) |
 
