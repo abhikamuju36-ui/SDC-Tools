@@ -125,3 +125,138 @@ export async function fetchSchedulerProjectJobNumbers(): Promise<Set<string>> {
     return new Set();
   }
 }
+
+// ── FAT events (2026-08-27) ─────────────────────────────────────────────────
+//
+// The Scheduler is the authoritative source for FAT dates, and it holds them as
+// ORDINARY TASKS — there is no fat_date column on projects and no dedicated
+// milestone table. What identifies a FAT is the task NAME: "FAT", "Perform FAT",
+// "1138 - Shade-O-Matic FAT", "FAT - Bifacial 3", "Pre FAT"… (85 rows are the
+// bare word alone; the rest are free text a scheduler typed). Verified against
+// the live database on 2026-08-27 — 42 distinct spellings, every one of them
+// containing the word.
+//
+// So the match is a WORD-boundary regexp, not a LIKE '%FAT%': the latter also
+// catches any future task with "fatigue" or "fatal" in its name, and this feeds a
+// count managers read as a commitment. `is_action = 0` drops the Scheduler's
+// action items, which are to-dos hanging off a schedule rather than scheduled
+// work.
+//
+// Pre-FATs are returned rather than filtered out, tagged `kind: "pre"`, because
+// they are real scheduled events the execution team plans around — but they are
+// NOT the customer-facing FAT, so every count that means "how many FATs" must
+// exclude them. Classifying here rather than at each call site keeps that one
+// decision in one place.
+//
+// Fail-SOFT, like fetchSchedulerProjectJobNumbers: an unconfigured or unreachable
+// Scheduler yields null — distinct from an empty array, so the dashboard can say
+// "Scheduler unavailable" instead of the far worse "0 FATs".
+export type SchedulerFatEvent = {
+  taskId: number;
+  name: string;
+  /** Scheduler project (schedule) name — shown so two schedules for one job are visible rather than silently merged. */
+  project: string;
+  /** ETC job number stamped on the Scheduler project. */
+  jobNumber: string;
+  /** "YYYY-MM-DD" — the Scheduler stores dates as strings. */
+  date: string;
+  /** Whoever the FAT task itself is assigned to, if anyone. */
+  assignee: string | null;
+  /** A "Pre FAT"/"Pre-FAT"/"Internal Pre-FAT" is a readiness run, not the FAT. */
+  kind: "fat" | "pre";
+  progress: number;
+};
+
+// "Pre FAT", "Pre-FAT", "PreFAT", "Internal Pre-FAT for all NEWT wire types" —
+// all four spellings are live in the database today.
+function isPreFat(name: string): boolean {
+  return /pre[\s-]*fat/i.test(name);
+}
+
+export async function fetchSchedulerFatEvents(): Promise<SchedulerFatEvent[] | null> {
+  if (!isSchedulerDbConfigured()) return null;
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT t.id, t.name, t.project, p.job_number, t.start_date, t.assignee, t.progress
+         FROM tasks t
+         JOIN projects p ON p.name = t.project
+        WHERE p.job_number IS NOT NULL AND p.job_number <> ''
+          AND p.is_template = 0
+          AND t.is_action = 0
+          AND t.start_date IS NOT NULL AND t.start_date <> ''
+          AND t.name REGEXP '(^|[^A-Za-z])FAT([^A-Za-z]|$)'
+        ORDER BY t.start_date`,
+    );
+    return rows.map((r) => {
+      const name = String(r.name);
+      return {
+        taskId: Number(r.id),
+        name,
+        project: String(r.project),
+        jobNumber: String(r.job_number).trim(),
+        // Scheduler date columns are VARCHAR(32); everything live is already
+        // "YYYY-MM-DD", and slicing keeps a stray time component out.
+        date: String(r.start_date).slice(0, 10),
+        assignee: r.assignee ? String(r.assignee).trim() || null : null,
+        kind: isPreFat(name) ? "pre" : "fat",
+        progress: r.progress == null ? 0 : Number(r.progress),
+      };
+    });
+  } catch {
+    return null;
+  }
+}
+
+// ── Who ME/CE is, per job (2026-08-27) ──────────────────────────────────────
+//
+// A FAT task almost never carries a department itself (checked live: of the FAT
+// rows above, `sub_department` is null on all but a handful). The discipline
+// breakdown therefore comes from the SCHEDULE, not from the FAT row: which named
+// mechanical and controls engineers are assigned anywhere on that job's schedule.
+//
+// Deliberately NOT "does the project have any mech/controls task" — every one of
+// the 14 projects with an upcoming FAT has both, so that test answers "yes" for
+// everything and tells a manager nothing. Named assignees do vary, and they are
+// also the answer to "who owns this FAT", which is the same lookup.
+//
+// Placeholders ("ME Placeholder", "CE Placeholder") are excluded by the same
+// name convention fetchSchedulerTeam/fetchSchedulerPlaceholders already use —
+// an unfilled seat is not a person, and counting it as ME involvement would
+// report staffing that does not exist.
+export type SchedulerJobDisciplineOwners = {
+  /** ETC job number → distinct named engineers on that job's mech tasks. */
+  me: Map<string, string[]>;
+  controls: Map<string, string[]>;
+};
+
+export async function fetchSchedulerJobDisciplineOwners(): Promise<SchedulerJobDisciplineOwners> {
+  const empty: SchedulerJobDisciplineOwners = { me: new Map(), controls: new Map() };
+  if (!isSchedulerDbConfigured()) return empty;
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT DISTINCT p.job_number, t.sub_department, t.assignee
+         FROM tasks t
+         JOIN projects p ON p.name = t.project
+        WHERE p.job_number IS NOT NULL AND p.job_number <> ''
+          AND p.is_template = 0
+          AND t.sub_department IN ('mech', 'controls')
+          AND t.assignee IS NOT NULL AND t.assignee <> ''
+          AND t.assignee NOT LIKE '%Placeholder%'
+        ORDER BY p.job_number, t.assignee`,
+    );
+    const out: SchedulerJobDisciplineOwners = { me: new Map(), controls: new Map() };
+    for (const r of rows) {
+      const job = String(r.job_number).trim();
+      const bucket = String(r.sub_department) === "mech" ? out.me : out.controls;
+      const list = bucket.get(job) ?? [];
+      const name = String(r.assignee).trim();
+      if (name && !list.includes(name)) list.push(name);
+      bucket.set(job, list);
+    }
+    return out;
+  } catch {
+    return empty;
+  }
+}

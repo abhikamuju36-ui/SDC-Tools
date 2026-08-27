@@ -6234,3 +6234,144 @@ ok and the lock released.
   Scheduler, hiring, or procurement, and the Scheduler roster pull was retired
   2026-08-13. `revalidatePath` names five specific pages; there is no global
   revalidation and nothing rebuilds or remounts the application.
+
+---
+
+## 68. Dashboard redesigned into a management/execution overview (2026-08-27)
+
+### What it was
+
+Four count KPIs (Total Jobs, Active Jobs, Active Employees, ETC Entries Needing
+Review), a `Manage Jobs` button, and the refresh-status card — on a page wide
+enough for far more. It told a manager how many jobs existed and nothing about
+the work: not which customers, not what is being tested this month, not what
+capacity the execution departments have. Most of the viewport was empty.
+
+### The audit that came first
+
+Every figure the redesign asks for was traced to an existing source before any of
+it was built. Five findings changed the design:
+
+* **"Head Start" is a STATUS, not a project type.** `JOB_STATUSES` is
+  `Active | HeadStart | Complete`; `VALID_JOB_TYPES` is `Custom | Duplicate |
+  Hybrid | Service | T&M`. A Head Start job is *also* a Custom or a Duplicate, so
+  it cannot be a sixth bar without breaking the one property that makes the type
+  strip trustworthy — that its rows sum to exactly the Active Jobs KPI. It gets
+  its own KPI and its own row *below* the bars, clearly labelled as a status.
+* **FAT dates live in the Scheduler as ordinary TASKS, identified only by name.**
+  There is no `fat_date` column and no milestone table. 42 distinct spellings are
+  live ("FAT", "Perform FAT", "1138 - Shade-O-Matic FAT", "FAT - Bifacial 3",
+  "Pre FAT"…), 85 rows being the bare word alone. So the match is a word-boundary
+  regexp — not a `%FAT%` LIKE, which would also catch a future "fatigue" task —
+  and pre-FATs are tagged and excluded from every count that means "how many
+  FATs", because a readiness run is not the customer-facing test.
+* **ME/CE cannot come from the FAT row.** `sub_department` is null on nearly every
+  FAT task. And the obvious project-level test — "does this job have any
+  mech/controls task" — answers *yes* for all 14 jobs with an upcoming FAT, so it
+  tells a manager nothing. The breakdown instead uses the NAMED mech/controls
+  assignees on that job's schedule, excluding the Scheduler's placeholder seats
+  ("ME Placeholder") by the same convention `fetchSchedulerTeam` already uses. An
+  unfilled seat is not a person, and counting it would report staffing that does
+  not exist.
+* **Hours already have an authoritative monthly-by-department source.**
+  `JobHoursDetail.standardDepartment` (`PM | Engineering | Shop | Undefined`) is
+  the stored Paylocity punch classification, filtered by the denormalised `month`
+  column. Power BI is not read anywhere. Capacity comes from
+  `workforce-capacity-policy.ts`'s published holiday calendar, and headcount runs
+  the Employees tab's own `resolveEmployeeGroup` → `workforceGroupForCardKey` →
+  `rollupGroup` chain — so a mapping change there moves this card too, and there
+  is no second department table.
+* **Customer Visits do not exist anywhere.** Audited the Scheduler's MySQL (no
+  visit table, no visit column on `projects` or `tasks`), this app's schema (no
+  visit model, nothing on `Job`), and `ProjectRelease.details` (buyer, PO,
+  warranty, budget — no visit date). The only visit-shaped rows in the entire
+  Scheduler are two ad-hoc task names somebody typed: "Stuller Onsite Visit" and
+  "Customer Onsite for Pre-FAT". Two rows out of ~2,300 tasks.
+
+### What was built
+
+`lib/dashboard-overview.ts` — **one** parallel pass of five reads (jobs,
+employees, punch hours, Scheduler FATs, Scheduler discipline owners) producing
+every figure on the page. Two structural rules hold it together:
+
+1. **One data pass.** No card fetches anything of its own. The Active Jobs KPI,
+   the five type bars and the customer cards are three views of the *same* jobs
+   array read once, so they cannot disagree the way three count queries could.
+2. **One month.** `DashboardMonthSelect` sets `?m=YYYY-MM` and the server rebuilds
+   the whole page from that string — so the FAT count, the ME/CE split,
+   Engineering hours and Shop hours move together by construction rather than by
+   four controls being kept in step.
+
+Layout: a five-cell KPI strip (Active Jobs · FATs this month · Engineering
+hours+headcount · Shop hours+headcount · Head Start), then Active Jobs by type
+beside Active Jobs by customer, then the FAT execution section (nearest-first list
+with owners and a days-until chip, beside the month's ME/CE breakdown), then the
+Customer Visits panel. Every section is ONE bordered frame with hairline dividers,
+not N individually bordered cards — the same trick the ETC KPI strip uses, and
+what lets all of this fit where four cards used to sit.
+
+`Job.type` and `Job.customer` filters were added to `/jobs` so the cards drill:
+clicking "Duplicate · 24" lands on those 24 rows, and a chip on the Jobs page
+names the filter so the narrowed list is never mistaken for the whole book.
+
+### Honest gaps, stated on the page
+
+* **Active Jobs is not month-scoped.** `Job.status` is the current state and
+  nothing records what it was in March, so a month-scoped active count would be a
+  number about today wearing a label about the past. The section says "current
+  status" instead.
+* **Customer Visits render as an explicit "no data source yet" panel** behind
+  `lib/customer-visits.ts`, which documents the full audit above and is the single
+  seam a real source plugs into — the layout and the month filter are already
+  wired to it. Inferring visits from free-text task names was rejected: the count
+  would silently change meaning the first time somebody worded a task differently,
+  and would miss every visit nobody wrote a task for. **Open with Mike:** should a
+  visit be a first-class milestone on a project's timeline, or one visit date per
+  project?
+* **No fake zeros.** A month with no punch rows reports `null`, not `0`. An
+  unreachable Scheduler reports "Scheduler unavailable", not "0 FATs". A year with
+  no holiday calendar entered (only 2026 today) says so on the card rather than
+  showing a bare dash beside a live headcount.
+* **Customer strings are grouped exactly as stored**, no fuzzy merging — the
+  Projects page groups the same way, so the cards reconcile against it. The live
+  data does contain near-duplicate spellings ("FIRST SOLAR, INC." vs "FIRST SOLAR
+  INC." vs "First Solar"), which is a data-quality question for the Projects
+  page's Customer field, not something to paper over with a number nobody can
+  trace to a row.
+* **ME + CE do not sum to the FAT total**, and the panel says so — most FATs
+  involve both disciplines, and any with neither named are called out separately.
+
+Preserved unchanged: the Data Quality tab and its issue badge, `Manage Jobs`, and
+the refresh-status card (moved to the bottom — it is a caveat on the figures, not
+one of them).
+
+### Verified
+
+`scripts/audit-dashboard-reconciliation.ts` re-derives every figure independently
+— a second count query, a second read of the raw Scheduler rows, a second walk of
+the employee department mapping — and all 21 checks pass against live data for
+2026-08:
+
+| check | result |
+|---|---|
+| Active total vs `prisma.count` | 59 = 59 |
+| Type counts sum to active total | 27+24+4+0+4 = 59 |
+| Customer counts / distinct job ids / type mixes | 59 = 59 = 59, across 26 customers |
+| FAT count vs distinct (job, date) in Scheduler | 7 = 7 (2 pre-FATs, counted separately) |
+| ME/CE bounded by FAT total, no placeholder counted | ME 6, CE 5 of 7; 1 unstaffed |
+| Engineering / Shop booked hours vs `JobHoursDetail` | 2,269 and 3,010 exact |
+| Headcount vs the department mapping | Engineering 26 (ME 10 / CE 11 / Service 5), Shop 26 (MFG 10 / Wire 9 / Build 7) |
+| Head Start count | 3 = 3 |
+| Month control moves monthly figures, not Active Jobs | Jul: 4 FATs, 2,902/3,739h → Aug: 7 FATs, 2,269/3,010h; active 59 both |
+| Future month reports null hours, not 0 | `[null, null]` |
+
+Also clean: `npx tsc --noEmit`, `npx eslint` on every touched file, and a full
+production `next build`. The unit suite is 1,432 pass / 5 fail, and those five
+failures reproduce on a stashed tree — they predate this change and are unrelated
+to it (build-readiness sync, change classification, ETC clear persistence, job
+cost inventory sync, a procurement risk-card assertion).
+
+Browser verification was NOT done: the app requires a sign-in, and entering
+credentials is outside what this agent will do. The production build proves the
+page compiles and its server/client boundaries are valid; the visual pass is left
+to a signed-in reviewer.

@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
-import { validJobTypeFilter, compareJobIds } from "@/lib/job-filters";
+import { validJobTypeFilter, VALID_JOB_TYPES, compareJobIds } from "@/lib/job-filters";
 import { PageTitle } from "@/components/ui/Typography";
 import { card, BUTTON_PRIMARY } from "@/components/ui/classnames";
 
@@ -15,9 +15,9 @@ const STATUS_FILTERS = [
 export default async function JobsPage({
   searchParams,
 }: {
-  searchParams: Promise<{ q?: string; status?: string }>;
+  searchParams: Promise<{ q?: string; status?: string; type?: string; customer?: string }>;
 }) {
-  const { q, status } = await searchParams;
+  const { q, status, type, customer } = await searchParams;
 
   const where: Prisma.JobWhereInput = { ...validJobTypeFilter };
   if (q) {
@@ -27,6 +27,15 @@ export default async function JobsPage({
     ];
   }
   if (status) where.status = status;
+  // `type` and `customer` (2026-08-27) exist so the redesigned Dashboard's
+  // project-type and customer cards are drillable — clicking "Duplicate · 24"
+  // lands on those 24 rows rather than on the unfiltered list. Both are EXACT
+  // matches on the stored value, deliberately: the dashboard groups on
+  // VALID_JOB_TYPES and on the customer string exactly as stored, so an exact
+  // filter here is what makes the drilled row count equal the number clicked.
+  // `type` is intersected with, never replaces, validJobTypeFilter's gate.
+  if (type && (VALID_JOB_TYPES as readonly string[]).includes(type)) where.type = type;
+  if (customer) where.customer = customer;
 
   const jobs = await prisma.job.findMany({
     where,
@@ -38,6 +47,10 @@ export default async function JobsPage({
     const qs = new URLSearchParams();
     if (q) qs.set("q", q);
     if (f.status) qs.set("status", f.status);
+    // A status tab must narrow the current view, not silently drop the type or
+    // customer the Dashboard drilled in on.
+    if (type) qs.set("type", type);
+    if (customer) qs.set("customer", customer);
     const query = qs.toString();
     return {
       key: f.key,
@@ -65,6 +78,8 @@ export default async function JobsPage({
       <div className="mb-5 flex flex-wrap gap-2.5">
         <form className="flex flex-1 gap-2.5">
           <input type="hidden" name="status" value={status ?? ""} />
+          <input type="hidden" name="type" value={type ?? ""} />
+          <input type="hidden" name="customer" value={customer ?? ""} />
           <div className="flex flex-1 items-center gap-2.5 rounded-lg border border-sdc-border bg-white px-3.5">
             <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className="shrink-0 text-sdc-gray-400">
               <circle cx="11" cy="11" r="8" />
@@ -96,6 +111,27 @@ export default async function JobsPage({
           ))}
         </div>
       </div>
+
+      {/* Arriving here from a Dashboard card, the list is filtered by something
+          no control on this page shows. Without this chip the page reads as "we
+          only have 24 jobs", which is the wrong conclusion to hand somebody. */}
+      {(type || customer) && (
+        <div className="mb-5 flex flex-wrap items-center gap-2 text-sm">
+          <span className="font-semibold text-sdc-gray-600">Filtered by</span>
+          {type && (
+            <span className="rounded-full bg-sdc-blue-light px-3 py-1 text-label font-semibold text-sdc-blue-dark">Type: {type}</span>
+          )}
+          {customer && (
+            <span className="rounded-full bg-sdc-blue-light px-3 py-1 text-label font-semibold text-sdc-blue-dark">Customer: {customer}</span>
+          )}
+          <Link
+            href={`/jobs${status ? `?status=${encodeURIComponent(status)}` : ""}`}
+            className="text-label font-semibold text-sdc-blue underline-offset-2 hover:underline"
+          >
+            Clear
+          </Link>
+        </div>
+      )}
 
       <div className={`${card("p-0")} overflow-x-auto`}>
         <div className="grid min-w-[900px] grid-cols-[40px_76px_minmax(240px,1fr)_180px_110px_120px] items-center gap-4 border-b border-sdc-border-soft bg-sdc-gray-50/60 px-6 py-3">
