@@ -15,6 +15,26 @@ const nextConfig: NextConfig = {
   distDir: process.env.NEXT_DIST_DIR || ".next",
   allowedDevOrigins: ["server-app1", "localhost"],
   serverExternalPackages: ["@azure/msal-node-extensions"],
+  // ── Pin the file-tracing root to THIS app (2026-08-27) ────────────────────
+  //
+  // This app is its own git repo that happens to sit inside the SDC Tools
+  // monorepo's folder, so two lockfiles are visible: its own, and
+  // "Centrailized library/package-lock.json" one level up. Next infers a
+  // tracing root when it sees more than one, picked the OUTER directory, and
+  // wrote a four-line warning into the PM2 error log on every single boot —
+  // enough noise to bury a real error, which is the only reason to fix it.
+  //
+  // `__dirname` is this folder, which is the correct root: nothing this app
+  // needs at runtime lives above it (the monorepo root holds the OTHER apps,
+  // and this one imports none of them). `__dirname` rather than
+  // `import.meta.dirname` because package.json declares no `"type": "module"`,
+  // so the config is loaded as CommonJS.
+  //
+  // Not a no-op even without `output: "standalone"`: the inferred root also
+  // decides which files a build traces, so pinning it narrows tracing to this
+  // app instead of walking the whole monorepo. Verified with a full production
+  // build after the change.
+  outputFileTracingRoot: __dirname,
 };
 
 export default nextConfig;
