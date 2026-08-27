@@ -202,23 +202,57 @@ export function DashboardOverviewPanel({
   const fatHref = (r: FatRow) =>
     schedulerJobNumbers.has(r.jobNumber) ? `${schedulerBaseUrl}/?job=${encodeURIComponent(r.jobNumber)}&view=schedule` : null;
 
-  const hoursSub = (bookedHours: number | null) => {
-    if (bookedHours == null) {
+  // ── What these two cards lead with (2026-08-27) ───────────────────────────
+  //
+  // The headline is HOURS ACTUALLY BOOKED. It used to be `capacityHours`, and
+  // that was the whole of the "Engineering and Shop both say 4,056h" bug:
+  // capacity is headcount x a policy figure, Engineering and Shop happen to
+  // have 26 people each, and 26 x 156h is 4,056 for both. Nothing was shared or
+  // cached between the cards — they were each correctly reporting a number
+  // nobody wanted, and the real hours (2,269 and 3,011 for 2026-08) were in the
+  // small print underneath.
+  //
+  // Capacity is still here, as the denominator it always was. A planned figure
+  // must never be the number a manager reads as hours worked.
+  const capacityYear = data.month.slice(0, 4);
+
+  const hoursValue = (w: (typeof data.workforce)[number]) =>
+    w.bookedHours == null ? "—" : `${w.bookedHours.toLocaleString()}h`;
+
+  // Where the number can be traced to its punch rows. The Hours tab has no
+  // "month" or "standardDepartment" FILTER param — its `departments` filter is
+  // the employee's raw HR department string, a different field that has been
+  // confused with standardDepartment here once already (2026-08-17). So this
+  // scopes the month with from/to and preselects the Standard Department
+  // grouping, which lands on a page whose Engineering and Shop rows are the two
+  // figures these cards show.
+  const [hoursYear, hoursMonth] = data.month.split("-").map(Number);
+  const lastDay = new Date(hoursYear, hoursMonth, 0).getDate();
+  const hoursHref =
+    `/hours?from=${data.month}-01&to=${data.month}-${String(lastDay).padStart(2, "0")}` +
+    `&groupBy=standardDepartment`;
+
+  const hoursSub = (w: (typeof data.workforce)[number]) => {
+    const people = `${w.headcount} employees`;
+    if (w.bookedHours == null) {
       // No punch rows exist for this month at all. Saying "0 hrs booked" here
       // would be a fake zero — the figure is unknown, not nil.
-      return data.monthInFuture ? "no hours booked yet — future month" : "no hours data for this month";
+      return `${people} · ${data.monthInFuture ? "no hours booked yet — future month" : "no hours data for this month"}`;
     }
-    return `${bookedHours.toLocaleString()} hrs booked${data.isCurrentMonth ? " so far" : ""}`;
+    // Capacity comes from a published, hand-entered holiday calendar, and only
+    // the years actually in workforce-capacity-policy.ts have one. Selecting a
+    // month outside those years must say WHY the figure is missing rather than
+    // silently dropping the comparison.
+    if (w.capacityHours == null || w.capacityHours === 0) {
+      return `${people} · no holiday calendar for ${capacityYear} yet`;
+    }
+    const capacity = `${w.capacityHours.toLocaleString()}h capacity`;
+    // A percentage of a month still being worked reads as under-utilisation
+    // when it only means the month is half over, so a live month states that
+    // instead of computing one.
+    if (data.isCurrentMonth) return `${people} · month in progress · ${capacity}`;
+    return `${people} · ${Math.round((w.bookedHours / w.capacityHours) * 100)}% of ${capacity}`;
   };
-  // Capacity comes from a published, hand-entered holiday calendar, and only the
-  // years actually in workforce-capacity-policy.ts have one. Selecting a month
-  // outside those years must say WHY the figure is missing — a bare em dash next
-  // to a live employee count reads as a bug.
-  const capacityYear = data.month.slice(0, 4);
-  const capacitySub = (w: (typeof data.workforce)[number]) =>
-    w.capacityHours == null
-      ? `${w.headcount} employees · no holiday calendar for ${capacityYear} yet`
-      : `${w.headcount} employees · ${hoursSub(w.bookedHours)}`;
 
   return (
     <div className="flex flex-col gap-7">
@@ -243,17 +277,22 @@ export function DashboardOverviewPanel({
           }
           tone={data.fats.available ? "navy" : "muted"}
         />
+        {/* "Hours" in the label, because the number is hours worked and the card
+            used to show capacity under the same wording. The link goes to the
+            Hours explorer rather than /employees now: that is where this figure
+            can be traced to its punch rows, and the headcount in the sub-line
+            still reaches the roster from the Employees tab itself. */}
         <Kpi
-          label={`Engineering · ${label}`}
-          value={eng.capacityHours == null ? "—" : `${eng.capacityHours.toLocaleString()}h`}
-          sub={capacitySub(eng)}
-          href="/employees"
+          label={`Engineering Hours · ${label}`}
+          value={hoursValue(eng)}
+          sub={hoursSub(eng)}
+          href={hoursHref}
         />
         <Kpi
-          label={`Shop · ${label}`}
-          value={shop.capacityHours == null ? "—" : `${shop.capacityHours.toLocaleString()}h`}
-          sub={capacitySub(shop)}
-          href="/employees"
+          label={`Shop Hours · ${label}`}
+          value={hoursValue(shop)}
+          sub={hoursSub(shop)}
+          href={hoursHref}
         />
         <Kpi
           label="Head Start Projects"
