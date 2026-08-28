@@ -1,7 +1,6 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import Link from "next/link";
 import type { CustomerSummary } from "@/lib/dashboard-overview";
 import { jobTypeColor, JOB_TYPE_LEGEND } from "@/lib/job-type-colors";
 
@@ -35,14 +34,15 @@ function CustomerRow({
   c,
   activeTotal,
   max,
-  expanded,
-  onToggle,
+  open,
+  onOpen,
 }: {
   c: CustomerSummary;
   activeTotal: number;
   max: number;
-  expanded: boolean;
-  onToggle: () => void;
+  /** True when THIS customer's drill-through is the one currently open below the charts. */
+  open: boolean;
+  onOpen: () => void;
 }) {
   const pct = activeTotal === 0 ? 0 : Math.round((c.activeCount / activeTotal) * 1000) / 10;
   // Bar track width relative to the biggest customer; segments then divide THAT
@@ -50,15 +50,19 @@ function CustomerRow({
   const trackPct = max === 0 ? 0 : (c.activeCount / max) * 100;
 
   return (
-    <div className="bg-white">
-      <div className="flex items-center gap-2 px-3 py-1.5 motion-interactive hover:bg-sdc-blue-light/25">
-        {/* The name is a link to the filtered job list; the row's expand control
-            is a separate button, so clicking the name never toggles the drill. */}
-        <Link
-          href={`/jobs?status=Active&customer=${encodeURIComponent(c.name)}`}
-          title={c.name}
-          className="w-40 shrink-0 truncate text-sm font-medium text-sdc-navy hover:underline sm:w-48"
-        >
+    // The WHOLE row is one control that opens this customer's jobs in the panel
+    // below the charts. It was a <Link> to /jobs, which left the Dashboard and
+    // lost the chart you were reading; a <button> both keeps you here and stops
+    // the row being middle-clicked into a new tab.
+    <button
+      type="button"
+      onClick={onOpen}
+      aria-pressed={open}
+      aria-label={`Show the ${c.activeCount} active job${c.activeCount === 1 ? "" : "s"} for ${c.name}`}
+      className={`block w-full text-left motion-interactive ${open ? "bg-sdc-blue-light" : "bg-white hover:bg-sdc-blue-light/25"}`}
+    >
+      <div className="flex items-center gap-2 px-3 py-1.5">
+        <span title={c.name} className="w-40 shrink-0 truncate text-sm font-medium text-sdc-navy sm:w-48">
           {c.name}
           {c.internal && (
             <span
@@ -68,15 +72,9 @@ function CustomerRow({
               Int
             </span>
           )}
-        </Link>
+        </span>
 
-        <button
-          type="button"
-          onClick={onToggle}
-          aria-expanded={expanded}
-          aria-label={`${expanded ? "Hide" : "Show"} ${c.name} job numbers`}
-          className="flex min-w-0 flex-1 items-center gap-2"
-        >
+        <span className="flex min-w-0 flex-1 items-center gap-2">
           <span className="h-3.5 min-w-0 flex-1 overflow-hidden rounded-sm bg-sdc-gray-100">
             <span className="flex h-full" style={{ width: `${trackPct}%` }}>
               {c.byType.map((t) => (
@@ -93,27 +91,24 @@ function CustomerRow({
             {c.activeCount}
           </span>
           <span className="w-11 shrink-0 text-right text-label tabular-nums text-sdc-gray-400">{pct}%</span>
-        </button>
+        </span>
       </div>
-
-      {expanded && (
-        <div className="flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-sdc-border-soft bg-sdc-gray-50 px-3 py-1.5 pl-[10.5rem] sm:pl-[13.5rem]">
-          {c.byType.map((t) => (
-            <span key={t.type} className="inline-flex items-center gap-1 text-label text-sdc-gray-600">
-              <span className={`inline-block h-2 w-2 rounded-sm ${jobTypeColor(t.type).swatch}`} aria-hidden />
-              {t.type} <span className="font-bold tabular-nums text-sdc-navy">{t.count}</span>
-            </span>
-          ))}
-          <span className="text-label text-sdc-gray-400">· {c.jobIds.join(", ")}</span>
-        </div>
-      )}
-    </div>
+    </button>
   );
 }
 
-export function CustomerBars({ customers, activeTotal }: { customers: CustomerSummary[]; activeTotal: number }) {
+export function CustomerBars({
+  customers,
+  activeTotal,
+  onOpen,
+  isOpen,
+}: {
+  customers: CustomerSummary[];
+  activeTotal: number;
+  onOpen: (customerName: string) => void;
+  isOpen: (customerName: string) => boolean;
+}) {
   const [scope, setScope] = useState<Scope>(10);
-  const [expanded, setExpanded] = useState<string | null>(null);
 
   // `customers` already arrives sorted by active count descending from
   // dashboard-overview.ts — the same order the cards used. Not re-sorted here,
@@ -179,8 +174,8 @@ export function CustomerBars({ customers, activeTotal }: { customers: CustomerSu
             c={c}
             activeTotal={activeTotal}
             max={max}
-            expanded={expanded === c.name}
-            onToggle={() => setExpanded((prev) => (prev === c.name ? null : c.name))}
+            open={isOpen(c.name)}
+            onOpen={() => onOpen(c.name)}
           />
         ))}
       </div>

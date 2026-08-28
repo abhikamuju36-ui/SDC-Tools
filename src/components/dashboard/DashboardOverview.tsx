@@ -4,6 +4,7 @@ import { SectionTitle } from "@/components/ui/Typography";
 import type { DashboardOverview as Overview, FatRow, JobTypeBreakdown } from "@/lib/dashboard-overview";
 import { CustomerBars } from "@/components/dashboard/CustomerBars";
 import { jobTypeColor, rankByCount } from "@/lib/job-type-colors";
+import { JobDrillPanel, useJobDrill } from "@/components/dashboard/JobDrillPanel";
 
 // ── The Dashboard's Overview panel (2026-08-27 redesign) ────────────────────
 //
@@ -86,15 +87,33 @@ function Kpi({
 // half the track and the short ones indistinguishable. Scaling to the leader
 // uses the full width and makes the ranking readable at a glance — the count and
 // the percent-of-total sit at the end, so no figure changes, only the scale.
-function TypeRow({ row, max, href }: { row: JobTypeBreakdown; max: number; href: string }) {
+// Clicking a bar opens the drill-through below the charts — it does NOT navigate.
+// A <button>, not a <Link>: it changes what this page shows rather than going
+// somewhere, so it must not be middle-clickable into a new tab or followed by a
+// crawler, and it announces its state with aria-pressed.
+function TypeRow({
+  row,
+  max,
+  onOpen,
+  open,
+}: {
+  row: JobTypeBreakdown;
+  max: number;
+  onOpen: () => void;
+  open: boolean;
+}) {
   const empty = row.count === 0;
   const color = jobTypeColor(row.type);
   return (
-    <Link
-      href={href}
-      aria-disabled={empty}
+    <button
+      type="button"
+      onClick={onOpen}
+      disabled={empty}
+      aria-pressed={open}
       title={`${row.type}: ${row.count} active job${row.count === 1 ? "" : "s"} (${row.pct}% of the active book)`}
-      className={`flex items-center gap-3 bg-white px-4 py-2 ${empty ? "pointer-events-none opacity-40" : "motion-interactive hover:bg-sdc-blue-light/25"}`}
+      className={`flex w-full items-center gap-3 px-4 py-2 text-left ${
+        empty ? "cursor-default bg-white opacity-40" : `motion-interactive ${open ? "bg-sdc-blue-light" : "bg-white hover:bg-sdc-blue-light/25"}`
+      }`}
     >
       <span className="w-20 shrink-0 truncate text-sm font-medium text-sdc-navy">{row.type}</span>
       <span className="h-3.5 min-w-0 flex-1 overflow-hidden rounded-sm bg-sdc-gray-100">
@@ -105,7 +124,7 @@ function TypeRow({ row, max, href }: { row: JobTypeBreakdown; max: number; href:
       </span>
       <span className="w-7 shrink-0 text-right font-heading text-sm font-bold tabular-nums text-sdc-navy">{row.count}</span>
       <span className="w-11 shrink-0 text-right text-label tabular-nums text-sdc-gray-400">{row.pct}%</span>
-    </Link>
+    </button>
   );
 }
 
@@ -262,6 +281,10 @@ export function DashboardOverviewPanel({
     return `${people} · ${Math.round((w.bookedHours / w.capacityHours) * 100)}% of ${capacity}`;
   };
 
+  // ONE drill for both charts — clicking a type after a customer replaces the
+  // table rather than opening a second one. See JobDrillPanel.
+  const drill = useJobDrill();
+
   // The longest bar in the type chart. Computed once here rather than inside the
   // row so every bar shares one scale.
   const typeMax = Math.max(0, ...data.byType.map((t) => t.count));
@@ -337,7 +360,8 @@ export function DashboardOverviewPanel({
                 key={row.type}
                 row={row}
                 max={typeMax}
-                href={`/jobs?status=Active&type=${encodeURIComponent(row.type)}`}
+                open={drill.isOpen({ kind: "type", value: row.type })}
+                onOpen={() => drill.toggle({ kind: "type", value: row.type })}
               />
             ))}
             {/* Head Start is a STATUS, not a type — a Head Start job is also a
@@ -359,9 +383,32 @@ export function DashboardOverviewPanel({
             title="Active Jobs by Customer"
             note={`${data.customers.length} customers with active work · grouped on the customer exactly as stored`}
           />
-          <CustomerBars customers={data.customers} activeTotal={data.activeTotal} />
+          <CustomerBars
+            customers={data.customers}
+            activeTotal={data.activeTotal}
+            onOpen={(name) => drill.toggle({ kind: "customer", value: name })}
+            isOpen={(name) => drill.isOpen({ kind: "customer", value: name })}
+          />
         </section>
       </div>
+
+      {/* The drill sits BELOW both charts, full content width, so whichever bar
+          you clicked is still on screen above it. Rendered outside the two-column
+          grid on purpose: inside it, the table would be squeezed into one column. */}
+      {drill.filter && (
+        <JobDrillPanel
+          filter={drill.filter}
+          result={drill.result}
+          loading={drill.loading}
+          error={drill.error}
+          onClose={drill.close}
+          expectedCount={
+            drill.filter.kind === "type"
+              ? (data.byType.find((t) => t.type === drill.filter!.value)?.count ?? 0)
+              : (data.customers.find((c) => c.name === drill.filter!.value)?.activeCount ?? 0)
+          }
+        />
+      )}
 
       {/* ── Execution: upcoming FATs + the month's ME/CE breakdown ────────── */}
       <section>

@@ -12,6 +12,24 @@ export const VALID_JOB_TYPES = ["Custom", "Duplicate", "Hybrid", "Service", "T&M
 
 export const validJobTypeFilter = { type: { in: [...VALID_JOB_TYPES] } };
 
+// ── The one definition of "an active job" (2026-08-28) ──────────────────────
+//
+// Status Active AND a valid project type. Exported as a single constant because
+// two places now have to agree exactly: the Dashboard's charts
+// (dashboard-overview.ts) and the inline drill-through those charts open
+// (dashboard-job-drill.ts). A bar that says 12 must open a table of 12, and the
+// way to guarantee that is for both to spell "active" with the same object
+// rather than with two identical-looking literals that can drift apart.
+export const ACTIVE_JOB_WHERE = { status: "Active", ...validJobTypeFilter } as const;
+
+/**
+ * The label for jobs with no customer on file. Shared, because the Dashboard's
+ * customer chart groups into this bucket and the drill-through has to resolve
+ * the same label back to "customer IS NULL OR ''" — two spellings of it and the
+ * bucket would open an empty table.
+ */
+export const NO_CUSTOMER = "No customer set";
+
 // The job lifecycle, in order. Declared here rather than derived from whatever
 // distinct values happen to be in the database, which is how it used to work:
 // the Status dropdown listed only statuses already in use, so a new one could

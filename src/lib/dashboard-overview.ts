@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { validJobTypeFilter, VALID_JOB_TYPES, isSdcCustomer, compareJobIds } from "@/lib/job-filters";
+import { validJobTypeFilter, VALID_JOB_TYPES, isSdcCustomer, compareJobIds, ACTIVE_JOB_WHERE } from "@/lib/job-filters";
 import { resolveEmployeeGroup } from "@/lib/employee-card-theme";
 import { workforceGroupForCardKey, rollupGroup } from "@/lib/employee-workforce-groups";
 import { monthlyCapacityHours, hasYearPolicy } from "@/lib/workforce-capacity-policy";
@@ -8,6 +8,7 @@ import { fetchSchedulerFatEvents, fetchSchedulerJobDisciplineOwners, type Schedu
 import { getCustomerVisits, type CustomerVisitsResult } from "@/lib/customer-visits";
 import { isValidMonth } from "@/lib/etc";
 import { getDepartmentUtilization, type DepartmentUtilizationResult } from "@/lib/department-utilization";
+import { customerBucket } from "@/lib/dashboard-job-drill";
 
 // ── One query pass for the whole dashboard (2026-08-27) ─────────────────────
 //
@@ -175,7 +176,12 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
     getDepartmentUtilization(month),
   ]);
 
-  const activeJobs = jobs.filter((j) => j.status === "Active");
+  // Split off the SAME status the drill-through queries by, read from the shared
+  // constant rather than re-typed as a literal here — the charts and the table a
+  // click on them opens have to mean the identical thing by "active". The query
+  // above already restricted `type` to validJobTypeFilter, which is the other
+  // half of ACTIVE_JOB_WHERE.
+  const activeJobs = jobs.filter((j) => j.status === ACTIVE_JOB_WHERE.status);
   const headStartTotal = jobs.filter((j) => j.status === "HeadStart").length;
   const activeTotal = activeJobs.length;
 
@@ -196,7 +202,11 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
   // trace back to a row.)
   const byCustomer = new Map<string, typeof activeJobs>();
   for (const j of activeJobs) {
-    const name = j.customer?.trim() || "No customer set";
+    // customerBucket, not a re-typed expression: the drill-through narrows its
+    // rows with this exact function, so a bar and the table it opens cannot
+    // group differently. (They did — see the collation note in
+    // dashboard-job-drill.ts.)
+    const name = customerBucket(j.customer);
     const list = byCustomer.get(name) ?? [];
     list.push(j);
     byCustomer.set(name, list);
