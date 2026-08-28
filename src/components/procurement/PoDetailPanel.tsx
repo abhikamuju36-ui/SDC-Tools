@@ -17,6 +17,7 @@ import {
   fmtDate,
   daysBetween,
   parentLineFor,
+  poCellState,
   type FlatPart,
   type PoGroup,
   type DrillablePart,
@@ -297,23 +298,42 @@ export function PartRowCells({
         return <span className="block truncate text-note font-medium text-sdc-navy" title={p.manufacturer}>{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>;
       case "supplier":
         return <SupplierChip supplier={p.supplier} />;
-      case "po":
-        return p.poNumber ? (
-          <button
-            type="button"
-            onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poNumber); }}
-            title="View PO"
-            className="block truncate text-left font-mono text-note font-medium text-sdc-blue hover:underline"
-          >
-            {p.poNumber}
-          </button>
-        ) : p.source === "stock" ? (
-          <span className="text-label font-semibold text-sdc-green-text" title={`Pulled from inventory (${num(p.pullQty)} issued) — no purchase order needed`}>STOCK</span>
-        ) : p.source === "process" ? (
-          <span className="text-label font-semibold text-sdc-blue-dark" title="Built in-house on an ETO process schedule — no purchase order needed">PROCESS</span>
-        ) : (
-          <span className="text-label font-semibold text-sdc-red-text">NO PO</span>
-        );
+      case "po": {
+        // poCellState, not an inline poNumber check — the red NO PO state is
+        // isUncoveredPart's, the same rule the card and the filter count with.
+        // See po-detail.ts for what the old inline chain got wrong.
+        const cell = poCellState(p);
+        switch (cell.kind) {
+          case "po":
+            return (
+              <button
+                type="button"
+                onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poNumber); }}
+                title="View PO"
+                className="block truncate text-left font-mono text-note font-medium text-sdc-blue hover:underline"
+              >
+                {cell.po}
+              </button>
+            );
+          case "stock":
+            return <span className="text-label font-semibold text-sdc-green-text" title={`Pulled from inventory (${num(p.pullQty)} issued) — no purchase order needed`}>STOCK</span>;
+          case "process":
+            return <span className="text-label font-semibold text-sdc-blue-dark" title="Built in-house on an ETO process schedule — no purchase order needed">IN-HOUSE</span>;
+          case "received":
+            return <span className="text-label font-semibold text-sdc-gray-400" title="Already satisfied — no purchase order to raise">N/A</span>;
+          case "hold":
+            return <span className="text-label font-semibold text-sdc-yellow-text" title="On hold in ETO — not an actionable purchasing gap while paused">ON HOLD</span>;
+          case "none":
+            return (
+              <span
+                className="text-label font-semibold text-sdc-red-text"
+                title={cell.stalePo ? `PO ${cell.stalePo} exists but covers no quantity — this is still an open buy` : "No purchase order, no inventory pull and no process schedule"}
+              >
+                NO PO
+              </span>
+            );
+        }
+      }
       case "purchased":
         return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.purchasedDate)}</span>;
       case "invoiceddate":

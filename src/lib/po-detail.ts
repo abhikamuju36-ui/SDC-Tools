@@ -13,6 +13,7 @@
 import type { BomNode, BomPart, JobBom, PoLineGroup, Vendor } from "@/lib/job-bom";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
 import { normPn, type WindowAttribution } from "@/lib/parts-cost-window-attribution";
+import { isUncoveredPart } from "@/lib/job-bom-rules";
 
 // A minimal shape shared by BOM leaf parts (Assemblies detail table) and the
 // flattened Parts List rows — enough to drill + copy.
@@ -29,6 +30,67 @@ export const DAY = 86_400_000;
 // being built in-house on an ETO process schedule. Those used to fall through
 // to "NO PO" (red) or "ON ORDER" (blue, with no PO to point at) — both wrong.
 // `noPO` is now only what job-bom-rules.ts calls genuinely uncovered.
+
+// ── What the PO COLUMN shows for one part (2026-08-28) ──────────────────────
+//
+// A separate question from `partStatus` above (which answers "how is this
+// requirement doing"), and it needs its own rule because the PO cell was
+// deriving one inline — and getting it wrong in BOTH directions.
+//
+// What the cell used to do, in three places:
+//
+//     poId ? <link> : source === "stock" ? STOCK
+//                   : source === "process" ? PROCESS
+//                   : <red NO PO>
+//
+// That is the raw "po_number is blank" definition, not the actionable one, so:
+//
+//   OVER-LABELLED  Every held part and every already-received part with no PO
+//                  painted red. Measured live: job 6000 showed 65 red rows
+//                  against 0 actionable; 1148 showed 59 against 0; 1154 32
+//                  against 0; 1129 91 against 24. All of the extras were
+//                  exactly `hold` or `received`.
+//   UNDER-LABELLED The reverse, and the more dangerous one: a part whose PO row
+//                  exists but carries POQty 0 or -1 covers nothing, so
+//                  `sourceFor` correctly calls it uncovered — but the cell saw
+//                  a poId and rendered a PO link, hiding a real gap. Live
+//                  examples: 1147 PO 104393 (qty 0), 1143 PO 103689 (qty -1),
+//                  1162 PO 106098 (qty 0).
+//
+// So the red state is now decided by `isUncoveredPart` — the SAME rule the No
+// Purchase Order card, the readiness line and the Parts List filter count with
+// — and it is checked FIRST, so a stale zero-quantity PO cannot mask a gap.
+// Everything else with a blank PO gets a truthful non-red state instead.
+export type PoCellState =
+  | { kind: "po"; po: string }
+  /** Covered by an inventory pull — legitimately needs no PO. */
+  | { kind: "stock" }
+  /** Built in-house on an ETO process schedule — legitimately needs no PO. */
+  | { kind: "process" }
+  /** Already satisfied. Whatever route it arrived by, there is nothing to raise. */
+  | { kind: "received" }
+  /** Paused in ETO. Chasing a PO for something on hold is not an action. */
+  | { kind: "hold" }
+  /** A genuine, actionable purchasing gap. `stalePo` is a PO that exists but covers no quantity. */
+  | { kind: "none"; stalePo: string | null };
+
+export function poCellState(
+  p: Pick<BomPart, "status" | "hold" | "source"> & { poId?: string | null; poNumber?: string | null },
+): PoCellState {
+  // FIRST, so a PO row that covers nothing cannot present as covered.
+  if (isUncoveredPart(p)) return { kind: "none", stalePo: p.poNumber ?? p.poId ?? null };
+  const po = p.poId ?? p.poNumber;
+  if (po) return { kind: "po", po: String(po) };
+  if (p.source === "stock") return { kind: "stock" };
+  if (p.source === "process") return { kind: "process" };
+  if (p.status === "received") return { kind: "received" };
+  // Held AND uncovered already returned "none"? No — isUncoveredPart excludes
+  // held parts on purpose, so a held part with no PO lands here and reads as
+  // paused rather than as a gap somebody should act on.
+  if (p.hold) return { kind: "hold" };
+  return { kind: "received" };
+}
+
 export type StatusKey = "received" | "hold" | "noPO" | "overdue" | "soon" | "ordered" | "stock" | "process";
 export type PartStatus = { key: StatusKey; label: string; cls: string; sub: string };
 

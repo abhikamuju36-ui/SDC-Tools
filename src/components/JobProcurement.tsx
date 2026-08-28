@@ -26,6 +26,7 @@ import {
   authoritativeVendorRollup,
   makePoGroup,
   flattenBomParts,
+  poCellState,
   NO_PO_KEY,
   type FlatPart,
   type PoGroup,
@@ -929,22 +930,45 @@ function PartsDetailTable({
                     <span className="line-clamp-1">{p.supplier || "—"}</span>
                   </td>
                   <td className="px-2 py-1.5">
-                    {p.poId ? (
-                      <button
-                        type="button"
-                        onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poId); }}
-                        title="View PO"
-                        className="font-mono text-label font-bold text-sdc-blue underline decoration-dotted underline-offset-2"
-                      >
-                        {p.poId}
-                      </button>
-                    ) : p.source === "stock" ? (
-                      <span className="text-label font-bold text-sdc-green-text" title={`Pulled from inventory (${num(p.pullQty)} issued) — no purchase order needed`}>STOCK</span>
-                    ) : p.source === "process" ? (
-                      <span className="text-label font-bold text-sdc-blue-dark" title="Built in-house on an ETO process schedule — no purchase order needed">PROCESS</span>
-                    ) : (
-                      <span className="text-label font-bold text-sdc-red-text">NO PO</span>
-                    )}
+                    {/* poCellState, the shared rule — red NO PO here means the
+                        same thing it means on the card and in the Parts List
+                        filter. This cell used to decide it from `p.poId` alone,
+                        which painted every held and already-received part red
+                        and, worse, hid a real gap behind a zero-quantity PO.
+                        See po-detail.ts. */}
+                    {(() => {
+                      const cell = poCellState(p);
+                      switch (cell.kind) {
+                        case "po":
+                          return (
+                            <button
+                              type="button"
+                              onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poId); }}
+                              title="View PO"
+                              className="font-mono text-label font-bold text-sdc-blue underline decoration-dotted underline-offset-2"
+                            >
+                              {cell.po}
+                            </button>
+                          );
+                        case "stock":
+                          return <span className="text-label font-bold text-sdc-green-text" title={`Pulled from inventory (${num(p.pullQty)} issued) — no purchase order needed`}>STOCK</span>;
+                        case "process":
+                          return <span className="text-label font-bold text-sdc-blue-dark" title="Built in-house on an ETO process schedule — no purchase order needed">IN-HOUSE</span>;
+                        case "received":
+                          return <span className="text-label font-bold text-sdc-gray-400" title="Already satisfied — no purchase order to raise">N/A</span>;
+                        case "hold":
+                          return <span className="text-label font-bold text-sdc-yellow-text" title="On hold in ETO — not an actionable purchasing gap while paused">ON HOLD</span>;
+                        case "none":
+                          return (
+                            <span
+                              className="text-label font-bold text-sdc-red-text"
+                              title={cell.stalePo ? `PO ${cell.stalePo} exists but covers no quantity — this is still an open buy` : "No purchase order, no inventory pull and no process schedule"}
+                            >
+                              NO PO
+                            </span>
+                          );
+                      }
+                    })()}
                   </td>
                   <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.poDate)}</td>
                   <td className="px-2 py-1.5 whitespace-nowrap font-mono text-label text-sdc-gray-600">{fmtDate(p.originalDate)}</td>
