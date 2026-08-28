@@ -367,18 +367,6 @@ export function DashboardOverviewPanel({
                   </>
                 )}
               </p>
-              {data.fats.monthRows.length > 0 && (
-                <details className="mt-3">
-                  <summary className="cursor-pointer text-label font-semibold text-sdc-blue">
-                    Show the {data.fats.monthRows.length} event{data.fats.monthRows.length === 1 ? "" : "s"} in {label}
-                  </summary>
-                  <Frame className="mt-2 grid-cols-1">
-                    {data.fats.monthRows.map((r) => (
-                      <FatListRow key={`m-${r.taskId}`} row={r} schedulerHref={fatHref(r)} />
-                    ))}
-                  </Frame>
-                </details>
-              )}
             </div>
           </div>
         )}
