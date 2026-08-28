@@ -10,6 +10,28 @@
  */
 const { contextBridge, ipcRenderer } = require('electron');
 
+// ── Cross-app navigation, for apps that link to each other ─────────────────
+//
+// Exposed 2026-08-28. Without it an embedded app's only way to reach another
+// app was a target="_blank" link, and setWindowOpenHandler (main.js) answers
+// those with shell.openExternal — which throws the user OUT of SDC Tools into
+// their default browser, at a standalone copy of an app that is very likely
+// already open as a shell window, and without the shell's session.
+//
+// That is exactly what Reports' "Project Schedule" job-menu item did.
+//
+// Only an appId and a same-origin PATH cross the bridge. The shell owns every
+// app's origin (processManager's port registry), so a renderer cannot aim a
+// shell window at an arbitrary URL.
+contextBridge.exposeInMainWorld('sdcShell', {
+  /**
+   * Open (or focus, and navigate) another SDC Tools app.
+   * @param {string} appId   e.g. 'scheduler'
+   * @param {string} [path]  same-origin path+query, e.g. '/?job=1127&view=schedule'
+   */
+  openApp: (appId, path) => ipcRenderer.invoke('open-app', appId, path),
+});
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // ── File operations (native OS dialogs) ───────────────────────────────────
 

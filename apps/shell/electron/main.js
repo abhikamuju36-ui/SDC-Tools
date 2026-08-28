@@ -203,18 +203,39 @@ function logDiagnostic(source, event, detail) {
   console.warn(line);
 }
 
-async function openAppWindow(appId) {
+/**
+ * @param appId one of processManager's config ids
+ * @param deepPath optional path+query to open INSIDE that app, e.g.
+ *   "/?job=1127&view=schedule". Added 2026-08-28 so one app can hand another a
+ *   deep link and have it open in the shell rather than in an external browser
+ *   — see the setWindowOpenHandler note below for what used to happen instead.
+ *   Only a path is accepted, never a full URL: the shell owns every app's
+ *   origin, and taking one from a renderer would let an embedded page point a
+ *   shell window anywhere.
+ */
+async function openAppWindow(appId, deepPath) {
   const status = processManager.getStatus();
   const appInfo = status[appId];
 
   if (!appInfo) return { error: 'Unknown app' };
   if (appInfo.status !== 'running') return { error: 'Server not ready yet' };
 
+  // Reject anything that is not a same-origin path — "//evil.com" and
+  // "https://…" both parse as an origin change once appended.
+  const safePath =
+    typeof deepPath === 'string' && deepPath.startsWith('/') && !deepPath.startsWith('//')
+      ? deepPath
+      : null;
+
   if (appWindows.has(appId)) {
     const existing = appWindows.get(appId);
     if (!existing.isDestroyed()) {
       if (existing.isMinimized()) existing.restore();
       existing.focus();
+      // Already open: navigate the EXISTING window to the deep link rather than
+      // just focusing it, which is what "open job 1127 in the Scheduler" has to
+      // mean when the Scheduler is already showing some other project.
+      if (safePath) await existing.loadURL(`${appInfo.url}${safePath}`).catch(() => {});
       return { success: true };
     }
     appWindows.delete(appId);
@@ -265,7 +286,7 @@ async function openAppWindow(appId) {
   await sdcSession.ensureSession();
   await sdcSession.applySessionCookies(appInfo.url);
 
-  let targetUrl = appInfo.url;
+  let targetUrl = safePath ? `${appInfo.url}${safePath}` : appInfo.url;
   if (appId === 'reports') {
     const hop = await Promise.race([
       sdcSession.mintEtcSsoHopToken(),
@@ -644,7 +665,7 @@ app.whenReady().then(() => {
     logDiagnostic(String(source).slice(0, 40), String(event).slice(0, 200), String(detail).slice(0, 2000));
     return true;
   });
-  ipcMain.handle('open-app',     (_, appId) => openAppWindow(appId));
+  ipcMain.handle('open-app',     (_, appId, deepPath) => openAppWindow(appId, deepPath));
   ipcMain.handle('retry-app',    (_, appId) => processManager.restart(appId));
   ipcMain.handle('stop-all',     () => processManager.stopAll());
   ipcMain.handle('restart-all',  () => processManager.restartAll());
