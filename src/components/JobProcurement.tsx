@@ -2079,7 +2079,8 @@ function RiskCards({
               </div>
             </div>
           </div>
-          <div className="h-[284px] overflow-y-auto styled-scrollbar">
+          <RiskTableHead />
+          <div className="h-[262px] overflow-y-auto styled-scrollbar">
             {/* One row per PO (2026-08-14, by request — "group by PO instead
                 of individual parts"), clicking opens the PO drawer instead
                 of drilling to the Parts List row. `row.po.total` is the
@@ -2094,11 +2095,9 @@ function RiskCards({
                     key={`${row.supplier}-${row.po.poKey}-${i}`}
                     poNumber={row.po.poNumber}
                     supplier={row.supplier}
-                    count={row.po.total}
-                    dates={[
-                      { label: "Required", value: earliestRequired(row.po.parts) },
-                      { label: "Expected", value: row.po.expected, late: row.po.pastDue },
-                    ]}
+                    parts={row.po.parts}
+                    expected={row.po.expected}
+                    pastDue={row.po.pastDue}
                     onClick={() => openPo(row)}
                   />
                 ))
@@ -2137,7 +2136,8 @@ function RiskCards({
               </div>
             </div>
           </div>
-          <div className="h-[284px] overflow-y-auto styled-scrollbar">
+          <RiskTableHead />
+          <div className="h-[262px] overflow-y-auto styled-scrollbar">
             {/* One row per supplier (2026-08-14, by request — "group... under
                 a clear No PO / Unassigned grouping using the same existing
                 uncovered logic"): every row is labelled "No PO" (there is no
@@ -2153,8 +2153,11 @@ function RiskCards({
                     key={`${row.supplier}-${i}`}
                     poNumber={null}
                     supplier={row.supplier}
-                    count={row.po.total}
-                    dates={[{ label: "Required", value: earliestRequired(row.po.parts) }]}
+                    parts={row.po.parts}
+                    // Nothing has been raised, so there is no expected date to
+                    // show — the column stays, rendering "—", so the three
+                    // cards keep the same shape.
+                    expected={null}
                     onClick={() => openPo(row)}
                   />
                 ))
@@ -2231,7 +2234,8 @@ function RiskCards({
               ))}
             </div>
           </div>
-          <div className="h-[284px] overflow-y-auto styled-scrollbar">
+          <RiskTableHead />
+          <div className="h-[262px] overflow-y-auto styled-scrollbar">
             {groupBy === "po" ? (
               upcomingPos.length === 0 ? (
                 <p className="px-4 py-6 text-center text-xs text-sdc-gray-400">No parts with an expected date in week {selectedWeek?.week ?? 1}.</p>
@@ -2241,11 +2245,8 @@ function RiskCards({
                     key={`${row.supplier}-${row.po.poKey}-${i}`}
                     poNumber={row.po.poNumber}
                     supplier={row.supplier}
-                    count={row.po.total}
-                    dates={[
-                      { label: "Expected", value: row.po.expected },
-                      { label: "Required", value: earliestRequired(row.po.parts) },
-                    ]}
+                    parts={row.po.parts}
+                    expected={row.po.expected}
                     onClick={() => openPo(row)}
                   />
                 ))
@@ -2380,68 +2381,173 @@ function SeeAllBtn({ onClick, disabled }: { onClick: () => void; disabled?: bool
 // because the column count is dynamic (1 vs 2 date columns) — a Tailwind
 // class has to be a static string the build can scan for, which a
 // `dates.length`-shaped template can't be.
-function PoRiskRow({
-  poNumber,
+// ── The three risk cards share ONE mini-table (2026-08-28) ──────────────────
+//
+// Delivery Slip, No Purchase Order and Upcoming Deliveries used to render two
+// different row shapes with different column counts — PoRiskRow was
+// `PO | Supplier | count | dates…` (the date count varying per card) and
+// PartRiskRow was `Part | Desc | Supplier | Required | Expected`. Neither had
+// a header, neither showed Qty, and no two cards lined up with each other.
+//
+// One template, one header, one row component, both grouping modes:
+//
+//     PO # / Part # | Qty | Description | Supplier | Required | Expected
+//
+// Every value comes from the field the Parts List already reads — `p.qty`
+// through `num()`, `p.desc`, `p.supplier`, `p.requiredDate`, `p.expectedDate`,
+// and `fmtDate` from po-detail — so there is no second definition of any
+// column here, only a second place they are laid out.
+// Widths tuned so no HEADER label truncates at the narrowest the cards get
+// (three across from 1280px, minus the sidebar). Values still truncate with the
+// full text on hover — that is expected for a description; a truncated column
+// HEADING is not, and the first cut of this read "DESCRIPTI…".
+//
+// Description and Supplier are the two flexible columns, description weighted
+// heavier, because they are the only ones whose content has no natural width.
+const RISK_COLS = "minmax(0,78px) minmax(0,32px) minmax(62px,1.35fr) minmax(54px,1fr) minmax(0,54px) minmax(0,56px)";
+const RISK_ROW = "grid items-center gap-2 px-4";
+
+function RiskTableHead() {
+  return (
+    <div
+      className={`${RISK_ROW} border-b border-sdc-border bg-sdc-gray-50 py-1 text-[0.62rem] font-semibold uppercase tracking-[0.04em] text-sdc-muted`}
+      style={{ gridTemplateColumns: RISK_COLS }}
+      role="row"
+    >
+      <span className="truncate" title="Purchase order number, or the part number when there is no PO">PO # / Part #</span>
+      <span className="truncate text-right">Qty</span>
+      <span className="truncate" title="Description">Desc</span>
+      <span className="truncate">Supplier</span>
+      <span className="truncate text-right">Required</span>
+      <span className="truncate text-right">Expected</span>
+    </div>
+  );
+}
+
+/**
+ * One row of the mini-table.
+ *
+ * `ident` is the PO number when the row HAS one and the part number otherwise —
+ * never the literal "No PO", which is not an identifier and told the reader
+ * nothing the card's own title had not already said.
+ */
+function RiskTableRow({
+  ident,
+  identIsPo,
+  qty,
+  desc,
   supplier,
-  count,
-  dates,
+  requiredDate,
+  expectedDate,
+  expectedLate,
+  title,
   onClick,
 }: {
-  poNumber: string | null;
+  ident: string;
+  identIsPo: boolean;
+  qty: number;
+  desc: string;
   supplier: string;
-  count: number;
-  dates: { label: string; value: string | null; late?: boolean }[];
+  requiredDate: string | null;
+  expectedDate: string | null;
+  expectedLate?: boolean;
+  title: string;
   onClick: () => void;
 }) {
   return (
     <div
       onClick={onClick}
-      title="Open PO details"
-      className="grid cursor-pointer items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
-      style={{ gridTemplateColumns: `minmax(0,64px) minmax(50px,1fr) minmax(0,26px) ${dates.map(() => "minmax(0,58px)").join(" ")}` }}
+      title={title}
+      role="row"
+      className={`${RISK_ROW} cursor-pointer border-b border-sdc-border-soft/60 py-1 last:border-b-0 hover:bg-sdc-blue-light/30`}
+      style={{ gridTemplateColumns: RISK_COLS }}
     >
-      <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={poNumber ?? "No PO"}>
-        {poNumber ?? "No PO"}
+      <span
+        className={`truncate font-mono text-note font-semibold ${identIsPo ? "text-sdc-blue" : "text-sdc-navy"}`}
+        title={identIsPo ? `PO ${ident}` : `Part ${ident}`}
+      >
+        {ident}
       </span>
-      <span className="truncate text-note text-sdc-navy" title={supplier}>{supplier}</span>
-      <span className="truncate text-right font-mono text-label text-sdc-gray-600" title={`${count} part${count === 1 ? "" : "s"}`}>{count}</span>
-      {dates.map((d) => (
-        <span
-          key={d.label}
-          className={`truncate font-mono text-label ${d.late ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}
-          title={`${d.label} ${fmtDate(d.value)}`}
-        >
-          {fmtDate(d.value)}
-        </span>
-      ))}
+      {/* num(p.qty), the Parts List's own qty cell. */}
+      <span className="truncate text-right font-mono text-label tabular-nums text-sdc-navy">{num(qty)}</span>
+      <span className="truncate text-note text-sdc-gray-600" title={desc}>{desc || "—"}</span>
+      <span className="truncate text-note text-sdc-navy" title={supplier}>{supplier || "—"}</span>
+      <span className="truncate text-right font-mono text-label text-sdc-gray-600" title={`Required ${fmtDate(requiredDate)}`}>
+        {fmtDate(requiredDate)}
+      </span>
+      <span
+        className={`truncate text-right font-mono text-label ${expectedLate ? "font-semibold text-sdc-red-text" : "text-sdc-gray-600"}`}
+        title={`Expected ${fmtDate(expectedDate)}`}
+      >
+        {fmtDate(expectedDate)}
+      </span>
     </div>
   );
 }
 
-// Part-mode equivalent of PoRiskRow — one row per individual part, no PO
-// grouping. Unlike every PO-mode row, there's no drawer to open here (there
-// may not even be a single PO behind the row) — clicking instead jumps to
-// this exact part's row in the Parts List below, via onJumpToPart.
-function PartRiskRow({ part, onClick }: { part: FlatPart; onClick: () => void }) {
+/**
+ * PO-grouping mode: one row per PO, on the same six columns.
+ *
+ * A PO covers several parts, so Qty is the group's summed quantity and
+ * Description says how many parts it is — except for a single-part PO, where
+ * the part's own description is more useful than "1 part".
+ */
+function PoRiskRow({
+  poNumber,
+  supplier,
+  parts,
+  expected,
+  pastDue,
+  onClick,
+}: {
+  poNumber: string | null;
+  supplier: string;
+  parts: FlatPart[];
+  expected: string | null;
+  pastDue?: boolean;
+  onClick: () => void;
+}) {
+  const qty = parts.reduce((t, p) => t + (Number(p.qty) || 0), 0);
+  const desc = parts.length === 1 ? parts[0].desc : `${parts.length} parts`;
+  // A group with no PO number is the "unassigned" bucket — identify it by its
+  // first part rather than by the words "No PO".
+  const ident = poNumber ?? parts[0]?.pn ?? "—";
   return (
-    <div
+    <RiskTableRow
+      ident={ident}
+      identIsPo={poNumber !== null}
+      qty={qty}
+      desc={desc}
+      supplier={supplier}
+      requiredDate={earliestRequired(parts)}
+      expectedDate={expected}
+      expectedLate={pastDue}
+      title={poNumber ? "Open PO details" : "Open these parts"}
       onClick={onClick}
+    />
+  );
+}
+
+// Part-mode equivalent — one row per individual part, no PO grouping. Unlike
+// every PO-mode row, there's no drawer to open here (there may not even be a
+// single PO behind the row), so clicking jumps to this exact part's row in the
+// Parts List below via onJumpToPart.
+function PartRiskRow({ part, onClick }: { part: FlatPart; onClick: () => void }) {
+  // PO number when the part has one, its part number otherwise — so the
+  // No Purchase Order card always identifies a row by something real.
+  const po = part.poNumber ?? part.poId ?? null;
+  return (
+    <RiskTableRow
+      ident={po ? String(po) : part.pn}
+      identIsPo={po !== null}
+      qty={part.qty}
+      desc={part.desc}
+      supplier={part.supplier ?? ""}
+      requiredDate={part.requiredDate}
+      expectedDate={part.expectedDate}
       title="Locate this part in the Parts List"
-      className="grid cursor-pointer items-center gap-2 border-b border-sdc-border-soft/60 px-4 py-1.5 last:border-b-0 hover:bg-sdc-blue-light/30"
-      style={{ gridTemplateColumns: "minmax(0,84px) minmax(80px,1fr) minmax(60px,110px) minmax(0,58px) minmax(0,58px)" }}
-    >
-      <span className="truncate font-mono text-note font-semibold text-sdc-blue" title={part.pn}>
-        {part.pn}
-      </span>
-      <span className="truncate text-note text-sdc-gray-600" title={part.desc}>{part.desc}</span>
-      <span className="truncate text-note text-sdc-navy" title={part.supplier ?? "—"}>{part.supplier ?? "—"}</span>
-      <span className="truncate text-right font-mono text-label text-sdc-gray-600" title={`Required ${fmtDate(part.requiredDate)}`}>
-        {fmtDate(part.requiredDate)}
-      </span>
-      <span className="truncate text-right font-mono text-label text-sdc-gray-600" title={`Expected ${fmtDate(part.expectedDate)}`}>
-        {fmtDate(part.expectedDate)}
-      </span>
-    </div>
+      onClick={onClick}
+    />
   );
 }
 
