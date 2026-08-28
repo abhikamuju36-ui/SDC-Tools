@@ -318,7 +318,13 @@ function DepartmentTable({
 
 type EmpSort = "utilAsc" | "utilDesc" | "hours" | "name";
 
-function EmployeeUtilization({ result }: { result: DepartmentUtilizationResult }) {
+function EmployeeUtilization({
+  result,
+  drill,
+}: {
+  result: DepartmentUtilizationResult;
+  drill: ReturnType<typeof useEmployeePunchDrill>;
+}) {
   const [dept, setDept] = useState<string>("__scope__");
   const [query, setQuery] = useState("");
   const [order, setOrder] = useState<EmpSort>("utilAsc");
@@ -416,20 +422,36 @@ function EmployeeUtilization({ result }: { result: DepartmentUtilizationResult }
             const tone = utilTone(e.utilizationPct);
             const width = e.utilizationPct === null ? 0 : Math.min(100, e.utilizationPct * 100);
             return (
-              <li key={e.employeeId} className={`flex items-center gap-3 px-3 py-1.5 text-sm ${TABLE_ROW_HOVER}`}>
-                <span className="min-w-0 flex-1">
-                  <span className="block truncate text-sdc-navy">{e.name}</span>
-                  <span className="block truncate text-xs text-sdc-muted">{e.departmentTitle}</span>
-                </span>
-                <span className="hidden w-16 shrink-0 text-right text-xs tabular-nums text-sdc-muted sm:block">
-                  {hoursFmt(e.actualHours)}h
-                </span>
-                <span className="h-2 w-24 shrink-0 overflow-hidden rounded-full bg-sdc-gray-100 sm:w-32" aria-hidden>
-                  <span className={`block h-full rounded-full ${tone.bar}`} style={{ width: `${width}%` }} />
-                </span>
-                <span className={`w-11 shrink-0 text-right text-sm font-semibold tabular-nums ${tone.text}`}>
-                  {pctFmt(e.utilizationPct)}
-                </span>
+              <li key={e.employeeId}>
+                {/* The whole row opens this person's punches — this list is the
+                    most natural place to ask "why is that number what it is",
+                    so it is drillable as well as the department table's rows.
+                    People with no hours stay inert: an empty panel is a dead
+                    end. */}
+                <button
+                  type="button"
+                  onClick={() => e.actualHours > 0 && drill.toggle({ employeeId: e.employeeId, name: e.name })}
+                  disabled={e.actualHours <= 0}
+                  aria-pressed={drill.isOpen(e.employeeId)}
+                  title={e.actualHours > 0 ? `Show ${e.name}'s punches for this month` : `${e.name} booked no hours this month`}
+                  className={`flex w-full items-center gap-3 px-3 py-1.5 text-left text-sm ${
+                    drill.isOpen(e.employeeId) ? "bg-sdc-blue-light" : TABLE_ROW_HOVER
+                  } ${e.actualHours > 0 ? "" : "cursor-default"}`}
+                >
+                  <span className="min-w-0 flex-1">
+                    <span className="block truncate text-sdc-navy">{e.name}</span>
+                    <span className="block truncate text-xs text-sdc-muted">{e.departmentTitle}</span>
+                  </span>
+                  <span className="hidden w-16 shrink-0 text-right text-xs tabular-nums text-sdc-muted sm:block">
+                    {hoursFmt(e.actualHours)}h
+                  </span>
+                  <span className="h-2 w-24 shrink-0 overflow-hidden rounded-full bg-sdc-gray-100 sm:w-32" aria-hidden>
+                    <span className={`block h-full rounded-full ${tone.bar}`} style={{ width: `${width}%` }} />
+                  </span>
+                  <span className={`w-11 shrink-0 text-right text-sm font-semibold tabular-nums ${tone.text}`}>
+                    {pctFmt(e.utilizationPct)}
+                  </span>
+                </button>
               </li>
             );
           })}
@@ -484,20 +506,31 @@ export function UtilizationPanel({ result, monthLabel }: { result: DepartmentUti
         <DepartmentTable result={result} drill={drill} />
       </Panel>
 
-      <Panel flush className="flex min-w-0 flex-col">
-        <PanelHead
-          className="border-b border-sdc-border px-4 py-2.5"
-          title="Employee Utilization"
-          note="Billable hours ÷ hours worked"
-        />
-        <EmployeeUtilization result={result} />
-      </Panel>
+      {/* ── The punch drill opens BESIDE the employee list, not under it ─────
+          The department table above keeps the full width for the reason in the
+          note at the top of this block — it has fifteen columns and squeezing
+          it puts real data behind a scrollbar. The employee list does not: it
+          is four narrow columns, so the drill pairs with THAT, at the same
+          vertical position as the row you clicked.
+          Which is also why the list rows are drillable now — clicking a name
+          on the left and reading their punches immediately to the right is the
+          interaction this section wanted.
+          Stacks below xl, where two columns would leave neither usable. */}
+      <div
+        className={`grid min-w-0 gap-5 ${
+          drill.target ? "xl:grid-cols-[minmax(20rem,0.75fr)_minmax(0,1.6fr)] xl:items-start" : ""
+        }`}
+      >
+        <Panel flush className="flex min-w-0 flex-col">
+          <PanelHead
+            className="border-b border-sdc-border px-4 py-2.5"
+            title="Employee Utilization"
+            note="Billable hours ÷ hours worked"
+          />
+          <EmployeeUtilization result={result} drill={drill} />
+        </Panel>
 
-      {/* Full width, under both panels: a six-column punch table does not fit
-          in the left column of the grid above, and putting it there would push
-          the department table off screen while you read it. */}
-      {drill.target && (
-        <div className="2xl:col-span-2">
+        {drill.target && (
           <EmployeePunchDrillPanel
             target={drill.target}
             result={drill.result}
@@ -507,8 +540,8 @@ export function UtilizationPanel({ result, monthLabel }: { result: DepartmentUti
             onClose={drill.close}
             expectedHours={drilled?.actualHours ?? 0}
           />
-        </div>
-      )}
+        )}
+      </div>
     </div>
   );
 }

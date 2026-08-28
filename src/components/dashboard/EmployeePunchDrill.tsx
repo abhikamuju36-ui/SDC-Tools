@@ -143,7 +143,7 @@ export function EmployeePunchDrillPanel({
       // same rows — so if it ever shows, it is a real defect and needs to be loud.
       note={reconciles ? undefined : "This panel and the table disagree — please report it."}
       onClose={onClose}
-      className="mt-3"
+      className="min-w-0"
     >
       {error ? (
         <p className="px-4 py-6 text-sm text-sdc-red-text">{error}</p>
