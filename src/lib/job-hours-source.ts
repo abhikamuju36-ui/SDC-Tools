@@ -82,6 +82,21 @@ export type JobHoursRow = {
   // and must still reconcile; it classifies as Undefined on exactly that basis.
   rawSection: string;
   rawFunction: string;
+  // ── Travel location (2026-08-28) ──────────────────────────────────────────
+  //
+  // The Paylocity export's own "Travel" column, normalized the way the Job Hours
+  // Report's Power Query does it: the literal "TRAVEL" becomes "Travel", and
+  // "Not Defined"/blank becomes "Concord" (the home site). Feeds the Department
+  // Utilization section's Travel / Travel % columns, which are a straight
+  // reproduction of that report's `Hours Actual Travel` measure
+  // (SUM of hours WHERE Travel = "Travel").
+  //
+  // OPTIONAL because this file's own Power BI reader cannot supply it — the PBI
+  // model exposes the column on its fact table but the fallback DAX here does not
+  // select it. Rows from that path arrive without travel rather than with a
+  // fabricated "Concord", so a Travel figure computed over a PBI-sourced month is
+  // absent instead of wrong. The live workbook path always sets it.
+  travel?: string;
 };
 
 // Hours the feed holds against something that isn't a job number. An untracked

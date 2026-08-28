@@ -7,6 +7,7 @@ import { monthlyCapacityHours, hasYearPolicy } from "@/lib/workforce-capacity-po
 import { fetchSchedulerFatEvents, fetchSchedulerJobDisciplineOwners, type SchedulerFatEvent } from "@/lib/scheduler-db";
 import { getCustomerVisits, type CustomerVisitsResult } from "@/lib/customer-visits";
 import { isValidMonth } from "@/lib/etc";
+import { getDepartmentUtilization, type DepartmentUtilizationResult } from "@/lib/department-utilization";
 
 // ── One query pass for the whole dashboard (2026-08-27) ─────────────────────
 //
@@ -91,6 +92,14 @@ export type DashboardOverview = {
   };
   workforce: WorkforceCard[];
   visits: CustomerVisitsResult;
+  // ── Department / Employee Utilization ─────────────────────────────────────
+  //
+  // A native rebuild of the Job Hours Report's utilization visuals — see
+  // department-utilization.ts for the rules and for why its theoretical hours
+  // legitimately differ from `workforce` above (that one is holiday-aware
+  // capacity, this one is the report's holiday-agnostic Working Days x 8).
+  // Both are on the page on purpose; they answer different questions.
+  utilization: DepartmentUtilizationResult;
 };
 
 /** The month the dashboard defaults to, and the one every month-scoped figure is measured in. */
@@ -136,7 +145,7 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
   const [year, monthNo] = month.split("-").map(Number);
   const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-  const [jobs, employees, hoursRows, fatEvents, owners, visits] = await Promise.all([
+  const [jobs, employees, hoursRows, fatEvents, owners, visits, utilization] = await Promise.all([
     // The whole live job population in one read (a few hundred rows). Active and
     // HeadStart are split in memory rather than by two counts, so the KPI, the
     // type strip and the customer cards are provably the same set of jobs.
@@ -159,6 +168,11 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
     fetchSchedulerFatEvents(),
     fetchSchedulerJobDisciplineOwners(),
     getCustomerVisits(month),
+    // Punch-grain, so it does its own reads rather than reusing the grouped
+    // `hoursRows` above — but it is one awaited unit inside THIS pass, not a
+    // fetch the card makes for itself. The one-data-pass rule is about the page
+    // never firing per-card requests, not about forbidding a second query.
+    getDepartmentUtilization(month),
   ]);
 
   const activeJobs = jobs.filter((j) => j.status === "Active");
@@ -302,5 +316,6 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
     },
     workforce,
     visits,
+    utilization,
   };
 }

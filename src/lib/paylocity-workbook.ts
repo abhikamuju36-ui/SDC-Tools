@@ -83,9 +83,27 @@ export const REQUIRED_HEADERS = [
   "Function",
   "Total Hours Worked",
 ] as const;
-// Present in the file and deliberately not required: it carries a travel location
-// ("Concord", "Not Defined") that reaches no figure in this app.
+// Present in the file and NOT required: it carries a travel location ("TRAVEL",
+// "Concord", "Not Defined"). Optional because it must stay optional — an export
+// saved without the column has to keep importing rather than fail the whole
+// refresh over one derived column. As of 2026-08-28 it is no longer discarded:
+// it feeds the Dashboard's Department Utilization Travel / Travel % columns via
+// normalizeTravel() below. A file missing the column yields "" on every row,
+// which reads as "not known" (Travel renders as a dash), never as zero travel.
 export const OPTIONAL_HEADERS = ["Travel"] as const;
+
+// The Job Hours Report's Power Query does exactly two replacements on this column
+// (expressions.tmdl: ReplaceValue "Not Defined"->"Concord", then "TRAVEL"->"Travel").
+// Reproduced here so the app's Travel hours and the report's agree by construction
+// rather than by coincidence. Anything else is passed through as-is: the column is
+// a free-text site name and inventing a bucket for an unrecognised one would hide it.
+export function normalizeTravel(raw: string): string {
+  const v = raw.trim();
+  if (v === "") return "";
+  if (v.toUpperCase() === "TRAVEL") return "Travel";
+  if (v === "Not Defined") return "Concord";
+  return v;
+}
 
 // ── The file's identity (§42.2) ─────────────────────────────────────────────
 //
@@ -491,6 +509,8 @@ export async function readPaylocityWorkbook(opts?: {
     machineSec: headerIndex.get("MachineSec")!,
     fn: headerIndex.get("Function")!,
     hours: headerIndex.get("Total Hours Worked")!,
+    // Optional — undefined when the export was saved without the column.
+    travel: headerIndex.get("Travel"),
   };
 
   if (ws.rowCount < 2) {
@@ -727,6 +747,7 @@ export async function readPaylocityWorkbook(opts?: {
       employeeId,
       rawSection: rawSectionId,
       rawFunction: rawFunctionId,
+      travel: COL.travel === undefined ? "" : normalizeTravel(cellText(row.getCell(COL.travel).value)),
     });
   }
 

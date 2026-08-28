@@ -11,6 +11,7 @@ import { getDashboardOverview, dashboardMonth } from "@/lib/dashboard-overview";
 import { DashboardOverviewPanel, monthLabel } from "@/components/dashboard/DashboardOverview";
 import { DashboardMonthSelect } from "@/components/dashboard/DashboardMonthSelect";
 import { RefreshScheduleCard } from "@/components/dashboard/RefreshScheduleCard";
+import { UtilizationPanel } from "@/components/dashboard/UtilizationPanel";
 import { getSchedulerBaseUrl } from "@/lib/scheduler-link";
 import { fetchSchedulerProjectJobNumbers } from "@/lib/scheduler-db";
 
@@ -111,6 +112,11 @@ export default async function Home({
               schedulerBaseUrl={getSchedulerBaseUrl()}
               schedulerJobNumbers={schedulerJobNumbers}
             />
+            {/* Below the overview, above the refresh card: it is the page's most
+                detailed table and reads as the "and here is the detail" answer to
+                the workforce capacity cards immediately above it. Same `overview`
+                object, same month — no second month state, no second fetch. */}
+            <UtilizationPanel result={overview.utilization} monthLabel={monthLabel(month)} />
             <RefreshScheduleCard freshnessRows={freshnessRows} lastRun={refreshRuns[0] ?? null} />
           </div>
         }

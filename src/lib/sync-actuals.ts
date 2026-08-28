@@ -272,14 +272,43 @@ export async function syncJobHoursDetail(
     // alone is the whole key — no fold, no split, nothing else can collide on it.
     const merged = new Map<
       string,
-      { section: string; workDate: Date; employeeId: string; hours: number; rawSection: string; rawFunction: string }
+      {
+        section: string;
+        workDate: Date;
+        employeeId: string;
+        hours: number;
+        rawSection: string;
+        rawFunction: string;
+        travelHours: number;
+        travelKnown: boolean;
+      }
     >();
     for (const r of monthRows) {
       const day = new Date(Date.UTC(r.date.getUTCFullYear(), r.date.getUTCMonth(), r.date.getUTCDate()));
       const k = `${r.section}::${day.toISOString().slice(0, 10)}::${r.employeeId}`;
+      // ── Travel is stored as HOURS, not as a label (2026-08-28) ────────────
+      //
+      // The Job Hours Report keeps Travel inside its own group-by grain, so a day
+      // split between a travel site and Concord stays two rows there. This table's
+      // grain is (job, section, date, employee) and its unique key says so, so the
+      // two collapse into one row here and a single `travel` label would have to
+      // pick a winner — silently dropping or inventing travel hours either way.
+      //
+      // Storing the travel PORTION of the row's hours sidesteps the grain mismatch
+      // entirely: SUM(travelHours) equals the report's `Hours Actual Travel`
+      // (SUM of hours WHERE Travel = "Travel") whatever the grain does, because
+      // both are summing the same underlying punch hours.
+      //
+      // travelKnown separates "this export had no Travel column" from "nobody
+      // travelled". Null reaches the UI as a dash; 0 reaches it as a real zero.
+      const isTravel = r.travel === "Travel";
+      const known = r.travel !== undefined && r.travel !== "";
       const cur = merged.get(k);
-      if (cur) cur.hours += r.hours;
-      else
+      if (cur) {
+        cur.hours += r.hours;
+        if (isTravel) cur.travelHours += r.hours;
+        cur.travelKnown ||= known;
+      } else
         merged.set(k, {
           section: r.section,
           workDate: day,
@@ -287,6 +316,8 @@ export async function syncJobHoursDetail(
           hours: r.hours,
           rawSection: r.rawSection,
           rawFunction: r.rawFunction,
+          travelHours: isTravel ? r.hours : 0,
+          travelKnown: known,
         });
     }
 
@@ -309,6 +340,7 @@ export async function syncJobHoursDetail(
         standardDepartment: c.department,
         standardTaskDescription: c.taskDescription,
         mappingStatus: c.mappingStatus,
+        travelHours: m.travelKnown ? round2(m.travelHours) : null,
         source,
       };
     });
@@ -329,6 +361,12 @@ export async function syncJobHoursDetail(
   // that would be written — the classifyPunch outputs among them. So this cannot go
   // stale against a rule-book change: a different classification is a different
   // payload is a different digest is a rewrite. See the JobHoursBucket model.
+  //
+  // digestBucket() lists its fields EXPLICITLY rather than hashing the payload object,
+  // so "includes every column" is a promise the next person has to keep by hand: a new
+  // column on the write above must also be added to the digest, or every bucket skips
+  // and the column silently keeps its default forever. Exactly that happened when
+  // travelHours was added (2026-08-28) — the backfill reported 0 rows written.
   //
   // What is deliberately NOT skipped: a bucket with no stored digest. "Unknown" is
   // treated as changed, so the first pass after this deploy, after a manual repair
@@ -447,6 +485,7 @@ function digestBucket(
     standardDepartment: string;
     standardTaskDescription: string;
     mappingStatus: string;
+    travelHours: number | null;
     source: string;
   }[],
 ): string {
@@ -462,6 +501,10 @@ function digestBucket(
         d.standardDepartment,
         d.standardTaskDescription,
         d.mappingStatus,
+        // Null and 0 must hash differently — "no Travel column in this export" and
+        // "measured zero travel" are different facts, and a change between them has
+        // to force a rewrite. "" vs "0.00" does that; String(null) would not.
+        d.travelHours === null ? "" : d.travelHours.toFixed(2),
         d.source,
       ].join("\u0001"),
     )
