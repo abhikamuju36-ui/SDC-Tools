@@ -271,7 +271,7 @@ function finalize(m: UtilizationMeasures, opts: { employees: number; workingDays
  * NOT narrowed by the month being viewed. Computing it per month would move a
  * close-date proxy every time somebody changed the month filter.
  */
-async function loadEffectiveCloseDates(): Promise<Map<string, Date | null>> {
+export async function loadEffectiveCloseDates(): Promise<Map<string, Date | null>> {
   const jobs = await prisma.job.findMany({ select: { id: true, jobId: true, status: true, completeDate: true } });
 
   const needProxy = jobs.filter((j) => j.status === "Complete" && j.completeDate === null).map((j) => j.id);

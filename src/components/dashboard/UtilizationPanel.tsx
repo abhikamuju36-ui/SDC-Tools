@@ -3,6 +3,7 @@
 import { Fragment, useMemo, useState } from "react";
 import { INPUT, TABLE_ROW_HOVER } from "@/components/ui/classnames";
 import { Panel, PanelHead } from "@/components/dashboard/DashboardLayout";
+import { EmployeePunchDrillPanel, useEmployeePunchDrill } from "@/components/dashboard/EmployeePunchDrill";
 import { SortableTh } from "@/components/ui/SortableHeader";
 import { cycleSortState, sortRows, type SortColumns, type SortState } from "@/lib/table-sort";
 import type {
@@ -130,7 +131,13 @@ function UtilCell({ pct, muted }: { pct: number | null; muted?: boolean }) {
   );
 }
 
-function DepartmentTable({ result }: { result: DepartmentUtilizationResult }) {
+function DepartmentTable({
+  result,
+  drill,
+}: {
+  result: DepartmentUtilizationResult;
+  drill: ReturnType<typeof useEmployeePunchDrill>;
+}) {
   const [sort, setSort] = useState<SortState<DeptSortKey>>({ key: "utilizationPct", direction: "desc" });
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
@@ -244,9 +251,33 @@ function DepartmentTable({ result }: { result: DepartmentUtilizationResult }) {
                 </tr>
                 {open &&
                   row.employeeRows.map((e) => (
-                    <tr key={`${row.key}::${e.employeeId}`} className="border-b border-sdc-border-soft bg-sdc-gray-50 text-xs">
-                      <th scope="row" className={`${DEPT_CELL} bg-sdc-gray-50 py-1 pl-9 pr-3 text-left font-normal text-sdc-gray-700`}>
-                        {e.name}
+                    <tr
+                      key={`${row.key}::${e.employeeId}`}
+                      className={`border-b border-sdc-border-soft text-xs ${
+                        drill.isOpen(e.employeeId) ? "bg-sdc-blue-light" : "bg-sdc-gray-50"
+                      }`}
+                    >
+                      <th
+                        scope="row"
+                        className={`${DEPT_CELL} ${drill.isOpen(e.employeeId) ? "bg-sdc-blue-light" : "bg-sdc-gray-50"} py-1 pl-9 pr-3 text-left font-normal text-sdc-gray-700`}
+                      >
+                        {/* Only people with hours are drillable — an empty panel
+                            for someone who booked nothing is a dead end, so the
+                            row stays plain text rather than offering a click
+                            that leads nowhere. */}
+                        {e.actualHours > 0 ? (
+                          <button
+                            type="button"
+                            onClick={() => drill.toggle({ employeeId: e.employeeId, name: e.name })}
+                            aria-pressed={drill.isOpen(e.employeeId)}
+                            title={`Show ${e.name}'s punches for this month`}
+                            className="text-left underline decoration-dotted decoration-sdc-gray-400 underline-offset-2 hover:text-sdc-blue hover:decoration-sdc-blue"
+                          >
+                            {e.name}
+                          </button>
+                        ) : (
+                          e.name
+                        )}
                         {!e.active && (
                           <span
                             className="ml-1.5 rounded bg-sdc-yellow-bg px-1 py-0.5 text-[0.6rem] font-semibold uppercase text-sdc-yellow-text"
@@ -410,6 +441,12 @@ function EmployeeUtilization({ result }: { result: DepartmentUtilizationResult }
 
 export function UtilizationPanel({ result, monthLabel }: { result: DepartmentUtilizationResult; monthLabel: string }) {
   const hasHours = result.total.actualHours > 0;
+  // ONE punch drill for the whole section, scoped to the same month the table
+  // is showing — so clicking a second person replaces the panel rather than
+  // stacking two, and the panel can never be showing a different month from the
+  // row that opened it.
+  const drill = useEmployeePunchDrill(result.month);
+  const drilled = drill.target ? result.employees.find((e) => e.employeeId === drill.target!.employeeId) : null;
 
   if (!hasHours) {
     return (
@@ -444,7 +481,7 @@ export function UtilizationPanel({ result, monthLabel }: { result: DepartmentUti
             result.travelKnown ? "" : " · travel not recorded for this month"
           }`}
         />
-        <DepartmentTable result={result} />
+        <DepartmentTable result={result} drill={drill} />
       </Panel>
 
       <Panel flush className="flex min-w-0 flex-col">
@@ -455,6 +492,23 @@ export function UtilizationPanel({ result, monthLabel }: { result: DepartmentUti
         />
         <EmployeeUtilization result={result} />
       </Panel>
+
+      {/* Full width, under both panels: a six-column punch table does not fit
+          in the left column of the grid above, and putting it there would push
+          the department table off screen while you read it. */}
+      {drill.target && (
+        <div className="2xl:col-span-2">
+          <EmployeePunchDrillPanel
+            target={drill.target}
+            result={drill.result}
+            loading={drill.loading}
+            error={drill.error}
+            monthLabel={monthLabel}
+            onClose={drill.close}
+            expectedHours={drilled?.actualHours ?? 0}
+          />
+        </div>
+      )}
     </div>
   );
 }
