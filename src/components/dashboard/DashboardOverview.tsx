@@ -2,7 +2,8 @@ import Link from "next/link";
 import { card } from "@/components/ui/classnames";
 import { SectionTitle } from "@/components/ui/Typography";
 import type { DashboardOverview as Overview, FatRow, JobTypeBreakdown } from "@/lib/dashboard-overview";
-import { CustomerCards } from "@/components/dashboard/CustomerCards";
+import { CustomerBars } from "@/components/dashboard/CustomerBars";
+import { jobTypeColor, rankByCount } from "@/lib/job-type-colors";
 
 // ── The Dashboard's Overview panel (2026-08-27 redesign) ────────────────────
 //
@@ -80,23 +81,30 @@ function Kpi({
 // A single horizontal proportion bar. Used for the type mix, where the question
 // is "how much of the active book is this" — a number alone answers it far more
 // slowly than a number beside a bar.
-function TypeRow({ row, total, href }: { row: JobTypeBreakdown; total: number; href: string }) {
+// One ranked bar. `max` is the biggest count in the chart, not the active total:
+// the top type is ~half the book, so scaling to the total left every bar under
+// half the track and the short ones indistinguishable. Scaling to the leader
+// uses the full width and makes the ranking readable at a glance — the count and
+// the percent-of-total sit at the end, so no figure changes, only the scale.
+function TypeRow({ row, max, href }: { row: JobTypeBreakdown; max: number; href: string }) {
   const empty = row.count === 0;
+  const color = jobTypeColor(row.type);
   return (
     <Link
       href={href}
       aria-disabled={empty}
-      className={`flex items-center gap-3 bg-white px-4 py-2.5 ${empty ? "pointer-events-none opacity-45" : "motion-interactive hover:bg-sdc-blue-light/25"}`}
+      title={`${row.type}: ${row.count} active job${row.count === 1 ? "" : "s"} (${row.pct}% of the active book)`}
+      className={`flex items-center gap-3 bg-white px-4 py-2 ${empty ? "pointer-events-none opacity-40" : "motion-interactive hover:bg-sdc-blue-light/25"}`}
     >
-      <span className="w-20 shrink-0 text-sm font-semibold text-sdc-navy">{row.type}</span>
-      <span className="h-2 flex-1 overflow-hidden rounded-full bg-sdc-gray-100">
+      <span className="w-20 shrink-0 truncate text-sm font-medium text-sdc-navy">{row.type}</span>
+      <span className="h-3.5 min-w-0 flex-1 overflow-hidden rounded-sm bg-sdc-gray-100">
         <span
-          className="block h-full rounded-full bg-sdc-blue"
-          style={{ width: `${total === 0 ? 0 : (row.count / total) * 100}%` }}
+          className={`block h-full rounded-sm ${color.bar}`}
+          style={{ width: `${max === 0 ? 0 : (row.count / max) * 100}%` }}
         />
       </span>
-      <span className="w-8 shrink-0 text-right font-heading text-base font-bold tabular-nums text-sdc-navy">{row.count}</span>
-      <span className="w-12 shrink-0 text-right text-label tabular-nums text-sdc-gray-400">{row.pct}%</span>
+      <span className="w-7 shrink-0 text-right font-heading text-sm font-bold tabular-nums text-sdc-navy">{row.count}</span>
+      <span className="w-11 shrink-0 text-right text-label tabular-nums text-sdc-gray-400">{row.pct}%</span>
     </Link>
   );
 }
@@ -254,6 +262,10 @@ export function DashboardOverviewPanel({
     return `${people} · ${Math.round((w.bookedHours / w.capacityHours) * 100)}% of ${capacity}`;
   };
 
+  // The longest bar in the type chart. Computed once here rather than inside the
+  // row so every bar shares one scale.
+  const typeMax = Math.max(0, ...data.byType.map((t) => t.count));
+
   return (
     <div className="flex flex-col gap-7">
       {/* ── Top KPI strip ─────────────────────────────────────────────────── */}
@@ -315,11 +327,16 @@ export function DashboardOverviewPanel({
             }
           />
           <Frame className="grid-cols-1">
-            {data.byType.map((row) => (
+            {/* Ranked by count, with the declared type order as a stable tiebreak
+                (rankByCount). Zero-count types stay in the list, sorted last and
+                dimmed, rather than disappearing — "no Service work right now" is
+                a fact worth seeing, and a row that vanishes is one a reader has
+                to notice is missing. */}
+            {rankByCount(data.byType).map((row) => (
               <TypeRow
                 key={row.type}
                 row={row}
-                total={data.activeTotal}
+                max={typeMax}
                 href={`/jobs?status=Active&type=${encodeURIComponent(row.type)}`}
               />
             ))}
@@ -342,7 +359,7 @@ export function DashboardOverviewPanel({
             title="Active Jobs by Customer"
             note={`${data.customers.length} customers with active work · grouped on the customer exactly as stored`}
           />
-          <CustomerCards customers={data.customers} activeTotal={data.activeTotal} />
+          <CustomerBars customers={data.customers} activeTotal={data.activeTotal} />
         </section>
       </div>
 
