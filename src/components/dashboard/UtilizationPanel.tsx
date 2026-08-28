@@ -1,8 +1,8 @@
 "use client";
 
 import { Fragment, useMemo, useState } from "react";
-import { card, INPUT, TABLE_ROW_HOVER } from "@/components/ui/classnames";
-import { SectionTitle } from "@/components/ui/Typography";
+import { INPUT, TABLE_ROW_HOVER } from "@/components/ui/classnames";
+import { Panel, PanelHead } from "@/components/dashboard/DashboardLayout";
 import { SortableTh } from "@/components/ui/SortableHeader";
 import { cycleSortState, sortRows, type SortColumns, type SortState } from "@/lib/table-sort";
 import type {
@@ -74,8 +74,12 @@ const DEPT_COLUMNS: SortColumns<DepartmentUtilizationRow, DeptSortKey> = {
   overtimeHours: { type: "hours", value: (r) => r.overtimeHours },
 };
 
-// label, key, and whether the column is part of the "core" block that must be
-// visible before any horizontal scrolling.
+// The five CORE measures — headcount, the two hour totals and the two ratios —
+// answer "how are we doing" and sit inside the initial viewport. The billable
+// breakdown after them is real detail nobody scans first, so it is rendered a
+// shade lighter and follows to the right. Same table, same data, one visual
+// tier of difference: the requirement is to make the important columns easier
+// to scan, not to hide the rest behind a toggle.
 const DEPT_HEADERS: { key: DeptSortKey; label: string; core?: boolean }[] = [
   { key: "employees", label: "Employees", core: true },
   { key: "theoreticalHours", label: "Theoretical", core: true },
@@ -184,7 +188,7 @@ function DepartmentTable({ result }: { result: DepartmentUtilizationResult }) {
                 type={h.key.endsWith("Pct") || h.key === "employees" ? "number" : "hours"}
                 sort={sort}
                 onSort={onSort}
-                className="py-2 px-2 font-semibold whitespace-nowrap"
+                className={`py-2 px-2 font-semibold whitespace-nowrap ${h.core ? "" : "text-sdc-gray-400"}`}
               />
             ))}
           </tr>
@@ -228,7 +232,12 @@ function DepartmentTable({ result }: { result: DepartmentUtilizationResult }) {
                     </button>
                   </th>
                   {DEPT_HEADERS.map((h) => (
-                    <td key={h.key} className="py-1.5 px-2 text-right tabular-nums whitespace-nowrap">
+                    <td
+                      key={h.key}
+                      className={`py-1.5 px-2 text-right tabular-nums whitespace-nowrap ${
+                        h.core ? "text-sdc-navy" : "text-sdc-gray-600"
+                      }`}
+                    >
                       {h.key === "utilizationPct" ? <UtilCell pct={row.utilizationPct} /> : numeric(row, h.key)}
                     </td>
                   ))}
@@ -371,7 +380,7 @@ function EmployeeUtilization({ result }: { result: DepartmentUtilizationResult }
       ) : (
         // Capped height with its own scroll so a 50-person list cannot stretch the
         // Dashboard; the department table above stays the page's anchor.
-        <ul className="max-h-[22rem] overflow-y-auto">
+        <ul className="styled-scrollbar max-h-[24rem] min-h-0 flex-1 overflow-y-auto">
           {rows.map((e) => {
             const tone = utilTone(e.utilizationPct);
             const width = e.utilizationPct === null ? 0 : Math.min(100, e.utilizationPct * 100);
@@ -402,30 +411,50 @@ function EmployeeUtilization({ result }: { result: DepartmentUtilizationResult }
 export function UtilizationPanel({ result, monthLabel }: { result: DepartmentUtilizationResult; monthLabel: string }) {
   const hasHours = result.total.actualHours > 0;
 
-  return (
-    <section className={card("p-0")} aria-label="Department and employee utilization">
-      <header className="flex flex-wrap items-baseline justify-between gap-x-4 gap-y-1 border-b border-sdc-border px-5 py-3">
-        <SectionTitle>Department Utilization</SectionTitle>
-        <p className="text-xs text-sdc-muted">
-          {monthLabel} · {result.workingDays} working days · theoretical = headcount × {result.workingDays} × 8h
-          {!result.travelKnown && " · travel not recorded for this month"}
-        </p>
-      </header>
+  if (!hasHours) {
+    return (
+      <Panel>
+        <PanelHead title="Department Utilization" note={`${monthLabel} · ${result.workingDays} working days`} />
+        <p className="py-8 text-sm text-sdc-muted">No hours booked in {monthLabel} yet.</p>
+      </Panel>
+    );
+  }
 
-      {!hasHours ? (
-        <p className="px-5 py-8 text-sm text-sdc-muted">No hours booked in {monthLabel} yet.</p>
-      ) : (
-        <>
-          <DepartmentTable result={result} />
-          <div className="border-t border-sdc-border">
-            <div className="flex items-baseline justify-between gap-3 px-5 pt-3">
-              <SectionTitle>Employee Utilization</SectionTitle>
-              <p className="text-xs text-sdc-muted">Billable hours ÷ hours worked</p>
-            </div>
-            <EmployeeUtilization result={result} />
-          </div>
-        </>
-      )}
-    </section>
+  return (
+    // ── Two peer panels, stacked (2026-08-28) ───────────────────────────────
+    //
+    // They were ONE card with the employee list hanging off the bottom of the
+    // department table, which read as a loose appendix. They are peers — the
+    // same question asked per department and per person — so each now has its
+    // own panel and header.
+    //
+    // Stacked, NOT side by side, and that is a measured decision rather than a
+    // preference. Side by side was built first: at a 1560px viewport it left the
+    // department panel 961px wide and pushed 381px of the table behind a
+    // horizontal scrollbar, and the split only stops scrolling right at the
+    // 1600px content cap — one added column and it would start again. A
+    // fifteen-column table that has to be scrolled to be read is a worse outcome
+    // than a taller page, so the table keeps the full width.
+    <div className="grid min-w-0 gap-5">
+      <Panel flush className="flex min-w-0 flex-col">
+        <PanelHead
+          className="border-b border-sdc-border px-4 py-2.5"
+          title="Department Utilization"
+          note={`${monthLabel} · ${result.workingDays} working days · theoretical = headcount × ${result.workingDays} × 8h${
+            result.travelKnown ? "" : " · travel not recorded for this month"
+          }`}
+        />
+        <DepartmentTable result={result} />
+      </Panel>
+
+      <Panel flush className="flex min-w-0 flex-col">
+        <PanelHead
+          className="border-b border-sdc-border px-4 py-2.5"
+          title="Employee Utilization"
+          note="Billable hours ÷ hours worked"
+        />
+        <EmployeeUtilization result={result} />
+      </Panel>
+    </div>
   );
 }

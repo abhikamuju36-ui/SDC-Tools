@@ -305,7 +305,7 @@ export function ExecutionCalendarSection({
                     return (
                       <div
                         key={c.iso}
-                        className={`min-h-[6.2rem] border-r border-b border-sdc-border-soft p-1 last:border-r-0 ${
+                        className={`min-h-[5.4rem] border-r border-b border-sdc-border-soft p-1 last:border-r-0 ${
                           c.inMonth ? "bg-white" : "bg-sdc-gray-50/60"
                         }`}
                       >

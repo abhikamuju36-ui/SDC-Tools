@@ -3,6 +3,7 @@ import { card } from "@/components/ui/classnames";
 import type { DashboardOverview as Overview } from "@/lib/dashboard-overview";
 import { ActiveJobsSection } from "@/components/dashboard/ActiveJobsSection";
 import { ExecutionCalendarSection } from "@/components/dashboard/ExecutionCalendar";
+import { Band, KpiStrip } from "@/components/dashboard/DashboardLayout";
 
 // ── The Dashboard's Overview panel (2026-08-27 redesign) ────────────────────
 //
@@ -45,29 +46,27 @@ function Kpi({
           ? "text-sdc-gray-400"
           : "text-sdc-navy";
   const body = (
-    <div className={`flex h-full flex-col justify-center gap-0.5 bg-white px-4 py-3.5 ${href ? "motion-interactive hover:bg-sdc-blue-light/25" : ""}`}>
-      <p className="truncate text-xs font-semibold text-sdc-gray-600">{label}</p>
+    <div className={`flex h-full flex-col justify-center gap-1 bg-white px-4 py-3 ${href ? "motion-interactive hover:bg-sdc-blue-light/25" : ""}`}>
+      <p className="truncate text-label font-semibold uppercase tracking-[0.06em] text-sdc-gray-600">{label}</p>
       <p className={`font-heading text-3xl leading-none font-bold tracking-tight tabular-nums ${valueClass}`}>{value}</p>
-      {sub && <p className="truncate text-label text-sdc-gray-400">{sub}</p>}
+      {sub && <p className="truncate text-label leading-tight text-sdc-gray-400">{sub}</p>}
     </div>
   );
+  // A flex item that GROWS, not a grid cell — see KpiStrip's own note on why
+  // five KPIs in a grid leave a white hole at the middle breakpoints.
+  const shell = "min-w-0 flex-1 basis-[11rem]";
   return href ? (
-    <Link href={href} className="block h-full">
+    <Link href={href} className={`${shell} block`}>
       {body}
     </Link>
   ) : (
-    <div className="h-full">{body}</div>
+    <div className={shell}>{body}</div>
   );
 }
 
-// A single horizontal proportion bar. Used for the type mix, where the question
-// is "how much of the active book is this" — a number alone answers it far more
-// slowly than a number beside a bar.
-// One ranked bar. `max` is the biggest count in the chart, not the active total:
-// the top type is ~half the book, so scaling to the total left every bar under
-// half the track and the short ones indistinguishable. Scaling to the leader
-// uses the full width and makes the ranking readable at a glance — the count and
-// the percent-of-total sit at the end, so no figure changes, only the scale.
+// The hairline-divided container the FAT summary grid still uses. (Two stale
+// comments describing TypeRow used to sit here — it moved to
+// ActiveJobsSection.tsx and left them pointing at nothing.)
 function Frame({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <div className={`grid gap-px overflow-hidden rounded-xl border border-sdc-border bg-sdc-border-soft shadow-sm ${className}`}>
@@ -137,9 +136,9 @@ export function DashboardOverviewPanel({ data }: { data: Overview }) {
   };
 
   return (
-    <div className="flex flex-col gap-7">
+    <div className="flex flex-col gap-8">
       {/* ── Top KPI strip ─────────────────────────────────────────────────── */}
-      <Frame className="grid-cols-2 md:grid-cols-3 xl:grid-cols-5">
+      <KpiStrip>
         <Kpi
           label="Active Jobs"
           value={String(data.activeTotal)}
@@ -183,19 +182,21 @@ export function DashboardOverviewPanel({ data }: { data: Overview }) {
           href="/jobs?status=HeadStart"
           tone={data.headStartTotal > 0 ? "yellow" : "navy"}
         />
-      </Frame>
+      </KpiStrip>
 
       {/* ── Active jobs: by type, and by customer ─────────────────────────── */}
       {/* A CLIENT component: the charts open an inline drill-through, whose state
           is a hook — and a hook cannot be called from this server component. Only
           that section crosses the boundary; everything else here stays on the
           server. See ActiveJobsSection.tsx. */}
-      <ActiveJobsSection
-        byType={data.byType}
-        customers={data.customers}
-        activeTotal={data.activeTotal}
-        headStartTotal={data.headStartTotal}
-      />
+      <Band label="Active work">
+        <ActiveJobsSection
+          byType={data.byType}
+          customers={data.customers}
+          activeTotal={data.activeTotal}
+          headStartTotal={data.headStartTotal}
+        />
+      </Band>
 
       {/* ── Execution Calendar: FATs, Pre-FATs and Customer Visits ────────── */}
       {/* Replaces the old "Execution — FATs" list and the separate
@@ -203,44 +204,46 @@ export function DashboardOverviewPanel({ data }: { data: Overview }) {
           of thing on one page; the calendar answers "what is happening the week
           of the 14th" without counting rows. The FAT KPI cards survive, moved
           beside the grid — they are a summary, not a second event list. */}
-      <ExecutionCalendarSection
-        data={data.calendar}
-        monthLabel={label}
-        kpis={
-          data.fats.available ? (
-            <div>
-              <Frame className="grid-cols-2">
-                <Kpi label={`FATs in ${label}`} value={String(data.fats.monthTotal)} tone="blue" />
-                <Kpi label="Pre-FATs" value={String(data.fats.monthPreFats)} sub="readiness runs, not the FAT" />
-                <Kpi label="Involving ME" value={String(data.fats.monthWithMe)} sub="named mechanical engineer" />
-                <Kpi label="Involving CE" value={String(data.fats.monthWithCe)} sub="named controls engineer" />
-              </Frame>
-              {/* ME + CE deliberately do NOT sum to the FAT total: most FATs
-                  involve both disciplines, and some have neither named yet.
-                  Saying so beats letting someone read the three numbers as a
-                  partition and conclude the data is broken. */}
-              <p className="mt-2 text-label leading-relaxed text-sdc-gray-400">
-                A FAT counts under ME or CE when its job&apos;s Scheduler schedule names a real engineer of that discipline
-                (placeholder seats excluded). Most FATs involve both, so these do not sum to the total.
-                {data.fats.monthUnstaffed > 0 && (
-                  <>
-                    {" "}
-                    <span className="font-semibold text-sdc-yellow-text">
-                      {data.fats.monthUnstaffed} FAT{data.fats.monthUnstaffed === 1 ? " has" : "s have"} no named ME or CE.
-                    </span>
-                  </>
-                )}
-              </p>
-            </div>
-          ) : (
-            <div className={`${card("p-4")} border-dashed`}>
-              <p className="text-sm text-sdc-gray-400">
-                The Scheduler is unreachable, so this month&apos;s FAT figures are unavailable.
-              </p>
-            </div>
-          )
-        }
-      />
+      <Band label="Execution &amp; planning">
+        <ExecutionCalendarSection
+          data={data.calendar}
+          monthLabel={label}
+          kpis={
+            data.fats.available ? (
+              <div>
+                <Frame className="grid-cols-2">
+                  <Kpi label={`FATs in ${label}`} value={String(data.fats.monthTotal)} tone="blue" />
+                  <Kpi label="Pre-FATs" value={String(data.fats.monthPreFats)} sub="readiness runs, not the FAT" />
+                  <Kpi label="Involving ME" value={String(data.fats.monthWithMe)} sub="named mechanical engineer" />
+                  <Kpi label="Involving CE" value={String(data.fats.monthWithCe)} sub="named controls engineer" />
+                </Frame>
+                {/* ME + CE deliberately do NOT sum to the FAT total: most FATs
+                    involve both disciplines, and some have neither named yet.
+                    Saying so beats letting someone read the three numbers as a
+                    partition and conclude the data is broken. */}
+                <p className="mt-2 text-label leading-relaxed text-sdc-gray-400">
+                  A FAT counts under ME or CE when its job&apos;s Scheduler schedule names a real engineer of that discipline
+                  (placeholder seats excluded). Most FATs involve both, so these do not sum to the total.
+                  {data.fats.monthUnstaffed > 0 && (
+                    <>
+                      {" "}
+                      <span className="font-semibold text-sdc-yellow-text">
+                        {data.fats.monthUnstaffed} FAT{data.fats.monthUnstaffed === 1 ? " has" : "s have"} no named ME or CE.
+                      </span>
+                    </>
+                  )}
+                </p>
+              </div>
+            ) : (
+              <div className={`${card("p-4")} border-dashed`}>
+                <p className="text-sm text-sdc-gray-400">
+                  The Scheduler is unreachable, so this month&apos;s FAT figures are unavailable.
+                </p>
+              </div>
+            )
+          }
+        />
+      </Band>
     </div>
   );
 }

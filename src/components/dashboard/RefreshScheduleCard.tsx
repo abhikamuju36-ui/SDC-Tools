@@ -1,5 +1,3 @@
-import { SectionTitle } from "@/components/ui/Typography";
-import { card } from "@/components/ui/classnames";
 import { SYNC_SOURCES, SYNC_INTERVAL_MS } from "@/lib/auto-sync";
 
 // ── The refresh-status card, lifted out of page.tsx unchanged (2026-08-27) ───
@@ -66,10 +64,17 @@ export function RefreshScheduleCard({ freshnessRows, lastRun }: { freshnessRows:
   const failingFeeds = scheduledFeeds.filter((f) => f.failure);
 
   return (
-    <div className={card("p-5")}>
+    // ── Deliberately the quietest container on the page (2026-08-28) ────────
+    //
+    // Operational metadata, not a business metric. It keeps every figure it had
+    // — source freshness is the thing you come here for — but sits on the page
+    // background rather than a white card, with tighter padding and a smaller
+    // heading, so it reads as a footer to the dashboard instead of a sixth
+    // peer section competing with Active Jobs.
+    <div className="rounded-xl border border-sdc-border bg-sdc-gray-50/70 p-4">
       <div className="flex flex-wrap items-start justify-between gap-x-4 gap-y-1">
         <div className="min-w-0">
-          <SectionTitle>Refresh Schedule</SectionTitle>
+          <h3 className="text-sm font-semibold text-sdc-gray-600">Refresh Schedule</h3>
           <p className="mt-0.5 text-label leading-relaxed text-sdc-gray-400">
             All of these refresh together every {SYNC_INTERVAL_MS / 3_600_000 === 1 ? "hour" : `${SYNC_INTERVAL_MS / 3_600_000} hours`},
             in one pass — and “Refresh Data” in the sidebar runs that identical pass on demand. Historical months and app-owned

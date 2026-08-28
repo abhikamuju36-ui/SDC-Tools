@@ -11,6 +11,7 @@ import { getDashboardOverview, dashboardMonth } from "@/lib/dashboard-overview";
 import { DashboardOverviewPanel, monthLabel } from "@/components/dashboard/DashboardOverview";
 import { DashboardMonthSelect } from "@/components/dashboard/DashboardMonthSelect";
 import { RefreshScheduleCard } from "@/components/dashboard/RefreshScheduleCard";
+import { Band } from "@/components/dashboard/DashboardLayout";
 import { UtilizationPanel } from "@/components/dashboard/UtilizationPanel";
 
 // ── The Dashboard (redesigned 2026-08-27) ───────────────────────────────────
@@ -83,7 +84,16 @@ export default async function Home({
 
   return (
     <div className="w-full max-w-[1600px] px-8 py-9 md:px-13 md:py-10">
-      <div className="mb-6 flex flex-wrap items-end justify-between gap-x-6 gap-y-3">
+      {/* ── Header bar ────────────────────────────────────────────────────────
+          A real bar now, closed by a rule, rather than a title floating above
+          the content: the month/year control and Manage Jobs belong to the whole
+          page, and the rule is what says so.
+
+          No "Refresh Data" button here on purpose — RefreshDataButton is already
+          in the sidebar on every page (the Refresh card at the bottom points
+          readers there), and a second copy of a global control is a second thing
+          to keep in step, not a convenience. */}
+      <div className="mb-7 flex flex-wrap items-end justify-between gap-x-6 gap-y-3 border-b border-sdc-border pb-5">
         <div className="min-w-0">
           <PageTitle>Dashboard</PageTitle>
           <p className="text-sm text-sdc-gray-600">
@@ -103,14 +113,26 @@ export default async function Home({
         issueCount={dataQuality.future.count + dataQuality.afterCompletion.count + dataQuality.undefinedEmployees.count}
         dataQuality={<DataQualityPanel dq={dataQuality} explorer={explorer} />}
         overview={
-          <div className="flex flex-col gap-7">
+          // Four labelled bands, not five equal blocks in a stack. The KPI
+          // strip and the first two bands live inside DashboardOverviewPanel;
+          // capacity and the system metadata are bands here because they are
+          // separate components. See DashboardLayout.tsx.
+          <div className="flex flex-col gap-8">
             <DashboardOverviewPanel data={overview} />
-            {/* Below the overview, above the refresh card: it is the page's most
-                detailed table and reads as the "and here is the detail" answer to
-                the workforce capacity cards immediately above it. Same `overview`
-                object, same month — no second month state, no second fetch. */}
-            <UtilizationPanel result={overview.utilization} monthLabel={monthLabel(month)} />
-            <RefreshScheduleCard freshnessRows={freshnessRows} lastRun={refreshRuns[0] ?? null} />
+
+            {/* The page's most detailed figures — the "and here is the detail"
+                answer to the hours KPIs above. Same `overview` object, same
+                month: no second month state and no second fetch. */}
+            <Band label="Capacity &amp; utilization">
+              <UtilizationPanel result={overview.utilization} monthLabel={monthLabel(month)} />
+            </Band>
+
+            {/* Operational metadata, deliberately last and deliberately quiet —
+                a muted band label and a lighter container, so it stays findable
+                without competing with a business figure. */}
+            <Band label="System" tone="muted">
+              <RefreshScheduleCard freshnessRows={freshnessRows} lastRun={refreshRuns[0] ?? null} />
+            </Band>
           </div>
         }
       />
