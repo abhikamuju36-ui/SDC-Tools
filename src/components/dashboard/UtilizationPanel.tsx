@@ -174,8 +174,11 @@ function DepartmentTable({
 
   return (
     // The scroller, not the page, takes the overflow — a fifteen-column table must
-    // never make the whole Dashboard scroll sideways on a laptop.
-    <div className="overflow-x-auto">
+    // never make the whole Dashboard scroll sideways on a laptop, and a
+    // twelve-department list must not push the rest of the page off the bottom.
+    // Both axes are capped here, and the header row sticks so a scrolled table
+    // still says which column is which.
+    <div className="styled-scrollbar max-h-[27rem] overflow-auto">
       <table className="w-full min-w-[62rem] border-collapse text-sm">
         <thead>
           <tr className="border-b border-sdc-border bg-white text-xs uppercase tracking-wide text-sdc-muted">
@@ -185,7 +188,9 @@ function DepartmentTable({
               type="text"
               sort={sort}
               onSort={onSort}
-              className={`${DEPT_CELL} bg-white py-2 pl-3 pr-3 font-semibold`}
+              // z-30: this one corner cell is sticky on BOTH axes, so it has to
+              // sit above the sticky row (z-20) and the sticky column (z-10).
+              className={`${DEPT_CELL} sticky top-0 z-30 bg-white py-2 pl-3 pr-3 font-semibold`}
             />
             {DEPT_HEADERS.map((h) => (
               <SortableTh
@@ -195,7 +200,9 @@ function DepartmentTable({
                 type={h.key.endsWith("Pct") || h.key === "employees" ? "number" : "hours"}
                 sort={sort}
                 onSort={onSort}
-                className={`py-2 px-2 font-semibold whitespace-nowrap ${h.core ? "" : "text-sdc-gray-400"}`}
+                className={`sticky top-0 z-20 bg-white py-2 px-2 font-semibold whitespace-nowrap ${
+                  h.core ? "" : "text-sdc-gray-400"
+                }`}
               />
             ))}
           </tr>
@@ -438,14 +445,20 @@ function EmployeeUtilization({
                     drill.isOpen(e.employeeId) ? "bg-sdc-blue-light" : TABLE_ROW_HOVER
                   } ${e.actualHours > 0 ? "" : "cursor-default"}`}
                 >
+                  {/* Hours moved onto the second line, beside the department,
+                      and the bar is narrower. This list now lives in a 21rem
+                      column beside the department table, and as a row of four
+                      fixed-width columns it left the NAME 26px of a 314px panel
+                      -- every person read as two characters. The fixed furniture
+                      is ~156px now, so the name keeps the rest. */}
                   <span className="min-w-0 flex-1">
                     <span className="block truncate text-sdc-navy">{e.name}</span>
-                    <span className="block truncate text-xs text-sdc-muted">{e.departmentTitle}</span>
+                    <span className="flex items-baseline gap-2 text-xs text-sdc-muted">
+                      <span className="min-w-0 truncate">{e.departmentTitle}</span>
+                      <span className="ml-auto shrink-0 tabular-nums">{hoursFmt(e.actualHours)}h</span>
+                    </span>
                   </span>
-                  <span className="hidden w-16 shrink-0 text-right text-xs tabular-nums text-sdc-muted sm:block">
-                    {hoursFmt(e.actualHours)}h
-                  </span>
-                  <span className="h-2 w-24 shrink-0 overflow-hidden rounded-full bg-sdc-gray-100 sm:w-32" aria-hidden>
+                  <span className="h-2 w-16 shrink-0 overflow-hidden rounded-full bg-sdc-gray-100" aria-hidden>
                     <span className={`block h-full rounded-full ${tone.bar}`} style={{ width: `${width}%` }} />
                   </span>
                   <span className={`w-11 shrink-0 text-right text-sm font-semibold tabular-nums ${tone.text}`}>
@@ -480,21 +493,37 @@ export function UtilizationPanel({ result, monthLabel }: { result: DepartmentUti
   }
 
   return (
-    // ── Two peer panels, stacked (2026-08-28) ───────────────────────────────
+    // ── Two peer panels, side by side (2026-08-28) ──────────────────────
     //
     // They were ONE card with the employee list hanging off the bottom of the
     // department table, which read as a loose appendix. They are peers — the
-    // same question asked per department and per person — so each now has its
-    // own panel and header.
+    // same question asked per department and per person — so each has its own
+    // panel and header.
     //
-    // Stacked, NOT side by side, and that is a measured decision rather than a
-    // preference. Side by side was built first: at a 1560px viewport it left the
-    // department panel 961px wide and pushed 381px of the table behind a
-    // horizontal scrollbar, and the split only stops scrolling right at the
-    // 1600px content cap — one added column and it would start again. A
-    // fifteen-column table that has to be scrolled to be read is a worse outcome
-    // than a taller page, so the table keeps the full width.
-    <div className="grid min-w-0 gap-5">
+    // Side by side was tried and REJECTED once, and that failure is the
+    // constraint this split has to respect: the department table is sixteen
+    // columns and measures 1341px. At the old 1600px content cap a 65/35 split
+    // left it 1096px and pushed 245px behind a horizontal scrollbar, and a
+    // table that must be scrolled to be read is worse than a taller page.
+    //
+    // So the columns are NOT a ratio. The content cap is now 1800px and the
+    // right-hand column is pinned to the width the employee list needs (21rem)
+    // rather than a share of the row, which leaves the table 1362px — the whole
+    // thing, measured, with a little headroom. A ratio would silently put it
+    // back behind a scrollbar the next time this row is touched. Below xl it
+    // stacks and the table gets the full width back either way.
+    //
+    // The row widens when the drill is open, deliberately: the punch table needs
+    // real width, and the department table degrades gracefully there because
+    // both its first column and its header stick.
+    //
+    // Both panels are height-capped and scroll internally, so this band is one
+    // screen-ish block instead of the ~970px run it had grown into.
+    <div
+      className={`grid min-w-0 items-start gap-5 ${
+        drill.target ? "xl:grid-cols-[minmax(0,1fr)_minmax(26rem,31rem)]" : "xl:grid-cols-[minmax(0,1fr)_21rem]"
+      }`}
+    >
       <Panel flush className="flex min-w-0 flex-col">
         <PanelHead
           className="border-b border-sdc-border px-4 py-2.5"
@@ -506,42 +535,33 @@ export function UtilizationPanel({ result, monthLabel }: { result: DepartmentUti
         <DepartmentTable result={result} drill={drill} />
       </Panel>
 
-      {/* ── The punch drill opens BESIDE the employee list, not under it ─────
-          The department table above keeps the full width for the reason in the
-          note at the top of this block — it has fifteen columns and squeezing
-          it puts real data behind a scrollbar. The employee list does not: it
-          is four narrow columns, so the drill pairs with THAT, at the same
-          vertical position as the row you clicked.
-          Which is also why the list rows are drillable now — clicking a name
-          on the left and reading their punches immediately to the right is the
-          interaction this section wanted.
-          Stacks below xl, where two columns would leave neither usable. */}
-      <div
-        className={`grid min-w-0 gap-5 ${
-          drill.target ? "xl:grid-cols-[minmax(20rem,0.75fr)_minmax(0,1.6fr)] xl:items-start" : ""
-        }`}
-      >
+      {/* ── The punch drill REPLACES the employee list, it does not push it ───
+          Both live in the right-hand column. Opening a person's punches swaps
+          this panel's content rather than appending a third block, so the band
+          never grows: you are looking at either the ranked list or the one
+          person you picked out of it, which is the actual reading order.
+          The drill's own header carries the name and a close that returns you
+          to the list. */}
+      {drill.target ? (
+        <EmployeePunchDrillPanel
+          target={drill.target}
+          result={drill.result}
+          loading={drill.loading}
+          error={drill.error}
+          monthLabel={monthLabel}
+          onClose={drill.close}
+          expectedHours={drilled?.actualHours ?? 0}
+        />
+      ) : (
         <Panel flush className="flex min-w-0 flex-col">
           <PanelHead
             className="border-b border-sdc-border px-4 py-2.5"
             title="Employee Utilization"
-            note="Billable hours ÷ hours worked"
+            note="Billable hours / hours worked"
           />
           <EmployeeUtilization result={result} drill={drill} />
         </Panel>
-
-        {drill.target && (
-          <EmployeePunchDrillPanel
-            target={drill.target}
-            result={drill.result}
-            loading={drill.loading}
-            error={drill.error}
-            monthLabel={monthLabel}
-            onClose={drill.close}
-            expectedHours={drilled?.actualHours ?? 0}
-          />
-        )}
-      </div>
+      )}
     </div>
   );
 }

@@ -83,7 +83,7 @@ export default async function Home({
   ]);
 
   return (
-    <div className="w-full max-w-[1600px] px-8 py-9 md:px-13 md:py-10">
+    <div className="w-full max-w-[1800px] px-6 py-6 md:px-10 md:py-7">
       {/* ── Header bar ────────────────────────────────────────────────────────
           A real bar now, closed by a rule, rather than a title floating above
           the content: the month/year control and Manage Jobs belong to the whole

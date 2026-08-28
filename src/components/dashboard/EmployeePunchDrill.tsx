@@ -167,7 +167,7 @@ export function EmployeePunchDrillPanel({
           </div>
 
           <div className="overflow-x-auto">
-            <table className="w-full min-w-[38rem] border-collapse text-sm">
+            <table className="w-full min-w-[30rem] border-collapse text-sm">
               <thead>
                 <tr className="border-b border-sdc-border bg-white text-xs uppercase tracking-wide text-sdc-muted">
                   <th scope="col" className="w-[7.5rem] px-3 py-2 text-left font-semibold">Date</th>

@@ -372,7 +372,7 @@ export function ExecutionCalendarSection({
                     return (
                       <div
                         key={c.iso}
-                        className={`min-h-[5.4rem] border-r border-b border-sdc-border-soft p-1 last:border-r-0 ${
+                        className={`min-h-[4.6rem] border-r border-b border-sdc-border-soft p-1 last:border-r-0 ${
                           c.inMonth ? "bg-white" : "bg-sdc-gray-50/60"
                         }`}
                       >
@@ -425,7 +425,7 @@ export function ExecutionCalendarSection({
               </div>
             </div>
           ) : (
-            <div className="max-h-[30rem] divide-y divide-sdc-border-soft overflow-y-auto">
+            <div className="max-h-[26rem] divide-y divide-sdc-border-soft overflow-y-auto">
               {shown.length === 0 ? (
                 <p className="px-4 py-6 text-sm text-sdc-gray-400">No events in {monthLabel} for the selected types.</p>
               ) : (
