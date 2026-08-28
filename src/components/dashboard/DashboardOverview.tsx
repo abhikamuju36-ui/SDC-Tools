@@ -1,8 +1,8 @@
 import Link from "next/link";
 import { card } from "@/components/ui/classnames";
-import { SectionTitle } from "@/components/ui/Typography";
-import type { DashboardOverview as Overview, FatRow } from "@/lib/dashboard-overview";
+import type { DashboardOverview as Overview } from "@/lib/dashboard-overview";
 import { ActiveJobsSection } from "@/components/dashboard/ActiveJobsSection";
+import { ExecutionCalendarSection } from "@/components/dashboard/ExecutionCalendar";
 
 // ── The Dashboard's Overview panel (2026-08-27 redesign) ────────────────────
 //
@@ -23,23 +23,6 @@ export function monthLabel(month: string): string {
   return MONTH_LABEL.format(new Date(Date.UTC(y, m - 1, 1)));
 }
 
-const DAY_LABEL = new Intl.DateTimeFormat("en-US", { weekday: "short", month: "short", day: "numeric", timeZone: "UTC" });
-
-function dayLabel(iso: string): string {
-  const [y, m, d] = iso.split("-").map(Number);
-  return DAY_LABEL.format(new Date(Date.UTC(y, m - 1, d)));
-}
-
-function countdown(days: number): { text: string; tone: string } {
-  if (days === 0) return { text: "Today", tone: "bg-sdc-red-bg text-sdc-red-text" };
-  if (days === 1) return { text: "Tomorrow", tone: "bg-sdc-red-bg text-sdc-red-text" };
-  if (days <= 14) return { text: `${days} days`, tone: "bg-sdc-yellow-bg text-sdc-yellow-text" };
-  return { text: `${days} days`, tone: "bg-sdc-gray-100 text-sdc-gray-600" };
-}
-
-// One number, its label, and an optional second line. `href` makes it drillable;
-// a KPI with nothing meaningful to drill into stays a plain cell rather than a
-// link to somewhere that doesn't answer the question it raises.
 function Kpi({
   label,
   value,
@@ -85,71 +68,6 @@ function Kpi({
 // half the track and the short ones indistinguishable. Scaling to the leader
 // uses the full width and makes the ranking readable at a glance — the count and
 // the percent-of-total sit at the end, so no figure changes, only the scale.
-function OwnerChips({ label, names, tone }: { label: string; names: string[]; tone: string }) {
-  if (names.length === 0) return null;
-  return (
-    <span className={`inline-flex max-w-full items-center gap-1 rounded-md px-1.5 py-0.5 text-label font-medium ${tone}`}>
-      <span className="font-bold">{label}</span>
-      <span className="truncate">{names.join(", ")}</span>
-    </span>
-  );
-}
-
-function FatListRow({ row, schedulerHref }: { row: FatRow; schedulerHref: string | null }) {
-  const c = countdown(row.daysUntil);
-  const inner = (
-    <>
-      <span className="flex min-w-0 flex-col">
-        <span className="flex items-center gap-2">
-          <span className="font-mono text-label tabular-nums text-sdc-muted">{row.jobNumber}</span>
-          <span className="truncate text-sm font-semibold text-sdc-navy" title={row.jobName ?? row.project}>
-            {row.jobName ?? row.project}
-          </span>
-          {row.kind === "pre" && (
-            <span className="shrink-0 rounded-full bg-sdc-gray-100 px-1.5 py-0.5 text-label font-semibold text-sdc-gray-600">
-              Pre-FAT
-            </span>
-          )}
-        </span>
-        <span className="truncate text-label text-sdc-gray-400" title={row.customer ?? undefined}>
-          {row.customer ?? "No customer set"}
-        </span>
-      </span>
-      <span className="flex min-w-0 flex-wrap items-center gap-1">
-        {/* The FAT task's own assignee wins when the scheduler set one — it is a
-            statement about THIS event. The ME/CE names are the fallback: they
-            come from the job's schedule, so they answer "who is on this job",
-            which is the closest available answer to "who owns this FAT". */}
-        {row.assignee && (
-          <span className="truncate rounded-md bg-sdc-blue-light px-1.5 py-0.5 text-label font-semibold text-sdc-blue-dark">
-            {row.assignee}
-          </span>
-        )}
-        <OwnerChips label="ME" names={row.meOwners} tone="bg-sdc-gray-100 text-sdc-navy" />
-        <OwnerChips label="CE" names={row.ceOwners} tone="bg-sdc-green-bg text-sdc-green-text" />
-        {!row.assignee && row.meOwners.length === 0 && row.ceOwners.length === 0 && (
-          <span className="text-label text-sdc-gray-400">No named owner in Scheduler</span>
-        )}
-      </span>
-      <span className="shrink-0 text-right text-label font-medium whitespace-nowrap text-sdc-gray-600">{dayLabel(row.date)}</span>
-      <span className={`shrink-0 rounded-full px-2 py-0.5 text-center text-label font-semibold whitespace-nowrap tabular-nums ${c.tone}`}>
-        {c.text}
-      </span>
-    </>
-  );
-  const cls =
-    "grid grid-cols-[minmax(0,1.6fr)_minmax(0,1.4fr)_auto_auto] items-center gap-3 bg-white px-4 py-2.5 motion-interactive hover:bg-sdc-blue-light/25";
-  return schedulerHref ? (
-    <a href={schedulerHref} target="_blank" rel="noopener noreferrer" className={cls} title="Open this schedule in SDC Scheduler">
-      {inner}
-    </a>
-  ) : (
-    <div className={cls}>{inner}</div>
-  );
-}
-
-// The outer frame every section shares: one border, one shadow, hairline
-// dividers between rows.
 function Frame({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
     <div className={`grid gap-px overflow-hidden rounded-xl border border-sdc-border bg-sdc-border-soft shadow-sm ${className}`}>
@@ -158,33 +76,13 @@ function Frame({ children, className = "" }: { children: React.ReactNode; classN
   );
 }
 
-function SectionHead({ title, note, action }: { title: string; note?: React.ReactNode; action?: React.ReactNode }) {
-  return (
-    <div className="mb-2.5 flex items-end justify-between gap-3">
-      <div className="min-w-0">
-        <SectionTitle>{title}</SectionTitle>
-        {note && <p className="mt-0.5 text-label text-sdc-gray-400">{note}</p>}
-      </div>
-      {action}
-    </div>
-  );
-}
-
-export function DashboardOverviewPanel({
-  data,
-  schedulerBaseUrl,
-  schedulerJobNumbers,
-}: {
-  data: Overview;
-  schedulerBaseUrl: string;
-  /** Job numbers that actually have a Scheduler project, so a FAT row never links nowhere. */
-  schedulerJobNumbers: Set<string>;
-}) {
+// The two Scheduler props (`schedulerBaseUrl`, `schedulerJobNumbers`) are gone
+// with the FAT list: they existed only to deep-link a FAT row into the
+// Scheduler, and the Execution Calendar opens its details in place instead.
+export function DashboardOverviewPanel({ data }: { data: Overview }) {
   const label = monthLabel(data.month);
   const eng = data.workforce.find((w) => w.key === "engineering")!;
   const shop = data.workforce.find((w) => w.key === "shop")!;
-  const fatHref = (r: FatRow) =>
-    schedulerJobNumbers.has(r.jobNumber) ? `${schedulerBaseUrl}/?job=${encodeURIComponent(r.jobNumber)}&view=schedule` : null;
 
   // ── What these two cards lead with (2026-08-27) ───────────────────────────
   //
@@ -299,57 +197,23 @@ export function DashboardOverviewPanel({
         headStartTotal={data.headStartTotal}
       />
 
-      {/* ── Execution: upcoming FATs + the month's ME/CE breakdown ────────── */}
-      <section>
-        <SectionHead
-          title="Execution — FATs"
-          note="Factory Acceptance Tests, live from the SDC Scheduler. Rows open that job's schedule."
-        />
-        {!data.fats.available ? (
-          <div className={`${card("p-5")} text-sm text-sdc-gray-600`}>
-            The SDC Scheduler is not reachable from this host, so FAT dates cannot be shown. This is deliberately blank rather
-            than zero — the Scheduler is the only source for FAT dates, and an unreachable source is not the same answer as “no
-            FATs scheduled”.
-          </div>
-        ) : (
-          <div className="grid gap-6 xl:grid-cols-[minmax(0,2fr)_minmax(280px,0.8fr)]">
-            <Frame className="min-w-0 grid-cols-1">
-              <div className="flex items-center justify-between gap-3 bg-sdc-gray-50/70 px-4 py-2">
-                <span className="text-label font-semibold tracking-wider text-sdc-gray-400 uppercase">Next up</span>
-                <span className="text-label text-sdc-gray-400">{data.fats.upcoming.length} scheduled from today</span>
-              </div>
-              {data.fats.upcoming.length === 0 ? (
-                <p className="bg-white px-4 py-5 text-sm text-sdc-gray-400">
-                  No FATs are scheduled on any active job from today onward.
-                </p>
-              ) : (
-                data.fats.upcoming.slice(0, 12).map((r) => <FatListRow key={r.taskId} row={r} schedulerHref={fatHref(r)} />)
-              )}
-              {data.fats.upcoming.length > 12 && (
-                <p className="bg-white px-4 py-2 text-label text-sdc-gray-400">
-                  Showing the 12 nearest of {data.fats.upcoming.length}. The rest are further out than the last row above.
-                </p>
-              )}
-            </Frame>
-
-            <div className="min-w-0">
+      {/* ── Execution Calendar: FATs, Pre-FATs and Customer Visits ────────── */}
+      {/* Replaces the old "Execution — FATs" list and the separate
+          "Planning — Customer Visits" panel. Both were lists of the same shape
+          of thing on one page; the calendar answers "what is happening the week
+          of the 14th" without counting rows. The FAT KPI cards survive, moved
+          beside the grid — they are a summary, not a second event list. */}
+      <ExecutionCalendarSection
+        data={data.calendar}
+        monthLabel={label}
+        kpis={
+          data.fats.available ? (
+            <div>
               <Frame className="grid-cols-2">
                 <Kpi label={`FATs in ${label}`} value={String(data.fats.monthTotal)} tone="blue" />
-                <Kpi
-                  label="Pre-FATs"
-                  value={String(data.fats.monthPreFats)}
-                  sub="readiness runs, not the FAT"
-                />
-                <Kpi
-                  label="Involving ME"
-                  value={String(data.fats.monthWithMe)}
-                  sub="named mechanical engineer"
-                />
-                <Kpi
-                  label="Involving CE"
-                  value={String(data.fats.monthWithCe)}
-                  sub="named controls engineer"
-                />
+                <Kpi label="Pre-FATs" value={String(data.fats.monthPreFats)} sub="readiness runs, not the FAT" />
+                <Kpi label="Involving ME" value={String(data.fats.monthWithMe)} sub="named mechanical engineer" />
+                <Kpi label="Involving CE" value={String(data.fats.monthWithCe)} sub="named controls engineer" />
               </Frame>
               {/* ME + CE deliberately do NOT sum to the FAT total: most FATs
                   involve both disciplines, and some have neither named yet.
@@ -368,51 +232,15 @@ export function DashboardOverviewPanel({
                 )}
               </p>
             </div>
-          </div>
-        )}
-      </section>
-
-      {/* ── Planning: customer visits ─────────────────────────────────────── */}
-      <section>
-        <SectionHead title="Planning — Customer Visits" note={`Planned visits in ${label}`} />
-        {data.visits.configured ? (
-          <Frame className="grid-cols-1">
-            {data.visits.visits.length === 0 ? (
-              <p className="bg-white px-4 py-5 text-sm text-sdc-gray-400">No customer visits are planned in {label}.</p>
-            ) : (
-              data.visits.visits.map((v) => (
-                <div key={`${v.date}-${v.customer}`} className="grid grid-cols-[minmax(0,1fr)_auto] items-center gap-3 bg-white px-4 py-2.5">
-                  <span className="min-w-0">
-                    <span className="block truncate text-sm font-semibold text-sdc-navy">{v.customer}</span>
-                    <span className="block truncate text-label text-sdc-gray-400">
-                      {[v.jobNumber, v.jobName, v.owner].filter(Boolean).join(" · ") || "—"}
-                    </span>
-                  </span>
-                  <span className="text-label font-medium whitespace-nowrap text-sdc-gray-600">{dayLabel(v.date)}</span>
-                </div>
-              ))
-            )}
-          </Frame>
-        ) : (
-          <div className={`${card("p-5")} border-dashed`}>
-            <p className="text-sm font-semibold text-sdc-navy">No data source yet — this section is intentionally empty.</p>
-            <p className="mt-1.5 text-sm leading-relaxed text-sdc-gray-600">
-              Customer Visits are not recorded anywhere today. The Scheduler has no visit table and no visit field on{" "}
-              <span className="font-mono text-label">projects</span> or <span className="font-mono text-label">tasks</span>;
-              this app&apos;s own schema has no visit model; and the parsed Project Release document does not carry a visit
-              date. The only visit-shaped rows anywhere are two ad-hoc task names somebody happened to type, which is not a
-              source a count can be built on.
-            </p>
-            <p className="mt-2.5 text-sm leading-relaxed text-sdc-gray-600">
-              <span className="font-semibold text-sdc-navy">Open with Mike:</span> where should a Customer Visit be entered in
-              the Scheduler — as a first-class visit milestone on a project&apos;s timeline (so it inherits the date cascade and
-              can recur), or as one visit date per project? Once that is decided, this section fills in from{" "}
-              <span className="font-mono text-label">lib/customer-visits.ts</span> alone; the layout, the month filter and this
-              panel are already wired to it.
-            </p>
-          </div>
-        )}
-      </section>
+          ) : (
+            <div className={`${card("p-4")} border-dashed`}>
+              <p className="text-sm text-sdc-gray-400">
+                The Scheduler is unreachable, so this month&apos;s FAT figures are unavailable.
+              </p>
+            </div>
+          )
+        }
+      />
     </div>
   );
 }

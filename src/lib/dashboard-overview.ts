@@ -4,11 +4,12 @@ import { validJobTypeFilter, VALID_JOB_TYPES, isSdcCustomer, compareJobIds, ACTI
 import { resolveEmployeeGroup } from "@/lib/employee-card-theme";
 import { workforceGroupForCardKey, rollupGroup } from "@/lib/employee-workforce-groups";
 import { monthlyCapacityHours, hasYearPolicy } from "@/lib/workforce-capacity-policy";
-import { fetchSchedulerFatEvents, fetchSchedulerJobDisciplineOwners, type SchedulerFatEvent } from "@/lib/scheduler-db";
+import { fetchSchedulerFatEvents, fetchSchedulerJobDisciplineOwners, dedupeFats } from "@/lib/scheduler-db";
 import { getCustomerVisits, type CustomerVisitsResult } from "@/lib/customer-visits";
 import { isValidMonth } from "@/lib/etc";
 import { getDepartmentUtilization, type DepartmentUtilizationResult } from "@/lib/department-utilization";
 import { customerBucket } from "@/lib/dashboard-job-drill";
+import { getExecutionCalendar, type ExecutionCalendar } from "@/lib/dashboard-calendar";
 
 // ── One query pass for the whole dashboard (2026-08-27) ─────────────────────
 //
@@ -101,6 +102,8 @@ export type DashboardOverview = {
   // capacity, this one is the report's holiday-agnostic Working Days x 8).
   // Both are on the page on purpose; they answer different questions.
   utilization: DepartmentUtilizationResult;
+  /** FATs, Pre-FATs and Customer Visits for `month`, in one normalized event array. */
+  calendar: ExecutionCalendar;
 };
 
 /** The month the dashboard defaults to, and the one every month-scoped figure is measured in. */
@@ -125,28 +128,11 @@ function pct(count: number, total: number): number {
   return total === 0 ? 0 : Math.round((count / total) * 1000) / 10;
 }
 
-// One FAT per (job, date, kind), even when two Scheduler schedules or two
-// differently-named tasks describe it. Live data has both: job 1138 carries
-// "FAT" and "1138 - Shade-O-Matic FAT" on 2026-08-19, and jobs 1101/1153 each
-// have more than one schedule. Collapsing them is what stops "FATs this month"
-// double-counting one event; the surviving row keeps its schedule name, so a
-// genuinely duplicated schedule is still visible on the list rather than hidden.
-function dedupeFats(events: SchedulerFatEvent[]): SchedulerFatEvent[] {
-  const seen = new Map<string, SchedulerFatEvent>();
-  for (const e of events) {
-    const key = `${e.jobNumber}|${e.date}|${e.kind}`;
-    const prior = seen.get(key);
-    // Prefer the row that names a person — it is the one worth showing.
-    if (!prior || (!prior.assignee && e.assignee)) seen.set(key, e);
-  }
-  return [...seen.values()];
-}
-
 export async function getDashboardOverview(month: string, now: Date = new Date()): Promise<DashboardOverview> {
   const [year, monthNo] = month.split("-").map(Number);
   const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-  const [jobs, employees, hoursRows, fatEvents, owners, visits, utilization] = await Promise.all([
+  const [jobs, employees, hoursRows, fatEvents, owners, visits, utilization, calendar] = await Promise.all([
     // The whole live job population in one read (a few hundred rows). Active and
     // HeadStart are split in memory rather than by two counts, so the KPI, the
     // type strip and the customer cards are provably the same set of jobs.
@@ -174,6 +160,7 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
     // fetch the card makes for itself. The one-data-pass rule is about the page
     // never firing per-card requests, not about forbidding a second query.
     getDepartmentUtilization(month),
+    getExecutionCalendar(month),
   ]);
 
   // Split off the SAME status the drill-through queries by, read from the shared
@@ -327,5 +314,6 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
     workforce,
     visits,
     utilization,
+    calendar,
   };
 }

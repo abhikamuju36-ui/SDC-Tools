@@ -162,6 +162,14 @@ export type SchedulerFatEvent = {
   date: string;
   /** Whoever the FAT task itself is assigned to, if anyone. */
   assignee: string | null;
+  /**
+   * The machine this FAT belongs to ("M1", "M2", …), from the Scheduler's own
+   * `tasks.machine` column — the real relationship, not a guess parsed out of the
+   * task name. NULL is meaningful and common: on a single-machine project, and on
+   * a FAT that covers the whole project, the Scheduler leaves it unset. Callers
+   * render that as a project-level FAT rather than as missing data.
+   */
+  machine: string | null;
   /** A "Pre FAT"/"Pre-FAT"/"Internal Pre-FAT" is a readiness run, not the FAT. */
   kind: "fat" | "pre";
   progress: number;
@@ -178,7 +186,7 @@ export async function fetchSchedulerFatEvents(): Promise<SchedulerFatEvent[] | n
   try {
     const pool = getPool();
     const [rows] = await pool.query<mysql.RowDataPacket[]>(
-      `SELECT t.id, t.name, t.project, p.job_number, t.start_date, t.assignee, t.progress
+      `SELECT t.id, t.name, t.project, p.job_number, t.start_date, t.assignee, t.progress, t.machine
          FROM tasks t
          JOIN projects p ON p.name = t.project
         WHERE p.job_number IS NOT NULL AND p.job_number <> ''
@@ -199,6 +207,7 @@ export async function fetchSchedulerFatEvents(): Promise<SchedulerFatEvent[] | n
         // "YYYY-MM-DD", and slicing keeps a stray time component out.
         date: String(r.start_date).slice(0, 10),
         assignee: r.assignee ? String(r.assignee).trim() || null : null,
+        machine: r.machine ? String(r.machine).trim() || null : null,
         kind: isPreFat(name) ? "pre" : "fat",
         progress: r.progress == null ? 0 : Number(r.progress),
       };
@@ -206,6 +215,31 @@ export async function fetchSchedulerFatEvents(): Promise<SchedulerFatEvent[] | n
   } catch {
     return null;
   }
+}
+
+// ── One FAT per (job, date, kind) ───────────────────────────────────────────
+//
+// Even when two Scheduler schedules or two differently-named tasks describe the
+// same real event. Live data has both: job 1138 carries "FAT" and
+// "1138 - Shade-O-Matic FAT" on 2026-08-19, and jobs 1101/1153 each have more
+// than one schedule. Collapsing them is what stops "FATs this month"
+// double-counting one event; the surviving row keeps its schedule name, so a
+// genuinely duplicated schedule is still visible rather than hidden.
+//
+// Lives HERE, beside the reader whose rows it de-duplicates, rather than inside
+// one consumer: the Dashboard's FAT KPIs and its Execution Calendar both have to
+// count a month the same way, and they only do that for as long as they run the
+// same function. (They briefly did not — the calendar showed 8 FATs in August
+// against the KPI's 7, which is exactly this 1138 pair.)
+export function dedupeFats(events: SchedulerFatEvent[]): SchedulerFatEvent[] {
+  const seen = new Map<string, SchedulerFatEvent>();
+  for (const e of events) {
+    const key = `${e.jobNumber}|${e.date}|${e.kind}`;
+    const prior = seen.get(key);
+    // Prefer the row that names a person — it is the one worth showing.
+    if (!prior || (!prior.assignee && e.assignee)) seen.set(key, e);
+  }
+  return [...seen.values()];
 }
 
 // ── Who ME/CE is, per job (2026-08-27) ──────────────────────────────────────
@@ -258,5 +292,44 @@ export async function fetchSchedulerJobDisciplineOwners(): Promise<SchedulerJobD
     return out;
   } catch {
     return empty;
+  }
+}
+
+// ── PM and Debug Lead, per schedule (2026-08-28) ────────────────────────────
+//
+// The Scheduler stores both in ONE settings row — `settings.project_leads`, a
+// JSON object keyed by the SCHEDULE NAME (`projects.name`, not the job number)
+// holding `{ pm?, debug? }`. That is the same store its own Projects page reads
+// and writes through its PM / Debug lead pickers, so this is the existing
+// assignment rather than a second field invented here.
+//
+// Keyed by schedule name and not by job number on purpose: a job can carry more
+// than one schedule (1101 has three live today) and they do not always name the
+// same debug lead. Resolving by job would have to pick one arbitrarily.
+export type SchedulerProjectLeads = Map<string, { pm: string | null; debug: string | null }>;
+
+export async function fetchSchedulerProjectLeads(): Promise<SchedulerProjectLeads> {
+  const out: SchedulerProjectLeads = new Map();
+  if (!isSchedulerDbConfigured()) return out;
+  try {
+    const pool = getPool();
+    const [rows] = await pool.query<mysql.RowDataPacket[]>(
+      `SELECT value FROM settings WHERE \`key\` = 'project_leads' LIMIT 1`,
+    );
+    const raw = rows[0]?.value;
+    if (!raw) return out;
+    const parsed: unknown = JSON.parse(String(raw));
+    if (!parsed || typeof parsed !== "object") return out;
+    for (const [project, leads] of Object.entries(parsed as Record<string, unknown>)) {
+      if (!leads || typeof leads !== "object") continue;
+      const l = leads as { pm?: unknown; debug?: unknown };
+      const clean = (v: unknown): string | null => (typeof v === "string" && v.trim() !== "" ? v.trim() : null);
+      out.set(project, { pm: clean(l.pm), debug: clean(l.debug) });
+    }
+    return out;
+  } catch {
+    // Same failure posture as every other reader here: an unreachable or
+    // malformed Scheduler yields "unknown", never a thrown Dashboard.
+    return out;
   }
 }

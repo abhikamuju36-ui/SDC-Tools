@@ -12,8 +12,6 @@ import { DashboardOverviewPanel, monthLabel } from "@/components/dashboard/Dashb
 import { DashboardMonthSelect } from "@/components/dashboard/DashboardMonthSelect";
 import { RefreshScheduleCard } from "@/components/dashboard/RefreshScheduleCard";
 import { UtilizationPanel } from "@/components/dashboard/UtilizationPanel";
-import { getSchedulerBaseUrl } from "@/lib/scheduler-link";
-import { fetchSchedulerProjectJobNumbers } from "@/lib/scheduler-db";
 
 // ── The Dashboard (redesigned 2026-08-27) ───────────────────────────────────
 //
@@ -68,7 +66,7 @@ export default async function Home({
   // client state alone.
   const onQualityTab = sp.tab === "quality";
 
-  const [overview, dataQuality, explorer, freshnessRows, refreshRuns, schedulerJobNumbers] = await Promise.all([
+  const [overview, dataQuality, explorer, freshnessRows, refreshRuns] = await Promise.all([
     getDashboardOverview(month),
     // The Power BI report's Data Quality page, rebuilt locally — see
     // lib/data-quality.ts for where each rule comes from.
@@ -81,7 +79,6 @@ export default async function Home({
     recentRefreshRuns(1),
     // Which jobs actually have a Scheduler project, so a FAT row is never a dead
     // link. Fail-soft: an unreachable Scheduler yields an empty set (no links).
-    fetchSchedulerProjectJobNumbers(),
   ]);
 
   return (
@@ -107,11 +104,7 @@ export default async function Home({
         dataQuality={<DataQualityPanel dq={dataQuality} explorer={explorer} />}
         overview={
           <div className="flex flex-col gap-7">
-            <DashboardOverviewPanel
-              data={overview}
-              schedulerBaseUrl={getSchedulerBaseUrl()}
-              schedulerJobNumbers={schedulerJobNumbers}
-            />
+            <DashboardOverviewPanel data={overview} />
             {/* Below the overview, above the refresh card: it is the page's most
                 detailed table and reads as the "and here is the detail" answer to
                 the workforce capacity cards immediately above it. Same `overview`
