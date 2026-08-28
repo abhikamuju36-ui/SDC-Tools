@@ -3,15 +3,49 @@ import { fetchSchedulerProjectJobNumbers } from "./scheduler-db";
 import { withSchedulerSso } from "./scheduler-sso";
 import { auth } from "./auth";
 import { withTimeoutOrNull } from "./with-timeout";
+import { headers } from "next/headers";
 
-// Browser-reachable base URL of the SDC Scheduler app. The link is clicked in
-// the user's browser, so it must use the LAN hostname (users reach ETC at
-// server-app1:4006 and the Scheduler at server-app1:4003) — NOT localhost.
-// Override with SCHEDULER_BASE_URL in .env if the host/port ever changes.
-const DEFAULT_SCHEDULER_BASE_URL = "http://server-app1:4003";
+// ── Browser-reachable base URL of the SDC Scheduler app ─────────────────────
+//
+// The link is clicked in the USER'S browser, so it has to name a host that
+// browser can reach — not localhost-from-the-server.
+//
+// The port is the one fact worth keeping in code: SDC Tools assigns each app a
+// fixed port and the shell's own registry is the register of them
+// (apps/shell/electron/processManager.js — assemblies 4001, readiness 4002,
+// scheduler 4003, statelogic 4004, calendar 4005, reports 4006). The shell
+// builds every app URL as `http://${SDC_SERVER_HOST || 'localhost'}:${port}`,
+// and this now follows the same rule instead of baking in one deployment's
+// hostname.
+//
+// The HOST is derived from the request, not hard-coded. It used to default to
+// `http://server-app1:4003`, which is only correct on one machine: a developer
+// running Reports on localhost:4006 got links into the PRODUCTION Scheduler,
+// and any hostname change meant editing source. Reports and the Scheduler are
+// always served from the same host (that is what the shell's `url(port)` does),
+// so whichever host the user reached Reports on is by definition the one that
+// reaches the Scheduler too — swap the port and keep everything else.
+//
+// SCHEDULER_BASE_URL still overrides, for a deployment that ever splits them.
+export const SCHEDULER_PORT = 4003;
 
-export function getSchedulerBaseUrl(): string {
-  return (process.env.SCHEDULER_BASE_URL || DEFAULT_SCHEDULER_BASE_URL).replace(/\/+$/, "");
+/**
+ * @param requestHost the browser-facing host of THIS request — `headers().get("host")`.
+ *   Omit it only where no request is in scope; the env override then has to carry it.
+ */
+export function getSchedulerBaseUrl(requestHost?: string | null): string {
+  const override = process.env.SCHEDULER_BASE_URL?.trim();
+  if (override) return override.replace(/\/+$/, "");
+
+  // host arrives as "server-app1:4006" / "localhost:4006" — keep the hostname,
+  // swap the port. Bracketed IPv6 literals keep their brackets.
+  const hostname = requestHost?.trim().replace(/:\d+$/, "");
+  if (hostname) return `http://${hostname}:${SCHEDULER_PORT}`;
+
+  // No request in scope. localhost is the honest fallback — it is right in dev
+  // and obviously wrong in production, which is better than a hostname that
+  // silently points at one specific server forever.
+  return `http://localhost:${SCHEDULER_PORT}`;
 }
 
 // The Scheduler SPA reads ?job=<etcJobId>&view=schedule on boot, resolves the
@@ -38,8 +72,20 @@ export async function getSchedulerLinkContext(): Promise<{
   // the four call sites don't each have to remember to fetch the session.
   ssoEmail: string | null;
 }> {
-  const [jobNumbers, session] = await Promise.all([fetchSchedulerProjectJobNumbers(), auth()]);
-  return { baseUrl: getSchedulerBaseUrl(), jobNumbers, ssoEmail: session?.user?.email ?? null };
+  // The request's own Host header is what makes these links work in dev AND
+  // production without an env var: whatever host the user reached Reports on is
+  // the host that reaches the Scheduler. See getSchedulerBaseUrl.
+  const [jobNumbers, session, h] = await Promise.all([fetchSchedulerProjectJobNumbers(), auth(), headers()]);
+  return { baseUrl: getSchedulerBaseUrl(h.get("host")), jobNumbers, ssoEmail: session?.user?.email ?? null };
+}
+
+/**
+ * Browser-facing Scheduler origin for the CURRENT request. For links rendered
+ * into a page — never for a server-to-server fetch, which wants the local
+ * origin and gets it from the no-argument getSchedulerBaseUrl().
+ */
+export async function getSchedulerBaseUrlForRequest(): Promise<string> {
+  return getSchedulerBaseUrl((await headers()).get("host"));
 }
 
 // Called from this app's own sign-out action (see (app)/layout.tsx) so

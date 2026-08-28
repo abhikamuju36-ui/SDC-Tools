@@ -3,7 +3,8 @@
 import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Link from "next/link";
-import { JOB_MENU_CELL_SELECTOR } from "@/lib/job-cell-menu";
+import { JOB_MENU_CELL_SELECTOR, placeContextMenu } from "@/lib/job-cell-menu";
+import { currentZoom } from "@/lib/app-zoom";
 
 // The Job cell's right-click menu (Job Hour Details / Project Schedule) — ONE
 // instance for a whole grid, instead of one component per cell.
@@ -101,10 +102,18 @@ export function JobCellMenuHost() {
   useLayoutEffect(() => {
     const el = menuRef.current;
     if (!el || !at) return;
-    const { width, height } = el.getBoundingClientRect();
-    const pad = 6;
-    const x = at.x + width + pad > window.innerWidth ? Math.max(pad, at.x - width) : at.x;
-    const y = at.y + height + pad > window.innerHeight ? Math.max(pad, at.y - height) : at.y;
+
+    // The arithmetic — and the reason it is not simply clientX/clientY — lives
+    // in placeContextMenu (lib/job-cell-menu.ts), where it is pure and tested.
+    const { x, y } = placeContextMenu({
+      clientX: at.x,
+      clientY: at.y,
+      viewportWidth: window.innerWidth,
+      viewportHeight: window.innerHeight,
+      width: el.offsetWidth,
+      height: el.offsetHeight,
+      zoom: currentZoom(),
+    });
     el.style.left = `${x}px`;
     el.style.top = `${y}px`;
     el.style.visibility = "visible";
@@ -113,6 +122,43 @@ export function JobCellMenuHost() {
   }, [at]);
 
   if (!at) return null;
+
+  // ── Inside the SDC Tools shell, do NOT open a new tab (2026-08-28) ───────
+  //
+  // The shell answers every window.open / target="_blank" from an embedded app
+  // with `shell.openExternal(url)` and denies the window
+  // (apps/shell/electron/main.js's setWindowOpenHandler). So "Project Schedule"
+  // threw the user OUT of the shell into their default browser, at the
+  // standalone Scheduler — which is the "opens the wrong app" report: the
+  // Scheduler was already running as a shell window, and the shell's session
+  // does not follow you into Chrome.
+  //
+  // If the shell exposes an app-launcher bridge, use it: it focuses the
+  // Scheduler window that is already open (openAppWindow reuses an existing
+  // one) instead of starting anything. Feature-detected, because a browser tab
+  // and older shell builds have no such object — those keep the _blank tab,
+  // which is the right behaviour there.
+  const shellOpen = (
+    globalThis as unknown as { sdcShell?: { openApp?: (appId: string, path?: string) => void } }
+  ).sdcShell?.openApp;
+
+  const onScheduleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
+    if (shellOpen && at.schedulerUrl) {
+      e.preventDefault();
+      // Hand over only the path+query; the shell owns the origin, so the job
+      // deep-link survives without this app guessing the shell's host or port.
+      const u = new URL(`${at.schedulerUrl}&ret=${encodeURIComponent(at.ret)}`);
+      shellOpen("scheduler", `${u.pathname}${u.search}`);
+      setAt(null);
+      return;
+    }
+    // Deferred close for the _blank path: setAt(null) unmounts this anchor, and
+    // React flushes that synchronously for discrete events — potentially before
+    // the browser performs the default action, which can silently cancel the
+    // new tab. A macrotask close lets the navigation start first.
+    setTimeout(() => setAt(null), 0);
+  };
+
 
   return createPortal(
     <div
@@ -157,12 +203,7 @@ export function JobCellMenuHost() {
           role="menuitem"
           data-menu-item
           className={ITEM}
-          // Deferred close, unlike the Link above: setAt(null) unmounts this
-          // anchor, and React flushes that synchronously for discrete events —
-          // i.e. potentially before the browser performs the default action,
-          // which can silently cancel the new tab. A macrotask close lets the
-          // navigation start first.
-          onClick={() => setTimeout(() => setAt(null), 0)}
+          onClick={onScheduleClick}
         >
           <svg viewBox="0 0 16 16" width="12" height="12" fill="none" stroke="currentColor" strokeWidth="1.6" className="shrink-0 text-sdc-gray-400">
             <line x1="2.5" y1="3.5" x2="9.5" y2="3.5" strokeLinecap="round" />

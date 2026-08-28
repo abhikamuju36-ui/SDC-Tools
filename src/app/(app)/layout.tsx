@@ -5,7 +5,7 @@ import { COLLAPSED_COOKIE, WIDTH_COOKIE, parseSidebarPrefs } from "@/lib/sidebar
 import { LiveRefresh } from "@/components/LiveRefresh";
 import { RealtimeProvider } from "@/components/RealtimeProvider";
 import { InteractionMetrics } from "@/components/InteractionMetrics";
-import { getSchedulerBaseUrl } from "@/lib/scheduler-link";
+import { getSchedulerBaseUrlForRequest } from "@/lib/scheduler-link";
 import { withSchedulerSso } from "@/lib/scheduler-sso";
 import { hasPermission } from "@/lib/permissions";
 import { ROUTE_PERMISSIONS } from "@/lib/route-permissions";
@@ -78,7 +78,7 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
       // Scheduler can start its own session instead of showing a login modal to
       // someone the app already authenticated. No secret configured, or no
       // session: the link is unchanged and the Scheduler asks as it does today.
-      schedulerProjectsUrl={withSchedulerSso(`${getSchedulerBaseUrl()}/?view=projects`, session?.user?.email)}
+      schedulerProjectsUrl={withSchedulerSso(`${await getSchedulerBaseUrlForRequest()}/?view=projects`, session?.user?.email)}
     >
       {/* Mounted once for the whole app, so every tab — Projects, Monthly ETC,
           Employees, Job Hours, the dashboard, a job page — picks up what other
