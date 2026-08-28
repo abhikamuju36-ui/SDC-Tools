@@ -138,24 +138,52 @@ export function JobCellMenuHost() {
   // one) instead of starting anything. Feature-detected, because a browser tab
   // and older shell builds have no such object — those keep the _blank tab,
   // which is the right behaviour there.
-  const shellOpen = (
-    globalThis as unknown as { sdcShell?: { openApp?: (appId: string, path?: string) => void } }
-  ).sdcShell?.openApp;
+  const g = globalThis as unknown as {
+    sdcShell?: { openApp?: (appId: string, path?: string) => void };
+    // appPreload.js has exposed this to every embedded app window for a long
+    // time, so it is the reliable "am I inside the shell" signal — including on
+    // shell builds that predate sdcShell.
+    electronAPI?: unknown;
+  };
+  const shellOpen = g.sdcShell?.openApp;
+  const insideShell = Boolean(g.electronAPI);
 
   const onScheduleClick = (e: React.MouseEvent<HTMLAnchorElement>) => {
-    if (shellOpen && at.schedulerUrl) {
+    const href = at.schedulerUrl ? `${at.schedulerUrl}&ret=${encodeURIComponent(at.ret)}` : null;
+
+    // 1. New shell — hand it to the launcher. It focuses the Scheduler window
+    //    that is already open (or starts one) and navigates it to this job.
+    //    Only the path crosses: the shell owns the origin.
+    if (shellOpen && href) {
       e.preventDefault();
-      // Hand over only the path+query; the shell owns the origin, so the job
-      // deep-link survives without this app guessing the shell's host or port.
-      const u = new URL(`${at.schedulerUrl}&ret=${encodeURIComponent(at.ret)}`);
+      const u = new URL(href);
       shellOpen("scheduler", `${u.pathname}${u.search}`);
       setAt(null);
       return;
     }
-    // Deferred close for the _blank path: setAt(null) unmounts this anchor, and
-    // React flushes that synchronously for discrete events — potentially before
-    // the browser performs the default action, which can silently cancel the
-    // new tab. A macrotask close lets the navigation start first.
+
+    // 2. Older shell, no bridge yet — navigate THIS window instead of opening a
+    //    tab. Without this the anchor's target="_blank" reaches the shell's
+    //    setWindowOpenHandler, which answers with shell.openExternal and throws
+    //    the user out to their default browser at a standalone Scheduler, with
+    //    none of the shell's session. Staying in the shell is strictly better,
+    //    and the `ret` parameter already gives the Scheduler its "← Back to
+    //    report" button, so this is a round trip rather than a dead end.
+    //
+    //    Drops away on its own once the shell ships the bridge — this branch is
+    //    only reachable while sdcShell is undefined.
+    if (insideShell && href) {
+      e.preventDefault();
+      window.location.assign(href);
+      setAt(null);
+      return;
+    }
+
+    // 3. A normal browser tab — the anchor's own target="_blank" is right here.
+    //    Deferred close: setAt(null) unmounts this anchor, and React flushes
+    //    that synchronously for discrete events — potentially before the browser
+    //    performs the default action, which can silently cancel the new tab. A
+    //    macrotask close lets the navigation start first.
     setTimeout(() => setAt(null), 0);
   };
 
