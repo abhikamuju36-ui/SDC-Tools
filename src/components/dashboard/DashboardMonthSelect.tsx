@@ -1,9 +1,7 @@
 "use client";
 
-import { useState, useTransition } from "react";
-import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { BTN_H_STANDARD, BUTTON_COMPACT } from "@/components/ui/classnames";
-import { nextParams, notePendingParams } from "@/lib/url-params";
+import { useDashboardMonth } from "@/components/dashboard/useDashboardMonth";
 
 const MONTH_NAMES = [
   "January", "February", "March", "April", "May", "June",
@@ -28,16 +26,10 @@ const MONTH_NAMES = [
 // this on ETC months would hide real data. It shares the geometry tokens, which
 // is the part that has to match.
 export function DashboardMonthSelect({ month }: { month: string }) {
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const [pending, startTransition] = useTransition();
-  // Same reason MonthYearSelect holds one: `month` is a server prop and cannot
-  // change until the new page commits, so a controlled <select> snaps straight
-  // back to the old month for the whole round-trip and reads as broken.
-  const [target, setTarget] = useState<string | null>(null);
-
-  const shown = pending && target ? target : month;
+  // The navigation itself lives in useDashboardMonth, shared with the Execution
+  // Calendar's ‹ › arrows — one implementation of "go to this month", so the two
+  // controls cannot drift apart or end up owning separate months.
+  const { shown, pending, goTo } = useDashboardMonth(month);
   const [shownYear, shownMonth] = shown.split("-");
 
   // A window around the current year rather than a list derived from data:
@@ -46,22 +38,6 @@ export function DashboardMonthSelect({ month }: { month: string }) {
   // in it. An empty month is a real answer here, not a broken one.
   const thisYear = new Date().getFullYear();
   const years = [thisYear + 2, thisYear + 1, thisYear, thisYear - 1, thisYear - 2].map(String);
-
-  const go = (ym: string) => {
-    if (ym === month) return;
-    setTarget(ym);
-    // See lib/url-params.ts: useSearchParams still reports the pre-navigation
-    // value while a change is in flight, so building straight from it can revert
-    // whatever the Data Quality tab or another control set a moment ago.
-    const currentQs = searchParams.toString();
-    const qs = nextParams(currentQs);
-    qs.set("m", ym);
-    const q = qs.toString();
-    notePendingParams(currentQs, q);
-    startTransition(() => {
-      router.push(`${pathname}?${q}`, { scroll: false });
-    });
-  };
 
   const selectClass = `${BTN_H_STANDARD} rounded-lg border border-sdc-border bg-white px-3 text-sm font-medium text-sdc-navy shadow-sm outline-none motion-interactive focus:border-sdc-blue disabled:cursor-wait ${
     pending ? "opacity-60" : ""
@@ -74,7 +50,7 @@ export function DashboardMonthSelect({ month }: { month: string }) {
     <div className="flex items-center gap-2">
       <select
         value={shownMonth}
-        onChange={(e) => go(`${shownYear}-${e.target.value}`)}
+        onChange={(e) => goTo(`${shownYear}-${e.target.value}`)}
         disabled={pending}
         className={selectClass}
         aria-label="Dashboard month"
@@ -88,7 +64,7 @@ export function DashboardMonthSelect({ month }: { month: string }) {
       </select>
       <select
         value={shownYear}
-        onChange={(e) => go(`${e.target.value}-${shownMonth}`)}
+        onChange={(e) => goTo(`${e.target.value}-${shownMonth}`)}
         disabled={pending}
         className={selectClass}
         aria-label="Dashboard year"
@@ -101,7 +77,7 @@ export function DashboardMonthSelect({ month }: { month: string }) {
         ))}
       </select>
       {month !== currentKey && (
-        <button type="button" onClick={() => go(currentKey)} disabled={pending} className={BUTTON_COMPACT}>
+        <button type="button" onClick={() => goTo(currentKey)} disabled={pending} className={BUTTON_COMPACT}>
           This month
         </button>
       )}

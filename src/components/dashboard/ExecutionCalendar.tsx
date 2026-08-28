@@ -4,6 +4,7 @@ import { useMemo, useState } from "react";
 import { card } from "@/components/ui/classnames";
 import { SectionTitle } from "@/components/ui/Typography";
 import type { CalendarEvent, CalendarEventType, ExecutionCalendar as CalendarData } from "@/lib/dashboard-calendar";
+import { useDashboardMonth, shiftMonth } from "@/components/dashboard/useDashboardMonth";
 
 // ── Execution Calendar — FATs & Customer Visits (2026-08-28) ────────────────
 //
@@ -177,6 +178,22 @@ function EventDetails({ e, onClose }: { e: CalendarEvent; onClose: () => void })
 
 const MAX_PER_CELL = 3;
 
+const STEP_BTN =
+  "rounded-md px-2 py-1 text-sm leading-none font-semibold text-sdc-gray-600 motion-interactive hover:bg-sdc-blue-light disabled:cursor-wait disabled:opacity-50";
+
+const MONTH_ONLY = new Intl.DateTimeFormat("en-US", { month: "long", year: "numeric", timeZone: "UTC" });
+function monthName(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  return MONTH_ONLY.format(new Date(Date.UTC(y, m - 1, 1)));
+}
+function thisMonth(): string {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}`;
+}
+function isCurrentMonth(month: string): boolean {
+  return month === thisMonth();
+}
+
 export function ExecutionCalendarSection({
   data,
   monthLabel,
@@ -187,6 +204,14 @@ export function ExecutionCalendarSection({
   /** The existing FAT KPI cards, rendered beside the calendar rather than above a second list. */
   kpis: React.ReactNode;
 }) {
+  // ── The month arrows drive the DASHBOARD's month, not a local one ────────
+  //
+  // Same `?m=YYYY-MM` the month/year dropdowns in the page header set, through
+  // the same hook — so stepping the calendar also steps the FAT KPI panel beside
+  // it, the hours KPIs and the utilization table. A calendar with its own month
+  // would sit next to a "FATs in August" card while showing September, which is
+  // the one thing this section must not do.
+  const monthNav = useDashboardMonth(data.month);
   const [enabled, setEnabled] = useState<Set<CalendarEventType>>(new Set(ORDER));
   const [view, setView] = useState<"calendar" | "upcoming">("calendar");
   const [selected, setSelected] = useState<string | null>(null);
@@ -231,24 +256,66 @@ export function ExecutionCalendarSection({
         <div className="min-w-0">
           <SectionTitle>Execution Calendar — FATs &amp; Customer Visits</SectionTitle>
           <p className="mt-0.5 text-label text-sdc-gray-400">
-            {monthLabel} · {shown.length} event{shown.length === 1 ? "" : "s"}
+            {monthNav.pending ? `${monthName(monthNav.shown)} · loading…` : `${monthLabel} · ${shown.length} event${shown.length === 1 ? "" : "s"}`}
             {data.schedulerAvailable ? "" : " · Scheduler unavailable, FATs not shown"}
           </p>
         </div>
-        <div className="flex items-center gap-1 rounded-lg border border-sdc-border bg-white p-0.5">
-          {(["calendar", "upcoming"] as const).map((v) => (
+        <div className="flex flex-wrap items-center gap-2">
+          {/* Month stepper. Labelled with the month it goes TO, so the control
+              says where it leads rather than making the reader work it out. */}
+          <div
+            className="flex items-center gap-0.5 rounded-lg border border-sdc-border bg-white p-0.5"
+            role="group"
+            aria-label="Change the dashboard month"
+          >
             <button
-              key={v}
               type="button"
-              onClick={() => setView(v)}
-              aria-pressed={view === v}
-              className={`rounded-md px-2.5 py-1 text-label font-semibold capitalize motion-interactive ${
-                view === v ? "bg-sdc-blue text-white" : "text-sdc-gray-600 hover:bg-sdc-blue-light"
-              }`}
+              onClick={() => monthNav.shift(-1)}
+              disabled={monthNav.pending}
+              aria-label={`Previous month — ${monthName(shiftMonth(monthNav.shown, -1))}`}
+              title={`Previous month — ${monthName(shiftMonth(monthNav.shown, -1))}`}
+              className={STEP_BTN}
             >
-              {v}
+              ‹
             </button>
-          ))}
+            {!isCurrentMonth(monthNav.shown) && (
+              <button
+                type="button"
+                onClick={() => monthNav.goTo(thisMonth())}
+                disabled={monthNav.pending}
+                title="Back to the current month"
+                className="rounded-md px-2 py-1 text-label font-semibold text-sdc-gray-600 motion-interactive hover:bg-sdc-blue-light disabled:opacity-50"
+              >
+                Today
+              </button>
+            )}
+            <button
+              type="button"
+              onClick={() => monthNav.shift(1)}
+              disabled={monthNav.pending}
+              aria-label={`Next month — ${monthName(shiftMonth(monthNav.shown, 1))}`}
+              title={`Next month — ${monthName(shiftMonth(monthNav.shown, 1))}`}
+              className={STEP_BTN}
+            >
+              ›
+            </button>
+          </div>
+
+          <div className="flex items-center gap-1 rounded-lg border border-sdc-border bg-white p-0.5">
+            {(["calendar", "upcoming"] as const).map((v) => (
+              <button
+                key={v}
+                type="button"
+                onClick={() => setView(v)}
+                aria-pressed={view === v}
+                className={`rounded-md px-2.5 py-1 text-label font-semibold capitalize motion-interactive ${
+                  view === v ? "bg-sdc-blue text-white" : "text-sdc-gray-600 hover:bg-sdc-blue-light"
+                }`}
+              >
+                {v}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
 
