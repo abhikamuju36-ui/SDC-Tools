@@ -15,7 +15,7 @@
 // concept on their own); everything under them is walked.
 
 import type { JobBom } from "@/lib/job-bom";
-import type { BomNode, BomPart } from "@/lib/job-bom-rules";
+import { isUncoveredPart, type BomNode, type BomPart } from "@/lib/job-bom-rules";
 
 export type BomUnit = {
   key: string;
@@ -60,7 +60,13 @@ export function walkJobBomUnits(bom: JobBom): BomUnit[] {
         stats: {
           total: looseTotal,
           received: looseReceived,
-          noPO: section.parts.filter((p) => p.status === "noPO").length,
+          // isUncoveredPart, NOT a raw `status === "noPO"` — a part paused on
+          // hold still carries that status, and counting it here made this the
+          // one surface that disagreed with the Procurement card, the Parts
+          // List filter and build-readiness-sync's own `no_po` key. Measured
+          // before the fix: job 1122 reported 15 uncovered against everyone
+          // else's 7, the difference being exactly its 8 held parts.
+          noPO: section.parts.filter(isUncoveredPart).length,
           ordered: section.parts.filter((p) => p.status === "ordered").length,
           stock: section.parts.filter((p) => p.source === "stock" || p.source === "process").length,
           pct: looseTotal ? Math.round((looseReceived / looseTotal) * 100) : 0,

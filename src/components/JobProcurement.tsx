@@ -153,6 +153,10 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   // Default hidden columns (fresh users; anyone with a stored set keeps theirs).
   const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set(saved.hiddenPartCols ?? DEFAULT_HIDDEN_COLS));
   const [upcomingWeek, setUpcomingWeek] = useState<number>(() => saved.upcomingWeek ?? 1);
+  // Shared by the risk cards mounted below and passed down unchanged — one
+  // clock for the whole drawer, so a card and a table row cannot disagree about
+  // what "overdue" means mid-render.
+  const now = useStableNow();
   const [colWidths, setColWidths] = useState<Partial<Record<ColKey, number>>>(() => saved.colWidths ?? {});
 
   // Persist everything under one key.
@@ -403,6 +407,30 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
         </span>
       </div>
 
+      {/* ── Delivery Slip · No Purchase Order · Upcoming Deliveries ─────────
+          Mounted HERE — below the readiness summary, above the tab chips — so
+          the Assemblies view shows them too. They used to live inside
+          PartsListTab, which is why they vanished when you switched to
+          Assemblies.
+
+          Deliberately the SAME MOUNTED INSTANCE for both tabs rather than one
+          per tab: same `parts` array, same RiskCards, same `upcomingWeek`
+          state (already lifted to this component). The two views cannot report
+          different counts because there is only one card row, and the week
+          picker keeps its selection when you switch tabs instead of resetting.
+
+          The "No Purchase Order" figure it shows is isUncoveredPart's, via
+          computeRiskCards — the same rule as the readiness line directly above
+          it and the Parts List's own "Uncovered (no PO)" filter. */}
+      <RiskCards
+        parts={parts}
+        onOpenPoGroup={openPoGroup}
+        onJumpToPart={jumpToPartRow}
+        now={now}
+        upcomingWeek={upcomingWeek}
+        setUpcomingWeek={setUpcomingWeek}
+      />
+
       {/* Tab chips */}
       <div className="flex items-center gap-2">
         <TabChip active={tab === "assemblies"} onClick={() => setTab("assemblies")} label="Assemblies" count={assembliesCount} />
@@ -428,10 +456,8 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
           drill={drill}
           vendors={bom.vendors}
           onPartClick={drillToPart}
-          onJumpToPart={jumpToPartRow}
           onCopy={copyText}
           onOpenPo={openPoFor}
-          onOpenPoGroup={openPoGroup}
           windowStatus={{
             requested: windowRequested,
             pending: pendingWindow,
@@ -1038,10 +1064,8 @@ function PartsListTab({
   drill,
   vendors,
   onPartClick,
-  onJumpToPart,
   onCopy,
   onOpenPo,
-  onOpenPoGroup,
   windowStatus,
 }: {
   parts: FlatPart[];
@@ -1049,13 +1073,11 @@ function PartsListTab({
   drill: { key: string; nonce: number };
   vendors: Vendor[];
   onPartClick: (p: DrillablePart) => void;
-  onJumpToPart: (p: DrillablePart) => void;
   onCopy: (text: string, label?: string) => void;
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
-  onOpenPoGroup: (supplier: string, po: PoGroup) => void;
   windowStatus: WindowStatus;
 }) {
-  const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, upcomingWeek, setUpcomingWeek, colWidths, setColWidths, clearFilters } = state;
+  const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, colWidths, setColWidths, clearFilters } = state;
   const { toast } = useToast();
   const now = useStableNow();
   // "Active" for status means the selection differs from the default (every
@@ -1204,7 +1226,9 @@ function PartsListTab({
 
   return (
     <div ref={rootRef} className="flex flex-col gap-3">
-      <RiskCards parts={parts} onOpenPoGroup={onOpenPoGroup} onJumpToPart={onJumpToPart} now={now} upcomingWeek={upcomingWeek} setUpcomingWeek={setUpcomingWeek} />
+      {/* RiskCards used to render here, inside the Parts List tab only. It is
+          now mounted once at the top of JobProcurement so the Assemblies view
+          gets the same three cards — see the note at that call site. */}
 
       {/* Filter row */}
       <div className="flex flex-wrap items-center gap-2 rounded-lg border border-sdc-border bg-white px-3 py-2.5 shadow-sm">
