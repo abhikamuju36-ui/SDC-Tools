@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Canvas - React Flow diagram editor for state logic diagrams.
  * Features:
  *   - onConnectEnd: drag handle to empty canvas → create node + auto-connect
