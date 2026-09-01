@@ -1,15 +1,14 @@
 # packages/
 
-Reserved for code genuinely shared across more than one SDC app — not a dumping ground for app-specific logic. Nothing lives here yet.
+Reserved for code genuinely shared across more than one SDC app — not a dumping ground for app-specific logic.
 
-## `sdcSessionAuth.js` — extraction in progress
+## `shared-auth/`
 
-The SDC Tools centralized-login cookie verifier (`sdc_session`, minted by SDC Scheduler's `routes/ssoCentral.js`) was previously duplicated **verbatim** across four apps. It's now being extracted to `packages/shared-auth/` (`@sdc/shared-auth`, registered as a root npm workspace member), staged across three PRs to keep the diff and risk contained:
+The SDC Tools centralized-login cookie verifier (`sdc_session`, minted by SDC Scheduler's `routes/ssoCentral.js`). Canonical source for `requireSdcSession`/`verifySdcSession`, imported as `@sdc/shared-auth` by Assemblies Library, Build Readiness Report, and State Logic Builder (all three via the root npm workspace) and Calendar (via a `file:` dependency, since it isn't a workspace member). Previously duplicated verbatim across all four apps; Calendar's `server/middleware/requireAuth.js` still keeps its own bespoke wrapper (`resolveShellUser`, legacy bearer fallback, etc.) around the shared `verifySdcSession` import, since only that core piece was ever actually duplicated there.
 
-- **Done** — Build Readiness (`apps/build-readiness/server/index.js`) imports `@sdc/shared-auth`; its local `sdcSessionAuth.js` copy is deleted.
-- **Not yet migrated** — `apps/assemblies/server/sdcSessionAuth.js` and `apps/state-logic/sdcSessionAuth.js` still hold the old duplicated copy (pending a PR that also verifies electron-builder correctly packages the new workspace dependency for these two Electron-shipped apps). `apps/calendar/server/middleware/requireAuth.js` still holds its own inline copy of just the `verifySdcSession` core (pending a PR that swaps that one function for the shared import, while keeping the rest of that file — `resolveShellUser`, the legacy bearer fallback, etc. — local, since only the verify core is actually duplicated there).
+## `design-system/`
 
-Once all three apps are migrated, this section should be replaced with a one-line note pointing at `packages/shared-auth/` as the canonical source, same as `packages/design-system/`.
+Shared design tokens and CSS primitives, consumed via relative-path `@import`/static file serving (not npm resolution — see its own files for the pattern).
 
 ## Adding something else here later
 
