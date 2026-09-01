@@ -75,8 +75,8 @@ app.get('/health', (_req, res) => res.json({ ok: true, service: 'assemblies' }))
 // ─── SDC Tools centralized session ───────────────────────────────────────────
 // Requires the shared "sdc_session" cookie (minted by SDC Scheduler's central
 // SSO after Azure AD login) on everything below this line. No-op until
-// SDC_SSO_ENABLED=true is set — see server/sdcSessionAuth.js.
-app.use(require('./sdcSessionAuth').requireSdcSession('assemblies'));
+// SDC_SSO_ENABLED=true is set — see packages/shared-auth/sdcSessionAuth.js.
+app.use(require('@sdc/shared-auth').requireSdcSession('assemblies'));
 
 // ─── API Routes ───────────────────────────────────────────────────────────────
 app.use('/api/assemblies', rateLimit(300), assembliesRouter);
