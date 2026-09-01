@@ -1,4 +1,5 @@
 import { PageTitle } from "@/components/ui/Typography";
+import { PAGE_SHELL } from "@/components/ui/classnames";
 import { requirePagePermission } from "@/lib/require-permission";
 import { getRolePermissionsMatrix } from "@/lib/role-permissions-store";
 import { RolePermissionsMatrix } from "@/components/RolePermissionsMatrix";
@@ -11,7 +12,7 @@ export default async function AdminPermissionsPage() {
   const rows = await getRolePermissionsMatrix();
 
   return (
-    <div className="w-full p-8">
+    <div className={PAGE_SHELL}>
       <PageTitle className="mb-1">Role Permissions</PageTitle>
       <p className="mb-6 max-w-2xl text-sm text-sdc-gray-600">
         Controls what each role can see and do, everywhere in the app — the sidebar, direct URLs, and every edit action all

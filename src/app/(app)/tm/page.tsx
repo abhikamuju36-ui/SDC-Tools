@@ -1,4 +1,5 @@
 import { PageTitle } from "@/components/ui/Typography";
+import { PAGE_SHELL } from "@/components/ui/classnames";
 import { requirePagePermission } from "@/lib/require-permission";
 import { listDashboardJobs } from "@/lib/job-hours-dashboard";
 import { fetchTmMetrics, fetchTmDateDefaults, type TmMetrics, type TmPartsMetrics } from "@/lib/tm-report";
@@ -88,7 +89,7 @@ export default async function TmPage({
     : null;
 
   return (
-    <div className="w-full p-8">
+    <div className={PAGE_SHELL}>
       <PageTitle className="mb-1">T&M</PageTitle>
       <p className="mb-6 max-w-2xl text-sm text-sdc-gray-600">
         Time &amp; materials summary for a job (or every job), over a date range. The five Hours figures come from the

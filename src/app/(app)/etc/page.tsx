@@ -55,7 +55,7 @@ import { MonthYearSelect } from "@/components/MonthYearSelect";
 import { JobCellMenuHost } from "@/components/JobCellMenuHost";
 import { jobCellMenuProps } from "@/lib/job-cell-menu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
-import { BUTTON_SECONDARY, TOOLBAR_MIN_W, TABLE_HEADER_ROW, TABLE_GRID, GRID_SCROLLER, ETC_COL_W, PARTS_COL_W } from "@/components/ui/classnames";
+import { BUTTON_SECONDARY, ETC_COL_W, GRID_SCROLLER, PAGE_SHELL, PARTS_COL_W, TABLE_GRID, TABLE_HEADER_ROW, TOOLBAR_MIN_W } from "@/components/ui/classnames";
 import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
@@ -1037,7 +1037,7 @@ export default async function MonthlyEtcPage({
     // renders acts on it. Everything inside is unchanged by a tick except the one
     // <style> node and the ~20 banded header cells. See lib/grid-view.ts.
     <EtcGridView initialHidden={initialHiddenView}>
-    <div className="w-full p-8">
+    <div className={PAGE_SHELL}>
       <PageTitle className="mb-1">Monthly ETC</PageTitle>
       <p className="mb-4 text-sm text-sdc-gray-600">
         {`${visibleJobs.length}${billableFilterActive ? ` of ${jobs.length}` : ""} ${monthIsLocked ? "job" : "active job"}${visibleJobs.length === 1 ? "" : "s"} — replaces the "Managers Fill Out" sheet.`}

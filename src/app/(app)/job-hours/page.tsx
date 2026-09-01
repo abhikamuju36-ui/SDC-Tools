@@ -1,5 +1,5 @@
 import { PageTitle } from "@/components/ui/Typography";
-import { card } from "@/components/ui/classnames";
+import { PAGE_SHELL, card } from "@/components/ui/classnames";
 import { JobHoursDashboard } from "@/components/JobHoursDashboard";
 import { IndicatorCard } from "@/components/charts/IndicatorCard";
 import { JobSelect } from "@/components/JobSelect";
@@ -148,7 +148,7 @@ export default async function JobHoursPage({
   const bomFailed = !!(data && singleJobId) && bom == null;
 
   return (
-    <div className="w-full p-6 md:p-8">
+    <div className={PAGE_SHELL}>
       <div className="mb-1 flex flex-wrap items-end justify-between gap-4">
         <PageTitle>Job Hour Details</PageTitle>
         <div className="flex items-center gap-2">

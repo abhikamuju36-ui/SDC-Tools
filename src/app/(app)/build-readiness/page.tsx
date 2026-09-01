@@ -1,4 +1,5 @@
 import { PageTitle } from "@/components/ui/Typography";
+import { PAGE_SHELL } from "@/components/ui/classnames";
 import { getBuildReadinessData, triggerBuildReadinessRefresh } from "@/lib/build-readiness-actions";
 import { listBuildReadinessViews } from "@/lib/build-readiness-views-actions";
 import { BuildReadinessDashboard } from "@/components/build-readiness/BuildReadinessDashboard";
@@ -26,7 +27,7 @@ export default async function BuildReadinessPage() {
     // tabs already carry (see job-cost-explorer/page.tsx's note): AppShell's <main> has
     // no padding of its own by design, so every page supplies its own breathing room.
     // This page simply hadn't, which is why it sat flush against the sidebar.
-    <div className="w-full p-8">
+    <div className={PAGE_SHELL}>
       <div className="flex flex-col gap-4">
         <PageTitle>Build Readiness</PageTitle>
         <p className="-mt-2 text-note text-sdc-gray-400">

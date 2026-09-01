@@ -1,4 +1,5 @@
 import { PageTitle } from "@/components/ui/Typography";
+import { PAGE_SHELL } from "@/components/ui/classnames";
 import { loadJobCostRows } from "@/lib/job-cost-source";
 import { loadCostRates, loadHourAllocations } from "@/lib/job-cost-actions";
 import { JobCostExplorer } from "@/components/JobCostExplorer";
@@ -37,7 +38,7 @@ export default async function JobCostExplorerPage({ searchParams }: { searchPara
     // `left-*` offsets resolve against the table's own scroll container
     // (GRID_SCROLLER, inside JobCostExplorer.tsx), not the viewport or this
     // div, so padding out here only moves that whole box rightward as a unit.
-    <div className="w-full p-8">
+    <div className={PAGE_SHELL}>
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3">
         <PageTitle>Profitability</PageTitle>
         <p className="text-note text-sdc-gray-400">

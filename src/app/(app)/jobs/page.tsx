@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { validJobTypeFilter, VALID_JOB_TYPES, compareJobIds } from "@/lib/job-filters";
 import { PageTitle } from "@/components/ui/Typography";
-import { card, BUTTON_PRIMARY } from "@/components/ui/classnames";
+import { BUTTON_PRIMARY, PAGE_SHELL, card } from "@/components/ui/classnames";
 
 const STATUS_FILTERS = [
   { key: "all", label: "All", status: undefined },
@@ -61,7 +61,7 @@ export default async function JobsPage({
   });
 
   return (
-    <div className="w-full max-w-[1440px] px-8 py-10 md:px-13 md:py-11">
+    <div className={PAGE_SHELL}>
       <div className="mb-6 flex items-end justify-between gap-4">
         <div>
           <PageTitle>Jobs</PageTitle>

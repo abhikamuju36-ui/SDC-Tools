@@ -1,4 +1,5 @@
 import { PageTitle } from "@/components/ui/Typography";
+import { PAGE_SHELL } from "@/components/ui/classnames";
 import { requireEltOnly } from "@/lib/cash-flow-access";
 import { getProjectEstimates, getCashFlowLines, resolveAsOf, listSnapshots, getLatestSnapshotSummary } from "@/lib/cash-flow";
 import { CashFlowClient } from "@/components/CashFlowClient";
@@ -54,7 +55,7 @@ export default async function CashFlowPage({
   ]);
 
   return (
-    <div className="w-full px-8 py-10 md:px-13 md:py-11">
+    <div className={PAGE_SHELL}>
       <div className="mb-1">
         <PageTitle className="mb-1">Cash Flow Forecast</PageTitle>
         <p className="max-w-3xl text-sm text-sdc-gray-600">

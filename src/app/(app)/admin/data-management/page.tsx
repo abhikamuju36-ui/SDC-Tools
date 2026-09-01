@@ -1,4 +1,5 @@
 import { PageTitle } from "@/components/ui/Typography";
+import { PAGE_SHELL } from "@/components/ui/classnames";
 import { requirePagePermission } from "@/lib/require-permission";
 import { ImportSupervisorsButton } from "@/components/ImportSupervisorsButton";
 import { ReconcileRosterButton } from "@/components/ReconcileRosterButton";
@@ -31,7 +32,7 @@ export default async function AdminDataManagementPage() {
   await requirePagePermission("employees:edit");
 
   return (
-    <div className="w-full p-8">
+    <div className={PAGE_SHELL}>
       <PageTitle className="mb-1">Data Management</PageTitle>
       <p className="mb-6 max-w-3xl text-sm text-sdc-gray-600">
         Manual roster maintenance. Nothing here runs on a schedule, and Refresh Data does not perform any of it —

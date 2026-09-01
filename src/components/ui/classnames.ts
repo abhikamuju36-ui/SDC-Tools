@@ -230,3 +230,38 @@ export const TABLE_CARD = `overflow-hidden border ${GRID_LINE_BORDER} bg-white s
 // them) and Projects its own min-width.
 export const GRID_SCROLLER =
   `overflow-auto border ${GRID_LINE_BORDER} bg-white shadow-sm select-none styled-scrollbar`;
+
+// ── PAGE_SHELL — the one page-level wrapper, for every tab (2026-09-01) ──────
+//
+// Reported as "at 110% zoom the dashboard leaves a 300px blank column on the
+// right". The cause was NOT the zoom control: `zoom` is a CSS length scaler that
+// participates in layout (see lib/app-zoom.ts), so the layout viewport shrinks
+// with it and a `width: 100%` container fills it at every level.
+//
+// The cause was a hard cap. The Dashboard wrapper was `max-w-[1800px]` and the
+// Jobs list `max-w-[1440px]`, so on any workspace wider than that the content
+// simply stopped and the remainder stayed white. Everything INSIDE the Dashboard
+// was already fluid and had been all along — the KPI cards are
+// `min-w-0 flex-1 basis-[11rem]` flex items that grow, Active Work is
+// `xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.6fr)]`, and the Execution
+// Calendar is `grid-cols-7` inside `min-w-0`. They were all being held back by
+// one class on an ancestor.
+//
+// So the fix is to remove the ceiling, not to raise it, and to put the page
+// wrapper in ONE place so a future page cannot quietly reintroduce one. The
+// AppShell above it already does the right thing and needed no change: it is a
+// flex row with a `shrink-0` aside and `main` at `min-w-0 flex-1`, so the
+// content offset IS the current sidebar width by construction — collapsing the
+// sidebar hands the freed space to the active tab with no JS and no listener.
+//
+//   w-full     — take the whole of `main`, whatever that currently is
+//   min-w-0    — never let a wide child (a grid, a long table) push the shell
+//                wider than the viewport and create a page-level scrollbar;
+//                such tables scroll inside their own GRID_SCROLLER instead
+//   no max-w   — deliberately. This is the whole point.
+//
+// The gutter replaces four different values that had accumulated across the tabs
+// (p-8, p-6, px-6 md:px-10, and px-8 md:px-13 — 52px, which is well past a
+// gutter). 24px, 32px from md up: a standard page margin, and the same one
+// everywhere so tabs stop disagreeing about where content starts.
+export const PAGE_SHELL = "w-full min-w-0 px-6 py-6 md:px-8 md:py-7";

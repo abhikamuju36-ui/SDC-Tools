@@ -5,7 +5,7 @@ import { DashboardTabs } from "@/components/DashboardTabs";
 import { DataQualityPanel } from "@/components/DataQualityPanel";
 import { recentRefreshRuns } from "@/lib/refresh-service";
 import { PageTitle } from "@/components/ui/Typography";
-import { BUTTON_PRIMARY } from "@/components/ui/classnames";
+import { BUTTON_PRIMARY, PAGE_SHELL } from "@/components/ui/classnames";
 import { requirePagePermission } from "@/lib/require-permission";
 import { getDashboardOverview, dashboardMonth } from "@/lib/dashboard-overview";
 import { DashboardOverviewPanel, monthLabel } from "@/components/dashboard/DashboardOverview";
@@ -83,7 +83,7 @@ export default async function Home({
   ]);
 
   return (
-    <div className="w-full max-w-[1800px] px-6 py-6 md:px-10 md:py-7">
+    <div className={PAGE_SHELL}>
       {/* ── Header bar ────────────────────────────────────────────────────────
           A real bar now, closed by a rule, rather than a title floating above
           the content: the month/year control and Manage Jobs belong to the whole

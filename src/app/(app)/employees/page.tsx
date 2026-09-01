@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { PAGE_SHELL } from "@/components/ui/classnames";
 import { PageTitle } from "@/components/ui/Typography";
 import { EmployeesGrid } from "@/components/EmployeesGrid";
 import { DISCIPLINE_LABELS } from "@/lib/disciplines";
@@ -77,7 +78,7 @@ export default async function EmployeesPage() {
   const hiringPositions = redactHiddenPositions(hiring.positions, canAssignHiring);
 
   return (
-    <div className="w-full px-8 py-10 md:px-13 md:py-11">
+    <div className={PAGE_SHELL}>
       <div className="mb-1">
         <div>
           <PageTitle className="mb-1">Employees</PageTitle>

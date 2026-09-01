@@ -7,7 +7,7 @@ import { hasPermission } from "@/lib/permissions";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
 import { PageTitle } from "@/components/ui/Typography";
-import { TABLE_HEADER_ROW, TABLE_GRID, GRID_SCROLLER, BUTTON_PRIMARY, BUTTON_SECONDARY } from "@/components/ui/classnames";
+import { BUTTON_PRIMARY, BUTTON_SECONDARY, GRID_SCROLLER, PAGE_SHELL, TABLE_GRID, TABLE_HEADER_ROW } from "@/components/ui/classnames";
 import { ProjectViewsMenu } from "@/components/ProjectViewsMenu";
 import { ExportMenu } from "@/components/ExportMenu";
 import { listSharedViews } from "@/lib/saved-views-actions";
@@ -520,7 +520,7 @@ export default async function QuotedPage({
     {/* QuotedSaveForm (client) owns the <form> so the Save button can read what the
         action returned — counts on success, the message on failure. The grid below
         stays a server component, passed through as children. */}
-    <QuotedSaveForm action={saveQuotedHours} className="w-full px-8 py-10 md:px-13 md:py-11">
+    <QuotedSaveForm action={saveQuotedHours} className={PAGE_SHELL}>
       {/* Wraps the toolbar AND the grid: the switch, the Add/Save buttons and
           the fieldset that locks the cells all read the same client state, so
           they can never show three different opinions about the mode. */}

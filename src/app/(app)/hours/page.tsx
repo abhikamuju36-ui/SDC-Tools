@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { PageTitle } from "@/components/ui/Typography";
-import { card } from "@/components/ui/classnames";
+import { PAGE_SHELL, card } from "@/components/ui/classnames";
 import { IndicatorCard } from "@/components/charts/IndicatorCard";
 import { ExportMenu } from "@/components/ExportMenu";
 import { EmptyState } from "@/components/ui/EmptyState";
@@ -116,7 +116,7 @@ export default async function HoursPage({ searchParams }: { searchParams: Promis
   const treeKey = JSON.stringify({ filters, groupByLevels });
 
   return (
-    <div className="flex flex-col gap-4 p-6">
+    <div className={`flex flex-col gap-4 ${PAGE_SHELL}`}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <PageTitle>Hours</PageTitle>
         <div className="flex items-center gap-2">

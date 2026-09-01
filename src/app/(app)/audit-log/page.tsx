@@ -1,4 +1,5 @@
 import { prisma } from "@/lib/prisma";
+import { PAGE_SHELL } from "@/components/ui/classnames";
 import { PageTitle } from "@/components/ui/Typography";
 import { AuditLogGrid } from "@/components/AuditLogGrid";
 import { requirePagePermission } from "@/lib/require-permission";
@@ -33,7 +34,7 @@ export default async function AuditLogPage() {
   }));
 
   return (
-    <div className="w-full p-8">
+    <div className={PAGE_SHELL}>
       <PageTitle className="mb-1">Audit Log</PageTitle>
       <p className="mb-6 text-sm text-sdc-gray-600">
         Every recorded data change across the app — ETC edits, employee/job changes, Standard Sheet edits,

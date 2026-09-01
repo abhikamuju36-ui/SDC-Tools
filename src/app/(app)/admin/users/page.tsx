@@ -1,4 +1,5 @@
 import { PageTitle } from "@/components/ui/Typography";
+import { PAGE_SHELL } from "@/components/ui/classnames";
 import { requirePagePermission } from "@/lib/require-permission";
 import { listUsersForAdmin, setUserRole } from "@/lib/user-role-actions";
 import { UserRoleSelect } from "@/components/UserRoleSelect";
@@ -10,7 +11,7 @@ export default async function AdminUsersPage() {
   const users = await listUsersForAdmin();
 
   return (
-    <div className="w-full p-8">
+    <div className={PAGE_SHELL}>
       <PageTitle className="mb-1">Users &amp; Roles</PageTitle>
       <p className="mb-6 text-sm text-sdc-gray-600">
         Assign each account&apos;s role. Roles are independent groups, not tiers &mdash; none of them inherits another&apos;s access.
