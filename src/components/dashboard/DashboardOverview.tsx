@@ -202,7 +202,7 @@ export function DashboardOverviewPanel({ data }: { data: Overview }) {
           so the ME/CE breakdown and the per-FAT rows are gone from
           lib/dashboard-overview.ts as well. */}
       <Band label="Execution &amp; planning">
-        <ExecutionCalendarSection data={data.calendar} monthLabel={label} />
+        <ExecutionCalendarSection data={data.calendar} monthLabel={label} keyDates={data.keyDates} />
       </Band>
     </div>
   );

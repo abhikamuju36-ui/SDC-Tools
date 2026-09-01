@@ -4,6 +4,8 @@ import { useMemo, useState } from "react";
 import { card } from "@/components/ui/classnames";
 import { SectionTitle } from "@/components/ui/Typography";
 import type { CalendarEvent, CalendarEventType, ExecutionCalendar as CalendarData } from "@/lib/dashboard-calendar";
+import type { KeyDatesResult } from "@/lib/key-dates-anchors";
+import { KeyDatesTimeline } from "@/components/dashboard/KeyDatesTimeline";
 import { useDashboardMonth, shiftMonth } from "@/components/dashboard/useDashboardMonth";
 
 // ── Execution Calendar — FATs & Customer Visits (2026-08-28) ────────────────
@@ -32,41 +34,8 @@ const TYPE_META: Record<CalendarEventType, { label: string; dot: string; chip: s
 
 const ORDER: CalendarEventType[] = ["fat", "pre", "visit"];
 
-const DOW = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"];
 const LONG_DATE = new Intl.DateTimeFormat("en-US", { weekday: "long", month: "long", day: "numeric", timeZone: "UTC" });
 
-/** Local calendar date as "YYYY-MM-DD" — compared as strings, never as Dates across zones. */
-function todayIso(): string {
-  const d = new Date();
-  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
-}
-
-/**
- * The grid's cells: whole weeks, Monday-first, covering the month and padded
- * with the neighbouring months' days so every row has seven.
- */
-function monthGrid(month: string): { iso: string; day: number; inMonth: boolean }[] {
-  const [y, m] = month.split("-").map(Number);
-  const first = new Date(Date.UTC(y, m - 1, 1));
-  // getUTCDay is Sunday-0; shift so Monday is 0.
-  const lead = (first.getUTCDay() + 6) % 7;
-  const start = new Date(Date.UTC(y, m - 1, 1 - lead));
-  const cells: { iso: string; day: number; inMonth: boolean }[] = [];
-  for (let i = 0; i < 42; i++) {
-    const d = new Date(start.getTime() + i * 86_400_000);
-    cells.push({
-      iso: d.toISOString().slice(0, 10),
-      day: d.getUTCDate(),
-      inMonth: d.getUTCFullYear() === y && d.getUTCMonth() === m - 1,
-    });
-    // Stop after the week that contains the last day — a 6th row only when needed.
-    if (i >= 27 && (i + 1) % 7 === 0) {
-      const next = new Date(start.getTime() + (i + 1) * 86_400_000);
-      if (next.getUTCFullYear() !== y || next.getUTCMonth() !== m - 1) break;
-    }
-  }
-  return cells;
-}
 
 /** "FAT · 1150 · M2 · USEC Heat Shield" — the compact form the cell shows. */
 function compactLabel(e: CalendarEvent): string {
@@ -76,29 +45,6 @@ function compactLabel(e: CalendarEvent): string {
   const name = e.jobName ?? (e.eventType === "visit" ? e.customer : e.title);
   if (name) parts.push(name);
   return parts.filter(Boolean).join(" · ");
-}
-
-function EventChip({ e, onClick, selected }: { e: CalendarEvent; onClick: () => void; selected: boolean }) {
-  const meta = TYPE_META[e.eventType];
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      aria-pressed={selected}
-      title={compactLabel(e)}
-      className={`flex w-full items-center gap-1 rounded px-1 py-0.5 text-left text-[0.68rem] leading-tight motion-interactive ${meta.chip} ${
-        selected ? "ring-1 ring-sdc-navy" : "hover:brightness-95"
-      }`}
-    >
-      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${meta.dot}`} aria-hidden />
-      <span className="truncate">
-        {e.jobNumber ?? ""}
-        {e.machine ? ` · ${e.machine}` : ""}
-        {e.jobNumber || e.machine ? " " : ""}
-        <span className="opacity-80">{e.jobName ?? e.customer ?? e.title}</span>
-      </span>
-    </button>
-  );
 }
 
 // Declared at module scope, not inside EventDetails: a component created during
@@ -176,7 +122,6 @@ function EventDetails({ e, onClose }: { e: CalendarEvent; onClose: () => void })
   );
 }
 
-const MAX_PER_CELL = 3;
 
 const STEP_BTN =
   "rounded-md px-2 py-1 text-sm leading-none font-semibold text-sdc-gray-600 motion-interactive hover:bg-sdc-blue-light disabled:cursor-wait disabled:opacity-50";
@@ -197,9 +142,11 @@ function isCurrentMonth(month: string): boolean {
 export function ExecutionCalendarSection({
   data,
   monthLabel,
+  keyDates,
 }: {
   data: CalendarData;
   monthLabel: string;
+  keyDates: KeyDatesResult;
 }) {
   // ── The month arrows drive the DASHBOARD's month, not a local one ────────
   //
@@ -210,25 +157,12 @@ export function ExecutionCalendarSection({
   // the one thing this section must not do.
   const monthNav = useDashboardMonth(data.month);
   const [enabled, setEnabled] = useState<Set<CalendarEventType>>(new Set(ORDER));
-  const [view, setView] = useState<"calendar" | "upcoming">("calendar");
+  const [view, setView] = useState<"timeline" | "upcoming">("timeline");
   const [selected, setSelected] = useState<string | null>(null);
-  const [expandedDay, setExpandedDay] = useState<string | null>(null);
 
   // THE filtered set. Both views render this and nothing else.
   const shown = useMemo(() => data.events.filter((e) => enabled.has(e.eventType)), [data.events, enabled]);
 
-  const byDay = useMemo(() => {
-    const m = new Map<string, CalendarEvent[]>();
-    for (const e of shown) {
-      const list = m.get(e.date) ?? [];
-      list.push(e);
-      m.set(e.date, list);
-    }
-    return m;
-  }, [shown]);
-
-  const cells = useMemo(() => monthGrid(data.month), [data.month]);
-  const today = todayIso();
   const selectedEvent = shown.find((e) => e.eventId === selected) ?? null;
 
   const counts = useMemo(() => {
@@ -251,10 +185,14 @@ export function ExecutionCalendarSection({
     <section aria-label="Execution calendar">
       <div className="mb-2.5 flex flex-wrap items-end justify-between gap-x-4 gap-y-1">
         <div className="min-w-0">
-          <SectionTitle>Execution Calendar — FATs &amp; Customer Visits</SectionTitle>
+          <SectionTitle>Key Dates — Execution Milestones</SectionTitle>
           <p className="mt-0.5 text-label text-sdc-gray-400">
-            {monthNav.pending ? `${monthName(monthNav.shown)} · loading…` : `${monthLabel} · ${shown.length} event${shown.length === 1 ? "" : "s"}`}
-            {data.schedulerAvailable ? "" : " · Scheduler unavailable, FATs not shown"}
+            {view === "timeline"
+              ? "Pick the milestones and the month range — soonest first · green done · red late"
+              : monthNav.pending
+                ? `${monthName(monthNav.shown)} · loading…`
+                : `${monthLabel} · ${shown.length} event${shown.length === 1 ? "" : "s"}`}
+            {data.schedulerAvailable || view === "timeline" ? "" : " · Scheduler unavailable, FATs not shown"}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-2">
@@ -299,7 +237,7 @@ export function ExecutionCalendarSection({
           </div>
 
           <div className="flex items-center gap-1 rounded-lg border border-sdc-border bg-white p-0.5">
-            {(["calendar", "upcoming"] as const).map((v) => (
+            {(["timeline", "upcoming"] as const).map((v) => (
               <button
                 key={v}
                 type="button"
@@ -322,8 +260,10 @@ export function ExecutionCalendarSection({
           with them rather than being left with one child. */}
       <div className="min-w-0">
         <div className={`${card("p-0")} min-w-0 overflow-hidden`}>
-          {/* Filters. The month itself comes from the Dashboard's own selector —
-              this section deliberately has no second month control. */}
+          {/* The FAT / Pre-FAT / Customer Visit legend belongs to the Upcoming
+              list. The timeline has its own milestone chips, and two rows of
+              filters that mean different things would be a trap. */}
+          {view === "upcoming" && (
           <div className="flex flex-wrap items-center gap-2 border-b border-sdc-border px-3 py-2">
             {ORDER.map((t) => {
               const on = enabled.has(t);
@@ -352,78 +292,14 @@ export function ExecutionCalendarSection({
               </span>
             )}
           </div>
+          )}
 
-          {view === "calendar" ? (
-            <div className="overflow-x-auto">
-              <div className="min-w-[44rem]">
-                <div className="grid grid-cols-7 border-b border-sdc-border bg-sdc-gray-50">
-                  {DOW.map((d) => (
-                    <div key={d} className="px-2 py-1 text-center text-label font-semibold uppercase tracking-wide text-sdc-muted">
-                      {d}
-                    </div>
-                  ))}
-                </div>
-                <div className="grid grid-cols-7">
-                  {cells.map((c) => {
-                    const events = byDay.get(c.iso) ?? [];
-                    const isToday = c.iso === today;
-                    const open = expandedDay === c.iso;
-                    const visible = open ? events : events.slice(0, MAX_PER_CELL);
-                    const hidden = events.length - visible.length;
-                    return (
-                      <div
-                        key={c.iso}
-                        className={`min-h-[4.6rem] border-r border-b border-sdc-border-soft p-1 last:border-r-0 ${
-                          c.inMonth ? "bg-white" : "bg-sdc-gray-50/60"
-                        }`}
-                      >
-                        <div className="mb-0.5 flex items-center justify-between px-0.5">
-                          <span
-                            className={`text-label tabular-nums ${
-                              isToday
-                                ? "rounded bg-sdc-navy px-1.5 py-0.5 font-bold text-white"
-                                : c.inMonth
-                                  ? "text-sdc-gray-600"
-                                  : "text-sdc-gray-400"
-                            }`}
-                          >
-                            {c.day}
-                          </span>
-                          {isToday && <span className="text-[0.6rem] font-semibold uppercase text-sdc-navy">Today</span>}
-                        </div>
-                        <div className="flex flex-col gap-0.5">
-                          {visible.map((e) => (
-                            <EventChip
-                              key={e.eventId}
-                              e={e}
-                              selected={selected === e.eventId}
-                              onClick={() => setSelected((prev) => (prev === e.eventId ? null : e.eventId))}
-                            />
-                          ))}
-                          {hidden > 0 && (
-                            <button
-                              type="button"
-                              onClick={() => setExpandedDay(c.iso)}
-                              className="px-1 text-left text-[0.65rem] font-semibold text-sdc-blue hover:underline"
-                            >
-                              +{hidden} more
-                            </button>
-                          )}
-                          {open && events.length > MAX_PER_CELL && (
-                            <button
-                              type="button"
-                              onClick={() => setExpandedDay(null)}
-                              className="px-1 text-left text-[0.65rem] text-sdc-gray-400 hover:underline"
-                            >
-                              show less
-                            </button>
-                          )}
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              </div>
+          {view === "timeline" ? (
+            // The month grid this replaced answered "what is happening on the 9th".
+            // The question the section is for is "which machines are approaching
+            // which milestone, and is anything late" — which is a timeline.
+            <div className="px-3 py-3">
+              <KeyDatesTimeline initial={keyDates} />
             </div>
           ) : (
             <div className="max-h-[26rem] divide-y divide-sdc-border-soft overflow-y-auto">

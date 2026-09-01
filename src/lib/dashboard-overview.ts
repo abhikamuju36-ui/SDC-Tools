@@ -15,6 +15,7 @@ import {
   type CanonicalCustomerKey,
 } from "@/lib/customer-canonical";
 import { getExecutionCalendar, type ExecutionCalendar } from "@/lib/dashboard-calendar";
+import { getKeyDates, type KeyDatesResult } from "@/lib/dashboard-key-dates";
 
 // ── One query pass for the whole dashboard (2026-08-27) ─────────────────────
 //
@@ -111,6 +112,13 @@ export type DashboardOverview = {
   utilization: DepartmentUtilizationResult;
   /** FATs, Pre-FATs and Customer Visits for `month`, in one normalized event array. */
   calendar: ExecutionCalendar;
+  /**
+   * The Key Dates timeline's FIRST paint. The component refetches through its own
+   * action whenever the chips or the month range move, so this only has to be a
+   * sensible opening view — the default anchor and this month through +2, which
+   * is the Scheduler's own default for the same view.
+   */
+  keyDates: KeyDatesResult;
 };
 
 /** The month the dashboard defaults to, and the one every month-scoped figure is measured in. */
@@ -127,7 +135,7 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
   const [year, monthNo] = month.split("-").map(Number);
   const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-  const [jobs, employees, hoursRows, fatEvents, visits, utilization, calendar] = await Promise.all([
+  const [jobs, employees, hoursRows, fatEvents, visits, utilization, calendar, keyDates] = await Promise.all([
     // The whole live job population in one read (a few hundred rows). Active and
     // HeadStart are split in memory rather than by two counts, so the KPI, the
     // type strip and the customer cards are provably the same set of jobs.
@@ -167,6 +175,15 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
     // never firing per-card requests, not about forbidding a second query.
     getDepartmentUtilization(month),
     getExecutionCalendar(month),
+    // The timeline's opening view: the Scheduler's own default for Key Dates —
+    // Mech 1, this month through +2. `today` is the server's, so done/late are
+    // the same for everyone rather than following a client clock.
+    getKeyDates({
+      from: currentMonthKey,
+      to: `${new Date(now.getFullYear(), now.getMonth() + 2, 1).getFullYear()}-${String(new Date(now.getFullYear(), now.getMonth() + 2, 1).getMonth() + 1).padStart(2, "0")}`,
+      anchors: ["mech_release_1"],
+      today: `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`,
+    }),
   ]);
 
   // Split off the SAME status the drill-through queries by, read from the shared
@@ -346,5 +363,6 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
     visits,
     utilization,
     calendar,
+    keyDates,
   };
 }
