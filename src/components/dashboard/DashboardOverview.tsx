@@ -1,5 +1,4 @@
 import Link from "next/link";
-import { card } from "@/components/ui/classnames";
 import type { DashboardOverview as Overview } from "@/lib/dashboard-overview";
 import { ActiveJobsSection } from "@/components/dashboard/ActiveJobsSection";
 import { ExecutionCalendarSection } from "@/components/dashboard/ExecutionCalendar";
@@ -61,17 +60,6 @@ function Kpi({
     </Link>
   ) : (
     <div className={shell}>{body}</div>
-  );
-}
-
-// The hairline-divided container the FAT summary grid still uses. (Two stale
-// comments describing TypeRow used to sit here — it moved to
-// ActiveJobsSection.tsx and left them pointing at nothing.)
-function Frame({ children, className = "" }: { children: React.ReactNode; className?: string }) {
-  return (
-    <div className={`grid gap-px overflow-hidden rounded-xl border border-sdc-border bg-sdc-border-soft shadow-sm ${className}`}>
-      {children}
-    </div>
   );
 }
 
@@ -202,47 +190,19 @@ export function DashboardOverviewPanel({ data }: { data: Overview }) {
       {/* Replaces the old "Execution — FATs" list and the separate
           "Planning — Customer Visits" panel. Both were lists of the same shape
           of thing on one page; the calendar answers "what is happening the week
-          of the 14th" without counting rows. The FAT KPI cards survive, moved
-          beside the grid — they are a summary, not a second event list. */}
+          of the 14th" without counting rows.
+          ── The FAT summary cards are gone too (2026-08-31, by request) ──
+          "FATs in <month>", "Pre-FATs", "Involving ME" and "Involving CE" used
+          to sit in a column beside the grid, with a paragraph under them about
+          placeholder seats and unstaffed FATs. Removed, and the calendar now
+          takes the full width of the band rather than 2.2/3 of it — see
+          ExecutionCalendarSection, which no longer has a slot to render them
+          into. The two counts worth keeping (FATs and pre-FATs this month) were
+          already on the top KPI strip and still are; nothing else read the rest,
+          so the ME/CE breakdown and the per-FAT rows are gone from
+          lib/dashboard-overview.ts as well. */}
       <Band label="Execution &amp; planning">
-        <ExecutionCalendarSection
-          data={data.calendar}
-          monthLabel={label}
-          kpis={
-            data.fats.available ? (
-              <div>
-                <Frame className="grid-cols-2">
-                  <Kpi label={`FATs in ${label}`} value={String(data.fats.monthTotal)} tone="blue" />
-                  <Kpi label="Pre-FATs" value={String(data.fats.monthPreFats)} sub="readiness runs, not the FAT" />
-                  <Kpi label="Involving ME" value={String(data.fats.monthWithMe)} sub="named mechanical engineer" />
-                  <Kpi label="Involving CE" value={String(data.fats.monthWithCe)} sub="named controls engineer" />
-                </Frame>
-                {/* ME + CE deliberately do NOT sum to the FAT total: most FATs
-                    involve both disciplines, and some have neither named yet.
-                    Saying so beats letting someone read the three numbers as a
-                    partition and conclude the data is broken. */}
-                <p className="mt-2 text-label leading-relaxed text-sdc-gray-400">
-                  A FAT counts under ME or CE when its job&apos;s Scheduler schedule names a real engineer of that discipline
-                  (placeholder seats excluded). Most FATs involve both, so these do not sum to the total.
-                  {data.fats.monthUnstaffed > 0 && (
-                    <>
-                      {" "}
-                      <span className="font-semibold text-sdc-yellow-text">
-                        {data.fats.monthUnstaffed} FAT{data.fats.monthUnstaffed === 1 ? " has" : "s have"} no named ME or CE.
-                      </span>
-                    </>
-                  )}
-                </p>
-              </div>
-            ) : (
-              <div className={`${card("p-4")} border-dashed`}>
-                <p className="text-sm text-sdc-gray-400">
-                  The Scheduler is unreachable, so this month&apos;s FAT figures are unavailable.
-                </p>
-              </div>
-            )
-          }
-        />
+        <ExecutionCalendarSection data={data.calendar} monthLabel={label} />
       </Band>
     </div>
   );

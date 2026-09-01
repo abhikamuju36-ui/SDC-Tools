@@ -1,7 +1,10 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
 import { DrillPanel } from "@/components/ui/Drill";
+import { SortableTh } from "@/components/ui/SortableHeader";
+import { cycleSortState, sortRows, type SortState } from "@/lib/table-sort";
+import { PUNCH_SORT_COLUMNS, type PunchSortKey } from "@/lib/employee-punch-sort";
 import { loadEmployeeMonthPunches } from "@/lib/employee-punch-actions";
 import type { EmployeeMonthPunches } from "@/lib/employee-punch-drill";
 import type { PunchBucket } from "@/lib/department-utilization";
@@ -33,6 +36,26 @@ function dateLabel(iso: string): string {
   return DATE.format(new Date(Date.UTC(y, m - 1, d)));
 }
 const hrs = (n: number) => (Math.round(n * 100) / 100).toLocaleString("en-US");
+
+// ── Sorting the punch list (2026-08-31) ────────────────────────────────────
+//
+// Through the app's shared sort (lib/table-sort.ts + ui/SortableHeader.tsx), the
+// same one the job drill and the department table use — so the click cycle
+// (none → asc → desc → none), the rotating chevron, the full-cell click target
+// and the aria-sort wiring are the established behaviour rather than a second
+// implementation living in this panel. The column definitions are in
+// lib/employee-punch-sort.ts, which has no React in it and is tested directly.
+//
+// The "none" third click restores the DEFAULT order, which is the server's own
+// `orderBy: [{ workDate: "desc" }, { section: "asc" }]` — newest punch first —
+// because sortRows() returns the input array untouched for a null sort.
+//
+// All client-side over the rows already loaded: a header click issues no
+// request, and the sorted array is a copy, so `result.rows` — which the bucket
+// chips and the footer total also read — is never reordered underneath them.
+
+/** Sticky, so the column names survive a long punch list. See the note in the table below. */
+const TH = "sticky top-0 z-10 border-b border-sdc-border bg-white px-3 py-2 font-semibold";
 
 export type PunchDrillTarget = { employeeId: string; name: string };
 
@@ -128,6 +151,26 @@ export function EmployeePunchDrillPanel({
 }) {
   const reconciles = result === null || Math.abs(result.totalHours - expectedHours) < 0.02;
 
+  // ── Sort state, reset when the panel switches employee ───────────────────
+  //
+  // Adjusting state during render on a changed prop — React's own documented
+  // pattern for exactly this, and cheaper than an effect (no second render, no
+  // flash of the previous person's sort). Done HERE rather than with a `key` on
+  // the caller so the guarantee belongs to the panel: whoever renders it next
+  // cannot forget it. Requirement: opening a different person starts back at the
+  // default newest-first order.
+  const [sort, setSort] = useState<SortState<PunchSortKey>>(null);
+  const [sortedFor, setSortedFor] = useState(target.employeeId);
+  if (sortedFor !== target.employeeId) {
+    setSortedFor(target.employeeId);
+    setSort(null);
+  }
+
+  // A COPY, always — sortRows never mutates, and `result.rows` stays in server
+  // order for the bucket chips and the footer total that also read it.
+  const rows = useMemo(() => sortRows(result?.rows ?? [], sort, PUNCH_SORT_COLUMNS), [result, sort]);
+  const onSort = (key: PunchSortKey) => setSort((current) => cycleSortState(current, key));
+
   return (
     <DrillPanel
       title={`${target.name} — punches in ${monthLabel}`}
@@ -166,20 +209,50 @@ export function EmployeePunchDrillPanel({
             ))}
           </div>
 
-          <div className="overflow-x-auto">
-            <table className="w-full min-w-[30rem] border-collapse text-sm">
+          {/* No overflow-x wrapper. `overflow-x: auto` computes `overflow-y` to
+              auto as well, which would make this div its own unconstrained
+              scroll container — and a sticky <thead> inside it would then have
+              nothing to stick to, because that container never scrolls
+              vertically. DrillPanel's body is already the capped scroller (see
+              DRILL_BODY / .drill-cap) and its own overflow-x computes to auto,
+              so the table still scrolls sideways on a narrow window; it just
+              does it in the element that also owns the vertical scroll. */}
+          <table className="w-full min-w-[30rem] border-collapse text-sm">
               <thead>
-                <tr className="border-b border-sdc-border bg-white text-xs uppercase tracking-wide text-sdc-muted">
-                  <th scope="col" className="w-[7.5rem] px-3 py-2 text-left font-semibold">Date</th>
-                  <th scope="col" className="w-[5rem] px-3 py-2 text-left font-semibold">Job</th>
-                  <th scope="col" className="px-3 py-2 text-left font-semibold">Project</th>
-                  <th scope="col" className="w-[10rem] px-3 py-2 text-left font-semibold">Section</th>
-                  <th scope="col" className="w-[7rem] px-3 py-2 text-left font-semibold">Counts as</th>
-                  <th scope="col" className="w-[4.5rem] px-3 py-2 text-right font-semibold">Hours</th>
+                {/* Sticky against the drill body's scroll, so the column names
+                    stay put through a long punch list. The background sits on the
+                    cells, not the row: a <tr> background does not reliably paint
+                    over content scrolling beneath a sticky header. */}
+                <tr className="text-xs uppercase tracking-wide text-sdc-muted">
+                  <SortableTh label="Date" sortKey="date" type="date" sort={sort} onSort={onSort} className={`${TH} w-[7.5rem]`} />
+                  <SortableTh label="Job" sortKey="jobId" type="id" sort={sort} onSort={onSort} align="left" className={`${TH} w-[5rem]`} />
+                  <SortableTh label="Project" sortKey="project" type="text" sort={sort} onSort={onSort} className={TH} />
+                  <SortableTh
+                    label="Section"
+                    sortKey="section"
+                    type="text"
+                    sort={sort}
+                    onSort={onSort}
+                    title="Sorted by section code, not by the name beside it"
+                    className={`${TH} w-[10rem]`}
+                  />
+                  {/* align left despite the numeric comparator: the column holds a
+                      label, and the rank it sorts by is an implementation detail. */}
+                  <SortableTh
+                    label="Counts as"
+                    sortKey="bucket"
+                    type="number"
+                    align="left"
+                    sort={sort}
+                    onSort={onSort}
+                    title="Billable, Warranty, Service, Spare Parts, Bellco, Non-Billable"
+                    className={`${TH} w-[7rem]`}
+                  />
+                  <SortableTh label="Hours" sortKey="hours" type="hours" sort={sort} onSort={onSort} className={`${TH} w-[4.5rem]`} />
                 </tr>
               </thead>
               <tbody>
-                {result.rows.map((r, i) => (
+                {rows.map((r, i) => (
                   <tr key={`${r.date}-${r.jobId}-${r.section}-${i}`} className="border-b border-sdc-border-soft hover:bg-sdc-blue-light/25">
                     <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-sdc-gray-700">{dateLabel(r.date)}</td>
                     <td className="px-3 py-1.5 whitespace-nowrap font-medium text-sdc-navy">{r.jobId}</td>
@@ -211,8 +284,7 @@ export function EmployeePunchDrillPanel({
                   <td className="px-3 py-2 text-right tabular-nums">{hrs(result.totalHours)}</td>
                 </tr>
               </tfoot>
-            </table>
-          </div>
+          </table>
         </>
       )}
     </DrillPanel>

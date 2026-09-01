@@ -78,30 +78,13 @@ async function main() {
   const rawPreKeys = new Set(rawMonth.filter((e) => e.kind === "pre").map((e) => `${e.jobNumber}|${e.date}`));
   check("4 FAT count matches Scheduler", d.fats.monthTotal === rawFatKeys.size, `dashboard ${d.fats.monthTotal} vs distinct (job,date) in Scheduler ${rawFatKeys.size}`);
   check("4b pre-FAT count matches Scheduler", d.fats.monthPreFats === rawPreKeys.size, `${d.fats.monthPreFats} vs ${rawPreKeys.size}`);
-  check(
-    "4c every listed FAT is a real Scheduler task on that date",
-    d.fats.monthRows.every((r) => raw.some((e) => e.taskId === r.taskId && e.date === r.date)),
-    `${d.fats.monthRows.length} rows checked`,
-  );
-  check(
-    "4d upcoming list is nearest-first and never in the past",
-    d.fats.upcoming.every((r, i, a) => r.daysUntil >= 0 && (i === 0 || a[i - 1].date <= r.date)),
-    `${d.fats.upcoming.length} upcoming, nearest ${d.fats.upcoming[0]?.date ?? "none"}`,
-  );
-
-  // 5. ME/CE come from real named assignments — never a placeholder seat, and
-  // never more than the FAT population they are a subset of.
-  check("5 ME/CE counts bounded by the FAT total", d.fats.monthWithMe <= d.fats.monthTotal && d.fats.monthWithCe <= d.fats.monthTotal, `ME ${d.fats.monthWithMe}, CE ${d.fats.monthWithCe}, total ${d.fats.monthTotal}`);
-  check(
-    "5b no placeholder seat counted as an engineer",
-    d.fats.monthRows.every((r) => [...r.meOwners, ...r.ceOwners].every((n) => !/placeholder/i.test(n))),
-    "every owner name checked",
-  );
-  check(
-    "5c unstaffed FATs are the ones with neither discipline named",
-    d.fats.monthRows.filter((r) => r.kind === "fat" && r.meOwners.length === 0 && r.ceOwners.length === 0).length === d.fats.monthUnstaffed,
-    `${d.fats.monthUnstaffed} unstaffed`,
-  );
+  // Checks 4c/4d and the whole of 5 (ME/CE bounds, placeholder seats, unstaffed
+  // FATs) were removed on 2026-08-31 along with the data they verified: the FAT
+  // summary cards beside the Execution Calendar were dropped by request, and with
+  // them `fats.monthRows`, `fats.upcoming` and the ME/CE/unstaffed counts. 4 and
+  // 4b above survive and still do the important job — they check the two figures
+  // the KPI strip shows against the raw Scheduler feed, which is also what
+  // validates the simpler count path that replaced the FatRow[] build.
 
   // 6. Hours against JobHoursDetail — the punch classification, not Power BI.
   const hours = await prisma.jobHoursDetail.groupBy({ by: ["standardDepartment"], where: { month }, _sum: { hours: true } });
@@ -140,8 +123,8 @@ async function main() {
   check(
     "9 monthly figures move with the month, active jobs do not",
     prev.month === prevMonthOf(month) && prev.activeTotal === d.activeTotal,
-    `${prevMonthOf(month)}: FATs ${prev.fats.monthTotal} (ME ${prev.fats.monthWithMe}/CE ${prev.fats.monthWithCe}) eng ${prev.workforce[0].bookedHours} shop ${prev.workforce[1].bookedHours} · ` +
-      `${month}: FATs ${d.fats.monthTotal} (ME ${d.fats.monthWithMe}/CE ${d.fats.monthWithCe}) eng ${d.workforce[0].bookedHours} shop ${d.workforce[1].bookedHours} · active unchanged at ${d.activeTotal}`,
+    `${prevMonthOf(month)}: FATs ${prev.fats.monthTotal} (+${prev.fats.monthPreFats} pre) eng ${prev.workforce[0].bookedHours} shop ${prev.workforce[1].bookedHours} · ` +
+      `${month}: FATs ${d.fats.monthTotal} (+${d.fats.monthPreFats} pre) eng ${d.workforce[0].bookedHours} shop ${d.workforce[1].bookedHours} · active unchanged at ${d.activeTotal}`,
   );
 
   // 9b. No fake zeros: a month nobody has booked hours in reports null, not 0.

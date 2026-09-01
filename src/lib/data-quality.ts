@@ -1,5 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
+import { customerAliasFindings, type CustomerAliasGroup } from "@/lib/customer-canonical";
 
 // The Power BI report's "Data Quality" page, rebuilt against the app's own data.
 //
@@ -62,6 +63,34 @@ export type PunchIssue = {
   completeDate: string | null;
 };
 
+/**
+ * Customers stored under more than one name.
+ *
+ * A finding, not a footnote: the Dashboard's customer chart now COMBINES these
+ * (lib/customer-canonical.ts), which fixes the chart and would otherwise hide
+ * the problem completely — the Customer field on the Projects page is still
+ * carrying seven spellings of one customer, and no amount of grouping
+ * downstream makes that a good state for the source data to be in.
+ *
+ * Reported over EVERY job, not just active ones: standardizing a name is worth
+ * doing once for the whole book, and a completed job's customer is what the next
+ * report of history reads.
+ */
+export type CustomerNaming = {
+  /** Canonical customers that combined two or more stored spellings. */
+  groups: CustomerAliasGroup[];
+  /** How many distinct stored spellings are involved across all of them. */
+  storedNames: number;
+  /**
+   * Merges that rest on a REVIEWED HUMAN DECISION rather than on a source
+   * identifier — worth re-checking when the underlying accounts change, and the
+   * first thing to look at if a total ever looks wrong.
+   */
+  reviewedWithoutSourceEvidence: { canonicalCustomerName: string; note: string }[];
+  /** Company records deliberately kept OUT of their accounting account's group, with why. */
+  detachedFromAccount: { companyId: number; reason: string }[];
+};
+
 export type DataQuality = {
   // The watermark everything is judged against — the same [Hours Refreshed Thru]
   // the report's header card shows. Null when the hours feed has never run.
@@ -69,15 +98,30 @@ export type DataQuality = {
   future: { count: number; hours: number; rows: PunchIssue[] };
   afterCompletion: { count: number; hours: number; rows: PunchIssue[] };
   undefinedEmployees: { count: number; hours: number; ids: { employeeId: string; rows: number; hours: number }[] };
+  /** Customers stored under more than one name — see CustomerNaming. */
+  customerNaming: CustomerNaming;
   // True when a check had more rows than SAMPLE_LIMIT, so the table can say the
   // list is partial rather than implying the count and the list agree.
   truncated: boolean;
 };
 
 export async function getDataQuality(): Promise<DataQuality> {
-  const [freshness, employees] = await Promise.all([
+  const [freshness, employees, customerJobs] = await Promise.all([
     prisma.powerBiFreshness.findUnique({ where: { source: "hours_actual" }, select: { refreshedThrough: true } }).catch(() => null),
     prisma.employee.findMany({ select: { paylocityId: true, name: true, department: true } }),
+    // Every job's customer identity, for the naming check below. One narrow read
+    // of a few hundred rows on a page that already does several — and the whole
+    // book on purpose, not just the active slice (see CustomerNaming).
+    prisma.job.findMany({
+      select: {
+        jobId: true,
+        status: true,
+        customer: true,
+        totEtoCompanyId: true,
+        totEtoAccountId: true,
+        customerManuallyEdited: true,
+      },
+    }),
   ]);
   const refreshedThrough = freshness?.refreshedThrough ?? null;
 
@@ -163,11 +207,14 @@ export async function getDataQuality(): Promise<DataQuality> {
 
   const sum = (rows: { hours: number }[]) => rows.reduce((s, r) => s + r.hours, 0);
 
+  const customerNaming = customerAliasFindings(customerJobs);
+
   return {
     refreshedThrough: refreshedThrough ? refreshedThrough.toISOString().slice(0, 10) : null,
     future: { count: futureAll.length, hours: sum(futureAll), rows: future },
     afterCompletion: { count: afterAll.length, hours: sum(afterAll), rows: after },
     undefinedEmployees: { count: unresolved.length, hours: sum(unresolved), ids: unresolved },
+    customerNaming,
     truncated: futureAll.length > SAMPLE_LIMIT || afterAll.length > SAMPLE_LIMIT,
   };
 }

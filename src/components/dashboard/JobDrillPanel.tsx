@@ -6,6 +6,7 @@ import { DrillPanel } from "@/components/ui/Drill";
 import { SortableTh } from "@/components/ui/SortableHeader";
 import { cycleSortState, sortRows, type SortColumns, type SortState } from "@/lib/table-sort";
 import { loadActiveJobDrill } from "@/lib/dashboard-drill-actions";
+import { jobTypeColor } from "@/lib/job-type-colors";
 import type { JobDrillFilter, JobDrillResult, JobDrillRow } from "@/lib/dashboard-job-drill";
 
 // ── The inline drill-through under the Dashboard's two charts ───────────────
@@ -32,12 +33,13 @@ import type { JobDrillFilter, JobDrillResult, JobDrillRow } from "@/lib/dashboar
 // clicking three customers quickly must not leave the third bar selected with
 // the first customer's rows under it.
 
-type SortKey = "jobId" | "jobName" | "customer" | "type" | "startDate" | "fatDate" | "owners" | "quotedHours" | "actualHours" | "etcHours";
+type SortKey = "jobId" | "jobName" | "customer" | "rawCustomer" | "type" | "startDate" | "fatDate" | "owners" | "quotedHours" | "actualHours" | "etcHours";
 
 const COLUMNS: SortColumns<JobDrillRow, SortKey> = {
   jobId: { type: "id", value: (r) => r.jobId },
   jobName: { type: "text", value: (r) => r.jobName },
   customer: { type: "text", value: (r) => r.customer },
+  rawCustomer: { type: "text", value: (r) => r.rawCustomer },
   type: { type: "text", value: (r) => r.type },
   startDate: { type: "date", value: (r) => r.startDate },
   fatDate: { type: "date", value: (r) => r.fatDate },
@@ -51,6 +53,10 @@ const HEADERS: { key: SortKey; label: string; align?: "right"; width: string }[]
   { key: "jobId", label: "Job #", width: "w-[5.5rem]" },
   { key: "jobName", label: "Project Name", width: "min-w-[16rem]" },
   { key: "customer", label: "Customer", width: "min-w-[11rem]" },
+  // The stored value, beside the canonical one. Sortable on purpose: sorting a
+  // combined customer's rows by this groups the spellings together, which is how
+  // you see at a glance which ones need standardizing at source.
+  { key: "rawCustomer", label: "Stored As", width: "min-w-[11rem]" },
   { key: "type", label: "Type", width: "w-[6rem]" },
   { key: "startDate", label: "Start", width: "w-[6.5rem]" },
   { key: "fatDate", label: "FAT", width: "w-[6.5rem]" },
@@ -171,6 +177,7 @@ export function JobDrillPanel({
   error,
   onClose,
   expectedCount,
+  label,
 }: {
   filter: JobDrillFilter;
   result: JobDrillResult | null;
@@ -179,21 +186,31 @@ export function JobDrillPanel({
   onClose: () => void;
   /** What the bar said. Rendered beside the row count so a mismatch is visible rather than silent. */
   expectedCount: number;
+  /** What to call this bar. `filter.value` is a canonical customer id, not a name. */
+  label: string;
 }) {
   const [sort, setSort] = useState<SortState<SortKey>>({ key: "jobId", direction: "asc" });
   const rows = result ? sortRows(result.rows, sort, COLUMNS) : [];
   const reconciles = result === null || result.rows.length === expectedCount;
+  // How many stored spellings these rows actually carry. Stated in the panel's
+  // meta line for a CUSTOMER drill, because "24 jobs" for a customer stored
+  // seven different ways is a number somebody will want to check — and the
+  // "Stored As" column beside every row is how they check it.
+  const storedNames =
+    filter.kind === "customer" && result ? new Set(result.rows.map((r) => r.rawCustomer)).size : 1;
 
   return (
     <DrillPanel
-      title={`Active Jobs — ${filter.value}`}
+      title={`Active Jobs — ${label}`}
       meta={
         loading
           ? "Loading…"
           : result
             ? `${result.rows.length} job${result.rows.length === 1 ? "" : "s"}${
                 reconciles ? "" : ` · chart says ${expectedCount}`
-              }${result.schedulerAvailable ? "" : " · Scheduler unavailable, FAT dates omitted"}`
+              }${storedNames > 1 ? ` · stored under ${storedNames} customer names` : ""}${
+                result.schedulerAvailable ? "" : " · Scheduler unavailable, FAT dates omitted"
+              }`
             : undefined
       }
       // Only ever shown when the drill and the bar disagree — which should be
@@ -250,7 +267,40 @@ export function JobDrillPanel({
                   <td className="max-w-[14rem] truncate px-3 py-1.5 text-sdc-gray-700" title={r.customer}>
                     {r.customer}
                   </td>
-                  <td className="px-3 py-1.5 whitespace-nowrap text-sdc-gray-700">{r.type}</td>
+                  {/* The customer string as STORED on the job. Rendered muted
+                      when it matches the canonical name (the common case, and
+                      not something to draw the eye) and in full weight when it
+                      differs — those are the rows whose Customer field wants
+                      standardizing on the Projects page. Keeping the raw value
+                      on screen is what makes a combined bar auditable instead of
+                      a number you have to trust. */}
+                  <td
+                    className={`max-w-[14rem] truncate px-3 py-1.5 ${
+                      r.rawCustomer === r.customer ? "text-sdc-gray-400" : "font-medium text-sdc-yellow-text"
+                    }`}
+                    title={
+                      r.rawCustomer === r.customer
+                        ? r.rawCustomer
+                        : `Stored as "${r.rawCustomer}" — counted under "${r.customer}"`
+                    }
+                  >
+                    {r.rawCustomer}
+                  </td>
+                  {/* The type's brand colour follows the click into the table — the
+                      same jobTypeColor() the bar segments use, so the row you land on
+                      is visibly the segment you clicked. A dot rather than a filled
+                      pill: two of the five brand colours are very light, and coloured
+                      text or a tinted background on them fails contrast, while a solid
+                      dot beside full-ink text does not. */}
+                  <td className="px-3 py-1.5 whitespace-nowrap text-sdc-gray-700">
+                    <span className="inline-flex items-center gap-1.5">
+                      <span
+                        className={`inline-block h-2 w-2 shrink-0 rounded-sm ring-1 ring-inset ring-black/10 ${jobTypeColor(r.type).dot}`}
+                        aria-hidden
+                      />
+                      {r.type}
+                    </span>
+                  </td>
                   <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-sdc-gray-700">{dateLabel(r.startDate)}</td>
                   <td className="px-3 py-1.5 whitespace-nowrap tabular-nums text-sdc-gray-700">{dateLabel(r.fatDate)}</td>
                   <td

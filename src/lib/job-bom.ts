@@ -106,7 +106,14 @@ const TOP_SQL = `
 //
 // `BOMAssemblyReleaseID` is the release status of this parent→child edge
 // (tsysBOMAssemblyRelease: 1 Contents Only / 2 Assembly Only / 3 Both) and is
-// what decides whether the child is exploded or bought whole. `ItemCost`,
+// what decides whether the child is exploded or bought whole.
+//
+// `BOMCustom1` and `Note` both carry the Packet ID — the tag that groups the
+// release rows belonging to one fragmented assembly update, so Build Readiness
+// can answer "are the parts for THIS change ready" (see packetIdOf() in
+// job-bom-rules.ts for which of the two wins). Both live on eps, i.e. per
+// parent→child EDGE, which is exactly the grain Purchasing asked for: a part
+// reused by two packets has two rows and stays correctly separated. `ItemCost`,
 // `ItemLastCost` and `ItemListCost` feed the cost fallback for requirements
 // that have no PO price of their own — both are applied in job-bom-rules.ts.
 const BOM_SQL = `
@@ -123,6 +130,8 @@ const BOM_SQL = `
     eps.RequiredDate,
     eps.ItemHold,
     eps.BOMAssemblyReleaseID,
+    eps.BOMCustom1,
+    eps.Note,
     eps.ItemCost,
     child.ItemLastCost,
     child.ItemListCost,
@@ -447,6 +456,9 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
       // explodes into its contents and never carries its own buy line.
       release: "contentsOnly",
       self: null,
+      // A section is synthetic - no eps edge - so it never carries a packet.
+      packetId: null,
+      packetLabel: null,
       stats: statsForRoots(topNodeIds, tree, ctx),
       children: [],
       parts: [],

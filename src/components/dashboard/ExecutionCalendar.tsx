@@ -197,19 +197,16 @@ function isCurrentMonth(month: string): boolean {
 export function ExecutionCalendarSection({
   data,
   monthLabel,
-  kpis,
 }: {
   data: CalendarData;
   monthLabel: string;
-  /** The existing FAT KPI cards, rendered beside the calendar rather than above a second list. */
-  kpis: React.ReactNode;
 }) {
   // ── The month arrows drive the DASHBOARD's month, not a local one ────────
   //
   // Same `?m=YYYY-MM` the month/year dropdowns in the page header set, through
-  // the same hook — so stepping the calendar also steps the FAT KPI panel beside
-  // it, the hours KPIs and the utilization table. A calendar with its own month
-  // would sit next to a "FATs in August" card while showing September, which is
+  // the same hook — so stepping the calendar also steps the top KPI strip's FAT
+  // count, the hours KPIs and the utilization table. A calendar with its own
+  // month would show September beside a strip reading "FATs · August", which is
   // the one thing this section must not do.
   const monthNav = useDashboardMonth(data.month);
   const [enabled, setEnabled] = useState<Set<CalendarEventType>>(new Set(ORDER));
@@ -319,7 +316,11 @@ export function ExecutionCalendarSection({
         </div>
       </div>
 
-      <div className="grid gap-4 xl:grid-cols-[minmax(0,2.2fr)_minmax(240px,0.8fr)]">
+      {/* Full width. This was a 2.2fr / 0.8fr grid with the FAT summary cards in
+          the right-hand column; those were removed on 2026-08-31 and an empty
+          0.8fr track would have left a third of the band blank, so the grid went
+          with them rather than being left with one child. */}
+      <div className="min-w-0">
         <div className={`${card("p-0")} min-w-0 overflow-hidden`}>
           {/* Filters. The month itself comes from the Dashboard's own selector —
               this section deliberately has no second month control. */}
@@ -456,8 +457,6 @@ export function ExecutionCalendarSection({
               navigation and no second page. */}
           {selectedEvent && <EventDetails e={selectedEvent} onClose={() => setSelected(null)} />}
         </div>
-
-        <div className="min-w-0">{kpis}</div>
       </div>
     </section>
   );

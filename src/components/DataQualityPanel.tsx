@@ -64,6 +64,118 @@ function Finding({
   );
 }
 
+// ── Inconsistent customer names ──────────────────────────────────
+//
+// The Dashboard's customer chart combines these so it can be read (see
+// lib/customer-canonical.ts). That is exactly why the finding has to be here:
+// without it, grouping would have turned a visible problem into an invisible
+// one, and nobody would ever go and standardize the Customer field.
+//
+// Each row states the EVIDENCE for its merge, because the merges are not all
+// equally solid — an accounting customer account is a fact about the source, a
+// reviewed alias is somebody's decision, and a reader comparing totals needs to
+// know which one they are looking at.
+
+function CustomerNamingFinding({ data }: { data: DataQuality["customerNaming"] }) {
+  const clean = data.groups.length === 0;
+  return (
+    <div className={`${card("p-5")} ${clean ? "" : "border-sdc-yellow"}`}>
+      <div className="flex items-start justify-between gap-4">
+        <div className="min-w-0">
+          <p className="font-heading text-base font-bold tracking-tight text-sdc-navy">
+            Customers stored under more than one name
+          </p>
+          <p className="mt-1 text-xs leading-relaxed text-sdc-muted">
+            One customer typed several ways in the Projects page&apos;s <strong>Customer</strong> field. The Dashboard&apos;s
+            &quot;Active Jobs by Customer&quot; chart combines these into one row so it can be read, but the source data is
+            still inconsistent — fixing it here is what makes every future report agree without a mapping.
+          </p>
+        </div>
+        <div className="shrink-0 text-right">
+          <p
+            className={`font-heading text-2xl font-bold tabular-nums ${clean ? "text-sdc-green-text" : "text-sdc-yellow-text"}`}
+          >
+            {data.groups.length.toLocaleString()}
+          </p>
+          <p className="text-label font-semibold text-sdc-gray-400">
+            customers
+            {data.storedNames > 0 && ` · ${data.storedNames} stored names`}
+          </p>
+        </div>
+      </div>
+
+      {clean ? (
+        <p className="mt-3 text-xs font-medium text-sdc-green-text">
+          Every customer is stored under a single consistent name.
+        </p>
+      ) : (
+        <div className="mt-3 overflow-x-auto rounded-lg border border-sdc-border">
+          <table className="w-full text-left text-xs">
+            <thead className="bg-sdc-gray-50 text-label font-semibold uppercase tracking-[0.04em] text-sdc-gray-600">
+              <tr>
+                <th className="px-3 py-2">Reported as</th>
+                <th className="px-3 py-2">Stored names</th>
+                <th className="px-3 py-2 text-right">Jobs</th>
+                <th className="px-3 py-2">Grouped by</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-sdc-border-soft">
+              {data.groups.map((g) => (
+                <tr key={g.canonicalCustomerId} className="align-top">
+                  <td className="px-3 py-2 font-medium text-sdc-navy">{g.canonicalCustomerName}</td>
+                  <td className="px-3 py-2">
+                    <ul className="space-y-0.5">
+                      {g.storedNames.map((n) => (
+                        <li key={n.name} className="text-sdc-gray-700">
+                          <span className="font-mono text-[0.7rem]">{n.name}</span>
+                          <span className="ml-1.5 text-sdc-gray-400">
+                            {n.jobCount} job{n.jobCount === 1 ? "" : "s"} · e.g. {n.exampleJobIds.join(", ")}
+                          </span>
+                        </li>
+                      ))}
+                    </ul>
+                  </td>
+                  <td className="px-3 py-2 text-right font-semibold tabular-nums text-sdc-navy">{g.jobCount}</td>
+                  <td className="max-w-[20rem] px-3 py-2 text-sdc-gray-600">{g.evidence}</td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+
+      {/* The two caveats a reader needs in order to trust — or challenge — the
+          combined totals above. Both are short lists by design: if either grows,
+          the mapping is doing work the source data should be doing. */}
+      {data.reviewedWithoutSourceEvidence.length > 0 && (
+        <div className="mt-3 rounded-lg border border-sdc-border bg-sdc-gray-50 px-3 py-2 text-xs leading-relaxed text-sdc-gray-600">
+          <p className="font-semibold text-sdc-navy">Merged by review, not by a source identifier</p>
+          <ul className="mt-1 space-y-1">
+            {data.reviewedWithoutSourceEvidence.map((r) => (
+              <li key={r.canonicalCustomerName}>
+                <strong>{r.canonicalCustomerName}</strong> — {r.note}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {data.detachedFromAccount.length > 0 && (
+        <div className="mt-2 rounded-lg border border-sdc-border bg-sdc-gray-50 px-3 py-2 text-xs leading-relaxed text-sdc-gray-600">
+          <p className="font-semibold text-sdc-navy">Deliberately NOT merged into their billing account</p>
+          <ul className="mt-1 space-y-1">
+            {data.detachedFromAccount.map((d) => (
+              <li key={d.companyId}>
+                TotalETO company #{d.companyId} — {d.reason}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
 export function DataQualityPanel({ dq, explorer }: { dq: DataQuality; explorer: PunchExplorer | null }) {
   return (
     <div className="space-y-5">
@@ -120,6 +232,8 @@ export function DataQualityPanel({ dq, explorer }: { dq: DataQuality; explorer: 
             what it has been booking to. */}
         <EmployeeIdDrill ids={dq.undefinedEmployees.ids} />
       </Finding>
+
+      <CustomerNamingFinding data={dq.customerNaming} />
 
       {/* "Hours booked to a non-job" (the report's "Job Id Not Defined" case) used to
           have its own finding and table here, reading the same HoursImportIssue rows

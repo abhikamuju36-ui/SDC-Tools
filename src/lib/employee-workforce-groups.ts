@@ -193,6 +193,45 @@ export function groupInScope(key: WorkforceGroupKey, scope: TeamScope): boolean 
   return scope === "entire" || isExecutionGroup(key);
 }
 
+// ── Canonical department order (2026-08-31) ─────────────────────────────────
+//
+// Every department card key in ONE business order, derived from the two
+// declarations that already encode it: WORKFORCE_GROUPS top to bottom, and
+// within each group its own `teamCodes` / `cardKeys` in the order they are
+// written. Both of those orders are deliberate already — WORKFORCE_GROUPS runs
+// Engineering → Shop → PM → back office, and employee-teams.ts's codes run in
+// the order work moves through the teams — so this restates nothing.
+//
+// Used for any list that needs EVERY department in a sensible business order —
+// today the Employee Utilization panel's department selector.
+//
+// NOT the source for the Dashboard's Engineering & Shop Utilization card. That
+// card follows the ETC tab's own column order, derived in
+// lib/etc-capacity-departments.ts, because the ETC structure is a statement
+// about which departments book ETC hours rather than about how the company is
+// organised. The two agree on the relative order of every department they share
+// — asserted in tests/etc-capacity-departments.test.ts — but they are different
+// questions and must not be collapsed into one list.
+//
+// A key not listed here ranks last rather than being dropped, so a brand-new
+// Paylocity department string still renders — at the bottom, where it is visible
+// as something nobody has classified yet.
+export const DEPARTMENT_CARD_ORDER: readonly string[] = WORKFORCE_GROUPS.flatMap((g) => [
+  ...g.teamCodes,
+  ...(g.cardKeys ?? []),
+]);
+
+const DEPARTMENT_CARD_RANK = new Map(DEPARTMENT_CARD_ORDER.map((key, i) => [key, i]));
+
+/** Position of a department card key in the canonical business order. Unlisted keys rank last. */
+export function departmentCardOrderRank(cardKey: string): number {
+  return (
+    DEPARTMENT_CARD_RANK.get(cardKey) ??
+    DEPARTMENT_CARD_RANK.get(cardKey.toLowerCase()) ??
+    Number.MAX_SAFE_INTEGER
+  );
+}
+
 // ── Rollup: which group a total should credit (2026-08-24) ──────────────────
 //
 // Identity for every group except General Engineering, which credits

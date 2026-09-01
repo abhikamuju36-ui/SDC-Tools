@@ -44,6 +44,8 @@ function part(overrides: Partial<BomPart> = {}): BomPart {
     hold: false,
     supplier: null,
     poId: null,
+    packetId: null,
+    packetLabel: null,
     ...overrides,
   };
 }
@@ -59,6 +61,8 @@ function node(overrides: Partial<BomNode> = {}): BomNode {
     isAssembly: false,
     release: "contentsOnly",
     self: null,
+    packetId: null,
+    packetLabel: null,
     children: [],
     parts: [],
     stats: { total: 0, received: 0, noPO: 0, ordered: 0, stock: 0, pct: 0 },

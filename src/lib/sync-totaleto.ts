@@ -1,6 +1,7 @@
 import sql from "mssql";
 import { prisma } from "@/lib/prisma";
 import { VALID_JOB_TYPES } from "@/lib/job-filters";
+import { applyRefundSign, sqlRefundSigned } from "@/lib/parts-refund";
 
 // The exact query Power BI's 'Part Purchase' table runs against this same
 // SQL server (extracted verbatim from the semantic model's TMDL). Verified
@@ -179,8 +180,34 @@ export type PartsBookedByJob = {
   unmatchedAmount: number;
 };
 
-const AP_LINE_AMOUNT =
+// The raw AP line amount, before the refund rule below. Kept separate only so
+// the rule can be applied to it in one visible place.
+const AP_LINE_AMOUNT_RAW =
   "(APDD.APDocQty * APDD.APDocUnitPrice * (1 - APDD.APDocItemPctDisc) * APBD.APDocCurrRate)";
+
+// ── Refund lines count as negative spend (2026-08-31) ───────────────────────
+//
+// A line whose Part / Item description says "Refund" is money coming back, and
+// TotalETO records some of them positive — a $31,765 "Refund" was adding to
+// parts spend on the Monthly ETC drill instead of subtracting from it.
+//
+// Applied HERE, to the one canonical AP-line-amount expression, rather than at
+// each call site. Every job / month / lifetime AP aggregate in this file already
+// routes through this constant — getPartsCostBookedByJob (Money Spent Month),
+// getPartsInvoicedByJob, getPartsActualByJob (Parts Actual) and
+// getJobPartsInvoicedInMonth's own line amounts — so all of them inherit the
+// rule and none of them has to know it exists. See lib/parts-refund.ts.
+//
+// ── What this deliberately changes ──────────────────────────────────────────
+//
+// getPartsCostBookedByJob's debit/credit split moves a refund into the CREDIT
+// column, which is where a refund belongs, and its net drops by the refund
+// amount. That means the app will now DIFFER from TotalETO's own pivot on any
+// month containing a positive-signed refund line — the reconciliation noted
+// above ("job 1127's $1,300 credit reconciles to the cent") held against a pivot
+// that treats those refunds as spend. That divergence is the requested change,
+// not a regression.
+const AP_LINE_AMOUNT = sqlRefundSigned(AP_LINE_AMOUNT_RAW, "APDD.APDocItemDesc");
 
 // ── The GL-posted rule (2026-08-10) ─────────────────────────────────────────
 //
@@ -779,7 +806,13 @@ export async function getJobPartsInvoicedInMonth(jobId: string, monthStart: Date
       totalPrice: Number(r.InvoicedAmount) || 0,
       invoicedAmount: Number(r.InvoicedAmount) || 0,
       actualAmount: Number(r.ActualAmount) || 0,
-    }));
+    }))
+      // Belt and braces over the SQL rule in AP_LINE_AMOUNT. That one can only
+      // read APDD.APDocItemDesc; `description` above is a COALESCE preferring the
+      // PO / item-master text, so a line can read "Refund" here while the AP
+      // line's own description does not. `-abs()` is idempotent, so a line caught
+      // by both is signed once. See lib/parts-refund.ts.
+      .map(applyRefundSign);
     const meaningful = lines.filter((l) => l.invoicedAmount !== 0);
     meaningful.sort((a, b) => (b.invoicedDate ?? "").localeCompare(a.invoicedDate ?? ""));
     const paid = meaningful.reduce((s, l) => s + l.invoicedAmount, 0);
@@ -810,7 +843,12 @@ export async function getJobPartsCost(jobId: string): Promise<JobPartsCost> {
       totalPrice: Number(r.TotalPrice) || 0,
       invoicedAmount: Number(r.InvoicedAmount) || 0,
       actualAmount: Number(r.ActualAmount) || 0,
-    }));
+    }))
+      // PARTS_DETAIL_SQL has its OWN amount expressions and never touches
+      // AP_LINE_AMOUNT, so this is the only place the refund rule reaches these
+      // lines — and the reduce below builds purchased / paid / actual from them,
+      // so the totals inherit it too. See lib/parts-refund.ts.
+      .map(applyRefundSign);
     // Sort newest purchase first; drop fully-zero noise rows.
     const meaningful = lines.filter((l) => l.totalPrice !== 0 || l.invoicedAmount !== 0 || l.quantity !== 0);
     meaningful.sort((a, b) => (b.purchaseDate ?? "").localeCompare(a.purchaseDate ?? ""));
@@ -844,6 +882,11 @@ interface TotalEtoProject {
   Description: string;
   Customer: string | null;
   Status: string;
+  // Customer IDENTITY, not just the name — see lib/customer-canonical.ts for why
+  // the accounting account is the field that actually groups customers and the
+  // company id (largely) does not.
+  CompanyID: number | null;
+  AccountID: string | null;
 }
 
 interface TotalEtoCosting {
@@ -936,8 +979,14 @@ export async function syncFromTotalEto(): Promise<{ jobsUpdated: number; skipped
         P.ProjectID AS [Job ID],
         P.PDescription AS [Description],
         P.CName AS [Customer],
-        P.PStatus AS [Status]
+        P.PStatus AS [Status],
+        P.CompanyID AS [CompanyID],
+        -- The accounting customer ACCOUNT. LEFT JOIN, not INNER: a project whose
+        -- company record has been removed must still sync its hours and its
+        -- name, just without an account.
+        C.CAccCustomerID AS [AccountID]
       FROM vwProjects P WITH(NOLOCK)
+      LEFT JOIN tblCompany C WITH(NOLOCK) ON C.CompanyID = P.CompanyID
       WHERE P.PStatus = 'Sold'
       ORDER BY P.PDelivery ASC
     `);
@@ -975,6 +1024,14 @@ export async function syncFromTotalEto(): Promise<{ jobsUpdated: number; skipped
         where: { jobId },
         data: {
           ...(manuallyEditedJobIds.has(jobId) ? {} : { customer: p.Customer }),
+          // NOT gated on manuallyEditedJobIds, unlike `customer` above. These
+          // two describe the TotalETO PROJECT, not somebody's preferred label
+          // for it, so a manual name edit is no reason to let them go stale.
+          // customer-canonical.ts honours the manual override by declining to
+          // group on the account for such a job — the override is respected
+          // where it means something, without blinding this app to the source.
+          totEtoCompanyId: p.CompanyID ?? null,
+          totEtoAccountId: p.AccountID?.trim() || null,
           totEtoEstEngHours: c?.EstEngHours ?? undefined,
           totEtoActEngHours: c?.ActEngHours ?? undefined,
           totEtoEstMfgHours: c?.EstMfgHours ?? undefined,

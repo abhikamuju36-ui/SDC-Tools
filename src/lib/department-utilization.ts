@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { workingDaysInMonth } from "@/lib/etc";
 import { resolveEmployeeGroup } from "@/lib/employee-card-theme";
 import { workforceGroupForCardKey, workforceGroupTitle, type WorkforceGroupKey } from "@/lib/employee-workforce-groups";
+import { isEtcCapacityCardKey, etcCapacityOrderRank } from "@/lib/etc-capacity-departments";
 
 // ── Department / Employee Utilization (2026-08-28) ──────────────────────────
 //
@@ -50,6 +51,52 @@ import { workforceGroupForCardKey, workforceGroupTitle, type WorkforceGroupKey }
 // is to be holiday/vacation/sick-AWARE for a different question. The Dashboard
 // shows both; they are different numbers on purpose and must not be reconciled
 // into one. See workforce-capacity-policy.ts's own header, which says so first.
+//
+// ── ROWS: the ETC tab's own departments (2026-08-31, by request) ─────────
+//
+// `departments` and `total` cover the departments the ETC/execution workflow
+// actually books hours through — Engineering AND Shop:
+//
+//   Mechanical Engineering, Controls Engineering, General Engineering,
+//   Mechanical Build, Electrical Build
+//
+// in the ETC tab's own column order. The back office is out (Finance, Sales,
+// Executive Leadership, Growth, Operations, No department), and so are the three
+// departments the ETC grid itself has no column for (PM, Manufacturing
+// Operations, Service Engineering) — see etc-capacity-departments.ts, which
+// derives all of this from ETC_SECTIONS rather than listing it.
+//
+// This got it wrong once in the other direction: a first pass filtered on the
+// app's ORGANISATIONAL grouping (Engineering + PM, excluding Shop because Shop
+// rolls up under Operations) and dropped Mechanical Build and Electrical Build,
+// which are core ETC departments. Whether a department sits under an Operations
+// organisation says nothing about whether it books ETC hours. That is why the
+// filter is the ETC section structure and not a team or group predicate.
+//
+// Two consequences worth being blunt about, since everything above this line is
+// about reproducing the report faithfully:
+//
+//   1. `total` IS NO LONGER THE REPORT'S GRAND TOTAL. The report foots the five
+//      billable departments (UTILIZATION_TEAM_CODES); this foots the rows the
+//      card actually shows. The two sets overlap heavily — mech, controls, build
+//      and wire are in both — and differ by Manufacturing Operations, which the
+//      report counts and the ETC grid has no column for. So the figure is close
+//      to the report's but not identical, by request.
+//   2. Every PER-ROW measure is untouched. The billable rule, the close-date
+//      pivot, theoretical hours, Available % and Utilization % are computed
+//      exactly as before for the rows that remain. General Engineering carries no
+//      Utilization % — it is outside UTILIZATION_TEAM_CODES — and no employees
+//      today, so it renders no row at all.
+//
+// `employees` stays UNFILTERED — it feeds the peer "Employee Utilization" panel,
+// which has its own All/Billable/per-department selector and was not part of the
+// request. That is the one place the two halves of this result deliberately
+// disagree about scope.
+//
+// The filter and the row order both come from etc-capacity-departments.ts
+// (isEtcCapacityCardKey / etcCapacityOrderRank), which derives them from the ETC
+// grid's own columns — so there is no dashboard-specific department list here to
+// drift from the ETC tab.
 
 /**
  * The team codes whose people the report counts as billable-utilization staff —
@@ -139,10 +186,20 @@ export type DepartmentUtilizationResult = {
   workingDays: number;
   /** True once at least one punch in the month carried travel data — drives "—" vs 0 in the UI. */
   travelKnown: boolean;
+  /**
+   * The ETC tab's departments only, in the ETC tab's own column order
+   * (Mechanical Engineering → Controls Engineering → General Engineering →
+   * Mechanical Build → Electrical Build). Never sorted alphabetically — see this
+   * file's header.
+   */
   departments: DepartmentUtilizationRow[];
-  /** Every in-scope and out-of-scope employee with hours or headcount, flattened for the ranked list. */
+   /**
+   * EVERY employee with hours or headcount, in an ETC department or not,
+   * flattened for the peer "Employee Utilization" ranked list. Deliberately NOT
+   * narrowed: that panel is a separate card with its own department selector.
+   */
   employees: EmployeeUtilizationRow[];
-  /** The in-scope total — the row the report's own grand total corresponds to. */
+  /** The total across `departments` — the ETC department set, NOT the report's grand total. See the header. */
   total: UtilizationMeasures;
 };
 
@@ -470,6 +527,11 @@ export async function getDepartmentUtilization(month: string): Promise<Departmen
     entry.row.employeeRows.push(er);
   }
 
+  // The foot of the card, so it sums exactly the rows the card renders — the ETC
+  // Engineering + Shop departments — rather than the report's five billable ones.
+  // Accumulated from the PUNCHES like every department row, not by adding
+  // the finalized rows up, for the same reason stated above: summing rounded
+  // ratios is how a total disagrees with its own rows.
   const totalAcc = emptyMeasures();
   let totalHeadcount = 0;
 
@@ -488,7 +550,11 @@ export async function getDepartmentUtilization(month: string): Promise<Departmen
     };
     const entry = deptAcc.get(person.departmentKey);
     if (entry) accumulate(entry.row, p);
-    if (person.inScope) accumulate(totalAcc, p);
+    // isEtcCapacityCardKey, not `person.inScope`: inScope is the report's five
+    // billable departments, which is a different question from "is this a row the
+    // card shows" (they differ by Manufacturing Operations and General
+    // Engineering).
+    if (isEtcCapacityCardKey(person.departmentKey)) accumulate(totalAcc, p);
   }
 
   // Overtime rolls up as a sum of the employee figures — it is already a per-person
@@ -497,25 +563,36 @@ export async function getDepartmentUtilization(month: string): Promise<Departmen
   for (const er of employeeRows) {
     const entry = deptAcc.get(er.departmentKey);
     if (entry) entry.row.overtimeHours += er.overtimeHours;
-    if (er.inUtilizationScope) {
+    if (isEtcCapacityCardKey(er.departmentKey)) {
       totalAcc.overtimeHours += er.overtimeHours;
+      // Headcount for the foot's Employees count and its theoretical hours, so
+      // Available % at the foot is over the same people the rows above cover.
       totalHeadcount += 1;
     }
   }
 
-  const departments = [...deptAcc.values()].map(({ row, headcount }) => {
-    finalize(row, { employees: headcount, workingDays, inScope: row.inUtilizationScope });
-    row.employeeRows.sort((a, b) => a.name.localeCompare(b.name));
-    return row;
-  });
+  const departments = [...deptAcc.values()]
+    // Everything the ETC grid has no column for leaves the card here — one
+    // filter, on the shared ETC mapping, applied before anything is finalized.
+    // The nested employeeRows go with their department, so an expanded row can
+    // never show a back-office employee under an ETC department.
+    .filter(({ row }) => isEtcCapacityCardKey(row.key))
+    .map(({ row, headcount }) => {
+      finalize(row, { employees: headcount, workingDays, inScope: row.inUtilizationScope });
+      row.employeeRows.sort((a, b) => a.name.localeCompare(b.name));
+      return row;
+    });
 
-  // In-scope departments first (they carry the Utilization % the section is about),
-  // then everything else, each block alphabetical.
-  departments.sort((a, b) => {
-    if (a.inUtilizationScope !== b.inUtilizationScope) return a.inUtilizationScope ? -1 : 1;
-    if (a.billingGroup !== b.billingGroup) return a.billingGroup.localeCompare(b.billingGroup);
-    return a.title.localeCompare(b.title);
-  });
+  // The ETC tab's own column order — Mechanical Engineering → Controls
+  // Engineering → General Engineering → Mechanical Build → Electrical Build.
+  //
+  // Was "in-scope first, then billing group, then title A→Z", which put Controls
+  // Engineering above Mechanical Engineering and split the Engineering block. The
+  // rank is derived from ETC_SECTIONS, so reordering the ETC grid's columns moves
+  // these rows with them and there is nothing here to update. The title tiebreak
+  // survives only for a key the ETC order does not know, which all rank
+  // equal-last — and the filter above means none reach the sort today.
+  departments.sort((a, b) => etcCapacityOrderRank(a.key) - etcCapacityOrderRank(b.key) || a.title.localeCompare(b.title));
 
   finalize(totalAcc, { employees: totalHeadcount, workingDays, inScope: true });
 

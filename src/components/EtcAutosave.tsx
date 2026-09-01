@@ -3,6 +3,7 @@
 import { useEffect, useRef } from "react";
 import { saveAllNewEtcDrafts } from "@/lib/etc-actions";
 import {
+  adoptEtcFieldBaseline,
   changedEtcFormData,
   hasUnrefusedEtcEdits,
   isEtcDirty,
@@ -105,6 +106,25 @@ export function EtcAutosave({ formId, month, locked }: { formId: string; month: 
       setCellSaveState(result.invalidFields, "failed");
       if (result.conflicts > 0) {
         markEtcFieldsRefused(result.conflictFields);
+        // ── Re-aim the baseline at what is actually stored (2026-08-31) ────────
+        //
+        // Otherwise this cell can never be saved again without a page reload. The
+        // baseline still holds the figure this page loaded with, the server holds
+        // somebody else's, and every retype posts the former and is refused against
+        // the latter — reproduced in a two-tab test, and silent before the status
+        // chip learned to report conflicts.
+        //
+        // adoptEtcFieldBaseline (rather than a bare baseline write) is deliberate: it
+        // also drops the field from `dirty` and `refused`, so nothing is queued to
+        // post on its own. That matters — the user's typed figure is still in the box
+        // and must NOT be auto-written over the colleague's value they have not seen
+        // yet. Their next keystroke re-dirties the cell and, now comparing against the
+        // real stored figure, that save lands.
+        //
+        // The cell's `conflict` save-state lives in a different store and is untouched
+        // here, so the ring, the tooltip and the chip all stay up until the cell is
+        // actually re-saved.
+        for (const { field, stored } of result.conflictStored) adoptEtcFieldBaseline(field, stored);
         requestLiveRefresh();
       }
       return result.ok;

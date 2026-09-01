@@ -2,7 +2,7 @@
 
 import { useSyncExternalStore } from "react";
 import { autosaveLabel, type AutosaveStatus } from "@/lib/autosave";
-import { subscribeCellSaveStates, invalidCellNames } from "@/lib/etc-save-state";
+import { subscribeCellSaveStates, invalidCellNames, conflictCellNames } from "@/lib/etc-save-state";
 
 // The autosave read-out for both grids. It replaces nothing — the manual Save
 // button stays — but with edits committing on their own, "did that save?"
@@ -41,6 +41,20 @@ export function SaveStatusChip({
     () => invalidCellNames().length,
     () => 0, // server render: nothing has been typed yet, so nothing can be invalid
   );
+  // ── A refused cell outranks "All changes saved" too (2026-08-31) ───────────
+  //
+  // Same requirement as the invalid case, same reason: the write did not land.
+  // Ranked BELOW invalid only because an invalid value is the one the user can fix
+  // without looking anything up; a conflict asks them to go read the stored figure
+  // first. Both must stop the green chip, which is the whole point.
+  //
+  // Subscribed HERE, beside the invalid count and above every early return — both are
+  // hooks, so neither may sit behind one of the `return`s below.
+  const conflictCount = useSyncExternalStore(
+    subscribeCellSaveStates,
+    () => conflictCellNames().length,
+    () => 0, // server render: nothing has been saved yet, so nothing can be refused
+  );
   if (watchesGridCells && invalidCount > 0) {
     return (
       <span
@@ -51,6 +65,20 @@ export function SaveStatusChip({
       >
         <WarnIcon />
         {invalidCount === 1 ? "1 cell needs fixing" : `${invalidCount} cells need fixing`}
+      </span>
+    );
+  }
+
+  if (watchesGridCells && conflictCount > 0) {
+    return (
+      <span
+        role="status"
+        aria-live="polite"
+        className="flex items-center gap-1.5 rounded-md border border-sdc-red-border bg-sdc-red-bg px-2 py-1 text-note font-medium text-sdc-red-text"
+        title="Another user changed these cells first, so your values were not saved. Check the figure that is stored now before re-entering."
+      >
+        <WarnIcon />
+        {conflictCount === 1 ? "1 cell not saved — changed by someone else" : `${conflictCount} cells not saved — changed by someone else`}
       </span>
     );
   }

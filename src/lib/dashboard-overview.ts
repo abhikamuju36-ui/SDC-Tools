@@ -4,11 +4,16 @@ import { validJobTypeFilter, VALID_JOB_TYPES, isSdcCustomer, compareJobIds, ACTI
 import { resolveEmployeeGroup } from "@/lib/employee-card-theme";
 import { workforceGroupForCardKey, rollupGroup } from "@/lib/employee-workforce-groups";
 import { monthlyCapacityHours, hasYearPolicy } from "@/lib/workforce-capacity-policy";
-import { fetchSchedulerFatEvents, fetchSchedulerJobDisciplineOwners, dedupeFats } from "@/lib/scheduler-db";
+import { fetchSchedulerFatEvents, dedupeFats } from "@/lib/scheduler-db";
 import { getCustomerVisits, type CustomerVisitsResult } from "@/lib/customer-visits";
 import { isValidMonth } from "@/lib/etc";
 import { getDepartmentUtilization, type DepartmentUtilizationResult } from "@/lib/department-utilization";
 import { customerBucket } from "@/lib/dashboard-job-drill";
+import {
+  canonicalCustomerKey,
+  pickCanonicalName,
+  type CanonicalCustomerKey,
+} from "@/lib/customer-canonical";
 import { getExecutionCalendar, type ExecutionCalendar } from "@/lib/dashboard-calendar";
 
 // ── One query pass for the whole dashboard (2026-08-27) ─────────────────────
@@ -32,6 +37,14 @@ import { getExecutionCalendar, type ExecutionCalendar } from "@/lib/dashboard-ca
 export type JobTypeBreakdown = { type: string; count: number; pct: number };
 
 export type CustomerSummary = {
+  /**
+   * What the chart groups by and what the drill-through filters on — a canonical
+   * customer id from customer-canonical.ts, NOT the stored customer string. The
+   * two are different things now: 24 First Solar jobs reach one row under five
+   * different spellings plus two site names.
+   */
+  canonicalCustomerId: string;
+  /** The label to draw. From the reviewed registry when there is an entry, else the dominant raw spelling. */
   name: string;
   /** SDC's own internal work, per job-filters.ts's isSdcCustomer — never a real customer. */
   internal: boolean;
@@ -39,23 +52,15 @@ export type CustomerSummary = {
   /** Type -> count, only the types this customer actually has. */
   byType: JobTypeBreakdown[];
   jobIds: string[];
-};
-
-export type FatRow = {
-  taskId: number;
-  jobNumber: string;
-  /** Null when the Scheduler project's job_number matches no job in this app. */
-  jobName: string | null;
-  customer: string | null;
-  project: string;
-  taskName: string;
-  date: string;
-  daysUntil: number;
-  kind: "fat" | "pre";
-  /** The FAT task's own assignee, when the scheduler set one. */
-  assignee: string | null;
-  meOwners: string[];
-  ceOwners: string[];
+  /**
+   * Every stored spelling this row combined, with how many active jobs each
+   * contributed, most-used first. Deliberately carried onto the chart rather
+   * than hidden inside the resolver: a bar that silently merges names is a bar
+   * nobody can check. One entry (equal to `name`) when nothing was merged.
+   */
+  rawNames: { name: string; count: number }[];
+  /** How this group was arrived at, so a merge is always traceable to its evidence. */
+  matchedBy: CanonicalCustomerKey["matchedBy"];
 };
 
 export type WorkforceCard = {
@@ -79,18 +84,20 @@ export type DashboardOverview = {
   headStartTotal: number;
   byType: JobTypeBreakdown[];
   customers: CustomerSummary[];
+  /**
+   * The two FAT figures the top KPI strip shows, and nothing else.
+   *
+   * The per-FAT rows and the ME/CE breakdown were removed on 2026-08-31 with the
+   * FAT summary cards that were their only reader — see the FAT block in
+   * getDashboardOverview below.
+   */
   fats: {
     /** False when the Scheduler is unconfigured or unreachable — so the UI can say that instead of "0 FATs". */
     available: boolean;
-    upcoming: FatRow[];
     /** Real FATs (pre-FATs excluded) dated inside `month`. */
     monthTotal: number;
-    monthWithMe: number;
-    monthWithCe: number;
+    /** Pre-FATs dated inside `month` — readiness runs, not the FAT. */
     monthPreFats: number;
-    /** Real FATs in `month` whose job has no named ME and no named CE on its schedule. */
-    monthUnstaffed: number;
-    monthRows: FatRow[];
   };
   workforce: WorkforceCard[];
   visits: CustomerVisitsResult;
@@ -112,18 +119,6 @@ export function dashboardMonth(raw: string | undefined, now: Date = new Date()):
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 }
 
-// Whole days from today to `date`, both taken as calendar dates — so "today" is
-// 0 and tomorrow is 1 regardless of the hour the page is opened. Deliberately
-// not a millisecond division on raw timestamps, which puts a FAT eight hours
-// away at "0 days" in the morning and "1 day" in the evening.
-function daysUntilDate(isoDate: string, today: Date): number {
-  const [y, m, d] = isoDate.split("-").map(Number);
-  if (!y || !m || !d) return Number.NaN;
-  const target = Date.UTC(y, m - 1, d);
-  const base = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
-  return Math.round((target - base) / 86_400_000);
-}
-
 function pct(count: number, total: number): number {
   return total === 0 ? 0 : Math.round((count / total) * 1000) / 10;
 }
@@ -132,13 +127,25 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
   const [year, monthNo] = month.split("-").map(Number);
   const currentMonthKey = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}`;
 
-  const [jobs, employees, hoursRows, fatEvents, owners, visits, utilization, calendar] = await Promise.all([
+  const [jobs, employees, hoursRows, fatEvents, visits, utilization, calendar] = await Promise.all([
     // The whole live job population in one read (a few hundred rows). Active and
     // HeadStart are split in memory rather than by two counts, so the KPI, the
     // type strip and the customer cards are provably the same set of jobs.
     prisma.job.findMany({
       where: { status: { in: ["Active", "HeadStart"] }, ...validJobTypeFilter },
-      select: { jobId: true, jobName: true, customer: true, type: true, status: true },
+      // totEtoCompanyId / totEtoAccountId / customerManuallyEdited are the inputs
+      // customer-canonical.ts groups on — three more columns on a read this pass
+      // already does, not a second query.
+      select: {
+        jobId: true,
+        jobName: true,
+        customer: true,
+        type: true,
+        status: true,
+        totEtoCompanyId: true,
+        totEtoAccountId: true,
+        customerManuallyEdited: true,
+      },
     }),
     prisma.employee.findMany({
       where: { active: true },
@@ -153,7 +160,6 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
       _sum: { hours: true },
     }),
     fetchSchedulerFatEvents(),
-    fetchSchedulerJobDisciplineOwners(),
     getCustomerVisits(month),
     // Punch-grain, so it does its own reads rather than reusing the grouped
     // `hoursRows` above — but it is one awaited unit inside THIS pass, not a
@@ -180,37 +186,68 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
     return { type, count, pct: pct(count, activeTotal) };
   });
 
-  // Customers, grouped on the customer string EXACTLY as stored. No fuzzy
-  // merging: the Projects page groups the same way, so the cards reconcile
-  // against it, and a spelling rule invented here would be a second definition
-  // of "who the customer is" living only on the dashboard. (The stored data does
-  // contain near-duplicate spellings — a data-quality question for the Projects
-  // page's Customer field, not something to paper over with a number nobody can
-  // trace back to a row.)
-  const byCustomer = new Map<string, typeof activeJobs>();
+  // ── Customers, grouped by CANONICAL customer (2026-08-31) ─────────────────
+  //
+  // This used to group on the customer string exactly as stored, with a comment
+  // arguing that no spelling rule belonged on the dashboard. The rule still does
+  // not live here — it lives in lib/customer-canonical.ts, which imports neither
+  // prisma nor any component and is therefore usable by any page — but the chart
+  // does now apply it, because the alternative was a top bar reading 12 for a
+  // customer with 24 active jobs.
+  //
+  // canonicalCustomerKey, not a re-typed expression: the drill-through narrows
+  // its rows with this exact function, so a bar and the table it opens cannot
+  // group differently. (They did once — see the collation note in
+  // dashboard-job-drill.ts.) Every job resolves to exactly ONE key, so the groups
+  // partition activeJobs and provably still sum to activeTotal — no job can be
+  // lost or counted twice by a merge.
+  const byCustomer = new Map<string, { key: CanonicalCustomerKey; jobs: typeof activeJobs }>();
   for (const j of activeJobs) {
-    // customerBucket, not a re-typed expression: the drill-through narrows its
-    // rows with this exact function, so a bar and the table it opens cannot
-    // group differently. (They did — see the collation note in
-    // dashboard-job-drill.ts.)
-    const name = customerBucket(j.customer);
-    const list = byCustomer.get(name) ?? [];
-    list.push(j);
-    byCustomer.set(name, list);
+    const key = canonicalCustomerKey(j);
+    const group = byCustomer.get(key.canonicalCustomerId) ?? { key, jobs: [] };
+    group.jobs.push(j);
+    byCustomer.set(key.canonicalCustomerId, group);
   }
+
   const customers: CustomerSummary[] = [...byCustomer.entries()]
-    .map(([name, list]) => ({
-      name,
-      internal: isSdcCustomer(name),
-      activeCount: list.length,
-      byType: VALID_JOB_TYPES.map((type) => {
-        const count = list.filter((j) => j.type === type).length;
-        return { type, count, pct: pct(count, list.length) };
-      }).filter((t) => t.count > 0),
-      jobIds: list.map((j) => j.jobId).sort(compareJobIds),
-    }))
-    // Most active work first; real customers ahead of SDC's own internal jobs at
-    // equal counts, since the section is about customer work.
+    .map(([canonicalCustomerId, { key, jobs: list }]) => {
+      // The stored spellings this row combined. Built here rather than in the
+      // resolver because the resolver sees one job at a time and so cannot know
+      // which spelling dominates.
+      const rawCounts = new Map<string, number>();
+      for (const j of list) {
+        const raw = customerBucket(j.customer);
+        rawCounts.set(raw, (rawCounts.get(raw) ?? 0) + 1);
+      }
+      const rawNames = [...rawCounts.entries()]
+        .map(([name, count]) => ({ name, count }))
+        .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+
+      return {
+        canonicalCustomerId,
+        // A reviewed registry entry names itself; a group formed by a bare
+        // account id or by formatting alone is labelled with its dominant
+        // spelling, which is deterministic and so cannot reshuffle on refresh.
+        name: key.registryName ?? pickCanonicalName(rawNames),
+        // Tested against EVERY spelling in the group, not just the label: the
+        // "SDC" jobs and the "Steven Douglas Corp." jobs are one row now, and
+        // that row is internal whichever spelling won the label.
+        internal: rawNames.some((r) => isSdcCustomer(r.name)),
+        activeCount: list.length,
+        byType: VALID_JOB_TYPES.map((type) => {
+          const count = list.filter((j) => j.type === type).length;
+          return { type, count, pct: pct(count, list.length) };
+        }).filter((t) => t.count > 0),
+        jobIds: list.map((j) => j.jobId).sort(compareJobIds),
+        rawNames,
+        matchedBy: key.matchedBy,
+      };
+    })
+    // Most active work first, on the COMBINED total — which is the point of the
+    // merge: First Solar goes from a 12-job top bar to a 24-job one, and Steven
+    // Douglas Corp. goes from two rows of 5 to one row of 10, overtaking four
+    // customers. Real customers ahead of SDC's own internal work at equal
+    // counts, since the section is about customer work.
     .sort(
       (a, b) =>
         b.activeCount - a.activeCount || Number(a.internal) - Number(b.internal) || a.name.localeCompare(b.name),
@@ -259,37 +296,38 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
     };
   });
 
-  // ── FATs ──────────────────────────────────────────────────────────────────
+  // ── FATs (2026-08-31: reduced to the two KPI-strip figures) ───────────────
+  //
+  // Two counts survive, both on the top KPI strip: real FATs dated in `month`,
+  // and pre-FATs.
+  //
+  // What went, and why nothing here computes it any more: the FAT SUMMARY CARDS
+  // beside the Execution Calendar — "Involving ME", "Involving CE" and the note
+  // about placeholder seats and unstaffed FATs — were removed by request, and
+  // they were the only readers of per-FAT owner data. So this no longer builds a
+  // FatRow[], and it no longer calls fetchSchedulerJobDisciplineOwners() at all,
+  // which takes one Scheduler round-trip off every Dashboard load. (That function
+  // is still live — the inline job drill-through uses it; see
+  // dashboard-job-drill.ts.)
+  //
+  // `upcoming` and `monthRows` went with them. Both were ALREADY unread before
+  // this change: the FAT list they fed was replaced by the Execution Calendar
+  // (see this file's Execution Calendar note), and nothing picked them up.
+  //
+  // The calendar is untouched by any of this — getExecutionCalendar(month) does
+  // its own read and never depended on these rows.
   const jobByNumber = new Map(jobs.map((j) => [j.jobId, j]));
   const available = fatEvents !== null;
-  const rows: FatRow[] = dedupeFats(fatEvents ?? [])
-    .map((e) => {
-      const job = jobByNumber.get(e.jobNumber);
-      return {
-        taskId: e.taskId,
-        jobNumber: e.jobNumber,
-        jobName: job?.jobName ?? null,
-        customer: job?.customer ?? null,
-        project: e.project,
-        taskName: e.name,
-        date: e.date,
-        daysUntil: daysUntilDate(e.date, now),
-        kind: e.kind,
-        assignee: e.assignee,
-        meOwners: owners.me.get(e.jobNumber) ?? [],
-        ceOwners: owners.controls.get(e.jobNumber) ?? [],
-      };
-    })
-    // Only FATs on jobs this app still considers live work. That keeps stale and
-    // test schedules ("1101_Steris_Test") out of a count managers act on, and it
-    // ties the FAT figures to the same population the rest of the page reports —
-    // so "FATs this month" cannot describe jobs the Active Jobs KPI has never
-    // heard of.
-    .filter((r) => jobByNumber.has(r.jobNumber))
-    .sort((a, b) => a.date.localeCompare(b.date) || compareJobIds(a.jobNumber, b.jobNumber));
 
-  const monthRows = rows.filter((r) => r.date.startsWith(`${month}-`));
-  const monthFats = monthRows.filter((r) => r.kind === "fat");
+  // Only FATs on jobs this app still considers live work. That keeps stale and
+  // test schedules ("1101_Steris_Test") out of a count managers act on, and it
+  // ties the FAT figures to the same population the rest of the page reports —
+  // so "FATs this month" cannot describe jobs the Active Jobs KPI has never
+  // heard of. dedupeFats first, so one FAT with several Scheduler tasks counts
+  // once — exactly as before.
+  const monthFatEvents = dedupeFats(fatEvents ?? []).filter(
+    (e) => jobByNumber.has(e.jobNumber) && e.date.startsWith(`${month}-`),
+  );
 
   return {
     month,
@@ -301,15 +339,8 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
     customers,
     fats: {
       available,
-      // Today counts as upcoming — a FAT happening this morning is the most
-      // relevant row on the page, not a past one.
-      upcoming: rows.filter((r) => r.daysUntil >= 0),
-      monthTotal: monthFats.length,
-      monthWithMe: monthFats.filter((r) => r.meOwners.length > 0).length,
-      monthWithCe: monthFats.filter((r) => r.ceOwners.length > 0).length,
-      monthPreFats: monthRows.filter((r) => r.kind === "pre").length,
-      monthUnstaffed: monthFats.filter((r) => r.meOwners.length === 0 && r.ceOwners.length === 0).length,
-      monthRows,
+      monthTotal: monthFatEvents.filter((e) => e.kind === "fat").length,
+      monthPreFats: monthFatEvents.filter((e) => e.kind === "pre").length,
     },
     workforce,
     visits,

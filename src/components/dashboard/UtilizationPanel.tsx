@@ -6,6 +6,7 @@ import { Panel, PanelHead } from "@/components/dashboard/DashboardLayout";
 import { EmployeePunchDrillPanel, useEmployeePunchDrill } from "@/components/dashboard/EmployeePunchDrill";
 import { SortableTh } from "@/components/ui/SortableHeader";
 import { cycleSortState, sortRows, type SortColumns, type SortState } from "@/lib/table-sort";
+import { departmentCardOrderRank } from "@/lib/employee-workforce-groups";
 import type {
   DepartmentUtilizationResult,
   DepartmentUtilizationRow,
@@ -138,7 +139,19 @@ function DepartmentTable({
   result: DepartmentUtilizationResult;
   drill: ReturnType<typeof useEmployeePunchDrill>;
 }) {
-  const [sort, setSort] = useState<SortState<DeptSortKey>>({ key: "utilizationPct", direction: "desc" });
+  // ── null, not { utilizationPct, desc } (2026-08-31) ──────────────────────
+  //
+  // null means "the order the server already put them in", which sortRows()
+  // passes through untouched — the canonical business order from
+  // employee-workforce-groups.ts (Mechanical → Controls → Service → General
+  // Engineering → Project Management). This defaulted to Utilization %
+  // descending, which silently reshuffled that order on every render and, since
+  // Service and PM carry a null Utilization %, parked them wherever the null
+  // comparator happened to put them.
+  //
+  // Clicking a header still sorts, and a third click returns here — see
+  // cycleSortState's own note on why the "none" state exists.
+  const [sort, setSort] = useState<SortState<DeptSortKey>>(null);
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
 
   const rows = useMemo(() => sortRows(result.departments, sort, DEPT_COLUMNS), [result.departments, sort]);
@@ -309,10 +322,31 @@ function DepartmentTable({
           <tr className="border-t-2 border-sdc-border bg-white font-semibold text-sdc-navy">
             <th scope="row" className={`${DEPT_CELL} bg-white py-2 pl-3 pr-3 text-left`}>
               Total
-              <span className="ml-1.5 text-xs font-normal text-sdc-muted">billable departments</span>
+              {/* NOT "billable departments" any more: this foots the ETC
+                  Engineering + Shop departments the card shows, which differ from
+                  the report's five by Manufacturing Operations. See
+                  department-utilization.ts's header — the figure legitimately
+                  differs from the Power BI report's grand total, and the label has
+                  to say which one it is. */}
+              <span className="ml-1.5 text-xs font-normal text-sdc-muted">Engineering &amp; Shop</span>
             </th>
             {DEPT_HEADERS.map((h) => (
-              <td key={h.key} className="py-2 px-2 text-right tabular-nums whitespace-nowrap">
+              <td
+                key={h.key}
+                className="py-2 px-2 text-right tabular-nums whitespace-nowrap"
+                // The foot's Utilization % is billable / actual across EVERY row
+                // above, Service Engineering and Project Management included —
+                // even though those two rows show "—" for their own Utilization %
+                // (they sit outside the report's billable departments). Their
+                // hours are in both halves of the ratio, so the foot stays a
+                // true total of what is on screen; saying so here is cheaper
+                // than letting somebody derive it and conclude it is a bug.
+                title={
+                  h.key === "utilizationPct"
+                    ? "Billable hours / hours worked across every ETC Engineering and Shop department shown"
+                    : undefined
+                }
+              >
                 {h.key === "utilizationPct" ? <UtilCell pct={result.total.utilizationPct} /> : numeric(result.total, h.key)}
               </td>
             ))}
@@ -336,10 +370,20 @@ function EmployeeUtilization({
   const [query, setQuery] = useState("");
   const [order, setOrder] = useState<EmpSort>("utilAsc");
 
-  const departments = useMemo(
-    () => result.departments.filter((d) => d.employeeRows.length > 0).map((d) => ({ key: d.key, title: d.title })),
-    [result.departments],
-  );
+  // Derived from `employees`, NOT from `result.departments` — that array is now
+  // the execution-only set the department card renders, and reading it here would
+  // have quietly dropped Shop, Finance and the rest from THIS panel's selector
+  // while its "All departments" option still filtered over all of them. This
+  // panel is a peer card with its own scope and was not part of the execution
+  // filter; deriving its options from the rows it actually filters keeps the two
+  // consistent by construction.
+  const departments = useMemo(() => {
+    const seen = new Map<string, string>();
+    for (const e of result.employees) if (!seen.has(e.departmentKey)) seen.set(e.departmentKey, e.departmentTitle);
+    return [...seen.entries()]
+      .map(([key, title]) => ({ key, title }))
+      .sort((a, b) => departmentCardOrderRank(a.key) - departmentCardOrderRank(b.key) || a.title.localeCompare(b.title));
+  }, [result.employees]);
 
   const rows = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -486,48 +530,45 @@ export function UtilizationPanel({ result, monthLabel }: { result: DepartmentUti
   if (!hasHours) {
     return (
       <Panel>
-        <PanelHead title="Department Utilization" note={`${monthLabel} · ${result.workingDays} working days`} />
+        <PanelHead
+          title="Engineering & Shop Utilization"
+          note={`${monthLabel} · ${result.workingDays} working days`}
+        />
         <p className="py-8 text-sm text-sdc-muted">No hours booked in {monthLabel} yet.</p>
       </Panel>
     );
   }
 
   return (
-    // ── Two peer panels, side by side (2026-08-28) ──────────────────────
+    // ── One full-width column (2026-08-31, by request) ──────────────────────
     //
-    // They were ONE card with the employee list hanging off the bottom of the
-    // department table, which read as a loose appendix. They are peers — the
-    // same question asked per department and per person — so each has its own
-    // panel and header.
+    // Everything in this band is now the same width and stacks top to bottom.
     //
-    // Side by side was tried and REJECTED once, and that failure is the
-    // constraint this split has to respect: the department table is sixteen
-    // columns and measures 1341px. At the old 1600px content cap a 65/35 split
-    // left it 1096px and pushed 245px behind a horizontal scrollbar, and a
-    // table that must be scrolled to be read is worse than a taller page.
+    // It was a two-column grid: the department table at 1fr and, beside it, a
+    // 21rem column holding either the ranked employee list or — once you clicked
+    // a person — their punch drill, which widened that column to 26–31rem. That
+    // widening is what this change removes. The department table is sixteen
+    // columns and measures ~1362px; handing a third of the row to the drill
+    // pushed several hundred pixels of it behind a horizontal scrollbar exactly
+    // when a reader was trying to compare the punch detail against the row it
+    // came from. A table you have to scroll sideways to read is worse than a
+    // taller page, which the original two-column note said about a 65/35 split
+    // and is just as true of a drill-sized right column.
     //
-    // So the columns are NOT a ratio. The content cap is now 1800px and the
-    // right-hand column is pinned to the width the employee list needs (21rem)
-    // rather than a share of the row, which leaves the table 1362px — the whole
-    // thing, measured, with a little headroom. A ratio would silently put it
-    // back behind a scrollbar the next time this row is touched. Below xl it
-    // stacks and the table gets the full width back either way.
+    // So the drill opens BELOW the department card at full width, and the ranked
+    // employee list follows it. No `xl:` column template, no drill-dependent
+    // width, nothing that changes shape when the drill opens — the department
+    // table is the same width whether or not somebody is drilled into.
     //
-    // The row widens when the drill is open, deliberately: the punch table needs
-    // real width, and the department table degrades gracefully there because
-    // both its first column and its header stick.
-    //
-    // Both panels are height-capped and scroll internally, so this band is one
-    // screen-ish block instead of the ~970px run it had grown into.
-    <div
-      className={`grid min-w-0 items-start gap-5 ${
-        drill.target ? "xl:grid-cols-[minmax(0,1fr)_minmax(26rem,31rem)]" : "xl:grid-cols-[minmax(0,1fr)_21rem]"
-      }`}
-    >
+    // Every panel here is still height-capped and scrolls internally (the drill
+    // through Drill.tsx's own `drill-cap`), so stacking three of them does not
+    // turn the band into a long scroll: the page grows by one capped card when a
+    // drill is open, and by nothing at all when it is not.
+    <div className="flex min-w-0 flex-col gap-5">
       <Panel flush className="flex min-w-0 flex-col">
         <PanelHead
           className="border-b border-sdc-border px-4 py-2.5"
-          title="Department Utilization"
+          title="Engineering & Shop Utilization"
           note={`${monthLabel} · ${result.workingDays} working days · theoretical = headcount × ${result.workingDays} × 8h${
             result.travelKnown ? "" : " · travel not recorded for this month"
           }`}
@@ -535,14 +576,14 @@ export function UtilizationPanel({ result, monthLabel }: { result: DepartmentUti
         <DepartmentTable result={result} drill={drill} />
       </Panel>
 
-      {/* ── The punch drill REPLACES the employee list, it does not push it ───
-          Both live in the right-hand column. Opening a person's punches swaps
-          this panel's content rather than appending a third block, so the band
-          never grows: you are looking at either the ranked list or the one
-          person you picked out of it, which is the actual reading order.
-          The drill's own header carries the name and a close that returns you
-          to the list. */}
-      {drill.target ? (
+      {/* Directly under the table the click came from, so the punches and the
+          row they belong to read as one thing. Rendered only while somebody is
+          selected — closing it leaves no placeholder and the band returns to its
+          compact height. Clicking a second person REPLACES this panel rather than
+          adding another: there is one drill for the whole section, keyed by the
+          selected employee (see useEmployeePunchDrill), so two people's punches
+          can never be on screen at once claiming to be the same month. */}
+      {drill.target && (
         <EmployeePunchDrillPanel
           target={drill.target}
           result={drill.result}
@@ -552,16 +593,21 @@ export function UtilizationPanel({ result, monthLabel }: { result: DepartmentUti
           onClose={drill.close}
           expectedHours={drilled?.actualHours ?? 0}
         />
-      ) : (
-        <Panel flush className="flex min-w-0 flex-col">
-          <PanelHead
-            className="border-b border-sdc-border px-4 py-2.5"
-            title="Employee Utilization"
-            note="Billable hours / hours worked"
-          />
-          <EmployeeUtilization result={result} drill={drill} />
-        </Panel>
       )}
+
+      {/* The ranked list stays — it is a peer question ("who is running low"),
+          not a thing the drill replaces. It used to be swapped out because it
+          shared the right-hand column with the drill; now that they are stacked,
+          both can be on screen, which is what makes clicking through several
+          people from the list actually work. */}
+      <Panel flush className="flex min-w-0 flex-col">
+        <PanelHead
+          className="border-b border-sdc-border px-4 py-2.5"
+          title="Employee Utilization"
+          note="Billable hours / hours worked"
+        />
+        <EmployeeUtilization result={result} drill={drill} />
+      </Panel>
     </div>
   );
 }

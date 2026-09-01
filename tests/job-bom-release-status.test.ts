@@ -72,6 +72,8 @@ function row(parentPN: string, childPN: string, o: RowOverrides = {}): BomRow {
     ReceivedQty: 0,
     UnitPrice: 0,
     LastReceivedDate: null,
+    BOMCustom1: null,
+    Note: null,
     ...o,
   };
 }

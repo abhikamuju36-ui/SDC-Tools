@@ -103,6 +103,11 @@ export type BomPart = {
   hold: boolean; // eps.ItemHold — flagged on hold in Total ETO
   supplier: string | null;
   poId: string | null;
+  // Packet ID for this edge - null when the row carries no packet tag.
+  // `packetId` is the grouping key behind per-packet readiness; `packetLabel`
+  // is the value as Purchasing typed it, for display. See packetOf().
+  packetId: string | null;
+  packetLabel: string | null;
 };
 
 export type BomNode = {
@@ -120,6 +125,13 @@ export type BomNode = {
   // buy) and for sections. "Assembly Only" parents never become nodes at all;
   // they appear as a BomPart under their own parent.
   self: BomPart | null;
+  // Packet ID from the edge that reached this node, independent of `self`.
+  // An exploding assembly ("Contents of Assembly Only") has self === null but
+  // its edge can still be packet-tagged - job 1131's 1131-GB-000 is exactly
+  // that - so reading the packet off `self` alone silently loses those rows.
+  // Null for sections, which are synthetic and have no edge.
+  packetId: string | null;
+  packetLabel: string | null;
   children: BomNode[]; // nested sub-assemblies
   parts: BomPart[]; // direct leaf parts
   stats: BomStats;
@@ -143,6 +155,8 @@ export type BomRow = {
   RequiredDate: Date | null;
   ItemHold: boolean | number | null;
   BOMAssemblyReleaseID: number | null;
+  BOMCustom1: string | null; // eps.BOMCustom1 — captioned "Packet ID" in Total ETO
+  Note: string | null; // eps.Note — the grid's "BOM Note", transitional Packet ID home
   ItemCost: number | null; // eps.ItemCost — cost entered on the BOM line
   ItemLastCost: number | null; // item master LPP / last purchased price
   ItemListCost: number | null;
@@ -194,6 +208,66 @@ const RELEASE_BY_ID: Record<number, ReleaseStatus> = {
 
 export function releaseOf(r: Pick<BomRow, "BOMAssemblyReleaseID">): ReleaseStatus {
   return RELEASE_BY_ID[Number(r.BOMAssemblyReleaseID)] ?? "contentsOnly";
+}
+
+// ── Packet ID ──────────────────────────────────────────────────────────────
+//
+// When an assembly update is released in fragments, Purchasing tags each of the
+// release rows belonging to one change with a shared "Packet ID", so the Debug
+// Lead can ask "are the parts for THIS change ready to build" instead of reading
+// the whole job. Requested by Purchasing 2026-08; live convention is three
+// comma-separated tokens — initials, assembly, MONYY — e.g. "PJV, ROTARY-LIGHT, AUG25".
+//
+// It is hand-typed into the Total ETO grid, so it is a fragile join key: we
+// cannot validate at entry (that grid is not ours). normalizePacketId absorbs
+// the drift we can resolve without guessing. It deliberately does NOT try to
+// correct spelling: two genuinely different strings stay two packets, and the
+// packet list's row counts are what make that visible (a 1-row packet beside a
+// 10-row one is a legible typo).
+export type Packet = {
+  // Grouping key. Punctuation- and case-insensitive: see packetKey below.
+  key: string;
+  // The value as typed, whitespace-collapsed - what the UI shows.
+  label: string;
+};
+
+// The key strips EVERY non-alphanumeric character rather than normalizing
+// separators, because the separators are exactly what drifts. Live proof from
+// job 1131 on the day the field went into use: nine rows read
+// "PJV, ROTARY-LIGHT, AUG25" and one reads "PJV, ROTARY-LIGHT AUG25" - same
+// packet, one missing comma. Keying on separators would have reported two
+// packets at partial readiness instead of one, which is precisely the wrong
+// answer to "can I build this change".
+//
+// The trade-off is deliberate: two packets differing ONLY in punctuation are
+// treated as one. Nothing in the convention (initials, assembly, MONYY) makes
+// punctuation meaningful, so that collapse is safe - and splitting is the more
+// damaging failure of the two, since half a packet reads as a real shortage.
+const packetKey = (v: string): string => v.replace(/[^a-z0-9]/gi, "").toUpperCase();
+
+export function normalizePacketId(raw: string | null | undefined): Packet | null {
+  const label = clean(raw); // collapses internal whitespace runs and trims
+  if (!label) return null;
+  const key = packetKey(label);
+  if (!key) return null; // punctuation-only value, e.g. "-"
+  return { key, label };
+}
+
+// BOMCustom1 is the dedicated field - its Total ETO caption is "Packet ID" and
+// it is the first column in the BOM grid - and always wins. Note is the
+// transitional home (Purchasing confirmed 2026-08 that its use for packets is
+// temporary) and it is a SHARED free-text field: other jobs use it for supplier
+// links and purchasing instructions. So the fallback is guarded to values that
+// could plausibly be an ID, which keeps the column from filling with unrelated
+// prose on jobs that never opted in. The guard retires with the fallback.
+const PACKET_NOTE_MAX_LEN = 64;
+
+export function packetOf(r: Pick<BomRow, "BOMCustom1" | "Note">): Packet | null {
+  const dedicated = normalizePacketId(r.BOMCustom1);
+  if (dedicated) return dedicated;
+  const note = clean(r.Note);
+  if (!note || note.length > PACKET_NOTE_MAX_LEN || /https?:\/\//i.test(note)) return null;
+  return normalizePacketId(note);
 }
 
 // ── Tree shape ───────────────────────────────────────────────────────────────
@@ -378,6 +452,7 @@ export function makePart(r: BomRow, t: SpecTree, ctx: BomContext): BomPart {
   const pull = ctx.pulls.get(r.ChildID);
   const { price, basis } = unitPriceFor(r, ctx);
   const release = releaseOf(r);
+  const packet = packetOf(r);
   return {
     id: r.ChildID,
     pn: clean(r.ChildPN) || "—",
@@ -402,6 +477,8 @@ export function makePart(r: BomRow, t: SpecTree, ctx: BomContext): BomPart {
     hold: !!r.ItemHold,
     supplier: line?.supplier ?? null,
     poId: line?.poId ?? null,
+    packetId: packet?.key ?? null,
+    packetLabel: packet?.label ?? null,
   };
 }
 
@@ -444,6 +521,7 @@ export function buildAssembly(
   selfRow: BomRow | null,
 ): BomNode {
   const release = selfRow ? releaseOf(selfRow) : "contentsOnly";
+  const selfPacket = selfRow ? packetOf(selfRow) : null;
   const node: BomNode = {
     key: keyPath,
     id: nodeId,
@@ -454,6 +532,8 @@ export function buildAssembly(
     isAssembly: true,
     release,
     self: selfRow && release === "bothAssemblyAndContents" ? makePart(selfRow, t, ctx) : null,
+    packetId: selfPacket?.key ?? null,
+    packetLabel: selfPacket?.label ?? null,
     children: [],
     parts: [],
     stats: statsForRoots([nodeId], t, ctx),

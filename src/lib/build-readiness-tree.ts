@@ -55,6 +55,10 @@ export function walkJobBomUnits(bom: JobBom): BomUnit[] {
         isAssembly: false,
         release: "contentsOnly",
         self: null,
+        // Synthetic bucket, not an eps edge - the parts inside carry their own
+        // packet tags, the bucket itself has none.
+        packetId: null,
+        packetLabel: null,
         children: [],
         parts: section.parts,
         stats: {

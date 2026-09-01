@@ -4,7 +4,7 @@ import Link from "next/link";
 import { SectionTitle } from "@/components/ui/Typography";
 import { CustomerBars } from "@/components/dashboard/CustomerBars";
 import { JobDrillPanel, useJobDrill } from "@/components/dashboard/JobDrillPanel";
-import { jobTypeColor, rankByCount } from "@/lib/job-type-colors";
+import { jobTypeColor, rankByCount, TRACK_CLASS } from "@/lib/job-type-colors";
 import type { CustomerSummary, JobTypeBreakdown } from "@/lib/dashboard-overview";
 
 // ── The two Active Jobs charts and the drill they share (2026-08-28) ────────
@@ -53,7 +53,7 @@ function TypeRow({
       }`}
     >
       <span className="w-20 shrink-0 truncate text-sm font-medium text-sdc-navy">{row.type}</span>
-      <span className="h-3.5 min-w-0 flex-1 overflow-hidden rounded-sm bg-sdc-gray-100">
+      <span className={`h-3.5 min-w-0 flex-1 overflow-hidden rounded-sm ${TRACK_CLASS}`}>
         <span
           className={`block h-full rounded-sm ${color.bar}`}
           style={{ width: `${max === 0 ? 0 : (row.count / max) * 100}%` }}
@@ -65,9 +65,27 @@ function TypeRow({
   );
 }
 
+// ── The card shell, sized to its CONTENT (2026-08-31) ───────────────────────
+//
+// A flex column with no height of its own, so the card is exactly as tall as
+// the rows inside it and stops.
+//
+// It briefly stretched to match the customer card beside it, with a white
+// filler absorbing the difference. That is what put a third of a card of blank
+// space under Head Start — six rows do not fill 510px, and no amount of filler
+// makes empty space look intentional. The two cards align at the TOP now and
+// size independently.
+//
+// Still flex rather than grid: a grid with auto rows distributes any spare
+// height across them (align-content defaults to stretch), so if this card is
+// ever given a height again the rows would silently stretch instead of the card
+// simply being too tall — a subtler bug than the one it replaced. The gap-px
+// over a border-soft background is what draws the hairlines between rows.
 function Frame({ children, className = "" }: { children: React.ReactNode; className?: string }) {
   return (
-    <div className={`grid gap-px overflow-hidden rounded-xl border border-sdc-border bg-sdc-border-soft shadow-sm ${className}`}>
+    <div
+      className={`flex flex-col gap-px overflow-hidden rounded-xl border border-sdc-border bg-sdc-border-soft shadow-sm ${className}`}
+    >
       {children}
     </div>
   );
@@ -105,8 +123,15 @@ export function ActiveJobsSection({
 
   return (
     <>
-      <div className="grid gap-6 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.6fr)]">
-        <section>
+      {/* ── Aligned at the top, sized independently (2026-08-31) ───────────
+          `items-start`, not the default `items-stretch`. Stretch made both
+          sections as tall as the taller one, which is how the type card ended
+          up with blank space under Head Start: it has six rows, the customer
+          card has a capped scrolling list, and there is no reason for the
+          shorter one to pretend otherwise. Each section is now its own height
+          and they share a top edge. */}
+      <div className="grid items-start gap-6 xl:grid-cols-[minmax(320px,0.85fr)_minmax(0,1.6fr)]">
+        <section className="flex min-w-0 flex-col">
           <SectionHead
             title="Active Jobs by Project Type"
             note={
@@ -115,7 +140,7 @@ export function ActiveJobsSection({
               </>
             }
           />
-          <Frame className="grid-cols-1">
+          <Frame>
             {/* Ranked by count, with the declared type order as a stable tiebreak
                 (rankByCount). Zero-count types stay in the list, sorted last and
                 dimmed, rather than disappearing — "no Service work right now" is
@@ -146,16 +171,21 @@ export function ActiveJobsSection({
           </Frame>
         </section>
 
-        <section className="min-w-0">
+        <section className="flex min-w-0 flex-col">
           <SectionHead
             title="Active Jobs by Customer"
-            note={`${customers.length} customers with active work · grouped on the customer exactly as stored`}
+            note={`${customers.length} customers with active work · one row per customer, spelling variants combined`}
           />
+          {/* No wrapper height: the card carries its own ceiling
+              (.customer-chart-cap) and scrolls inside it. */}
           <CustomerBars
             customers={customers}
             activeTotal={activeTotal}
-            onOpen={(name) => drill.toggle({ kind: "customer", value: name })}
-            isOpen={(name) => drill.isOpen({ kind: "customer", value: name })}
+            // The CANONICAL CUSTOMER ID, which is what the chart grouped by — so
+            // the drill narrows on the same key rather than trying to re-derive a
+            // bar's identity from its label.
+            onOpen={(id) => drill.toggle({ kind: "customer", value: id })}
+            isOpen={(id) => drill.isOpen({ kind: "customer", value: id })}
           />
         </section>
       </div>
@@ -173,7 +203,17 @@ export function ActiveJobsSection({
           expectedCount={
             drill.filter.kind === "type"
               ? (byType.find((t) => t.type === drill.filter!.value)?.count ?? 0)
-              : (customers.find((c) => c.name === drill.filter!.value)?.activeCount ?? 0)
+              : (customers.find((c) => c.canonicalCustomerId === drill.filter!.value)?.activeCount ?? 0)
+          }
+          // `filter.value` is a canonical customer id, which is not a label — the
+          // heading takes the name off the very row that was clicked, so the
+          // panel's title and the bar's label are the same string by
+          // construction.
+          label={
+            drill.filter.kind === "type"
+              ? drill.filter.value
+              : (customers.find((c) => c.canonicalCustomerId === drill.filter!.value)?.name ??
+                drill.filter.value)
           }
         />
       )}

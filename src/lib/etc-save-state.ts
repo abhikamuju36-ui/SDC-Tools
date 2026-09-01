@@ -139,6 +139,21 @@ export function invalidCellNames(): string[] {
   return [...invalidMessages.keys()];
 }
 
+// The same question hasInvalidCells() answers, for the OTHER state that means "your
+// value was not written": a cell somebody else changed first.
+//
+// Added 2026-08-31 after a two-tab test: the stale write was correctly refused by
+// saveAllNewEtcDrafts, the cell correctly took its conflict ring — and the status chip
+// still said "All changes saved", because it only ever escalated on `invalid`. The
+// requirement §27.9 wrote for invalid cells ("do not display 'All changes saved'")
+// applies here for exactly the same reason, and applies harder: an invalid value is
+// this user's own typo, visible to them, whereas a conflict is somebody else's write
+// that they never saw. Reading the state map rather than a second side-table because,
+// unlike `invalid`, `conflict` carries no message of its own.
+export function conflictCellNames(): string[] {
+  return [...state.entries()].filter(([, s]) => s === "conflict").map(([name]) => name);
+}
+
 export function readCellSaveState(name: string): CellSaveState | null {
   return state.get(name) ?? null;
 }
