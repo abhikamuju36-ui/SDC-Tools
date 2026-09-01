@@ -18,7 +18,7 @@ const readinessRoutes = require('./routes/readiness');
 const emailRoutes = require('./routes/emails');
 const procurementRoutes = require('./routes/procurement');
 const checkRoutes = require('./routes/check');
-const { requireSdcSession } = require('./sdcSessionAuth');
+const { requireSdcSession } = require('@sdc/shared-auth');
 
 const fs = require('fs');
 

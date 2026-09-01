@@ -1,0 +1,13 @@
+{
+  "name": "@sdc/shared-auth",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Shared SDC Tools centralized-session (sdc_session cookie) verification for apps with no login of their own",
+  "main": "sdcSessionAuth.js",
+  "exports": {
+    ".": "./sdcSessionAuth.js"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.3"
+  }
+}

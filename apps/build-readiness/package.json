@@ -11,6 +11,7 @@
     "build": "npm run build:client"
   },
   "dependencies": {
+    "@sdc/shared-auth": "^1.0.0",
     "cookie-parser": "^1.4.7",
     "dotenv": "^16.4.5",
     "express": "^4.21.0",

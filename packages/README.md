@@ -2,16 +2,14 @@
 
 Reserved for code genuinely shared across more than one SDC app — not a dumping ground for app-specific logic. Nothing lives here yet.
 
-## Known candidate: `sdcSessionAuth.js`
+## `sdcSessionAuth.js` — extraction in progress
 
-The SDC Tools centralized-login cookie verifier (`sdc_session`, minted by SDC Scheduler's `routes/ssoCentral.js`) is currently duplicated **verbatim** across four apps:
+The SDC Tools centralized-login cookie verifier (`sdc_session`, minted by SDC Scheduler's `routes/ssoCentral.js`) was previously duplicated **verbatim** across four apps. It's now being extracted to `packages/shared-auth/` (`@sdc/shared-auth`, registered as a root npm workspace member), staged across three PRs to keep the diff and risk contained:
 
-- `apps/assemblies/server/sdcSessionAuth.js`
-- `apps/build-readiness/server/...` (same pattern)
-- `apps/state-logic/...`
-- `apps/calendar/server/...`
+- **Done** — Build Readiness (`apps/build-readiness/server/index.js`) imports `@sdc/shared-auth`; its local `sdcSessionAuth.js` copy is deleted.
+- **Not yet migrated** — `apps/assemblies/server/sdcSessionAuth.js` and `apps/state-logic/sdcSessionAuth.js` still hold the old duplicated copy (pending a PR that also verifies electron-builder correctly packages the new workspace dependency for these two Electron-shipped apps). `apps/calendar/server/middleware/requireAuth.js` still holds its own inline copy of just the `verifySdcSession` core (pending a PR that swaps that one function for the shared import, while keeping the rest of that file — `resolveShellUser`, the legacy bearer fallback, etc. — local, since only the verify core is actually duplicated there).
 
-It's a real extraction candidate — same file, four copies, one shared secret (`SDC_SESSION_SECRET`) read from each app's own `.env`. It was deliberately **not** extracted as part of the 2026-08 restructuring: the SSO feature is currently dormant everywhere (`SDC_SSO_ENABLED` defaults off in every app), and touching four live production apps' auth-verification code at the same time as moving their folders was judged unnecessary risk for a purely structural cleanup. Do this as its own small, low-risk follow-up once someone's ready to turn SSO on for real — extract to `packages/shared-auth/`, update each app's import, keep the verification logic byte-for-byt identical.
+Once all three apps are migrated, this section should be replaced with a one-line note pointing at `packages/shared-auth/` as the canonical source, same as `packages/design-system/`.
 
 ## Adding something else here later
 
