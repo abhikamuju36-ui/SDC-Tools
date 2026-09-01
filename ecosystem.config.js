@@ -278,7 +278,34 @@ module.exports = {
       // restart mid-write. Raise it if a legitimate refresh ever trips it —
       // don't raise it to paper over an actual leak. See docs/PERFORMANCE.md
       // §1d for the baseline to compare against.
-      max_memory_restart: '600M',
+      //
+      // ── Raised 600M -> 1536M (2026-08-31), which is that "legitimate refresh"
+      //    case the line above reserved. It was not hypothetical: 600M was killing
+      //    this app EVERY HOUR, on the hour, in production.
+      //
+      // Measured, sampling RSS/private bytes every 6s across a live interval pass:
+      //
+      //     21:04:32   198 MB RSS / 359 MB private   (steady state)
+      //     21:04:38   794 MB RSS / 943 MB private   (<- the refresh)
+      //     21:04:41   [auto-sync] interval pass in 6752ms ... all 9 sources ok
+      //     21:04:42   [start] preflight ok - starting next on port 4006
+      //     21:04:44   new PID, 178 MB               (<- pm2 had killed it)
+      //
+      // The pass SUCCEEDS and then the process is killed for the memory it used
+      // getting there — so there is no error in the log, just a clean restart with
+      // every SSE session dropped and any save still in flight lost. The same
+      // signature is in the out log at 15:45, 16:45, 17:46, 18:46, 19:47 and 21:04.
+      //
+      // Not a leak: the replacement settles back to ~245 MB and stays there. The
+      // spike is the Paylocity workbook parse (54,535 rows) plus 8 other sources
+      // across 2 concurrent lanes, all resident at once for ~7 seconds.
+      //
+      // 1536M is ~1.6x the measured 943 MB peak — enough headroom that a slightly
+      // larger workbook next month does not put us straight back here, and still
+      // low enough to catch a genuine runaway (6x steady state). If this ever trips
+      // again, the fix is to stop holding the whole parse in memory, NOT another
+      // raise: see src/lib/paylocity-workbook.ts.
+      max_memory_restart: '1536M',
       log_date_format: 'YYYY-MM-DD HH:mm:ss',
       merge_logs:    true,
     },
