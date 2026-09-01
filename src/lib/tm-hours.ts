@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { punchIdentity, type PunchIdentity } from "@/lib/hours-filters";
 import { SECTIONS, mapPunchToColumns } from "@/lib/sections";
 import { validJobTypeFilter } from "@/lib/job-filters";
-import { classifyTmHoursSection, HOURS_CODES_BY_KEY, type TmHoursDrillKey } from "@/lib/tm-hours-classify";
+import { classifyTmHoursSection, TM_HOURS_KEYS, type TmHoursDrillKey } from "@/lib/tm-hours-classify";
 
 export type { TmHoursDrillKey };
 
@@ -64,6 +64,11 @@ function dateRangeWhere(startDate: string, endDate: string) {
 
 export type TmHoursTotals = Record<TmHoursDrillKey, number>;
 
+/** All five keys at zero — the starting point, and the shape of an empty selection. */
+function emptyTotals(): TmHoursTotals {
+  return Object.fromEntries(TM_HOURS_KEYS.map((k) => [k, 0])) as TmHoursTotals;
+}
+
 /**
  * The four KPI totals — an aggregate GROUP BY over the SAME rows
  * getTmHoursDrillRows reads for a card's own drill, so summing that
@@ -72,7 +77,7 @@ export type TmHoursTotals = Record<TmHoursDrillKey, number>;
  * flagged, not silent).
  */
 export async function getTmHoursTotals(jobPks: number[], startDate: string, endDate: string): Promise<TmHoursTotals> {
-  const totals: TmHoursTotals = { engineeringHours: 0, shopHours: 0, pmHours: 0, manufacturingHours: 0 };
+  const totals = emptyTotals();
   if (jobPks.length === 0) return totals;
 
   // `section` is the RAW pair now (2026-08-21) — grouping by it directly and
@@ -86,10 +91,20 @@ export async function getTmHoursTotals(jobPks: number[], startDate: string, endD
   });
 
   for (const g of grouped) {
-    for (const col of mapPunchToColumns(g.section, Number(g._sum?.hours ?? 0))) {
-      const key = classifyTmHoursSection(col.section);
-      if (!key) continue;
-      totals[key] += col.hours;
+    const hours = Number(g._sum?.hours ?? 0);
+    const cols = mapPunchToColumns(g.section, hours);
+    // A raw pair mapPunchToColumns does not recognise at all yields NO columns —
+    // Service/Spare Parts phases, the unmapped 10-400, and the malformed codes
+    // ("-311", "1-312", "5-111") whose phase prefix is missing in the export.
+    // Those hours were being dropped here without a trace; they land in
+    // `otherHours` now so the five cards reconcile to what was actually punched.
+    // See the audit note in tm-hours-classify.ts.
+    if (cols.length === 0) {
+      totals.otherHours += hours;
+      continue;
+    }
+    for (const col of cols) {
+      totals[classifyTmHoursSection(col.section)] += col.hours;
     }
   }
   return totals;
@@ -128,16 +143,28 @@ export async function getTmHoursDrillRows(
   const truncated = detail.length > MAX_ROWS;
   const kept = truncated ? detail.slice(0, MAX_ROWS) : detail;
   const byPaylocityId = new Map(employees.map((e) => [e.paylocityId!, e]));
-  const wantedCodes = new Set(HOURS_CODES_BY_KEY[key] as string[]);
-
   const rows: TmHoursDrillRow[] = kept
     .flatMap((d) => {
       const emp = byPaylocityId.get(d.employeeId);
+      const hours = Number(d.hours);
       // A raw punch that folds/splits can land in more than one ETC column; only the
-      // allocation(s) belonging to THIS card's codes are kept — the raw identity on
-      // every resulting row is still the untouched original (via punchIdentity below).
-      return mapPunchToColumns(d.section, Number(d.hours))
-        .filter((col) => wantedCodes.has(col.section))
+      // allocation(s) belonging to THIS card are kept — the raw identity on every
+      // resulting row is still the untouched original (via punchIdentity below).
+      //
+      // Selected by classifyTmHoursSection(), NOT by a per-key code list
+      // (HOURS_CODES_BY_KEY, deleted 2026-09-01). That list was a SECOND
+      // definition of the same mapping, sitting next to the classifier the
+      // TOTALS use — exactly the kind of pair that drifts and makes a card
+      // disagree with its own drill-through. One function decides now, in both
+      // places.
+      //
+      // An unrecognised raw pair yields no columns and is emitted as one
+      // `otherHours` row carrying its own raw code, matching what
+      // getTmHoursTotals adds to that bucket.
+      const cols = mapPunchToColumns(d.section, hours);
+      const allocations = cols.length > 0 ? cols : [{ section: d.section, hours }];
+      return allocations
+        .filter((col) => classifyTmHoursSection(col.section) === key)
         .map((col) => ({
           date: d.workDate.toISOString().slice(0, 10),
           employee: emp?.name ?? (d.employeeId ? `#${d.employeeId}` : "—"),

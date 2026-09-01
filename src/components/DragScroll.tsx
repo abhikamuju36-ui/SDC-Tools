@@ -42,18 +42,51 @@ import { useRef, type ReactNode } from "react";
 // A caret in a cell is not an edit — nothing is written until a value changes — and it
 // is exactly what "selecting a cell" looks like on a grid whose cells are inputs.
 // Double-click still selects the whole value, as a spreadsheet does.
+// ── One drag surface, from ANYWHERE in the grid (2026-09-01) ────────────────
+//
+// This list used to also contain `a`, `button`, `summary`, `label` and
+// `[role='button']`. That is what made the Projects grid feel like only its
+// HEADER could be dragged, which is exactly how it was reported.
+//
+// The grid's STICKY LEFT columns — the frozen job information anyone would
+// naturally grab to pan a wide table — are built almost entirely from those
+// elements: Job Id and Job Name are <Link>s, the row menu is a [role=button],
+// and Type / Billable / Status are <select>s. Every press there was "ignore",
+// so the one place with an obvious affordance did nothing. The numeric cells to
+// the right always panned (they are bare <input type="number">, which reads as
+// "pan" while unfocused), but by then the user had already concluded that only
+// the header worked.
+//
+// A link or a button is safe to pan from because mousedown does NOT activate
+// it — the CLICK does, and onClickCapture below swallows the click when a pan
+// actually happened. So a press that never moves still navigates or activates
+// normally, and a press that moves pans instead. That is the same
+// movement-decides-the-gesture rule the cell inputs already used.
+//
+// What genuinely cannot pan, and why the mousedown itself is the interaction:
+//
+//   select                — the native dropdown opens on mousedown. Suppressing
+//                           that to pan would need preventDefault, which is
+//                           what §38.1 forbids (it also cancels the click).
+//   input[type='date']    — GridDateCells calls showPicker() on mousedown.
+//   [contenteditable]     — the caret is placed on mousedown.
+//   checkbox / radio      — no technical obstacle (they activate on click, so
+//                           suppression would cover them), but they are ~16px
+//                           targets nobody grabs to pan a table, and starting a
+//                           drag from one is far more likely to be an accident
+//                           than an intent. Left out deliberately.
 const NEVER_PAN = [
   "select",
-  "button",
-  "a",
-  "summary",
-  "label",
   "[contenteditable]",
-  "[role='button']",
   "input[type='date']",
   "input[type='checkbox']",
   "input[type='radio']",
 ].join(",");
+
+// Past this much movement the press is a pan, not a click. 6px sits inside the
+// 5-8px the request asks for: comfortably above the 1-2px wobble of a deliberate
+// click, comfortably below any movement a person means as a drag.
+const DRAG_THRESHOLD_PX = 6;
 
 /**
  * What a mousedown on this grid means. Pure, and exported, because getting it wrong in
@@ -124,36 +157,79 @@ export function DragScroll({ className, children }: { className?: string; childr
     const startTop = el.scrollTop;
     moved.current = false;
 
+    // Restores everything the pan turned off. Called from BOTH exit paths, so a
+    // drag that ends off-window cannot leave the grid stuck in "grabbing" with
+    // text selection disabled.
+    // Arrow functions, not `function` declarations: hoisting would lift them
+    // above the `if (!el) return` above and lose its narrowing of `el`. All three
+    // are initialised before any of them can run.
+    const endPan = () => {
+      el.style.cursor = scrollable(el) ? "grab" : "";
+      el.style.userSelect = "";
+      window.removeEventListener("mousemove", onMove);
+      window.removeEventListener("mouseup", onUp);
+      window.removeEventListener("blur", onUp);
+      // Clear the "this was a pan" flag on the next tick. The click that ends a
+      // pan fires synchronously right after mouseup, so onClickCapture still
+      // sees `true` and swallows it — but if no click follows (mouseup landed
+      // outside the container, or off-window entirely) the flag would otherwise
+      // sit there and eat the NEXT genuine click.
+      setTimeout(() => {
+        moved.current = false;
+      }, 0);
+    };
+
     const onMove = (ev: MouseEvent) => {
       const dx = ev.clientX - startX;
       const dy = ev.clientY - startY;
       if (!moved.current) {
-        if (Math.abs(dx) <= 3 && Math.abs(dy) <= 3) return; // still a click, not a pan
+        // Still a click, not a pan. Threshold on EITHER axis, so a press that
+        // drifts vertically is not left half-committed.
+        if (Math.abs(dx) < DRAG_THRESHOLD_PX && Math.abs(dy) < DRAG_THRESHOLD_PX) return;
         moved.current = true;
         // NOW it is a pan: take focus off the cell the press landed in and drop the
         // text selection the browser started, so dragging scrolls the grid instead of
         // sweeping a selection through a value. Doing it here rather than on mousedown
         // is the whole fix — on mousedown it also cancelled the click.
         el.style.cursor = "grabbing";
+        // Belt and braces on top of GRID_SCROLLER's `select-none`: the other
+        // DragScroll callers (JobProcurement's two tables) do not carry that
+        // class, and a pan that sweeps a selection through half a table looks
+        // broken even when the scrolling itself is right.
+        el.style.userSelect = "none";
         if (document.activeElement instanceof HTMLElement && el.contains(document.activeElement)) {
           document.activeElement.blur();
         }
         window.getSelection()?.removeAllRanges();
       }
+      // Native scrollLeft/scrollTop, clamped by the browser — so the far-left and
+      // far-right boundaries just stop, and this never fights the wheel, the
+      // scrollbar, a trackpad swipe or a touch scroll. The drag is an ADDITIONAL
+      // way to move the same container, not a replacement for any of them.
       el.scrollLeft = startLeft - dx;
       el.scrollTop = startTop - dy;
     };
-    const onUp = () => {
-      el.style.cursor = scrollable(el) ? "grab" : "";
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-    };
+
+    const onUp = () => endPan();
+
     window.addEventListener("mousemove", onMove);
     window.addEventListener("mouseup", onUp);
+    // A mouseup that happens outside the browser window never reaches us; without
+    // this the grid stays in grabbing/user-select-none until the next press.
+    window.addEventListener("blur", onUp);
   }
 
-  // Swallow the click that fires at the end of a pan so it doesn't select a
-  // cell / trigger a sort. Reset the flag afterwards.
+  // Swallow the click that fires at the end of a pan.
+  //
+  // This carries more weight since 2026-09-01: links, buttons and row menus are
+  // pannable now, so this is the ONLY thing standing between "I dragged the grid
+  // sideways starting from a job name" and "I navigated to that job". Capture
+  // phase, so it runs before the anchor's or button's own handler, and
+  // preventDefault cancels the default action (navigation) too.
+  //
+  // A press that never passed DRAG_THRESHOLD_PX leaves `moved` false and is not
+  // touched at all — so a plain click on a link, a sort button, a toggle or a
+  // cell behaves exactly as it did.
   function onClickCapture(e: React.MouseEvent) {
     if (moved.current) {
       e.stopPropagation();

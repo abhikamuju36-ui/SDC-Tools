@@ -825,6 +825,32 @@ summary {
   max-height: clamp(18rem, calc(100vh - 12rem), 34rem);
 }
 
+/* ── The customer chart's ceiling (2026-08-31) ──────────────────────────────
+ *
+ * "Active Jobs by Customer" lists every canonical customer, so it needs a
+ * height it cannot exceed or the dashboard grows with the customer count
+ * (measured before this existed: 565px at 21 customers, 1058px at 41, and the
+ * list never scrolled). This is that ceiling; the card's own flex column turns
+ * it into an internal scroll.
+ *
+ * A MAX-height and nothing else. It was briefly a fixed `height` too, applied
+ * to both cards in the row so their edges lined up — that is what left "Active
+ * Jobs by Project Type" with a third of a card of blank space under Head Start,
+ * because six rows do not fill 510px. The two cards size independently now:
+ * this one caps and scrolls, the type card hugs its rows, and they align at the
+ * top instead of at both edges.
+ *
+ * With few enough customers to fit, the max-height never binds and this card
+ * hugs its content too.
+ *
+ * clamp() matches .drill-cap above: 22rem so the list is always a usable
+ * window, 34rem so it never dominates a tall screen. None of the three terms
+ * depends on the data.
+ */
+.customer-chart-cap {
+  max-height: clamp(22rem, calc(100vh - 26rem), 34rem);
+}
+
 /* ── The collapsed sidebar's scroll area (§46.5, §46.6) ─────────────────────
  *
  * The rail's nav is `overflow-y: auto`, which is what §46.5 asks for ("if vertical
@@ -906,9 +932,39 @@ summary {
 .quiet-controls input:disabled,
 .quiet-controls select:disabled,
 .quiet-controls textarea:disabled {
-  cursor: default;
   opacity: 1;
   -webkit-text-fill-color: currentColor;
+}
+
+/* ── Why a grid could only be dragged by its header (fixed 2026-09-01) ───────
+ *
+ * A DISABLED form control dispatches NO mouse events at all — not on itself,
+ * and not retargeted to an ancestor; the browser suppresses them outright. Both
+ * data grids disable their cells when they are not editable: Projects wraps
+ * ~1,100 of them in a <fieldset disabled> (read-only mode, the DEFAULT for that
+ * page), and Monthly ETC passes `disabled` per cell for a submitted month or a
+ * role with view-but-not-edit. Those inputs fill their cells, so a mousedown
+ * over the grid BODY never fired at all. DragScroll's handler sits on the scroll
+ * container and never saw a press — which is exactly why click-and-drag panning
+ * worked on the header (plain <th> text and links, no disabled controls) and
+ * nowhere else.
+ *
+ * Taking the disabled control out of hit-testing lets the press land on the <td>
+ * and bubble to the scroll container the way it always should have. Nothing is
+ * lost: a disabled control cannot be focused, typed into or opened either way.
+ *
+ * Two side effects, both improvements: each <td>'s `title` tooltip (Quoted /
+ * Actual, status and tone hints) now shows on hover instead of being swallowed
+ * by the input sitting on top of it, and the container's `grab` cursor finally
+ * reaches the pointer — a disabled input forces `cursor: default`, which
+ * contradicted the affordance on every cell.
+ *
+ * Keyed on [data-grid] so both grids get it from ONE rule; scoped to :disabled
+ * so an editable grid is untouched and every cell is a live input again. */
+table[data-grid] input:disabled,
+table[data-grid] select:disabled,
+table[data-grid] textarea:disabled {
+  pointer-events: none;
 }
 
 /* ═══ Motion system (§36) ═══════════════════════════════════════════════════

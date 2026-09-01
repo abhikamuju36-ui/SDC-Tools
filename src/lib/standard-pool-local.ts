@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { round2, isValidMonth } from "@/lib/etc";
+import { round2, isValidMonth, startsInMonth } from "@/lib/etc";
 import { VALID_JOB_TYPES, compareJobIds } from "@/lib/job-filters";
 import { POOL_CATEGORIES, POOL_QUOTED_SECTION, type PoolCategory } from "@/lib/sections";
 import type { PoolHoursByMonth } from "@/lib/job-hours-source";
@@ -76,9 +76,13 @@ function previousMonth(month: string): string {
   return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
-function monthOf(d: Date): string {
-  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
-}
+// "Does this job start in this month?" is answered by startsInMonth (lib/etc.ts)
+// — the SAME helper Monthly ETC's Prior ETC initialisation uses (seedMonthRows,
+// derivePriorEtcForMonth, syncPartsCost). There used to be a private `monthOf`
+// here doing the identical UTC arithmetic: a second definition of "new project
+// this month", which is exactly what makes the Standard Fees panel and the
+// Prior ETC opening balance able to disagree about the same job. They agreed —
+// same formula, same UTC basis — but by coincidence rather than construction.
 
 // One project that entered the pools this month, and what it contributed.
 // The per-job detail behind each pool's "New Hours Added this Month".
@@ -88,6 +92,14 @@ export type NewPoolProject = {
   startDate: string; // YYYY-MM-DD
   hours: Record<PoolCategory, number>;
   total: number;
+  /**
+   * False when the job started this month but quoted nothing into any of the
+   * four pool sections — it belongs in the list (that is the verified
+   * membership rule) and contributes 0 to every figure derived from it. The UI
+   * de-emphasises these rather than hiding them; see the note on
+   * newProjectsEnteringMonth.
+   */
+  contributesPoolHours: boolean;
 };
 
 // The projects whose quoted hours land in `month`'s pools, itemised.
@@ -99,9 +111,25 @@ export type NewPoolProject = {
 // one of them was edited.
 //
 // Membership is the verified rule described at the top of this file: Job.
-// startDate falls in the month, nothing else. Jobs contributing zero pool
-// hours are dropped — they started this month but added nothing to these four
-// sections, so listing them under "new hours added" would only be noise.
+// startDate falls in the month, nothing else.
+//
+// ── Zero-contribution starters are LISTED, not dropped (2026-09-01) ─────────
+//
+// `if (total === 0) continue` used to remove them, on the reasoning that a job
+// adding nothing to these four sections "would only be noise". That reasoning
+// was wrong in practice, and it cost real time: job 1169 (Secondary Packaging
+// Cell, started 2026-08-11, Active, Billable, Custom) is a fully eligible
+// August new project that was quoted 11 sections — but none of them PM
+// (10-111), Manufacturing (10-413) or either Warranty code, so its pool
+// contribution is 0/0/0/0 and it vanished from the panel entirely. Reported as
+// "1169 is being excluded from New projects this month", which is precisely how
+// it looked: there is no way to tell a job that was considered and contributed
+// nothing from one that was never considered.
+//
+// Listing it changes NO total — quotedHoursEnteringMonth sums this list, and
+// zeros add zero. It only makes the membership visible. Job 1168 (started
+// 2026-08-10, no quote on file at all) shows up the same way, which is worth
+// seeing rather than hiding.
 export async function newProjectsEnteringMonth(month: string): Promise<NewPoolProject[]> {
   const jobs = await prisma.job.findMany({
     // Type gate as everywhere else: a job with no Type is noise and must never
@@ -110,7 +138,7 @@ export async function newProjectsEnteringMonth(month: string): Promise<NewPoolPr
     where: { type: { in: [...VALID_JOB_TYPES] }, startDate: { not: null } },
     select: { id: true, jobId: true, jobName: true, startDate: true },
   });
-  const entering = jobs.filter((j) => j.startDate && monthOf(j.startDate) === month);
+  const entering = jobs.filter((j) => startsInMonth(j.startDate, month));
   if (entering.length === 0) return [];
 
   const est = await prisma.estimatedHours.findMany({
@@ -144,13 +172,13 @@ export async function newProjectsEnteringMonth(month: string): Promise<NewPoolPr
     }
     for (const c of POOL_CATEGORIES) hours[c] = round2(hours[c]);
     const total = round2(POOL_CATEGORIES.reduce((s, c) => s + hours[c], 0));
-    if (total === 0) continue;
     out.push({
       jobId: job.jobId,
       jobName: job.jobName,
       startDate: job.startDate!.toISOString().slice(0, 10),
       hours,
       total,
+      contributesPoolHours: total > 0,
     });
   }
   // Earliest Start Date first (2026-08-02, by request). It used to be biggest

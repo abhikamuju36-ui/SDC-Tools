@@ -18,8 +18,13 @@ export type ManagedUser = {
 // DB write. ELT-only (users:manage), same as every other mutation here.
 export async function listUsersForAdmin(): Promise<ManagedUser[]> {
   await assertActionPermission("users:manage");
-  const users = await prisma.user.findMany({ orderBy: { email: "asc" } });
-  return users.map((u) => ({ id: u.id, email: u.email, name: u.name, role: u.role, active: u.active }));
+  // Raw for the same reason as the write below: the generated client's Role
+  // enum predates PM, so a findMany would type u.role as the old union and a
+  // PM row would not narrow to AppRole.
+  const users = await prisma.$queryRaw<{ id: number; email: string; name: string; role: string; active: boolean | number }[]>`
+    SELECT id, email, name, role, active FROM User ORDER BY email ASC
+  `;
+  return users.map((u) => ({ id: u.id, email: u.email, name: u.name, role: u.role as AppRole, active: Boolean(u.active) }));
 }
 
 export async function setUserRole(userId: number, role: AppRole): Promise<void> {
@@ -29,7 +34,19 @@ export async function setUserRole(userId: number, role: AppRole): Promise<void> 
   const before = await prisma.user.findUnique({ where: { id: userId }, select: { email: true, role: true } });
   if (!before) throw new Error("That user no longer exists.");
 
-  await prisma.user.update({ where: { id: userId }, data: { role } });
+  // $executeRaw, not prisma.user.update({ data: { role } }) — the generated
+  // Prisma Client's `Role` enum does not yet include PM, because `prisma
+  // generate` cannot run on this box while a server process holds
+  // node_modules/.prisma open (the same standing constraint that makes
+  // RolePermission raw-only; see role-permissions-store.ts). The typed call
+  // rejects "PM" at compile time even though the column accepts it.
+  //
+  // Safe as a raw write: `role` has already been checked against ROLES above,
+  // so the parameter can only ever be one of the five known values, and it is
+  // bound rather than interpolated.
+  //
+  // Once a deploy regenerates the client, this can go back to the typed update.
+  await prisma.$executeRaw`UPDATE User SET role = ${role} WHERE id = ${userId}`;
   await logAudit({
     action: "user.roleChange",
     entityType: "User",

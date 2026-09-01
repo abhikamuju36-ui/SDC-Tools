@@ -18,6 +18,8 @@ import {
   newEtcDiff,
   latestPriorEtcByKey,
   priorEtcForMonth,
+  monthOfDate,
+  startsInMonth,
   redrivenDraft,
 } from "../src/lib/etc";
 
@@ -393,6 +395,82 @@ test("priorEtcForMonth: a job STARTING this month opens at its quote regardless"
   // Jobs 1159/1160: rows existed from before anyone typed their quote, carrying 0.
   assert.equal(priorEtcForMonth({ startsThisMonth: true, carried: 0, quoted: 260 }), 260);
   assert.equal(priorEtcForMonth({ startsThisMonth: true, carried: 999, quoted: 260 }), 260);
+});
+
+// ── startsInMonth / monthOfDate ───────────────────────────────────────────────
+//
+// The date half of the opening-balance rule. It decides whether a job is in its
+// FIRST ETC month (open at the quote) or a later one (carry forward), so an
+// off-by-one-month here is a whole project's Prior ETC reading zero — the
+// August 2026 regression. Every edge of the month, and the year, is pinned.
+
+test("startsInMonth: the first and last day of the month both count", () => {
+  // A date-only ISO string is UTC midnight per spec, which is how parseDate
+  // (quoted-actions.ts) writes every Start Date.
+  assert.equal(startsInMonth(new Date("2026-08-01"), "2026-08"), true);
+  assert.equal(startsInMonth(new Date("2026-08-31"), "2026-08"), true);
+  assert.equal(startsInMonth(new Date("2026-08-15"), "2026-08"), true);
+});
+
+test("startsInMonth: the days either side of the month do NOT", () => {
+  assert.equal(startsInMonth(new Date("2026-07-31"), "2026-08"), false);
+  assert.equal(startsInMonth(new Date("2026-09-01"), "2026-08"), false);
+});
+
+test("startsInMonth: a job starting NEXT month is not starting in this one", () => {
+  // Job 1170 starting September, viewed while running August: carries forward
+  // (or has no row at all), never opens at its quote in August.
+  assert.equal(startsInMonth(new Date("2026-09-10"), "2026-08"), false);
+});
+
+test("startsInMonth: no Start Date is never 'starts this month'", () => {
+  // Otherwise a dateless job would reset to its quote every month forever.
+  assert.equal(startsInMonth(null, "2026-08"), false);
+  assert.equal(startsInMonth(undefined, "2026-08"), false);
+});
+
+test("startsInMonth: the YEAR is compared, not just the month number", () => {
+  // January 2027 must not match 2026-01 — the year-boundary case.
+  assert.equal(startsInMonth(new Date("2027-01-15"), "2026-01"), false);
+  assert.equal(startsInMonth(new Date("2027-01-15"), "2027-01"), true);
+  assert.equal(startsInMonth(new Date("2026-12-31"), "2027-01"), false);
+  assert.equal(startsInMonth(new Date("2027-01-01"), "2027-01"), true);
+});
+
+test("startsInMonth: reads UTC, so a negative-offset zone cannot shift the month", () => {
+  // SDC is UTC-4/-5. Local getMonth() on 2026-08-01T00:00:00Z reads July 31st
+  // there and would drop the job's first ETC month by one.
+  assert.equal(startsInMonth(new Date("2026-08-01T00:00:00.000Z"), "2026-08"), true);
+  // And the far edge: late on the 31st UTC is still August, not September.
+  assert.equal(startsInMonth(new Date("2026-08-31T23:59:59.000Z"), "2026-08"), true);
+});
+
+test("monthOfDate: zero-pads the month so it compares against a YYYY-MM string", () => {
+  assert.equal(monthOfDate(new Date("2026-01-05")), "2026-01");
+  assert.equal(monthOfDate(new Date("2026-09-05")), "2026-09");
+  assert.equal(monthOfDate(new Date("2026-10-05")), "2026-10");
+  assert.equal(monthOfDate(new Date("2026-12-05")), "2026-12");
+});
+
+// The two halves composed — this is the whole rule as the grid experiences it.
+test("opening balance: first ETC month opens at the quote, later months carry forward", () => {
+  const open = (startDate: Date | null, month: string, carried: number | undefined, quoted: number) =>
+    priorEtcForMonth({ startsThisMonth: startsInMonth(startDate, month), carried, quoted });
+
+  // Job 1163: starts 2026-08-13, quoted 1770 on 10-211, no August history.
+  assert.equal(open(new Date("2026-08-13"), "2026-08", undefined, 1770), 1770);
+  // Same job the month AFTER it submitted 1500: carries, does NOT revert to 1770.
+  assert.equal(open(new Date("2026-08-13"), "2026-09", 1500, 1770), 1500);
+  // And a submitted zero in September stays zero in October.
+  assert.equal(open(new Date("2026-08-13"), "2026-10", 0, 1770), 0);
+  // A July-start job running August with a July submission of 120.
+  assert.equal(open(new Date("2026-07-20"), "2026-08", 120, 300), 120);
+  // A July-start job whose July submission was legitimately zero.
+  assert.equal(open(new Date("2026-07-20"), "2026-08", 0, 300), 0);
+  // Quoted zero on a department in its first month is zero, not a fallback.
+  assert.equal(open(new Date("2026-08-13"), "2026-08", undefined, 0), 0);
+  // No Start Date, no history: nothing to carry, so the quote.
+  assert.equal(open(null, "2026-08", undefined, 80), 80);
 });
 
 test("redrivenDraft: leaves a manager's own figure alone", () => {

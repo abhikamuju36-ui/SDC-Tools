@@ -1,14 +1,12 @@
 "use client";
 
 import { useTransition } from "react";
-import type { AppRole } from "@/lib/permissions";
+import { ROLES, ROLE_LABELS, type AppRole } from "@/lib/permissions";
 
-const ROLE_OPTIONS: { value: AppRole; label: string }[] = [
-  { value: "ALL", label: "All" },
-  { value: "MANAGER", label: "Managers" },
-  { value: "SALES", label: "Sales" },
-  { value: "ELT", label: "ELT" },
-];
+// Every role the app knows, in declaration order — read from lib/permissions.ts
+// rather than listed again here, which is why PM (2026-09-01) appeared in this
+// dropdown without touching this file.
+const ROLE_OPTIONS: { value: AppRole; label: string }[] = ROLES.map((value) => ({ value, label: ROLE_LABELS[value] }));
 
 // A signed-in ELT user can't change their OWN role here — the guard against
 // the whole tier locking itself out of the one screen that assigns it. Ask

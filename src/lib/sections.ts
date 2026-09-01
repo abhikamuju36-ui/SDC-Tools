@@ -84,10 +84,53 @@ const ETC_EXCLUDED_CODES = new Set(["10-111", "10-413", "70-211", "70-411"]);
 // separately SUM of the Shop blocks') rather than a manager-entered value.
 const ENGINEERING_CODES = new Set(["10-211", "10-312", "10-313", "10-515", "10-516", "10-517", "10-518", "40-211", "50-211"]);
 
+// The DEPARTMENTS (SECTIONS[].group, from paylocity-canonical.ts) that bill as
+// Engineering. `group` is a department name, one level finer than a billing
+// group — "Mechanical Engineering", "Controls Engineering" and "General
+// Engineering" all bill as Engineering, and phases 40/50/70 carry the already-
+// collapsed "Engineering" label.
+const ENGINEERING_DEPARTMENT_GROUPS = new Set([
+  "Engineering",
+  "Mechanical Engineering",
+  "Controls Engineering",
+  "General Engineering",
+]);
+
+const SECTION_BY_CODE = new Map(SECTIONS.map((s) => [s.code, s]));
+
+/**
+ * Engineering / Shop for ANY section code — the app-wide equivalent of Power
+ * BI's `'Function Hierarchy'[Billing Group]`, which its own `Engineering Hours`
+ * / `Shop Hours` / `Other Hours` measures are defined on.
+ *
+ * Null for a code that belongs to NEITHER billing group: Management (10-111),
+ * and any code with no SECTIONS row at all (Service 80-*, Spare Parts 90-*,
+ * Engineering "Other" 10-112/118/119/120, and anything unmapped). Those are
+ * real hours; they are just not Engineering or Shop, and a caller has to decide
+ * what to do with them rather than being handed a wrong bucket by default.
+ *
+ * Added 2026-09-01. Callers previously had to reach for ETC_SECTIONS'
+ * `billingGroup`, which answers this question only for the 13 codes the ETC
+ * sheet happens to have a column for — see the T&M audit note in
+ * tm-hours-classify.ts for what that silently cost.
+ */
+export function billingGroupForSection(code: string): "Engineering" | "Shop" | null {
+  const section = SECTION_BY_CODE.get(code);
+  if (!section) return null;
+  if (ENGINEERING_DEPARTMENT_GROUPS.has(section.group)) return "Engineering";
+  if (section.group === "Shop") return "Shop";
+  return null; // Management (10-111)
+}
+
 export const ETC_SECTIONS: { code: string; name: string; phase: string; billingGroup: "Engineering" | "Shop" }[] =
   SECTIONS.filter((s) => !ETC_EXCLUDED_CODES.has(s.code)).map((s) => ({
     ...s,
-    billingGroup: ENGINEERING_CODES.has(s.code) ? "Engineering" : "Shop",
+    // Was `ENGINEERING_CODES.has(s.code) ? "Engineering" : "Shop"` — a
+    // defaulting ternary that produced the right answer for these 13 codes only
+    // because 70-211 (Warranty ME & CE, an ENGINEERING department) is excluded
+    // above; un-exclude it and it would have been labelled Shop. Same result
+    // for every code this list contains, from the general rule instead.
+    billingGroup: billingGroupForSection(s.code) ?? (ENGINEERING_CODES.has(s.code) ? "Engineering" : "Shop"),
   }));
 
 export const ETC_TRACKED_CODES = new Set(ETC_SECTIONS.map((s) => s.code));

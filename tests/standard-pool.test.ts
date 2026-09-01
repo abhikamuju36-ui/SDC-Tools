@@ -89,3 +89,41 @@ test("the gated set stays derived from the pool sections, not hand-listed", () =
     assert.ok(RESTRICTED_SECTION_CODES.has(code), `${code} is a pool section but isn't gated`);
   }
 });
+
+// ── Why an eligible new project can contribute ZERO pool hours ──────────────
+//
+// The 1169 report (2026-09-01): "Job 1169 is being excluded from New projects
+// this month" — Active, Billable, Custom, started 2026-08-11, quoted 11
+// sections. It was never excluded from the membership rule; it contributed
+// 0/0/0/0 because none of its 11 quoted sections is one of the four the
+// Standard Fees pools are built from, and zero-contribution rows were being
+// dropped from the panel.
+//
+// This is the structural fact behind that, and it is why the situation is
+// normal rather than a bug: the pool sections and the ETC grid's sections are
+// DISJOINT sets. A job quoted only for grid departments necessarily adds
+// nothing to these pools.
+test("the four pool sections are disjoint from the ETC grid's tracked codes", () => {
+  const poolCodes = Object.values(POOL_QUOTED_SECTION);
+  assert.equal(poolCodes.length, 4);
+  for (const code of poolCodes) {
+    assert.ok(
+      !ETC_TRACKED_CODES.has(code),
+      `${code} is both a pool section and an ETC grid column — the two must not overlap or New Hours Added would double-count against the grid`,
+    );
+  }
+});
+
+test("a job quoted only for ETC grid sections contributes nothing to any pool", () => {
+  // Job 1169's real quoted set, verbatim from the database on 2026-09-01.
+  const quoted1169 = [
+    "10-211", "10-312", "10-313", "10-515", "10-517",
+    "10-518", "10-411", "10-412", "40-211", "40-411", "50-411",
+  ];
+  const poolCodes = new Set<string>(Object.values(POOL_QUOTED_SECTION));
+  const overlap = quoted1169.filter((c) => poolCodes.has(c));
+  assert.deepEqual(overlap, [], "1169 quoted none of the pool sections — 0/0/0/0 is the correct contribution");
+  // And it IS a real quote: the job is not unquoted, which is the distinction
+  // the panel now makes visible instead of hiding.
+  assert.ok(quoted1169.length > 0);
+});

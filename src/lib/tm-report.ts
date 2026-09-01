@@ -65,6 +65,11 @@ export type TmMetrics = TmPartsMetrics & {
   shopHours: number;
   pmHours: number;
   manufacturingHours: number;
+  // Every hour in range that is neither Engineering, Shop, PM nor Manufacturing
+  // — Power BI's own `Other Hours` measure by another name. Added 2026-09-01;
+  // before it, these hours were computed nowhere and shown nowhere. See
+  // tm-hours-classify.ts's audit note.
+  otherHours: number;
 };
 
 export type TmDateDefaults = {
@@ -89,7 +94,23 @@ function daxDate(isoDate: string): string {
  * "All Jobs Selected" rather than an accidental empty-set IN{} that would
  * zero everything out.
  */
-export function buildTmFilters(filters: TmFilters): string[] {
+// ── Which DATE a parts card's range applies to ──────────────────────────────
+//
+// "invoicedDate" is the model's own active relationship: 'Part Purchase'[Invoiced
+// Date] -> 'Date'[Date]. Filtering 'Date'[Date] therefore filters parts BY
+// INVOICED DATE, and that is right for Part Invoiced Amount — an invoiced amount
+// belongs to the period it was invoiced in.
+//
+// "purchaseDate" detaches that relationship (ALL('Date')) and filters
+// 'Part Purchase'[Purchase Date] directly. Needed because the model has no
+// active relationship on Purchase Date at all — it points at an auto-generated
+// LocalDateTable, not the shared Date table — so there is no way to reach it
+// through 'Date'[Date].
+//
+// Why any card needs it: see SDC Manufactured Parts Sales Price below.
+export type TmDateBasis = "invoicedDate" | "purchaseDate";
+
+export function buildTmFilters(filters: TmFilters, basis: TmDateBasis = "invoicedDate"): string[] {
   const args: string[] = [];
   if (filters.jobIds && filters.jobIds.length > 0) {
     args.push(`'Job'[Job Id] IN {${filters.jobIds.map(daxString).join(",")}}`);
@@ -97,7 +118,17 @@ export function buildTmFilters(filters: TmFilters): string[] {
   if (filters.jobStatuses && filters.jobStatuses.length > 0) {
     args.push(`'Job'[Job Status] IN {${filters.jobStatuses.map(daxString).join(",")}}`);
   }
-  args.push(`'Date'[Date] >= ${daxDate(filters.startDate)} && 'Date'[Date] <= ${daxDate(filters.endDate)}`);
+  if (basis === "purchaseDate") {
+    // ALL('Date') FIRST: it removes whatever the Invoiced-Date relationship would
+    // have imposed, so the explicit Purchase Date bounds below are the only date
+    // restriction. The job filters above are on 'Job' and are untouched by it.
+    args.push(`ALL('Date')`);
+    args.push(
+      `'Part Purchase'[Purchase Date] >= ${daxDate(filters.startDate)} && 'Part Purchase'[Purchase Date] <= ${daxDate(filters.endDate)}`,
+    );
+  } else {
+    args.push(`'Date'[Date] >= ${daxDate(filters.startDate)} && 'Date'[Date] <= ${daxDate(filters.endDate)}`);
+  }
   return args;
 }
 
@@ -113,17 +144,36 @@ function toIsoDateOrNull(value: unknown): string | null {
 }
 
 export async function fetchTmMetrics(filters: TmFilters): Promise<TmPartsMetrics> {
-  const args = buildTmFilters(filters).join(",\n    ");
+  // ── One round trip, but each card carries its OWN filters ─────────────────
+  //
+  // This was a single CALCULATETABLE wrapping ROW([measure], [measure],
+  // [measure]) — which forced all three cards to share one filter context and
+  // one date basis, and made every KPI depend on a Power BI measure that the
+  // drill then had to re-describe by hand.
+  //
+  // Each amount is now CALCULATE(SUM(<column>), <that card's own filters>),
+  // built from partsCardFilters() — the exact same function
+  // buildTmPartsDrillDax() calls. A card's KPI and its drill therefore read the
+  // same rows through the same filters by construction; they cannot drift, and
+  // a card can have its own date basis (which SDC Manufactured Parts needs).
+  //
+  // Still ONE query, so this costs no more round trips than the version it
+  // replaces.
+  const INDENT = ",\n      ";
+  const amount = (key: TmPartsDrillKey): string =>
+    `CALCULATE(SUM('Part Purchase'[${PARTS_CARDS[key].amountColumn}]),
+      ${partsCardFilters(filters, key).join(INDENT)}
+    )`;
+
   const dax = `
 EVALUATE
-CALCULATETABLE(
-  ROW(
-    "Job Display", [Job Display],
-    "Part Invoiced Amount", [Part Invoiced Amount],
-    "SDC Manufactured Parts Sales Price", [SDC Manufactured Parts Sales Price],
-    "Expense Reports", [Expense Reports]
-  ),
-    ${args}
+ROW(
+  "Job Display", CALCULATE([Job Display],
+      ${buildTmFilters(filters).join(INDENT)}
+    ),
+  "Part Invoiced Amount", ${amount("partInvoicedAmount")},
+  "SDC Manufactured Parts Sales Price", ${amount("sdcManufacturedPartsSalesPrice")},
+  "Expense Reports", ${amount("expenseReports")}
 )`;
   const rows = (await runDax(dax)) as Record<string, unknown>[];
   const row = rows[0] ?? {};
@@ -172,11 +222,81 @@ export type TmPartsDrillRow = {
 // filters at all) — despite the name, the measure is a text-matched subset of
 // 'Part Purchase' rows whose AP vendor name contains "expense reports". Using
 // 'Travel Expenses' here would show the wrong data and wouldn't reconcile.
-const PARTS_DRILL_FILTER: Record<TmPartsDrillKey, string | null> = {
-  partInvoicedAmount: null,
-  sdcManufacturedPartsSalesPrice: `'Part Purchase'[Manufacturer] = "SDC" && 'Part Purchase'[Supplier] = "Steven Douglas Corp."`,
-  expenseReports: `SEARCH("expense reports", 'Part Purchase'[Supplier], 1, 0) > 0`,
+// ── ONE spec per card, for BOTH the KPI and the drill (2026-09-01) ──────────
+//
+// The KPI used to call the Power BI MEASURE while the drill hand-replicated
+// that measure's filter here. Two definitions of one card, and the only thing
+// keeping them equal was that somebody had transcribed the DAX correctly —
+// exactly the drift the reconciliation requirement exists to prevent. (The
+// hours path had the same defect in a different shape; see tm-hours.ts.)
+//
+// Now `amountColumn` + `rowFilter` + `basis` generate the KPI's SUM and the
+// drill's row projection from the same three values, so "summary total = sum of
+// visible detail records" is true BY CONSTRUCTION rather than by agreement.
+// Verified numerically against the measures they replace, all-jobs
+// 2026-05-31..2026-07-31: Part Invoiced 4,618,166.917330997 both ways, Expense
+// Reports 6,451.06 both ways.
+export const PARTS_CARDS: Record<
+  TmPartsDrillKey,
+  { amountColumn: "Invoiced Amount" | "Total Price"; rowFilter: string | null; basis: TmDateBasis }
+> = {
+  // measure: sum('Part Purchase'[Invoiced Amount]) — an invoiced amount belongs
+  // to the period it was invoiced in, so the model's own Invoiced-Date
+  // relationship is the right basis and this card is unchanged.
+  partInvoicedAmount: { amountColumn: "Invoiced Amount", rowFilter: null, basis: "invoicedDate" },
+
+  // ── This card read $0 for every recent range, structurally ────────────────
+  //
+  // measure: CALCULATE(SUM('Part Purchase'[Total Price]), REMOVEFILTERS(...),
+  //          [Manufacturer] = "SDC", [Supplier] = "Steven Douglas Corp.")
+  //
+  // These are SDC's OWN manufactured parts — internal, so SDC never invoices
+  // itself. Measured 2026-09-01: 1,026 of 2,257 such rows have NO Invoiced Date
+  // at all, and the newest one that does is 2025-10-07. Filtered through the
+  // Invoiced-Date relationship, any range after October 2025 returns blank —
+  // not "no activity", but a guaranteed zero regardless of activity. The card
+  // was dead by construction.
+  //
+  // Purchase Date is the right basis and the more reliable field: 0 of those
+  // 2,257 rows are missing it (against 170 of all 31,312 Part Purchase rows,
+  // versus 3,605 missing Invoiced Date). It is also the event the metric names
+  // — when SDC manufactured/sold the part — rather than when an outside vendor
+  // billed us, which for an internal part never happens.
+  //
+  // On 2026-05-31..2026-07-31 this reports 218 rows / $39,102.73 where the
+  // measure reported blank. It is a DELIBERATE divergence from Power BI's own
+  // measure, the only one on this page, and the reason is that the measure is
+  // wrong for this column rather than that the app wants a different number.
+  sdcManufacturedPartsSalesPrice: {
+    amountColumn: "Total Price",
+    rowFilter: `'Part Purchase'[Manufacturer] = "SDC" && 'Part Purchase'[Supplier] = "Steven Douglas Corp."`,
+    basis: "purchaseDate",
+  },
+
+  // measure: CALCULATE(SUM('Part Purchase'[Total Price]),
+  //          SEARCH("expense reports", 'Part Purchase'[Supplier], 1, 0) > 0)
+  //
+  // NOT the model's separate 'Travel Expenses' table (real employee expense
+  // reports, with no Job/Date-range relationship to this page's filters at
+  // all) — despite the name, this is a text-matched subset of 'Part Purchase'
+  // rows whose AP vendor name contains "expense reports".
+  //
+  // Left on the Invoiced-Date basis: measured both ways on the reported range
+  // and they are identical ($6,451.06, 9 rows), so there is no evidence for
+  // changing it and faithfulness to the measure wins the tie.
+  expenseReports: {
+    amountColumn: "Total Price",
+    rowFilter: `SEARCH("expense reports", 'Part Purchase'[Supplier], 1, 0) > 0`,
+    basis: "invoicedDate",
+  },
 };
+
+/** The filter arguments for one card — the single source both the KPI and the drill build on. */
+function partsCardFilters(filters: TmFilters, key: TmPartsDrillKey): string[] {
+  const card = PARTS_CARDS[key];
+  const args = buildTmFilters(filters, card.basis);
+  return card.rowFilter ? [...args, card.rowFilter] : args;
+}
 
 // 'Part Purchase' is already row-grain (one PO/AP line per row), so this is a
 // straight SELECTCOLUMNS projection rather than an aggregation — every column
@@ -186,8 +306,9 @@ const PARTS_DRILL_FILTER: Record<TmPartsDrillKey, string | null> = {
 // tests/tm-report.test.ts can assert its shape without a live Power BI
 // connection.
 export function buildTmPartsDrillDax(filters: TmFilters, key: TmPartsDrillKey): string {
-  const extra = PARTS_DRILL_FILTER[key];
-  const args = (extra ? [...buildTmFilters(filters), extra] : buildTmFilters(filters)).join(",\n    ");
+  // Same partsCardFilters() the KPI uses — that shared call is what makes
+  // "summary total = sum of visible detail records" structural.
+  const args = partsCardFilters(filters, key).join(",\n    ");
   return `
 EVALUATE
 CALCULATETABLE(

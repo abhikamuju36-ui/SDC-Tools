@@ -30,13 +30,14 @@ import type { TmHoursDrillKey, TmHoursDrillRow } from "@/lib/tm-hours";
 type JobOpt = { id: number; jobId: string; jobName: string; status: string };
 type TmDrillRow = TmHoursDrillRow | TmPartsDrillRow;
 
-const HOURS_DRILL_KEYS: TmHoursDrillKey[] = ["engineeringHours", "shopHours", "pmHours", "manufacturingHours"];
+const HOURS_DRILL_KEYS: TmHoursDrillKey[] = ["engineeringHours", "shopHours", "pmHours", "manufacturingHours", "otherHours"];
 
 const CARD_TITLE: Record<TmDrillKey, string> = {
   engineeringHours: "Engineering Hours",
   shopHours: "Shop Hours",
   pmHours: "PM Hours",
   manufacturingHours: "Manufacturing Hours",
+  otherHours: "Other Hours",
   partInvoicedAmount: "Part Invoiced Amount",
   sdcManufacturedPartsSalesPrice: "SDC Manufactured Parts Sales Price",
   expenseReports: "Expense Reports",
@@ -224,6 +225,12 @@ export function TmReportClient({
         ["shopHours", fmtHours(metrics.shopHours), true],
         ["pmHours", fmtHours(metrics.pmHours), true],
         ["manufacturingHours", fmtHours(metrics.manufacturingHours), true],
+        // Last of the hours rows, and deliberately present even at zero: it is
+        // how the reader can tell the four cards above account for every hour
+        // punched in the range. Non-zero means codes outside Engineering / Shop
+        // / PM / Manufacturing were charged — Service (80-*), Spare Parts
+        // (90-*), or something unmapped worth chasing. Drill it to see which.
+        ["otherHours", fmtHours(metrics.otherHours), true],
         ["partInvoicedAmount", usd(metrics.partInvoicedAmount), false],
         ["sdcManufacturedPartsSalesPrice", usd(metrics.sdcManufacturedPartsSalesPrice), false],
         ["expenseReports", usd(metrics.expenseReports), false],

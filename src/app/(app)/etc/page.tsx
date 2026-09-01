@@ -13,6 +13,7 @@ import { getUndefinedHoursTotals } from "@/lib/unattributed-hours";
 import { EtcMonthKpiCards } from "@/components/EtcMonthKpiCards";
 import { auth } from "@/lib/auth";
 import { requirePagePermission } from "@/lib/require-permission";
+import { hasPermission } from "@/lib/permissions";
 import { DepartmentEtcChecklist } from "@/components/DepartmentEtcChecklist";
 import { readDepartmentCompletions } from "@/lib/etc-department-status";
 import { manageableDepartments, parseDepartmentOwners, DEPARTMENT_OWNERS_ENV } from "@/lib/etc-departments";
@@ -395,7 +396,11 @@ export default async function MonthlyEtcPage({
 }: {
   searchParams: Promise<{ month?: string; dept?: string; jobname?: string; billables?: string }>;
 }) {
-  await requirePagePermission("monthly-etc:view");
+  const etcSession = await requirePagePermission("monthly-etc:view");
+  // Read-only is now a real state: monthly-etc:view without monthly-etc:edit.
+  // The server action re-checks this independently (saveAllNewEtcDrafts), so
+  // this flag only decides what is RENDERED — it is not the enforcement.
+  const canEditEtc = hasPermission(etcSession.user.role, "monthly-etc:edit");
   const { month: monthParam, dept: deptParam, jobname: jobnameParam, billables: billablesParam } = await searchParams;
 
   // Billable / Non-Billable row filter (same pattern as the Projects tab).
@@ -909,6 +914,24 @@ export default async function MonthlyEtcPage({
   const allEntries = jobs.flatMap((j) => j.etcEntries);
   const started = allEntries.length > 0;
   const locked = isMonthLocked(allEntries);
+  // ── Read-only is NOT the same as locked (2026-09-01) ──────────────────────
+  //
+  // `locked` means the month is FROZEN — submitted. It drives the "Locked
+  // (submitted)" badge and the Reopen Month button, so a role that simply lacks
+  // edit rights must not be folded into it: a read-only PM would be told the
+  // month had been submitted and offered a button to reopen it, neither of
+  // which is true.
+  //
+  // This flag is the other reason an input is disabled: monthly-etc:view
+  // WITHOUT monthly-etc:edit, a state that only became expressible when the
+  // permission was split. Passed to every component that renders an editable
+  // cell (EtcSectionCells, PartsCostNewEtcCell, EtcAutosave, the department
+  // checklist) in place of `locked`, so a read-only role gets the whole grid
+  // read-only with no cell left behind.
+  //
+  // Presentation only. saveAllNewEtcDrafts re-checks monthly-etc:edit
+  // server-side and refuses regardless of what the browser was handed.
+  const cellsReadOnly = locked || !canEditEtc;
 
   // ── The department ETC sign-off checklist (§50) ────────────────────────────
   //
@@ -1061,7 +1084,7 @@ export default async function MonthlyEtcPage({
             unlocked month as of 2026-08-04: it used to require the Save gate, which
             meant no safety net at all on a fresh browser session. A submitted month
             is still untouchable. */}
-        <EtcAutosave formId="etc-month-form" month={month} locked={locked} />
+        <EtcAutosave formId="etc-month-form" month={month} locked={cellsReadOnly} />
         {/* Keeps the row TOTAL (NEW ETC) block and the grand-total row in step
             with the section cells as they are typed. Both are summed on the
             server, so nothing else moves them until a save. Renders nothing. */}
@@ -1123,7 +1146,7 @@ export default async function MonthlyEtcPage({
           monthTitle={monthHeading}
           initial={departmentCompletions}
           manageable={manageableDepts}
-          locked={locked}
+          locked={cellsReadOnly}
         />
       </div>
 
@@ -1572,7 +1595,7 @@ export default async function MonthlyEtcPage({
                       draft: entry.newEtcDraft != null ? Number(entry.newEtcDraft) : null,
                       confirmed: entry.submittedAt != null ? round2(Number(entry.newEtc)) : null,
                       cleared: entry.newEtcClearedAt != null,
-                      locked,
+                      locked: cellsReadOnly,
                       monthComplete,
                       precision: "whole",
                     } satisfies NewEtcCellState;
@@ -1661,7 +1684,7 @@ export default async function MonthlyEtcPage({
                                 initialWorked={0}
                                 initialDraft={null}
                                 initialConfirmed={null}
-                                locked={locked}
+                                locked={cellsReadOnly}
                                 monthComplete={monthComplete}
                               />
                             </Fragment>
@@ -1698,7 +1721,7 @@ export default async function MonthlyEtcPage({
                               // would seed straight back from the confirmed value
                               // above. See newEtcSeedText / DEVLOG §16.
                               cleared={entry.newEtcClearedAt != null}
-                              locked={locked}
+                              locked={cellsReadOnly}
                               monthComplete={monthComplete}
                             />
                           </Fragment>
@@ -1819,7 +1842,7 @@ export default async function MonthlyEtcPage({
                           draft: draftCost,
                           confirmed: isHistoricalMonth || partsCostEntry.submittedAt != null ? round2(Number(partsCostEntry.newEtc)) : null,
                           cleared: partsCostEntry.newEtcClearedAt != null,
-                          locked,
+                          locked: cellsReadOnly,
                           monthComplete,
                           // MONEY — keeps its cents. See NewEtcCellState.precision.
                           precision: "exact",
@@ -1914,7 +1937,7 @@ export default async function MonthlyEtcPage({
                                   ? undefined
                                   : `Nothing decided yet. Money Left is ${currencyExact(moneyLeft)} — carrying that forward would give ${currencyExact(suggestedCost)}.`
                               }
-                              locked={locked}
+                              locked={cellsReadOnly}
                             />
                             <td
                               // LIVE (2026-08-04). This cell was the one dependent figure

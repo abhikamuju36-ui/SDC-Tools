@@ -40,16 +40,12 @@ export const proxy = auth((req) => {
     return NextResponse.redirect(signInUrl);
   }
 
-  // /cash-flow checked separately, by role rather than through
-  // permissionForPath/hasPermission() below — it's ELT-only by explicit
-  // request and deliberately NOT a togglable Permission (see
-  // cash-flow-access.ts's requireEltOnly(), the same rule this mirrors), so a
-  // Role Permissions matrix change can never widen it. Page/action-level
-  // enforcement already covered this; this only adds the same defense-in-depth
-  // every other route gets against a typed-in URL.
-  if (req.nextUrl.pathname.startsWith("/cash-flow") && req.auth.user.role !== "ELT") {
-    return NextResponse.redirect(new URL(safeFallbackPath(req.auth.user.role), requestOrigin(req)));
-  }
+  // /cash-flow used to be checked HERE, separately, as `role !== "ELT"` —
+  // it was deliberately not a togglable Permission. It is one now
+  // (cash-flow:view, 2026-09-01) and it is listed in ROUTE_PERMISSIONS like
+  // every other route, so the generic check below covers it and this special
+  // case is gone. Access is unchanged: the migration seeds that permission OFF
+  // for every role but ELT, which passes via hasPermission()'s wildcard.
 
   // Defense-in-depth against a typed-in URL — NOT the only enforcement point.
   // A Server Action's route can fall outside this matcher entirely, so every

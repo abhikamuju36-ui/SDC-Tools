@@ -63,6 +63,18 @@ export const SYNC_SOURCES = [
   // refresh sees "Calculating Undefined Hours…" (§42.15) — and so the totals and the
   // punch rows behind them are written together (§42.10-42.12).
   { source: "undefined_hours", label: "Undefined hours", monthScoped: false },
+  // Re-applies the seeding rule to the open month's HOURS rows, the same way
+  // parts_cost below re-applies it to the money row. Added 2026-09-01: without it
+  // the hours half of a month was frozen at the instant the month was started,
+  // while the parts half re-derived hourly — so a job quoted (or created) after
+  // that instant had no ETC row for its quoted departments at all, and August
+  // 2026 showed three jobs at Prior ETC 0 beside a correct six-figure Parts
+  // Cost. See reseedOpenMonth in lib/etc-actions.ts.
+  //
+  // Runs BEFORE etc_hours_worked deliberately: seeding creates the quoted rows at
+  // the right opening figure, so the hours step then only has to fill them in
+  // rather than invent them.
+  { source: "etc_prior_etc", label: "ETC Prior ETC (quotes and carry-forward)", monthScoped: true },
   { source: "etc_hours_worked", label: "ETC hours worked", monthScoped: true },
   { source: "parts_cost", label: "Parts cost (TotalETO)", monthScoped: true },
   // The Projects grid's Parts Cost Actual column. Not month-scoped: it is a
@@ -378,6 +390,17 @@ export async function runAllSyncs(
         });
         undefinedResult = { kpiRows: r.kpiRows, kpiHours: r.kpiHours };
         return `${r.kpiHours.toFixed(2)}h across ${r.kpiRows} entries counted; ${r.storedRows} rejection rows stored with reasons`;
+      });
+
+      // STARTING a month stays manual (refresh-service.ts); this only ever
+      // re-derives one that is already open, and returns null when there is
+      // nothing open to re-derive.
+      await step("etc_prior_etc", labelFor("etc_prior_etc"), true, async () => {
+        if (!month) return null;
+        const { reseedOpenMonth } = await import("@/lib/etc-seeding");
+        const r = await reseedOpenMonth(month);
+        if (!r) return null;
+        return `${r.created} rows created, ${r.updated} Prior ETC re-derived for ${month}`;
       });
 
       await step("etc_hours_worked", labelFor("etc_hours_worked"), false, async () => {

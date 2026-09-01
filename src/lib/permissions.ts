@@ -6,13 +6,45 @@
 // components, server actions, and client components alike without dragging
 // any of those environments' assumptions into the other.
 //
-// Hierarchy: ALL < MANAGER < SALES < ELT. Higher tiers inherit every lower
-// tier's permissions — OWN_PERMISSIONS below lists only what a tier adds on
-// top of the one below it; hasPermission() walks the chain.
+// ── NO HIERARCHY (2026-09-01, by request) ───────────────────────────────────
+//
+// This file used to read: "Hierarchy: ALL < MANAGER < SALES < ELT. Higher tiers
+// inherit every lower tier's permissions." That is gone, and so are the three
+// things that implemented it: ROLE_RANK, roleAtLeast(), and
+// affectedRolesForCascade().
+//
+// Role names describe GROUPS OF USERS. They do not describe an access level.
+// Every (role, permission) pair is stored and evaluated on its own, so all of
+// these are now expressible, and none of them were before:
+//
+//   * MANAGER has Monthly ETC, SALES does not.
+//   * SALES has Dashboard, MANAGER does not.
+//   * PM has Monthly ETC, SALES is blocked from it.
+//
+// Ticking a box for one role reaches exactly one row. Nothing cascades, nothing
+// is implied, and there is no "which is the lowest tier holding this" question
+// left to ask — which is why roleAtLeast() was deleted rather than kept for
+// convenience. It had no callers outside its own test, and any new caller would
+// be reintroducing the ranking this change exists to remove.
+//
+// ELT is the ONE exception, and it is a wildcard rather than a rank: it passes
+// for every permission, including ones added after this file was last touched.
+// That is deliberate (see hasPermission) and it is not a mechanism the other
+// roles route through — ALL, MANAGER, PM and SALES are independent of it and of
+// each other.
 
-export type AppRole = "ALL" | "MANAGER" | "SALES" | "ELT";
+export type AppRole = "ALL" | "MANAGER" | "PM" | "SALES" | "ELT";
 
-export const ROLES: readonly AppRole[] = ["ALL", "MANAGER", "SALES", "ELT"];
+export const ROLES: readonly AppRole[] = ["ALL", "MANAGER", "PM", "SALES", "ELT"];
+
+/** Human labels, for every dropdown and column header that names a role. */
+export const ROLE_LABELS: Record<AppRole, string> = {
+  ALL: "All",
+  MANAGER: "Managers",
+  PM: "PM",
+  SALES: "Sales",
+  ELT: "ELT",
+};
 
 export type Permission =
   | "job-hour-details:view"
@@ -21,8 +53,11 @@ export type Permission =
   | "projects:view"
   | "projects:edit"
   | "monthly-etc:view"
+  | "monthly-etc:edit"
+  | "monthly-etc:submit"
   | "hours:view"
   | "dashboard:view"
+  | "cash-flow:view"
   | "standards:view"
   | "standards:edit"
   | "standards:pm"
@@ -37,36 +72,94 @@ export type Permission =
   | "permissions:manage"
   | "tm:view";
 
-// The shape every tier's OWN grants take — never flattened, hasPermission()
-// is the one place inheritance is resolved. This used to be the actual data
-// (a `const`); now it's just the type and the day-one fallback, since
-// role-permissions-store.ts made it live-editable (2026-08-18).
+// The shape every role's grants take. Now COMPLETE per role rather than "what
+// this tier adds on top of the one below it" — that phrasing only made sense
+// while hasPermission() walked a chain, and leaving the data as a delta would
+// have been the hierarchy surviving in storage after being removed from code.
 type OwnPermissionsShape = Record<AppRole, readonly Permission[]>;
 
 // What ships in code, and what the app falls back to if the database is ever
 // unreachable at boot (role-permissions-store.ts's loadRolePermissionsFromDb
-// normally overwrites this before the first real request). Turning on the
-// Role Permissions admin tab was seeded to match this exactly, so day one
-// changes nobody's access — see the seed migration.
+// normally overwrites this before the first real request).
+//
+// These lists are the EFFECTIVE access each role held on 2026-09-01, read off
+// the live RolePermission table and flattened — so removing inheritance moved
+// nobody's access, including on this fallback path. Verified before writing
+// them: every column of that table was already monotonic (no role held a
+// permission the role "above" it lacked), which is why the flattening was a
+// no-op rather than a guess.
 const DEFAULT_OWN_PERMISSIONS: OwnPermissionsShape = {
-  ALL: ["job-hour-details:view", "job-hour-details:schedule", "build-readiness:view"],
-  MANAGER: ["projects:view", "monthly-etc:view", "hours:view", "dashboard:view", "employees:view"],
-  SALES: [
-    "projects:edit",
-    "standards:view",
-    "standards:edit",
-    "standards:pm",
-    "standards:mfg",
-    "standards:warranty",
-    "profitability:view",
+  ALL: [
+    "job-hour-details:view",
+    "job-hour-details:schedule",
+    "build-readiness:view",
+    "monthly-etc:view",
+    // Nobody checked these before they existed: every caller who could open
+    // Monthly ETC could also type in it, and submission was gated only by the
+    // Standard Sheet password. Seeded ON so splitting the permission apart
+    // takes nothing away from anyone who has it today — see the seed
+    // migration's note about tightening them deliberately rather than by
+    // accident of a refactor.
+    "monthly-etc:edit",
+    "monthly-etc:submit",
   ],
-  // ELT's real answer is "everything" (see the wildcard in hasPermission) —
-  // this list only needs to name what ELT is the FIRST tier to receive, so
-  // that roleAtLeast()-style "who's the lowest tier with this" questions have
-  // a real place to point. permissions:manage lives here for the same
-  // reason users:manage already did — redundant under the wildcard, but
-  // keeps the type and the DB seed honest about who's first to get it.
-  ELT: ["employees:edit", "employees:hiring:assign", "audit-log:view", "users:manage", "permissions:manage", "tm:view"],
+  MANAGER: [
+    "job-hour-details:view",
+    "job-hour-details:schedule",
+    "build-readiness:view",
+    "monthly-etc:view",
+    "monthly-etc:edit",
+    "monthly-etc:submit",
+    "dashboard:view",
+    "employees:view",
+    "hours:view",
+    "projects:view",
+    "tm:view",
+  ],
+  // NEW ROLE (2026-09-01). Project execution, and nothing else — explicitly NOT
+  // seeded from MANAGER's or SALES's list, per the request. What PM gets is the
+  // set named there: Monthly ETC (view + edit), Projects, Job Hour Details,
+  // Build Readiness, plus the two execution views those are read alongside.
+  //
+  // Deliberately withheld, every one of them a single checkbox away: ETC Submit
+  // (finalising a month stays with MANAGER/SALES/ELT), Standard Fees,
+  // Profitability, T&M, Projects — Edit, Cash Flow, and every Administration
+  // row.
+  PM: [
+    "job-hour-details:view",
+    "job-hour-details:schedule",
+    "build-readiness:view",
+    "monthly-etc:view",
+    "monthly-etc:edit",
+    "projects:view",
+    "dashboard:view",
+    "hours:view",
+  ],
+  SALES: [
+    "job-hour-details:view",
+    "job-hour-details:schedule",
+    "build-readiness:view",
+    "monthly-etc:view",
+    "monthly-etc:edit",
+    "monthly-etc:submit",
+    "dashboard:view",
+    "employees:view",
+    "hours:view",
+    "projects:view",
+    "projects:edit",
+    "tm:view",
+  ],
+  // ELT's real answer is "everything", from the wildcard in hasPermission. This
+  // list is never consulted for an ELT caller; it exists so the type is total
+  // and so the DB seed has something honest to point at.
+  ELT: [
+    "employees:edit",
+    "employees:hiring:assign",
+    "audit-log:view",
+    "users:manage",
+    "permissions:manage",
+    "cash-flow:view",
+  ],
 };
 
 // ── Why globalThis, not a plain module-level `let` ──────────────────────────
@@ -92,52 +185,40 @@ export function setOwnPermissions(next: OwnPermissionsShape): void {
   g.__ownPermissions = next;
 }
 
-const ROLE_RANK: Record<AppRole, number> = { ALL: 0, MANAGER: 1, SALES: 2, ELT: 3 };
-
 /**
  * The one function every enforcement point calls — proxy.ts, page-level
- * guards, server actions, and the sidebar's nav filter. ELT is a wildcard: it
- * passes for ANY permission, including ones added after this file was last
- * touched, per "any future restricted feature unless explicitly excluded."
- * This check is untouched by the live-editable store below on purpose — it's
- * what guarantees an ELT user can never lock their own tier out by
- * misconfiguring the Role Permissions matrix.
+ * guards, server actions, route handlers, and the sidebar's nav filter.
+ *
+ * ONE ROLE, ONE LOOKUP. No rank comparison and no walk across other roles: the
+ * question is only ever "does THIS role hold THIS permission". A role that is
+ * not in the set at all — an unrecognised claim from a stale session cookie
+ * issued before the role list changed — fails closed rather than throwing.
+ *
+ * ELT is a wildcard and passes for ANY permission, including ones added after
+ * this file was last touched, per "any future restricted feature unless
+ * explicitly excluded." It is checked before the store is consulted, which is
+ * what guarantees an ELT user can never lock their own role out by
+ * misconfiguring the Role Permissions matrix. It grants nothing to the other
+ * roles and is not a hierarchy: no other role's answer depends on it.
  */
 export function hasPermission(role: AppRole | null | undefined, permission: Permission): boolean {
   if (!role) return false;
   if (role === "ELT") return true;
-  const ownPermissions = g.__ownPermissions!;
-  for (const r of ROLES) {
-    if (ROLE_RANK[r] <= ROLE_RANK[role] && ownPermissions[r].includes(permission)) return true;
-  }
-  return false;
-}
-
-/** For "Managers and up" style checks that aren't about one named permission. */
-export function roleAtLeast(role: AppRole | null | undefined, min: AppRole): boolean {
-  return !!role && ROLE_RANK[role] >= ROLE_RANK[min];
+  const own = g.__ownPermissions![role];
+  return own !== undefined && own.includes(permission);
 }
 
 /**
- * Roles a Role Permissions matrix save can actually change (role-permissions-
- * store.ts) — ELT is never included. ELT's access comes from the wildcard in
- * hasPermission() above, unconditionally, so there is no row for it in that
- * table and nothing here to cascade into or out of.
+ * Roles a Role Permissions matrix save can actually change — ELT is never
+ * included. ELT's access comes from the wildcard in hasPermission() above,
+ * unconditionally, so there is no row for it in that table and nothing for a
+ * save to reach.
  */
-export const EDITABLE_ROLES: readonly Exclude<AppRole, "ELT">[] = ["ALL", "MANAGER", "SALES"];
+export const EDITABLE_ROLES: readonly Exclude<AppRole, "ELT">[] = ["ALL", "MANAGER", "PM", "SALES"];
 
-/**
- * The Role Permissions matrix's cascade rule, pulled out as a pure function
- * so it's testable without a database — role-permissions-store.ts needs
- * `import "server-only"`, which (per its own and realtime-hub.ts's notes)
- * isn't importable from this repo's plain `tsx --test` runner. Which
- * editable roles a write to `role` touches: enabling reaches `role` and
- * everything ABOVE it; disabling reaches `role` and everything AT OR BELOW
- * it. This is what makes a hierarchy gap structurally impossible rather
- * than merely checked-for — there is no write path that touches only one
- * role in the middle of the chain.
- */
-export function affectedRolesForCascade(role: AppRole, enabling: boolean): Exclude<AppRole, "ELT">[] {
-  const targetRank = ROLE_RANK[role];
-  return EDITABLE_ROLES.filter((r) => (enabling ? ROLE_RANK[r] >= targetRank : ROLE_RANK[r] <= targetRank));
+export type EditableRole = Exclude<AppRole, "ELT">;
+
+/** Narrows an arbitrary string (a form field, a client argument) to a known editable role. */
+export function isEditableRole(value: string): value is EditableRole {
+  return (EDITABLE_ROLES as readonly string[]).includes(value);
 }

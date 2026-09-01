@@ -2,7 +2,7 @@ import "server-only";
 import { prisma } from "@/lib/prisma";
 import { logAudit } from "@/lib/audit";
 import { publishPermissionsChanged } from "@/lib/realtime-hub";
-import { setOwnPermissions, affectedRolesForCascade, EDITABLE_ROLES, type AppRole, type Permission } from "@/lib/permissions";
+import { setOwnPermissions, EDITABLE_ROLES, ROLES, isEditableRole, type AppRole, type EditableRole, type Permission } from "@/lib/permissions";
 
 // The live-editable half of the role/permission system — the DB-backed
 // source lib/permissions.ts's in-memory cache is loaded from at boot and
@@ -16,15 +16,23 @@ import { setOwnPermissions, affectedRolesForCascade, EDITABLE_ROLES, type AppRol
 // grants ELT everything, unconditionally, before this table is even
 // consulted. Keeping ELT out of the table entirely (rather than seeding it
 // `true` and hoping nothing ever flips it) means there is no row an ELT user
-// could accidentally disable to lock their own tier out. EDITABLE_ROLES
-// itself lives in lib/permissions.ts, shared with the matrix's cascade rule.
+// could accidentally disable to lock their own role out.
+//
+// There is no cascade any more (2026-09-01). A write reaches exactly the one
+// (role, permission) row it names — see setRolePermission.
 
-type RolePermissionRow = { role: AppRole; permission: string; enabled: boolean };
+type RolePermissionRow = { role: AppRole; permission: string; enabled: boolean | number };
 
 function buildOwnPermissionsShape(rows: RolePermissionRow[]): Record<AppRole, readonly Permission[]> {
-  const byRole: Record<AppRole, Permission[]> = { ALL: [], MANAGER: [], SALES: [], ELT: [] };
+  // Built from ROLES rather than a literal so a role added to the union cannot
+  // be forgotten here and silently read back as `undefined` (hasPermission
+  // fails closed on that, but a role whose every permission vanished would look
+  // like a permissions bug, not a missing key).
+  const byRole = Object.fromEntries(ROLES.map((r) => [r, [] as Permission[]])) as Record<AppRole, Permission[]>;
   for (const r of rows) {
-    if (r.enabled) byRole[r.role].push(r.permission as Permission);
+    // A row for a role this build no longer knows (rolled back mid-migration)
+    // is ignored rather than crashing the boot load.
+    if (Boolean(r.enabled) && byRole[r.role]) byRole[r.role].push(r.permission as Permission);
   }
   return byRole;
 }
@@ -35,9 +43,14 @@ export async function loadRolePermissionsFromDb(): Promise<void> {
   setOwnPermissions(buildOwnPermissionsShape(rows));
 }
 
+/** Every editable role, all false — the starting point for a permission no role holds yet. */
+function emptyEnabledMap(): Record<EditableRole, boolean> {
+  return Object.fromEntries(EDITABLE_ROLES.map((r) => [r, false])) as Record<EditableRole, boolean>;
+}
+
 export type RolePermissionMatrixRow = {
   permission: Permission;
-  enabled: Record<Exclude<AppRole, "ELT">, boolean>;
+  enabled: Record<EditableRole, boolean>;
 };
 
 /** Current state for every stored permission, for the admin page to render. ELT isn't included — it's always true, drawn by the UI, never read from here. */
@@ -48,10 +61,10 @@ export async function getRolePermissionsMatrix(): Promise<RolePermissionMatrixRo
     const key = r.permission as Permission;
     let row = byPermission.get(key);
     if (!row) {
-      row = { permission: key, enabled: { ALL: false, MANAGER: false, SALES: false } };
+      row = { permission: key, enabled: emptyEnabledMap() };
       byPermission.set(key, row);
     }
-    if (r.role !== "ELT") row.enabled[r.role] = r.enabled;
+    if (isEditableRole(r.role)) row.enabled[r.role] = Boolean(r.enabled);
   }
   return [...byPermission.values()];
 }
@@ -61,13 +74,18 @@ export type SetRolePermissionResult =
   | { ok: false; error: string };
 
 /**
- * The one write path. Cascades so a hierarchy gap is structurally impossible
- * rather than merely validated against: enabling a permission for `role`
- * also enables it for every editable role ABOVE it (checking a lower tier
- * implies every higher tier already had it); disabling disables it for
- * `role` and every editable role AT OR BELOW it. ELT is refused outright —
- * defense in depth on top of the fact that hasPermission()'s wildcard makes
- * a stored ELT row meaningless anyway.
+ * The one write path — ONE ROW PER CALL (2026-09-01).
+ *
+ * This used to cascade: enabling a permission for `role` also enabled it for
+ * every editable role "above" it, and disabling cleared it for `role` and
+ * everything at or below. That was how the hierarchy was kept gap-free, and it
+ * is exactly the behavior being removed — ticking Managers → Monthly ETC must
+ * not tick Sales, and unticking Sales must not untick Managers.
+ *
+ * So there is no `affected` list any longer. `role` and `permission` name one
+ * row in RolePermission, and that row is the only thing this touches. ELT is
+ * still refused outright: defense in depth on top of the fact that
+ * hasPermission()'s wildcard makes a stored ELT row meaningless anyway.
  */
 export async function setRolePermission(
   role: AppRole,
@@ -76,40 +94,37 @@ export async function setRolePermission(
   actorEmail: string | null,
 ): Promise<SetRolePermissionResult> {
   if (role === "ELT") return { ok: false, error: "ELT always has full access — it can't be changed here." };
-  if (!EDITABLE_ROLES.includes(role)) return { ok: false, error: `"${role}" is not a role this can change.` };
+  if (!isEditableRole(role)) return { ok: false, error: `"${role}" is not a role this can change.` };
 
-  const affected = affectedRolesForCascade(role, enabled);
+  const existing = await prisma.$queryRaw<{ enabled: boolean | number }[]>`
+    SELECT enabled FROM RolePermission WHERE role = ${role} AND permission = ${permission} LIMIT 1
+  `;
+  // Boolean(), because $queryRaw can hand back MySQL's TINYINT(1) as 0/1 rather
+  // than false/true depending on the driver path. Without it the no-op check
+  // below compares 1 === true, misses, and writes an audit row saying a value
+  // changed to what it already was.
+  const before = existing.length > 0 ? Boolean(existing[0].enabled) : false;
+  // Already correct: no row touched, nothing audited, nothing broadcast.
+  if (before === enabled) return { ok: true, changed: [] };
 
-  const changed: { role: AppRole; enabled: boolean }[] = [];
-  for (const r of affected) {
-    const existing = await prisma.$queryRaw<{ enabled: boolean }[]>`
-      SELECT enabled FROM RolePermission WHERE role = ${r} AND permission = ${permission} LIMIT 1
-    `;
-    const before = existing[0]?.enabled ?? false;
-    if (before === enabled) continue; // already correct — no row touched, nothing to audit
+  await prisma.$executeRaw`
+    INSERT INTO RolePermission (role, permission, enabled, updatedAt, updatedByEmail)
+    VALUES (${role}, ${permission}, ${enabled}, ${new Date()}, ${actorEmail})
+    ON DUPLICATE KEY UPDATE enabled = ${enabled}, updatedAt = ${new Date()}, updatedByEmail = ${actorEmail}
+  `;
+  await logAudit({
+    action: "permission.updated",
+    entityType: "RolePermission",
+    entityId: `${role}:${permission}`,
+    summary: `${permission} for ${role} set to ${enabled ? "on" : "off"} by ${actorEmail ?? "unknown"}`,
+    metadata: { role, permission, before, after: enabled },
+  });
 
-    await prisma.$executeRaw`
-      INSERT INTO RolePermission (role, permission, enabled, updatedAt, updatedByEmail)
-      VALUES (${r}, ${permission}, ${enabled}, ${new Date()}, ${actorEmail})
-      ON DUPLICATE KEY UPDATE enabled = ${enabled}, updatedAt = ${new Date()}, updatedByEmail = ${actorEmail}
-    `;
-    changed.push({ role: r, enabled });
-    await logAudit({
-      action: "permission.updated",
-      entityType: "RolePermission",
-      entityId: `${r}:${permission}`,
-      summary: `${permission} for ${r} set to ${enabled ? "on" : "off"} by ${actorEmail ?? "unknown"}`,
-      metadata: { role: r, permission, before, after: enabled },
-    });
-  }
+  // Re-read the whole table rather than patch the in-memory shape by hand —
+  // the table is small (dozens of rows), and re-deriving from the DB is one
+  // fewer place this and loadRolePermissionsFromDb could quietly disagree.
+  await loadRolePermissionsFromDb();
+  publishPermissionsChanged();
 
-  if (changed.length > 0) {
-    // Re-read the whole table rather than patch the in-memory shape by hand —
-    // the table is small (dozens of rows), and re-deriving from the DB is one
-    // fewer place this and loadRolePermissionsFromDb could quietly disagree.
-    await loadRolePermissionsFromDb();
-    publishPermissionsChanged();
-  }
-
-  return { ok: true, changed };
+  return { ok: true, changed: [{ role, enabled }] };
 }

@@ -13,7 +13,7 @@ import { createHash } from "crypto";
 import { prisma } from "@/lib/prisma";
 import { VALID_JOB_TYPES, etcActiveJobFilter } from "@/lib/job-filters";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION, JOB_DASHBOARD_HOURS_CODES, mapPunchToColumns } from "@/lib/sections";
-import { calcHoursLeft, round2, isMonthLocked, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, monthWindowUtc, prevMonth } from "@/lib/etc";
+import { calcHoursLeft, round2, isMonthLocked, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, monthWindowUtc, startsInMonth } from "@/lib/etc";
 import { getPartsCostBookedByJob } from "@/lib/sync-totaleto";
 import {
   hoursByJobSection,
@@ -547,7 +547,9 @@ export async function invalidateJobHoursDigests(jobIds?: number[]): Promise<numb
 // When there are hours in a tracked section the job has no entry for (work
 // charged to a section that was never quoted, so startMonth didn't seed it),
 // the entry is CREATED rather than the hours silently dropped. Prior ETC for
-// these comes from the previous month's entry if one exists, else 0.
+// these comes from the one shared rule — priorEtcForMonth — exactly as seeding
+// would have given it: the latest earlier month's New ETC, or the quote when this
+// is the job's first ETC month, or 0 when there is genuinely neither.
 // `prefetchedRows` — see syncActualHours: one parse shared between the two.
 // Raw rows -> ETC-grid-column rows, in memory. The 10-311 split (one raw row becomes
 // two) happens HERE, not in storage — see mapPunchToColumns in sections.ts for the
@@ -592,9 +594,29 @@ export async function syncHoursWorked(
   const jobIdStrs = [...new Set([...spentByKey.keys()].map((k) => k.split("::")[0]))];
   const jobRows = await prisma.job.findMany({
     where: { jobId: { in: jobIdStrs } },
-    select: { id: true, jobId: true, status: true, completeDate: true, type: true },
+    // startDate and the quote come along so a row CREATED below opens at the same
+    // figure seeding would have given it — see the note at the creation site.
+    select: {
+      id: true,
+      jobId: true,
+      status: true,
+      completeDate: true,
+      type: true,
+      startDate: true,
+      estimatedHours: { select: { section: true, quotedHours: true } },
+    },
   });
   const jobByJobId = new Map(jobRows.map((j) => [j.jobId, j]));
+
+  // EVERY earlier month, not prevMonth — the correction latestPriorEtcByKey was
+  // written to make, applied here too so this path cannot answer "what does this
+  // row open at" differently from seedMonth, the cascade, reopenMonth and
+  // syncPartsCost. One query for the whole loop.
+  const priorEntries = await prisma.etcEntry.findMany({
+    where: { month: { lt: month }, jobId: { in: jobRows.map((j) => j.id) } },
+    select: { jobId: true, section: true, month: true, newEtc: true },
+  });
+  const priorByKey = latestPriorEtcByKey(priorEntries);
 
   let rowsUpdated = 0;
   let rowsSkipped = 0;
@@ -637,11 +659,27 @@ export async function syncHoursWorked(
         continue;
       }
 
-      const priorEntry = await prisma.etcEntry.findUnique({
-        where: { jobId_section_month: { jobId: job.id, section, month: prevMonth(month) } },
-        select: { newEtc: true },
+      // The SHARED rule (priorEtcForMonth), not a local guess. This used to read
+      // the immediately preceding month alone and fall through to a hardcoded 0 —
+      // wrong in both of the ways the rest of the app had already been fixed for:
+      //
+      //   • prevMonth only, so a job that skipped a period reopened at 0 instead
+      //     of resuming from where its ETC actually left off (latestPriorEtcByKey).
+      //   • no quote fallback at all, so a punch landing on a job whose FIRST ETC
+      //     month this is created the row at 0 against a real quote. That is how
+      //     job 1163 came to show Prior 0 on 10-211/10-312/10-313 in August 2026
+      //     against quotes of 1,770 / 490 / 630 — the row did not exist when
+      //     August was seeded, so this path invented it, and this path did not
+      //     know the rule.
+      //
+      // A job with genuinely nothing quoted and no history still opens at 0, which
+      // is correct and is what this branch was originally written for.
+      const startsThisMonth = startsInMonth(job.startDate, month);
+      const priorEtc = priorEtcForMonth({
+        startsThisMonth,
+        carried: priorByKey.get(`${job.id}-${section}`),
+        quoted: Number(job.estimatedHours.find((q) => q.section === section)?.quotedHours ?? 0),
       });
-      const priorEtc = priorEntry ? Number(priorEntry.newEtc) : 0;
 
       await prisma.etcEntry.create({
         data: {
@@ -835,9 +873,7 @@ export async function syncPartsCost(month: string): Promise<{ rowsUpserted: numb
     // A job whose Start Date falls IN this month opens at its quote, whatever the
     // chain says — the same rule seedMonth applies to hours, so both halves of a
     // job's first month agree. See the note there (jobs 1159/1160).
-    const startsThisMonth =
-      job.startDate != null &&
-      `${job.startDate.getUTCFullYear()}-${String(job.startDate.getUTCMonth() + 1).padStart(2, "0")}` === month;
+    const startsThisMonth = startsInMonth(job.startDate, month);
     // `undefined`, not `?? 0`: a job whose latest parts month genuinely
     // confirmed 0 has finished buying, and must NOT be reopened at its original
     // quote. Same precedence as hours — priorEtcForMonth in lib/etc.ts.

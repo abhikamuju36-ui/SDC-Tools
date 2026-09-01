@@ -13,6 +13,7 @@ import { punchSources, type PaylocitySource } from "@/lib/paylocity-sources";
 import { aggregateUndefined, countsAsUndefined, type UndefinedReason } from "@/lib/undefined-hours-rules";
 import { prisma } from "@/lib/prisma";
 import { buildJobLabelIndex } from "@/lib/job-label";
+import { mergeManualContractorHours, manualContractorPoolHours } from "@/lib/manual-contractor-hours";
 
 // ── THE hours feed (§42.8, §42.14) ──────────────────────────────────────────
 //
@@ -184,17 +185,42 @@ export async function readHoursFeed(opts?: { onlyMonth?: string }): Promise<Hour
   // in `sources` for anything that wants the full picture.
   const primary = reads.find((r) => r.source.toYear == null) ?? reads[0];
 
-  const rows = reads.flatMap((r) => r.read.rows);
+  const officialRows = reads.flatMap((r) => r.read.rows);
   const rejected = reads.flatMap((r) => r.read.rejected);
   const poolHours = new Map<string, number>();
   for (const { read } of reads) {
     for (const [k, v] of read.poolHours) poolHours.set(k, (poolHours.get(k) ?? 0) + v);
   }
-  const monthsCovered = [...new Set(reads.flatMap((r) => r.read.monthsCovered))].sort();
+
+  // ── Manual contractor punches (TEMPORARY, 2026-09-01) ─────────────────────
+  //
+  // Paylocity's report is not carrying temp/contractor punches for July-August
+  // 2026, so the supplied timecards are merged in HERE — the one doorway every
+  // hours consumer already comes through, so Monthly ETC, the job rollups, the
+  // punch drill, Projects, T&M, the pools and the exports all pick them up from
+  // this single join. See lib/manual-contractor-hours.ts.
+  //
+  // `officialRows` is passed in so suppression is decided against the data being
+  // merged, on every read: any (employee, work date) the official export already
+  // covers drops its manual segments entirely. That is what makes a future
+  // Paylocity fix safe without anyone having to delete rows in time.
+  const manual = await mergeManualContractorHours({
+    officialRows,
+    knownJobNumbers: known,
+    onlyMonth: wanted,
+  });
+  const rows = manual.rows.length > 0 ? [...officialRows, ...manual.rows] : officialRows;
+  for (const [k, v] of manualContractorPoolHours(manual.rows)) {
+    poolHours.set(k, (poolHours.get(k) ?? 0) + v);
+  }
+
+  const monthsCovered = [...new Set([...reads.flatMap((r) => r.read.monthsCovered), ...manual.rows.map((r) => `${r.year}-${String(r.month).padStart(2, "0")}`)])].sort();
   let lastWorkDate: Date | null = null;
   for (const { read } of reads) {
     if (read.lastWorkDate && (!lastWorkDate || read.lastWorkDate > lastWorkDate)) lastWorkDate = read.lastWorkDate;
   }
+  // A manual punch later than anything in the workbook still moves "hours through".
+  for (const r of manual.rows) if (!lastWorkDate || r.date > lastWorkDate) lastWorkDate = r.date;
 
   const excludedTotal = reads.reduce((s, r) => s + r.read.stats.hoursExcludedByYear, 0);
   const note =
@@ -209,7 +235,18 @@ export async function readHoursFeed(opts?: { onlyMonth?: string }): Promise<Hour
       )
       .join("; ") +
     `. Hours through ${lastWorkDate?.toISOString().slice(0, 10) ?? "—"}.` +
-    (excludedTotal > 0 ? ` ${excludedTotal.toFixed(2)}h of overlapping duplicate hours prevented.` : "");
+    (excludedTotal > 0 ? ` ${excludedTotal.toFixed(2)}h of overlapping duplicate hours prevented.` : "") +
+    // Stated, never silent: a figure that includes manually transcribed
+    // timecards must say so wherever provenance is printed.
+    (manual.totalHours > 0
+      ? ` PLUS ${manual.totalHours.toFixed(2)}h from ${manual.rows.length} manually entered contractor timecard segments (Paylocity is not yet reporting them).`
+      : "") +
+    (manual.suppressed.length > 0
+      ? ` ${manual.suppressed.reduce((s2, x) => s2 + x.hours, 0).toFixed(2)}h of manual contractor hours suppressed — Paylocity now covers those days.`
+      : "") +
+    (manual.unknownJobs.length > 0
+      ? ` ${manual.unknownJobs.length} manual contractor segment(s) name a job the app does not know and were NOT counted.`
+      : "");
 
   return {
     rows,

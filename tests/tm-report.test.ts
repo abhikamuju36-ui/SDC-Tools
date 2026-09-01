@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { buildTmFilters, buildTmPartsDrillDax, type TmPartsDrillKey } from "../src/lib/tm-report";
+import { buildTmFilters, buildTmPartsDrillDax, PARTS_CARDS, type TmPartsDrillKey } from "../src/lib/tm-report";
 
 // buildTmFilters is the pure, network-free half of tm-report.ts — the DAX
 // query itself is only provably correct against the live Power BI model
@@ -65,11 +65,54 @@ test("the parts drill never groups by a dimension column — it projects the fac
   }
 });
 
-test("every parts drill query carries the same job/date filter arguments buildTmFilters produces for the KPI", () => {
+test("every parts drill query carries exactly its OWN card's filter arguments — the reconciliation invariant", () => {
+  // Was asserting buildTmFilters(filters) (the DEFAULT basis) appeared in all
+  // three drills. That stopped being the invariant on 2026-09-01, when SDC
+  // Manufactured Parts moved to a Purchase Date basis: the right test is that a
+  // card's drill uses THAT CARD's filters, not that every card uses the same
+  // ones. PARTS_CARDS is the single spec both the KPI and the drill build from,
+  // so this checks the two really are generated from it.
   const filters = { jobIds: ["1142", "1150"], startDate: "2026-01-01", endDate: "2026-03-31" };
-  const expectedArgs = buildTmFilters(filters);
   for (const key of ALL_PARTS_KEYS) {
+    const card = PARTS_CARDS[key];
     const dax = buildTmPartsDrillDax(filters, key);
-    for (const arg of expectedArgs) assert.ok(dax.includes(arg), `${key}: missing filter arg "${arg}" — KPI and drill would scope different rows`);
+    for (const arg of buildTmFilters(filters, card.basis)) {
+      assert.ok(dax.includes(arg), `${key}: missing filter arg "${arg}" — KPI and drill would scope different rows`);
+    }
+    if (card.rowFilter) {
+      assert.ok(dax.includes(card.rowFilter), `${key}: drill is missing the card's own row filter`);
+    }
+    // The amount column the KPI sums must be a column the drill actually projects.
+    assert.ok(dax.includes(`'Part Purchase'[${card.amountColumn}]`), `${key}: drill does not project ${card.amountColumn}`);
   }
+});
+
+test("SDC Manufactured Parts filters on Purchase Date, detached from the Invoiced-Date relationship", () => {
+  // The structural bug this fixed: 'Part Purchase' joins the Date table on
+  // INVOICED Date, and SDC's own internal parts are never invoiced (newest
+  // Invoiced Date 2025-10-07; 1,026 of 2,257 rows have none at all). Filtering
+  // through that relationship returned blank for every recent range — a
+  // guaranteed zero regardless of activity. Measured 2026-05-31..2026-07-31:
+  // blank before, 218 rows / $39,102.73 after.
+  const filters = { jobIds: [], startDate: "2026-05-31", endDate: "2026-07-31" };
+  const args = buildTmFilters(filters, "purchaseDate");
+  assert.ok(args.includes("ALL('Date')"), "must detach the Invoiced-Date relationship");
+  assert.ok(
+    args.some((a) => a.includes("'Part Purchase'[Purchase Date]")),
+    "must bound Purchase Date explicitly",
+  );
+  assert.ok(!args.some((a) => a.includes("'Date'[Date]")), "must not also filter the Date table");
+  // The job filter survives the ALL('Date') — scoping a card by job must still work.
+  const scoped = buildTmFilters({ ...filters, jobIds: ["1163"] }, "purchaseDate");
+  assert.ok(scoped.some((a) => a.includes("'Job'[Job Id]")), "job filter must survive ALL('Date')");
+  assert.equal(PARTS_CARDS.sdcManufacturedPartsSalesPrice.basis, "purchaseDate");
+  // The other two stay on the model's own basis.
+  assert.equal(PARTS_CARDS.partInvoicedAmount.basis, "invoicedDate");
+  assert.equal(PARTS_CARDS.expenseReports.basis, "invoicedDate");
+});
+
+test("the default date basis is unchanged — Invoiced Date, via the Date table", () => {
+  const args = buildTmFilters({ jobIds: [], startDate: "2026-05-31", endDate: "2026-07-31" });
+  assert.ok(args.some((a) => a.includes("'Date'[Date] >= DATE(2026,5,31)")));
+  assert.ok(!args.includes("ALL('Date')"));
 });

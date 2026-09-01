@@ -7,13 +7,21 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// All < Manager < Sales < ELT (see src/lib/permissions.ts for what each tier
-// actually grants — this enum is just the stored value). ADMIN was retired
-// 2026-08-18: every ADMIN row became ELT in the same migration that added
-// SALES/ELT (20260818150000_add_sales_elt_roles).
+// A user's role GROUP — not an access level. There is deliberately no ordering
+// among these: what each one can do is the RolePermission table alone, one
+// independent row per (role, permission). See src/lib/permissions.ts, which
+// dropped ROLE_RANK / inheritance / cascade on 2026-09-01.
+//
+// ADMIN was retired 2026-08-18: every ADMIN row became ELT in the same
+// migration that added SALES/ELT (20260818150000_add_sales_elt_roles). ELT is
+// the all-access role (a wildcard in hasPermission, not a top rank).
+//
+// PM added 2026-09-01 (20260901120000_add_pm_role_and_split_etc_permissions)
+// for project execution — seeded explicitly, NOT copied from MANAGER or SALES.
 enum Role {
   ALL
   MANAGER
+  PM
   SALES
   ELT
 }
@@ -170,6 +178,23 @@ model Job {
   totEtoEstMfgHours        Decimal?  @db.Decimal(10, 2)
   totEtoActMfgHours        Decimal?  @db.Decimal(10, 2)
   totEtoSyncedAt           DateTime?
+  // ── Customer identity, from TotalETO (2026-08-31) ──────────────────────────
+  //
+  // Captured by syncFromTotalEto so the app can group customers by a STABLE
+  // SOURCE IDENTIFIER instead of by the spelling somebody typed. Read only
+  // through lib/customer-canonical.ts, which is the one definition of "who the
+  // customer is" — see that file's header for why the accounting account and
+  // not the company id is the useful one (TotalETO holds five duplicate First
+  // Solar company records; they share one account).
+  //
+  // Both NULL-able with no default and no backfill from a default: a job that
+  // TotalETO has no project for (the internal 4000/7000/10000-series) has no
+  // company and no account, and that is a real "not applicable", not a zero.
+  // Unlike `customer`, these are NOT protected by customerManuallyEdited — they
+  // describe the TotalETO project, so the sync always rewrites them; the manual
+  // override is honoured in the resolver instead.
+  totEtoCompanyId          Int?
+  totEtoAccountId          String? // tblCompany.CAccCustomerID — the accounting customer ACCOUNT
   source                   String    @default("manual") // 'manual' | 'scheduler_sync' | 'totaleto_sync'
   createdAt                DateTime  @default(now())
   updatedAt                DateTime  @updatedAt
@@ -183,6 +208,8 @@ model Job {
   executionRate          ExecutionRate?
   standardSheetSnapshots StandardSheetSnapshot[]
   projectRelease         ProjectRelease?
+
+  @@index([totEtoAccountId])
 }
 
 // Parsed SDC "Project Release" Word doc, one per Job (replaced on re-upload).
@@ -799,6 +826,80 @@ model DepartmentEtcCompletion {
 // MonthlyReportSubmission above: `prisma generate` cannot run while a server
 // process holds node_modules/.prisma open, so a new table must not need a
 // deploy window to become usable.
+// ── Manual contractor punches — TEMPORARY (2026-09-01) ──────────────────────
+//
+// Paylocity's Job Hours report is not carrying temp/contractor punches for
+// July-August 2026. Until Paylocity fixes the source report, the missing
+// timecards are transcribed here, punch-segment by punch-segment, and merged
+// into the hours feed (lib/manual-contractor-hours.ts) so EVERY page that
+// consumes normalized hours sees them — Monthly ETC, Job Hour Details, Projects,
+// T&M, the Dashboard. Nothing is hard-coded into any of those pages.
+//
+// This is SOURCE DATA, not business logic: one row per punch segment, holding
+// exactly what the timecard shows, with `hours` derived from in/out rather than
+// typed. Seeded by scripts/seed-manual-contractor-punches.ts.
+//
+// Deleting this table (and its merge) is the whole rollback once Paylocity is
+// fixed — but nobody has to remember to: `supersededAt` and the (employee, date)
+// dedup in the merge mean an official punch for the same person and day wins
+// automatically. See §8 of the request.
+model ManualContractorPunch {
+  id Int @id @default(autoincrement())
+
+  /** As printed on the timecard, e.g. "Vijayan, Vipin". Used to resolve the CURRENT Employee row. */
+  employeeName String @db.VarChar(191)
+  /** The temp designation on the card: "Temp1", "Temp2", "Temp3". */
+  employeeRef String @db.VarChar(32)
+  /**
+   * The employee id emitted on the produced hours row, so the punch drill can
+   * name who booked the time. A STRING, deliberately: these contractors have no
+   * integer Paylocity id yet, and the whole pipeline already types employeeId as
+   * a string.
+   */
+  paylocityId String @db.VarChar(32)
+
+  workDate DateTime @db.Date
+
+  /** The transfer value verbatim, e.g. "211/1158/10/Concord" — the audit trail for the parse below. */
+  transferRaw String @db.VarChar(64)
+  /** Parsed from transferRaw by the SAME rules a workbook punch uses. */
+  jobNumber   String @db.VarChar(32)
+  machineSec  String @db.VarChar(16)
+  functionId  String @db.VarChar(16)
+  /** "Concord" etc. from the 4th transfer segment; blank when absent. */
+  location String @db.VarChar(64) @default("")
+
+  /** "HH:MM" 24h, as printed. */
+  startTime String @db.VarChar(5)
+  endTime   String @db.VarChar(5)
+  /** DERIVED from startTime/endTime at seed time, never estimated. */
+  hours Decimal @db.Decimal(6, 4)
+
+  /** Where this came from, for the audit trail. */
+  source String @db.VarChar(64) @default("manual_contractor_timecard")
+  /** The pay period the screenshot belongs to, e.g. "2026-08-16..2026-08-29". Reporting uses workDate, never this. */
+  payPeriod String @db.VarChar(32)
+  note      String? @db.VarChar(255)
+
+  /** Set false to withdraw a row without deleting it. */
+  active Boolean @default(true)
+  /**
+   * Stamped when the official Paylocity feed was observed to carry this
+   * employee/date, i.e. the manual row is no longer needed. Informational — the
+   * merge suppresses on live feed content, not on this column, so a stale value
+   * here can never cause a double count.
+   */
+  supersededAt DateTime?
+
+  createdAt      DateTime @default(now())
+  createdByEmail String?  @db.VarChar(191)
+
+  // One row per punch segment. Re-running the seed updates in place instead of
+  // inserting a duplicate.
+  @@unique([paylocityId, workDate, startTime, endTime, jobNumber, machineSec, functionId], name: "manual_punch_segment")
+  @@index([workDate])
+}
+
 model RolePermission {
   id             Int      @id @default(autoincrement())
   role           Role

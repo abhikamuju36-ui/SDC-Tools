@@ -583,6 +583,32 @@ export function priorEtcForMonth(opts: { startsThisMonth: boolean; carried: numb
   return round2(!opts.startsThisMonth && opts.carried !== undefined ? opts.carried : opts.quoted);
 }
 
+// "Which ETC month does this Start Date fall in?" — the other half of
+// priorEtcForMonth, and the half that was being hand-inlined at every call site
+// (seedMonth, derivePriorEtcForMonth, syncPartsCost, syncHoursWorked) as four
+// copies of the same getUTC* template string. One of them getting it wrong is a
+// job silently opening at the wrong figure, so it is one function.
+//
+// UTC deliberately, and it must stay UTC. Start Dates are written by parseDate in
+// quoted-actions.ts from the grid's "YYYY-MM-DD" — a date-only ISO string, which
+// the spec parses as UTC midnight. Reading it back with the LOCAL getMonth() in a
+// negative-offset zone (SDC is UTC-4/-5) turns 2026-08-01T00:00:00Z into July 31st
+// and drops the job's first ETC month by one, which is exactly the shift this
+// centralization exists to make impossible to reintroduce.
+//
+// A year is compared as part of the string, never a bare month number: January
+// 2027 against 2026-01 must not match.
+export function monthOfDate(d: Date): string {
+  return `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
+}
+
+// Does `startDate` fall in `month`? Null (no Start Date on the job) is NOT this
+// month: a job with no date has no known first ETC month, so it carries forward
+// like any other rather than being reset to its quote every month forever.
+export function startsInMonth(startDate: Date | null | undefined, month: string): boolean {
+  return startDate != null && monthOfDate(startDate) === month;
+}
+
 // Does a saved draft merely ECHO the suggestion computed from the Prior ETC that
 // was in place when it was written? If so it is not a decision, and it must move
 // when that Prior ETC moves.

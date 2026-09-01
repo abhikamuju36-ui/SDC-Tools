@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { calcHoursLeft, isMonthLocked, round2, nextMonth, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft } from "@/lib/etc";
+import { calcHoursLeft, isMonthLocked, round2, nextMonth, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, startsInMonth } from "@/lib/etc";
 import { PARTS_COST_SECTION } from "@/lib/sections";
 
 // Re-derives the Prior ETC (and the Hours Left it implies) of every UNSUBMITTED
@@ -39,14 +39,13 @@ export async function derivePriorEtcForMonth(month: string): Promise<{ entriesUp
   ]);
   const priorByKey = latestPriorEtcByKey(priorEntries);
   const jobById = new Map(jobs.map((j) => [j.id, j]));
-  const monthOfDate = (d: Date) => `${d.getUTCFullYear()}-${String(d.getUTCMonth() + 1).padStart(2, "0")}`;
 
   const writes: { id: number; priorEtc: number; hoursLeftCalc: number; newEtcDraft: number | null }[] = [];
   for (const entry of entries) {
     const job = jobById.get(entry.jobId);
     if (!job) continue;
     const carried = priorByKey.get(`${entry.jobId}-${entry.section}`);
-    const startsThisMonth = job.startDate != null && monthOfDate(job.startDate) === month;
+    const startsThisMonth = startsInMonth(job.startDate, month);
     // Parts Cost is MONEY, so its quote is the job's Parts Cost Quoted rather
     // than a per-section hours figure — the same split syncPartsCost makes.
     const quoted =

@@ -226,9 +226,9 @@ const GROUPS: NavGroup[] = [
         ),
       },
       {
-        // ELT-only (cash-flow-access.ts) — not permission-based like every
-        // other link here, so layout.tsx pushes this href onto visibleHrefs
-        // directly off `role === "ELT"` rather than off ROUTE_PERMISSIONS.
+        // Gated on cash-flow:view like every other link here (2026-09-01).
+        // Was ELT-only via a hardcoded role check in layout.tsx; the permission
+        // is seeded ELT-only, so what shows up here has not changed.
         href: "/cash-flow",
         label: "Cash Flow Forecast",
         isActive: (p) => p === "/cash-flow",

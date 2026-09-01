@@ -45,6 +45,8 @@ export type NewProjectRow = {
   startDate: string;
   hours: Record<string, number>;
   total: number;
+  /** False = started this month but quoted nothing into any pool section. */
+  contributesPoolHours: boolean;
 };
 
 // The four pool columns of the new-projects table, in display order: the two
@@ -326,8 +328,16 @@ function PoolDeptRow({ row, poolsEditable }: { row: PoolPanelRow; poolsEditable:
 //
 // Computed by newProjectsEnteringMonth() — the SAME function the pool figures
 // sum from, so this list always adds up to them. A job is here when its Start
-// Date falls in the month (the verified upstream rule) and it quoted hours
-// into at least one of the four pool sections.
+// Date falls in the month. That is the whole rule (verified upstream): not
+// status, not billable, and NOT whether it happens to have quoted hours in
+// these four sections.
+//
+// That last part changed on 2026-09-01. A job contributing 0/0/0/0 used to be
+// dropped, so job 1169 — a perfectly eligible August starter quoted for 11
+// other sections but none of the four pool ones — was invisible here and read
+// as a bug. Those rows are shown greyed now: the count answers "what started
+// this month", the columns answer "what each one added", and the two are no
+// longer conflated.
 function NewProjects({
   month,
   projects,
@@ -343,6 +353,7 @@ function NewProjects({
   isSubmitted: boolean;
 }) {
   const total = projects.reduce((s, p) => s + p.total, 0);
+  const contributingCount = projects.filter((p) => p.contributesPoolHours).length;
   const storedNewHours = POOL_ORDER.reduce((s, c) => s + (storedByCategory[c] ?? 0), 0);
   // Column totals — the whole point of the footer row: each one should match
   // the department block of the same name higher up the panel.
@@ -367,7 +378,15 @@ function NewProjects({
       <div className="flex items-baseline justify-between gap-2 bg-sdc-gray-50 px-3 py-1.5">
         <p className="text-xs font-semibold text-sdc-navy">New projects this month</p>
         <p className="shrink-0 text-note tabular-nums text-sdc-muted">
-          {projects.length === 0 ? "none" : `${projects.length} · ${whole(total)} h`}
+          {projects.length === 0
+            ? "none"
+            : contributingCount === projects.length
+              ? `${projects.length} · ${whole(total)} h`
+              : // "4 · 2 with pool hours · 6,503 h" — the count is what started
+                // this month, the hours are what those starts added, and when
+                // the two disagree saying so is the only way the table reads
+                // honestly. See the note above.
+                `${projects.length} · ${contributingCount} with pool hours · ${whole(total)} h`}
         </p>
       </div>
 
@@ -447,8 +466,18 @@ function NewProjects({
             </thead>
             <tbody>
               {projects.map((p) => (
-                <tr key={p.jobId} className="border-b border-sdc-border-soft/60" title={`${p.jobId} — ${p.jobName} · started ${p.startDate}`}>
-                  <td className="px-1.5 py-1 text-left font-mono text-sdc-navy">{p.jobId}</td>
+                <tr
+                  key={p.jobId}
+                  className="border-b border-sdc-border-soft/60"
+                  title={
+                    p.contributesPoolHours
+                      ? `${p.jobId} — ${p.jobName} · started ${p.startDate}`
+                      : `${p.jobId} — ${p.jobName} · started ${p.startDate} · no PM, Mfg or Warranty hours quoted, so it adds nothing to these four pools`
+                  }
+                >
+                  <td className={`px-1.5 py-1 text-left font-mono ${p.contributesPoolHours ? "text-sdc-navy" : "text-sdc-navy/40"}`}>
+                    {p.jobId}
+                  </td>
                   {POOL_COLUMNS.map((c) => {
                     const h = p.hours[c.category] ?? 0;
                     return (

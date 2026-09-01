@@ -1,26 +1,25 @@
-import { redirect } from "next/navigation";
-import { auth } from "@/lib/auth";
-import { safeFallbackPath } from "@/lib/route-permissions";
 import type { Session } from "next-auth";
+import { requirePagePermission, assertActionPermission } from "@/lib/require-permission";
 
-// Cash Flow Forecast is ELT-only, by explicit request — not a togglable
-// Permission like everything else in permissions.ts/PERMISSION_CATALOG (a
-// Role Permissions matrix row would let an ELT admin accidentally hand it to
-// MANAGER/SALES, which is exactly what "exclusive to ELT role" rules out).
-// This checks the role directly rather than going through hasPermission(),
-// so there is no toggle anywhere in the app that can widen access to this
-// page — changing that would need a code change here, not a checkbox.
+// Cash Flow Forecast used to check `session.user.role !== "ELT"` directly,
+// deliberately bypassing hasPermission() so that no Role Permissions checkbox
+// could widen access to it — the page was ELT-only by explicit request.
+//
+// It is a normal permission now (2026-09-01, by request): `cash-flow:view`, a
+// real row in the matrix. Access is UNCHANGED — the migration seeds that row
+// FALSE for ALL/MANAGER/PM/SALES, and ELT passes through hasPermission()'s
+// wildcard exactly as it passed the role comparison before — but widening it
+// is now a deliberate click by someone with permissions:manage rather than an
+// edit to this file.
+//
+// These two wrappers stay rather than being inlined at the call sites: the page
+// and its server actions must be gated on the SAME permission, and a named pair
+// is harder to get half-right than two loose hasPermission() calls would be.
 
 export async function requireEltOnly(): Promise<Session> {
-  const session = await auth();
-  if (!session?.user) redirect("/login");
-  if (session.user.role !== "ELT") redirect(safeFallbackPath(session.user.role));
-  return session;
+  return requirePagePermission("cash-flow:view");
 }
 
 export async function assertEltOnlyAction(): Promise<Session> {
-  const session = await auth();
-  if (!session?.user) throw new Error("You need to be signed in to do that.");
-  if (session.user.role !== "ELT") throw new Error("Cash Flow Forecast is restricted to ELT.");
-  return session;
+  return assertActionPermission("cash-flow:view");
 }

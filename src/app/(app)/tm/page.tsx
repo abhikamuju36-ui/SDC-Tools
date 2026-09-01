@@ -2,7 +2,7 @@ import { PageTitle } from "@/components/ui/Typography";
 import { requirePagePermission } from "@/lib/require-permission";
 import { listDashboardJobs } from "@/lib/job-hours-dashboard";
 import { fetchTmMetrics, fetchTmDateDefaults, type TmMetrics, type TmPartsMetrics } from "@/lib/tm-report";
-import { getTmHoursTotals, type TmHoursTotals } from "@/lib/tm-hours";
+import { getTmHoursTotals, resolveTmJobPks, type TmHoursTotals } from "@/lib/tm-hours";
 import { resolveTmDateRange } from "@/lib/tm-drill-validate";
 import { TmReportClient } from "@/components/TmReportClient";
 
@@ -25,10 +25,20 @@ export default async function TmPage({
 
   const selectedJobIds = (jobsParam ?? "").split(",").map((s) => s.trim()).filter((s) => idByJobId.has(s));
 
-  // The same "empty selection = All Jobs" convention buildTmFilters() uses
-  // for the Power BI path — an empty selectedJobIds resolves to every job's
-  // PK here too, not zero.
-  const jobPks = (selectedJobIds.length > 0 ? jobs.filter((j) => selectedJobIds.includes(j.jobId)) : jobs).map((j) => j.id);
+  // ── ONE function resolves the job population (2026-09-01) ─────────────────
+  //
+  // This used to derive jobPks inline from the `jobs` list above, while the
+  // DRILL-through resolved the same selection through resolveTmJobPks()
+  // (tm-drill-actions.ts). Two code paths answering "which jobs is this
+  // number about" is exactly how a KPI and its own detail drift apart, even
+  // when — as here — the two happened to agree today (both land on
+  // validJobTypeFilter, verified: 239 jobs either way).
+  //
+  // They agreed by coincidence, not by construction. Now the page calls the
+  // same function the drill does, so an edit to the job universe cannot move
+  // one without the other. Empty selection = All Jobs, the same convention
+  // buildTmFilters() uses for the Power BI path.
+  const jobPks = await resolveTmJobPks(selectedJobIds);
 
   // With nothing in the URL yet, the window matches the Power BI page's own
   // reporting window: [Estimated to Complete As Of Date] -> [Hours Refreshed
@@ -81,10 +91,13 @@ export default async function TmPage({
     <div className="w-full p-8">
       <PageTitle className="mb-1">T&M</PageTitle>
       <p className="mb-6 max-w-2xl text-sm text-sdc-gray-600">
-        Time &amp; materials summary for a job (or every job), over a date range — Hours read from the app&apos;s own
-        Paylocity data (the same source Monthly ETC uses); Part Invoiced Amount, SDC Manufactured Parts Sales Price and
-        Expense Reports read live from the same Power BI measures as the &quot;T&amp;M&quot; page in Job Hours Report -
-        Management Level.
+        Time &amp; materials summary for a job (or every job), over a date range. The five Hours figures come from the
+        app&apos;s own Paylocity punch data — the same source Monthly ETC uses, never Power BI — and together they
+        account for every hour punched in the range: Engineering and Shop by billing group, PM and Manufacturing carved
+        out of them, and Other for anything else (Service, Spare Parts, or an unmapped code worth chasing). Part
+        Invoiced Amount, SDC Manufactured Parts Sales Price and Expense Reports read live from the same Power BI
+        measures as the &quot;T&amp;M&quot; page in Job Hours Report - Management Level, where the date range applies to
+        each line&apos;s <span className="whitespace-nowrap">Invoiced Date</span>.
       </p>
       <TmReportClient
         jobs={jobs}

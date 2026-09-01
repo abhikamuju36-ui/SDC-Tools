@@ -15,6 +15,12 @@ export const ROUTE_PERMISSIONS: readonly { path: string; permission: Permission 
   { path: "/employees", permission: "employees:view" },
   { path: "/audit-log", permission: "audit-log:view" },
   { path: "/job-cost-explorer", permission: "profitability:view" },
+  // Added 2026-09-01 with the cash-flow:view permission. Until then this route
+  // was absent from the map (permissionForPath returned null, so proxy.ts let
+  // any signed-in user through) and the page's own requireEltOnly() was the
+  // only thing stopping them. Listing it here means the direct-URL check and
+  // the sidebar agree, like every other route.
+  { path: "/cash-flow", permission: "cash-flow:view" },
   { path: "/admin/users", permission: "users:manage" },
   // Roster maintenance moved off the Employees page (2026-08-24). Gated on the
   // permission its writing half needs, not the read-only half.

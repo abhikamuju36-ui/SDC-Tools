@@ -13,7 +13,8 @@ export default async function AdminUsersPage() {
     <div className="w-full p-8">
       <PageTitle className="mb-1">Users &amp; Roles</PageTitle>
       <p className="mb-6 text-sm text-sdc-gray-600">
-        Assign each account&apos;s permission tier. Higher tiers inherit everything below them: All &lt; Managers &lt; Sales &lt; ELT.
+        Assign each account&apos;s role. Roles are independent groups, not tiers &mdash; none of them inherits another&apos;s access.
+        What each one can see or do is set on the Role Permissions page, one checkbox per role. ELT always has full access.
       </p>
       <table className="w-full max-w-3xl border-collapse text-sm">
         <thead>

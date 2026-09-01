@@ -42,10 +42,9 @@ export default async function AppGroupLayout({ children }: { children: React.Rea
   const role = session?.user?.role ?? "ALL";
   const visibleHrefs = ROUTE_PERMISSIONS.filter((r) => hasPermission(role, r.permission)).map((r) => r.path);
   if (hasPermission(role, "dashboard:view")) visibleHrefs.push("/");
-  // Cash Flow Forecast is ELT-only by explicit request, never a togglable
-  // Permission — see cash-flow-access.ts's own header for why this checks
-  // the role directly instead of going through ROUTE_PERMISSIONS.
-  if (role === "ELT") visibleHrefs.push("/cash-flow");
+  // /cash-flow needs no special case any more: it is a real row in
+  // ROUTE_PERMISSIONS (cash-flow:view, 2026-09-01), so the filter above picks
+  // it up like every other link. This used to push it off `role === "ELT"`.
 
   // ── Sign-out removed (2026-08-20, SDC Tools centralized login) ────────────
   // This app no longer owns a sign-out of its own. Identity comes from the SDC

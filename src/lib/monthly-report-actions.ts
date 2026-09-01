@@ -7,6 +7,8 @@ import { logAudit } from "@/lib/audit";
 import { recordChanges } from "@/lib/change-log";
 import { matchesButtonPassword } from "@/lib/button-password";
 import { isStandardSheetUnlocked } from "@/lib/standard-sheet-gate";
+import { hasPermission } from "@/lib/permissions";
+import { assertActionPermission } from "@/lib/require-permission";
 import { isValidMonth } from "@/lib/etc";
 import { cascadePriorEtcForward, derivePriorEtcForMonth } from "@/lib/etc-prior-etc";
 import {
@@ -69,6 +71,19 @@ function monthNameOnly(month: string): string {
 export async function canSubmitMonthlyReport(): Promise<boolean> {
   const session = await auth();
   if (!session?.user) return false;
+  // BOTH, not either (2026-09-01). The Standard Sheet unlock stays exactly as
+  // it was — an HMAC cookie, re-entered every time, which is what stops a
+  // captured server-action id from finalising a month from a console. The role
+  // check is a second, independent question: is finalising the month something
+  // this role is allowed to do at all?
+  //
+  // Before this, the answer was "anyone signed in who can unlock the Standard
+  // Fees card", which included the base ALL role. The migration seeds
+  // monthly-etc:submit ON wherever monthly-etc:view was already on, so nobody
+  // loses the ability on deploy — narrowing it is a deliberate untick on the
+  // Role Permissions page. PM is seeded OFF: a PM fills the grid in, somebody
+  // with submit rights closes the month.
+  if (!hasPermission(session.user.role, "monthly-etc:submit")) return false;
   return isStandardSheetUnlocked();
 }
 
@@ -382,6 +397,9 @@ export async function submitMonthlyReport(
 // consolidation exists to prevent — ETC editable while the fees derived from it stay
 // frozen. One action, both tables.
 export async function reopenMonthlyReport(month: string, formData: FormData): Promise<void> {
+  // Same permission as submitting — reopening undoes a submission. Additional
+  // to the password below, never a replacement for it.
+  await assertActionPermission("monthly-etc:submit");
   if (!isValidMonth(month)) throw new Error(`"${month}" is not a valid month.`);
   if (!matchesButtonPassword(String(formData.get("reopenPassword") ?? ""), "submit")) {
     throw new Error("Incorrect password — the month was not reopened.");

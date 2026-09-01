@@ -108,3 +108,53 @@ test("the pan still swallows the click at the end of a drag", () => {
   assert.match(body, /moved\.current/);
   assert.match(body, /preventDefault/);
 });
+
+// ── One drag surface: panning from links, buttons and the frozen columns ─────
+//
+// Reported 2026-09-01 as "horizontal drag only works on the table header". The
+// numeric cells always panned (bare <input type="number"> -> "pan" while
+// unfocused); what did not was the STICKY LEFT column block — the frozen job
+// information anyone actually grabs to pan a wide grid. Job Id and Job Name are
+// <Link>s, the row menu is a [role=button], so every press there returned
+// "ignore" and did nothing at all.
+//
+// Links and buttons are safe to pan from because mousedown does not activate
+// them; the click does, and DragScroll's onClickCapture swallows that click when
+// a pan actually happened. These tests pin the rule in both directions, because
+// getting it wrong either way is a reported bug.
+
+test("a link pans — a job name is a drag handle, not a dead zone", () => {
+  // neverPan is false for an <a> now: the caller's NEVER_PAN selector no longer
+  // lists it, so pressKindFor is asked the ordinary question.
+  assert.equal(press({ neverPan: false, isTextish: false }), "pan");
+});
+
+test("the elements that genuinely cannot pan still return ignore", () => {
+  // select / date input / contenteditable / checkbox / radio — for each, the
+  // mousedown IS the interaction, so the caller passes neverPan: true.
+  assert.equal(press({ neverPan: true }), "ignore");
+  // ...and that verdict does not depend on anything else about the press.
+  assert.equal(press({ neverPan: true, isTextish: true, alreadyFocused: true }), "ignore");
+  assert.equal(press({ neverPan: true, scrollable: false }), "ignore");
+});
+
+test("a grid with nothing to scroll never pans, whatever was pressed", () => {
+  assert.equal(press({ scrollable: false }), "ignore");
+  assert.equal(press({ scrollable: false, isTextish: true }), "ignore");
+});
+
+test("an already-focused text cell is left alone so its value can be text-selected", () => {
+  assert.equal(press({ isTextish: true, alreadyFocused: true }), "editing");
+  // But the FIRST press on that same cell still pans — this is the movement-
+  // decides-the-gesture rule, not a click-count rule.
+  assert.equal(press({ isTextish: true, alreadyFocused: false }), "pan");
+});
+
+test("an empty cell, a totals cell and a parts-cost cell all pan", () => {
+  // No interactive content, nothing focused: every one of these is "anything
+  // else", which is the pan case. Named explicitly because the request lists
+  // them as places dragging must work.
+  for (const isTextish of [false, true]) {
+    assert.equal(press({ neverPan: false, isTextish, alreadyFocused: false }), "pan");
+  }
+});
