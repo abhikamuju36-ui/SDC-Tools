@@ -1,4 +1,5 @@
 import { PageTitle } from "@/components/ui/Typography";
+import { SourceStaleBanner } from "@/components/SourceStaleBanner";
 import { PAGE_SHELL } from "@/components/ui/classnames";
 import { requireEltOnly } from "@/lib/cash-flow-access";
 import { getProjectEstimates, getCashFlowLines, resolveAsOf, listSnapshots, getLatestSnapshotSummary } from "@/lib/cash-flow";
@@ -56,6 +57,10 @@ export default async function CashFlowPage({
 
   return (
     <div className={PAGE_SHELL}>
+      {/* Every figure on this page comes from the Total ETO snapshot, so when that
+          source fails to refresh the page still renders — correctly, from the last
+          good snapshot — and until now said nothing about it. Silent when healthy. */}
+      <SourceStaleBanner sources={["cash_flow_snapshot"]} what="This forecast" />
       <div className="mb-1">
         <PageTitle className="mb-1">Cash Flow Forecast</PageTitle>
         <p className="max-w-3xl text-sm text-sdc-gray-600">

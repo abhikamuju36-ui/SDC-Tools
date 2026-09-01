@@ -1,4 +1,5 @@
 import { Fragment } from "react";
+import { SourceStaleBanner } from "@/components/SourceStaleBanner";
 import Link from "next/link";
 import { prisma } from "@/lib/prisma";
 import { validJobTypeFilter, VALID_JOB_TYPES, JOB_STATUSES, DEFAULT_VISIBLE_STATUSES, compareJobIds, isSdcCustomer } from "@/lib/job-filters";
@@ -521,6 +522,7 @@ export default async function QuotedPage({
         action returned — counts on success, the message on failure. The grid below
         stays a server component, passed through as children. */}
     <QuotedSaveForm action={saveQuotedHours} className={PAGE_SHELL}>
+      <SourceStaleBanner sources={["totaleto_jobs", "parts_cost_actual"]} what="The Parts Cost Actual column" />
       {/* Wraps the toolbar AND the grid: the switch, the Add/Save buttons and
           the fieldset that locks the cells all read the same client state, so
           they can never show three different opinions about the mode. */}

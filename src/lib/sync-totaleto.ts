@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { totalEtoConfig, TOTALETO_TIMEOUT } from "@/lib/totaleto-connection";
 import { prisma } from "@/lib/prisma";
 import { VALID_JOB_TYPES } from "@/lib/job-filters";
 import { applyRefundSign, sqlRefundSigned } from "@/lib/parts-refund";
@@ -865,17 +866,11 @@ export async function getJobPartsCost(jobId: string): Promise<JobPartsCost> {
 // this app (Power BI, Auth, Standard Sheet password) — this was previously
 // the one exception, with a live username/password hardcoded in this file.
 // Set TOTALETO_DB_USER / TOTALETO_DB_PASSWORD in .env (gitignored).
-const config: sql.config = {
-  server: "SERVER-APP1.stevendouglas.local",
-  database: "SDC",
-  user: process.env.TOTALETO_DB_USER,
-  password: process.env.TOTALETO_DB_PASSWORD,
-  domain: "stevendouglas",
-  port: 1433,
-  options: { trustServerCertificate: true, encrypt: false },
-  connectionTimeout: 15000,
-  requestTimeout: 30000,
-};
+// The connection config moved to lib/totaleto-connection.ts (2026-09-01):
+// this file held one of FOUR byte-identical copies, which is what made a single
+// shared credential failure look like four unrelated ones. `config` below is that
+// shared definition, with this file's own requestTimeout.
+const config = totalEtoConfig(TOTALETO_TIMEOUT.sync);
 
 interface TotalEtoProject {
   "Job ID": number;

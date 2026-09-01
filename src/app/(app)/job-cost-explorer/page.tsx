@@ -1,4 +1,5 @@
 import { PageTitle } from "@/components/ui/Typography";
+import { SourceStaleBanner } from "@/components/SourceStaleBanner";
 import { PAGE_SHELL } from "@/components/ui/classnames";
 import { loadJobCostRows } from "@/lib/job-cost-source";
 import { loadCostRates, loadHourAllocations } from "@/lib/job-cost-actions";
@@ -39,6 +40,7 @@ export default async function JobCostExplorerPage({ searchParams }: { searchPara
     // (GRID_SCROLLER, inside JobCostExplorer.tsx), not the viewport or this
     // div, so padding out here only moves that whole box rightward as a unit.
     <div className={PAGE_SHELL}>
+      <SourceStaleBanner sources={["parts_cost_actual", "totaleto_jobs"]} what="These job costs" />
       <div className="mb-2 flex flex-wrap items-baseline justify-between gap-x-3">
         <PageTitle>Profitability</PageTitle>
         <p className="text-note text-sdc-gray-400">

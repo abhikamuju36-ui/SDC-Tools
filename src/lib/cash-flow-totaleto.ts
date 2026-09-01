@@ -1,4 +1,5 @@
 import sql from "mssql";
+import { totalEtoConfig, TOTALETO_TIMEOUT } from "@/lib/totaleto-connection";
 
 // ── Raw Total ETO extraction for Cash Flow Forecast (2026-08-19) ────────────
 //
@@ -36,17 +37,11 @@ import sql from "mssql";
 //                     dollar figure "remaining ETC" allocation is spread
 //                     across future months from).
 
-const config: sql.config = {
-  server: "SERVER-APP1.stevendouglas.local",
-  database: "SDC",
-  user: process.env.TOTALETO_DB_USER,
-  password: process.env.TOTALETO_DB_PASSWORD,
-  domain: "stevendouglas",
-  port: 1433,
-  options: { trustServerCertificate: true, encrypt: false },
-  connectionTimeout: 15000,
-  requestTimeout: 60000,
-};
+// The connection config moved to lib/totaleto-connection.ts (2026-09-01):
+// this file held one of FOUR byte-identical copies, which is what made a single
+// shared credential failure look like four unrelated ones. `config` below is that
+// shared definition, with this file's own requestTimeout.
+const config = totalEtoConfig(TOTALETO_TIMEOUT.cashFlow);
 
 export type ProjectEstimateRow = {
   projectId: string;

@@ -1,5 +1,6 @@
 import "server-only";
 import sql from "mssql";
+import { totalEtoConfig, TOTALETO_TIMEOUT } from "@/lib/totaleto-connection";
 import {
   type BomContext,
   type BomNode,
@@ -73,17 +74,11 @@ export type JobBom = {
 };
 
 // Total ETO connection — same server/db/creds as sync-totaleto.ts. DO NOT CHANGE.
-const config: sql.config = {
-  server: "SERVER-APP1.stevendouglas.local",
-  database: "SDC",
-  user: process.env.TOTALETO_DB_USER,
-  password: process.env.TOTALETO_DB_PASSWORD,
-  domain: "stevendouglas",
-  port: 1433,
-  options: { trustServerCertificate: true, encrypt: false },
-  connectionTimeout: 15000,
-  requestTimeout: 120000,
-};
+// The connection config moved to lib/totaleto-connection.ts (2026-09-01):
+// this file held one of FOUR byte-identical copies, which is what made a single
+// shared credential failure look like four unrelated ones. `config` below is that
+// shared definition, with this file's own requestTimeout.
+const config = totalEtoConfig(TOTALETO_TIMEOUT.bom);
 
 // ---------- SQL (ported from server/services/eto.js) ----------
 

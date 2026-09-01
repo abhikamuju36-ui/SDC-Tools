@@ -101,6 +101,13 @@ export const SYNC_SOURCES = [
   { source: "cash_flow_snapshot", label: "Cash Flow Forecast (TotalETO)", monthScoped: false },
 ] as const;
 
+/**
+ * The sources that talk to Total ETO. They share one connection
+ * (lib/totaleto-connection.ts), so they share one failure mode — which is why the
+ * lane checks the login once and why their errors are described from one place.
+ */
+export const TOTALETO_SOURCES = new Set(["parts_cost", "parts_cost_actual", "totaleto_jobs", "cash_flow_snapshot"]);
+
 function labelFor(source: string): string {
   return SYNC_SOURCES.find((s) => s.source === source)?.label ?? source;
 }
@@ -203,6 +210,8 @@ export async function runAllSyncs(
   const { newImportContext, beginPaylocityImport, recordUndefinedHours, completePaylocityImport } = await import("@/lib/paylocity-import");
   const { prisma } = await import("@/lib/prisma");
   const { isMonthLocked } = await import("@/lib/etc");
+  // One connection definition for every Total ETO source — see the lane below.
+  const { checkTotalEtoLogin, describeTotalEtoFailure } = await import("@/lib/totaleto-connection");
 
   const startedAt = new Date();
   // ── Recorded by source, reported in declaration order (2026-08-25) ────────
@@ -280,7 +289,17 @@ export async function runAllSyncs(
       done.set(source, { source, label, status: "ok", detail, ms });
     } catch (err) {
       const ms = took();
-      const message = err instanceof Error ? err.message : String(err);
+      // A Total ETO failure is described rather than quoted: the driver's own
+      // sentence ("The login is from an untrusted domain and cannot be used with
+      // Integrated authentication") reads like an application fault to whoever
+      // sees the toast, and says nothing about what to do. describeTotalEtoFailure
+      // names the server, the account and whether retrying can possibly help.
+      // Everything else keeps its own message unchanged.
+      const message = TOTALETO_SOURCES.has(source)
+        ? describeTotalEtoFailure(err)
+        : err instanceof Error
+          ? err.message
+          : String(err);
       // Timing a FAILED step matters as much as a successful one: a source that
       // fails after a 30s socket timeout and one that fails instantly on a bad
       // credential look identical in the log without this, and only the first
@@ -457,7 +476,37 @@ export async function runAllSyncs(
     })(),
 
     (async () => {
+      // ── ONE login check for the whole Total ETO lane (2026-09-01) ─────────
+      //
+      // All four sources in this lane — Parts cost, Parts cost actual, Jobs from
+      // TotalETO, Cash Flow snapshot — open the SAME connection with the SAME
+      // credentials (lib/totaleto-connection.ts). So when the credentials stop
+      // working they do not fail independently; they fail identically, four
+      // times, and the pass reports "4 sources failed" as though four things
+      // were wrong.
+      //
+      // That is exactly what happened on 2026-09-01: the 14:02 pass had all four
+      // green, the 14:21 pass had all four failing with ELOGIN, and each one had
+      // separately reached the server, been refused, and quoted mssql's sentence
+      // about "Integrated authentication" into the toast.
+      //
+      // Asking once, up front, changes three things:
+      //   * the reason is diagnosed ONCE, and every source reports the same
+      //     actionable sentence rather than a raw driver message
+      //   * a rejected login is named as a rejected login — retrying cannot fix
+      //     it, and saying "the hourly schedule will retry the rest" about it was
+      //     misleading
+      //   * on the failure path the four queries are not attempted at all
+      //
+      // Only a REJECTED LOGIN short-circuits. `unreachable` and `timeout` are
+      // genuinely transient and each source still gets its own attempt — a blip
+      // during the preflight must not cost a pass that would have succeeded.
+      const login = await checkTotalEtoLogin();
+      const blocked = login.ok === false && login.kind === "login_rejected" ? login.detail : null;
+      if (blocked) console.error(`[auto-sync] Total ETO lane blocked: ${blocked}`);
+
       await step("parts_cost", labelFor("parts_cost"), true, async () => {
+        if (blocked) throw new Error(blocked);
         if (!month) return null;
         const r = await syncPartsCost(month);
         return `${r.rowsUpserted} upserted`;
@@ -469,6 +518,7 @@ export async function runAllSyncs(
       // 2026-08-03; now pulled, per the policy that Jessica enters the QUOTED figures
       // and the app pulls the actuals.
       await step("parts_cost_actual", labelFor("parts_cost_actual"), true, async () => {
+        if (blocked) throw new Error(blocked);
         const r = await syncPartsCostActual();
         return `${r.jobsUpdated} jobs updated, ${r.jobsNotFound} TotalETO ids with no app job`;
       });
@@ -487,6 +537,7 @@ export async function runAllSyncs(
       // customerManuallyEdited — so running it unattended can't overwrite a
       // manager's correction.
       await step("totaleto_jobs", labelFor("totaleto_jobs"), true, async () => {
+        if (blocked) throw new Error(blocked);
         const r = await syncFromTotalEto();
         return `${r.jobsUpdated} jobs updated, ${r.skippedNoType} skipped (not app-tracked)`;
       });
@@ -497,6 +548,7 @@ export async function runAllSyncs(
       // recorded as the snapshot's createdBy, matching logAudit()'s own
       // "system@auto-sync" convention for unattended runs.
       await step("cash_flow_snapshot", labelFor("cash_flow_snapshot"), true, async () => {
+        if (blocked) throw new Error(blocked);
         const { captureCashFlowSnapshot } = await import("@/lib/cash-flow-capture");
         const r = await captureCashFlowSnapshot(userName ?? "system@auto-sync");
         return r.captured ? `snapshot #${r.snapshotId} captured, ${r.lineCount} lines (${r.reason})` : `no new snapshot — ${r.reason}`;

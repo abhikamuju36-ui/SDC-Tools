@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { SourceStaleBanner } from "@/components/SourceStaleBanner";
 import { prisma } from "@/lib/prisma";
 import type { Prisma } from "@prisma/client";
 import { validJobTypeFilter, VALID_JOB_TYPES, compareJobIds } from "@/lib/job-filters";
@@ -62,6 +63,7 @@ export default async function JobsPage({
 
   return (
     <div className={PAGE_SHELL}>
+      <SourceStaleBanner sources={["totaleto_jobs"]} what="This job list" />
       <div className="mb-6 flex items-end justify-between gap-4">
         <div>
           <PageTitle>Jobs</PageTitle>
