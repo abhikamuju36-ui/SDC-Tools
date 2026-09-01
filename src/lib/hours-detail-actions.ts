@@ -5,6 +5,7 @@ import { isValidMonth, monthWindowUtc } from "@/lib/etc";
 import { getEtcMonthHoursDetail, type JobHoursDetail } from "@/lib/job-hours-detail";
 import { getPartsSpentDetail, type PartsSpentDetail } from "@/lib/parts-spent";
 import { getJobPartsInvoicedInMonth, type JobPartsCost } from "@/lib/sync-totaleto";
+import { withDrillErrors } from "@/lib/drill-error";
 
 // The punch drill-through behind the Monthly ETC cards, fetched WHEN IT IS OPENED.
 //
@@ -94,7 +95,20 @@ export async function loadJobPartsLines(jobNumber: string, month: string): Promi
   if (!/^\d{1,10}$/.test(jobNumber)) throw new Error(`Invalid job number "${jobNumber}".`);
   if (!isValidMonth(month)) throw new Error(`Invalid month "${month}".`);
   const { start, endExclusive } = monthWindowUtc(month);
-  return getJobPartsInvoicedInMonth(jobNumber, start, endExclusive);
+  // ── Total ETO failures become a sentence, not React's redaction ───────────
+  //
+  // This is the ONE action on this page that leaves the application database, so
+  // it is the one that can fail because an integration is down rather than
+  // because of anything the user did. Unwrapped, a ConnectionError escaped the
+  // action and Next replaced it with "An error occurred in the Server Components
+  // render..." — printed verbatim into the parts table on 2026-09-01, when the
+  // Total ETO credentials stopped working (ELOGIN). See lib/drill-error.ts.
+  return withDrillErrors({
+    metric: "etc.partsSpent.jobLines",
+    context: { jobNumber, month },
+    upstream: "totaleto",
+    run: () => getJobPartsInvoicedInMonth(jobNumber, start, endExclusive),
+  });
 }
 
 const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;

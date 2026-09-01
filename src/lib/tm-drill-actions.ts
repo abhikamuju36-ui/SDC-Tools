@@ -1,10 +1,10 @@
 "use server";
 
-import { randomUUID } from "crypto";
 import { auth } from "@/lib/auth";
 import { fetchTmPartsDrill, type TmPartsDrillKey, type TmPartsDrillRow } from "@/lib/tm-report";
 import { getTmHoursDrillRows, resolveTmJobPks, type TmHoursDrillKey, type TmHoursDrillRow } from "@/lib/tm-hours";
 import { sanitizeJobIds, isValidDateRange } from "@/lib/tm-drill-validate";
+import { withDrillErrors } from "@/lib/drill-error";
 
 // The T&M KPI cards' drill-through, fetched WHEN A CARD IS CLICKED — same
 // reasoning as loadEtcMonthHoursDetail/loadPartsSpentDetail in
@@ -27,7 +27,7 @@ import { sanitizeJobIds, isValidDateRange } from "@/lib/tm-drill-validate";
 // A raw Prisma error can name a table/column; a raw Power BI DAX error can be
 // startlingly detailed about the model's own internals (see
 // docs/SEMANTIC-MODEL-MAP.md's `Hours Actual` example). Neither belongs in
-// front of a user. `withDrillLogging` is the one seam both actions go
+// front of a user. `withDrillErrors` (lib/drill-error.ts) is the one seam both actions go
 // through: it logs the full exception server-side with enough context to
 // actually debug an intermittent failure (metric, job selection, date range,
 // which source, how long it ran, a request id), and hands the CLIENT back
@@ -41,37 +41,19 @@ function requireDateRange(startDate: string, endDate: string): void {
   if (!isValidDateRange(startDate, endDate)) throw new Error("Invalid date range.");
 }
 
+// The shared helper (lib/drill-error.ts). This file's own `withDrillLogging` WAS
+// that implementation; it moved so the Monthly ETC parts drill could use the same
+// one rather than a second copy. Same behaviour, plus one addition: an upstream
+// that is unreachable now says so by name instead of "Couldn't load this detail",
+// which is what a Total ETO outage on 2026-09-01 showed was worth distinguishing.
 type DrillSource = "paylocity" | "powerbi";
 
-async function withDrillLogging<T>(params: {
-  metric: TmHoursDrillKey | TmPartsDrillKey;
-  jobIds: string[];
-  startDate: string;
-  endDate: string;
-  source: DrillSource;
-  run: () => Promise<T>;
-}): Promise<T> {
-  const requestId = randomUUID();
-  const startedAt = Date.now();
-  try {
-    return await params.run();
-  } catch (error) {
-    console.error("[tm-drill] query failed", {
-      requestId,
-      metric: params.metric,
-      jobIds: params.jobIds,
-      startDate: params.startDate,
-      endDate: params.endDate,
-      source: params.source,
-      durationMs: Date.now() - startedAt,
-      error: error instanceof Error ? { message: error.message, stack: error.stack } : String(error),
-    });
-    // Deliberately generic — see this file's header. The request id is the
-    // only thing carried through to the UI, so a user reporting "detail ref
-    // <id> failed" points straight at the log line above.
-    throw new Error(`Couldn't load this detail. (ref ${requestId})`);
-  }
-}
+const UPSTREAM_FOR: Record<DrillSource, "totaleto" | "powerbi" | "local"> = {
+  // The hours drills read the app's own database (the Paylocity ingest), so a
+  // failure there is a local one — never an integration being down.
+  paylocity: "local",
+  powerbi: "powerbi",
+};
 
 export async function loadTmHoursDrill(
   key: TmHoursDrillKey,
@@ -84,12 +66,10 @@ export async function loadTmHoursDrill(
   if (!HOURS_KEYS.includes(key)) throw new Error(`Invalid drill key "${key}".`);
   requireDateRange(startDate, endDate);
   const cleanJobIds = sanitizeJobIds(jobIds);
-  return withDrillLogging({
+  return withDrillErrors({
     metric: key,
-    jobIds: cleanJobIds,
-    startDate,
-    endDate,
-    source: "paylocity",
+    context: { jobIds: cleanJobIds, startDate, endDate, source: "paylocity" },
+    upstream: UPSTREAM_FOR.paylocity,
     run: async () => {
       const jobPks = await resolveTmJobPks(cleanJobIds);
       // `truncated` isn't surfaced to the panel today — MAX_ROWS (4000) is far
@@ -113,12 +93,10 @@ export async function loadTmPartsDrill(
   if (!PARTS_KEYS.includes(key)) throw new Error(`Invalid drill key "${key}".`);
   requireDateRange(startDate, endDate);
   const cleanJobIds = sanitizeJobIds(jobIds);
-  return withDrillLogging({
+  return withDrillErrors({
     metric: key,
-    jobIds: cleanJobIds,
-    startDate,
-    endDate,
-    source: "powerbi",
+    context: { jobIds: cleanJobIds, startDate, endDate, source: "powerbi" },
+    upstream: UPSTREAM_FOR.powerbi,
     run: () => fetchTmPartsDrill({ jobIds: cleanJobIds, startDate, endDate }, key),
   });
 }
