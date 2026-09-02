@@ -52,9 +52,29 @@ export function HoursFilterMenu({ filters }: { filters: HoursFilterSpec[] }) {
     return sel.length > 0 && sel.length < f.options.length;
   }).length;
 
+  // What the "(N)" counts, spelled out on hover. The number is GROUPS that are
+  // narrowing, not values picked — so selecting two departments reads as
+  // "Filters (1)", which is correct and, on its own, easy to misread as the
+  // second pick not having registered. The tooltip is the cheapest way to say
+  // which it is without changing a count this app renders the same way on the
+  // Projects tab.
+  const countExplanation =
+    narrowing === 0
+      ? "No filters applied — showing everything"
+      : filters
+          .filter((f) => {
+            const sel = draft[f.key] ?? [];
+            return sel.length > 0 && sel.length < f.options.length;
+          })
+          .map((f) => `${f.label}: ${(draft[f.key] ?? []).length} of ${f.options.length} selected`)
+          .join(" · ");
+
   return (
     <details ref={detailsRef} {...detailsProps} className="group relative inline-block">
-      <summary className={`${TOOLBAR_BTN} ${narrowing > 0 ? TOOLBAR_BTN_ACTIVE : TOOLBAR_BTN_NEUTRAL} ${pending ? "opacity-60" : ""}`}>
+      <summary
+        title={countExplanation}
+        className={`${TOOLBAR_BTN} ${narrowing > 0 ? TOOLBAR_BTN_ACTIVE : TOOLBAR_BTN_NEUTRAL} ${pending ? "opacity-60" : ""}`}
+      >
         Filters
         {narrowing > 0 && ` (${narrowing})`}
         <MenuStatus pending={pending} />

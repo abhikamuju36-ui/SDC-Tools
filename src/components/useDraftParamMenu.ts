@@ -81,6 +81,26 @@ export function applyDelayMs(
   return windowMs - msSinceLastNavigation;
 }
 
+/**
+ * Should an incoming server answer REPLACE the local draft?
+ *
+ * No, if it is the echo of a push this menu made: the draft is already at least
+ * as new as it, and may be newer — ticks made while that navigation was in
+ * flight live only in the draft, and adopting the answer would delete them. That
+ * is the bug this predicate exists for; see the resync's comment.
+ *
+ * Yes for anything else — the Back button, a loaded saved view, another
+ * component's navigation — which is what the resync was written for and must
+ * keep doing.
+ *
+ * Pure and exported so the rule is pinned by a test: the failure it prevents is
+ * silent (a checkbox that un-ticks itself a moment after you tick it), which is
+ * exactly the kind that comes back.
+ */
+export function shouldAdoptCommitted(committedKey: string, pushedKeys: readonly string[]): boolean {
+  return !pushedKeys.includes(committedKey);
+}
+
 export function useDraftParamsMenu<K extends string>({
   committed,
   buildParams,
@@ -116,19 +136,45 @@ export function useDraftParamsMenu<K extends string>({
   const draftKey = norm(draft);
   const dirty = committedKey !== draftKey;
 
+  // Every draft this menu has pushed, so an arriving server answer can be told
+  // apart from a change that came from somewhere else. See the resync below for
+  // what depends on that distinction. Bounded — only the last few matter, and a
+  // menu open for an hour must not accumulate a key per tick.
+  //
+  // State, not a ref, for the same reason useDraftGroupByMenu's `expectedCommitted`
+  // is: this has to be READ during render (in the resync just below), and React
+  // forbids reading a ref there.
+  const [pushedKeys, setPushedKeys] = useState<string[]>([]);
+
   // Adopt a new server answer. Replaces the old "remount under a key" contract,
   // for the reasons in the header note. Set-state-during-render is the supported
   // way to derive state from props — deliberately not an effect, which would
   // render one frame stale and trips react-hooks/set-state-in-effect.
   //
-  // In the normal case this fires just after our OWN push commits, and sets the
-  // draft to what it already was. It earns its keep for changes that come from
-  // somewhere else: the "Show all" switch, loading a saved View, or the Back
-  // button — all of which used to be picked up by the remount.
+  // ── Why it must NOT adopt our own answer (2026-09-02) ─────────────────────
+  //
+  // It used to adopt every change of `committed`, including the echo of our own
+  // push, and that silently threw away selections. Measured: five checkboxes
+  // ticked 40ms apart produced ONE selected value and one request. The first
+  // tick navigates on the leading edge; ticks two to five land in the draft
+  // while that navigation is still rendering; the answer comes back describing
+  // only the first tick, this resync overwrote the draft with it, and ticks two
+  // to five were gone — checkbox and all. That is the "clicking an option
+  // sometimes does not select" and "checkmarks out of sync with the applied
+  // filter" in the report, and it got worse the faster you clicked.
+  //
+  // So: a `committed` we recognise as the echo of one of our own pushes is NOT
+  // adopted — the draft is already at least as new as it, and may be newer. The
+  // auto-apply effect below then sends whatever is still un-pushed, so the
+  // fifth tick reaches the server on the trailing edge instead of vanishing.
+  //
+  // Anything we did NOT push is still adopted, unchanged: the Back button, a
+  // loaded saved View, the "Show all" switch, another component's navigation.
+  // Those are the cases this resync exists for.
   const [seenCommitted, setSeenCommitted] = useState(committedKey);
   if (seenCommitted !== committedKey) {
     setSeenCommitted(committedKey);
-    setDraft({ ...committed });
+    if (shouldAdoptCommitted(committedKey, pushedKeys)) setDraft({ ...committed });
   }
 
   // Replace one param's values in the draft.
@@ -171,6 +217,11 @@ export function useDraftParamsMenu<K extends string>({
     const q = qs.toString();
     if (lastPushedRef.current === q) return;
     lastPushedRef.current = q;
+    // Recorded BEFORE the push, so the answer can never arrive before we know we
+    // asked. Keyed the same way `committed` is normalised, since that is what it
+    // will be compared against. Last 8 kept: enough to survive answers arriving
+    // out of order, small enough to stay a constant.
+    setPushedKeys((prev) => [...prev.slice(-7), draftKey]);
     notePendingParams(current, q); // before the push, so the next tick sees it
     startTransition(() => {
       router.push(q ? `${pathname}?${q}` : pathname, { scroll: false });
@@ -228,8 +279,31 @@ export function useDraftParamsMenu<K extends string>({
       const el = detailsRef.current;
       if (el?.open && !el.contains(e.target as Node)) el.open = false;
     }
+    // ── Escape closes (2026-09-02) ────────────────────────────────────────
+    //
+    // A <details> does not close on Escape by itself — it is a disclosure, not a
+    // dialog — so these menus could only be dismissed by clicking, which is the
+    // one dropdown behaviour every other menu in this app already has (see
+    // JobSelect, which grew its own handler for the same reason).
+    //
+    // It goes through the same `open = false` path as an outside click, so
+    // whatever is still on the debounce is flushed by onToggle rather than
+    // silently dropped: Escape closes the menu, it does not undo the ticks.
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      const el = detailsRef.current;
+      if (!el?.open) return;
+      el.open = false;
+      // Focus lands back on the button that opened it, so a keyboard user is
+      // not dropped at the top of the document.
+      el.querySelector("summary")?.focus();
+    }
     document.addEventListener("click", onClickOutside);
-    return () => document.removeEventListener("click", onClickOutside);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("click", onClickOutside);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, []);
 
   return {

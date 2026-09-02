@@ -176,8 +176,23 @@ export function useDraftGroupByMenu({
       const el = detailsRef.current;
       if (el?.open && !el.contains(e.target as Node)) el.open = false;
     }
+    // Escape closes, the same way it does for the Filters/Dates menus — see the
+    // longer note in useDraftParamMenu. Both hooks need it because this menu's
+    // draft is an ORDERED list rather than a set of values, so it could not
+    // share that hook's state, only its behaviour.
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape") return;
+      const el = detailsRef.current;
+      if (!el?.open) return;
+      el.open = false;
+      el.querySelector("summary")?.focus();
+    }
     document.addEventListener("click", onClickOutside);
-    return () => document.removeEventListener("click", onClickOutside);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("click", onClickOutside);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, []);
 
   return {

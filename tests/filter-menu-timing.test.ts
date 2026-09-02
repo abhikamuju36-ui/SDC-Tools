@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { applyDelayMs } from "../src/components/useDraftParamMenu";
+import { applyDelayMs, shouldAdoptCommitted } from "../src/components/useDraftParamMenu";
 
 // When a toolbar multi-select sends its navigation (§32.7, §32.12).
 //
@@ -79,4 +79,37 @@ test("a zero window disables collapsing entirely", () => {
   // Not used by the app, but the arithmetic should degrade sensibly rather than
   // producing a negative timeout.
   assert.equal(applyDelayMs(0, false, 0), 0);
+});
+
+
+// ── Ticks made DURING a navigation must survive it (2026-09-02) ─────────────
+//
+// Reported as filter options that "sometimes do not select". Measured in the
+// running app before the fix: five Department checkboxes ticked 40ms apart left
+// exactly ONE selected. The first tick navigates on the leading edge; ticks two
+// to five land in the draft while that navigation renders; the server's answer
+// describes only the first tick; the resync adopted it and deleted the rest —
+// checkbox and all. After the fix the same five ticks leave five selected, in
+// two requests.
+
+test("our own answer coming back does not overwrite newer ticks", () => {
+  // The key we pushed after tick one. Ticks two-to-five are in the draft only.
+  const pushed = ['[["departments",["A"]]]'];
+  assert.equal(shouldAdoptCommitted('[["departments",["A"]]]', pushed), false);
+});
+
+test("a change from somewhere else IS adopted — Back, a saved view, Show all", () => {
+  // Nothing this menu pushed, so the draft must yield to it. This is the case
+  // the resync exists for and the fix must not break.
+  const pushed = ['[["departments",["A"]]]'];
+  assert.equal(shouldAdoptCommitted('[["departments",["B","C"]]]', pushed), true);
+  assert.equal(shouldAdoptCommitted('[["departments",[]]]', []), true, "nothing pushed yet");
+});
+
+test("an answer arriving out of order is still recognised as ours", () => {
+  // Two pushes in flight; the older answer lands last. Comparing against only
+  // the newest key would treat it as external and clobber the draft.
+  const pushed = ['[["departments",["A"]]]', '[["departments",["A","B"]]]'];
+  assert.equal(shouldAdoptCommitted('[["departments",["A"]]]', pushed), false);
+  assert.equal(shouldAdoptCommitted('[["departments",["A","B"]]]', pushed), false);
 });

@@ -10,8 +10,9 @@ import { HoursDateFilter } from "@/components/HoursDateFilter";
 import { HoursGroupByMenu } from "@/components/HoursGroupByMenu";
 import { HoursGroupedTree } from "@/components/HoursGroupedTree";
 import { HoursViewsMenu } from "@/components/HoursViewsMenu";
+import { HoursClearFiltersButton } from "@/components/HoursClearFiltersButton";
 import { getHoursFilterOptions, queryHoursGrouped, queryHoursRows, queryHoursSummary, type HoursRow } from "@/lib/hours-explorer";
-import { parseHoursFilters, parseHoursGroupByList, parseHoursSort, type HoursDetailSortKey } from "@/lib/hours-filters";
+import { parseHoursFilters, parseHoursGroupByList, parseHoursSort, countActiveHoursFilters, type HoursDetailSortKey } from "@/lib/hours-filters";
 import { cycleSortState, type SortState } from "@/lib/table-sort";
 import { listSharedHoursViews } from "@/lib/hours-saved-views-actions";
 import { requirePagePermission } from "@/lib/require-permission";
@@ -45,6 +46,10 @@ type HoursPageSearchParams = {
   groupBy?: string;
   sort?: string;
   dir?: string;
+  // Written by HoursViewsMenu when a saved view is loaded. Nothing on this page
+  // filters by it — it is carried so the toolbar can count a loaded view as
+  // active filtering and so "Clear filters" drops it with everything else.
+  view?: string;
 };
 
 export default async function HoursPage({ searchParams }: { searchParams: Promise<HoursPageSearchParams> }) {
@@ -108,6 +113,10 @@ export default async function HoursPage({ searchParams }: { searchParams: Promis
   }
 
   const hasAnyFilter = Boolean(sp.jobs || sp.employees || sp.sections || sp.departments || sp.from || sp.to);
+  // Counted from the SAME query string the results come from, server-side, so
+  // the badge cannot disagree with what is actually applied — see
+  // countActiveHoursFilters for what does and does not count as a filter.
+  const activeFilterCount = countActiveHoursFilters(sp);
 
   // Remounts HoursGroupedTree (dropping its expand/fetch state) only when the filters
   // or chosen levels themselves change — NOT on a routine LiveRefresh re-render with
@@ -124,6 +133,10 @@ export default async function HoursPage({ searchParams }: { searchParams: Promis
           <HoursDateFilter from={sp.from ?? ""} to={sp.to ?? ""} />
           <HoursGroupByMenu groupBy={groupByLevels} />
           <HoursViewsMenu sharedViews={sharedViewsResult.shared} />
+          {/* Between the menus it resets and the Export it does not — the
+              position the request asks for, and the one that reads as "undo all
+              of the above". Muted styling: it is a way out, not the main act. */}
+          <HoursClearFiltersButton activeCount={activeFilterCount} />
           <ExportMenu report="hours" />
         </div>
       </div>

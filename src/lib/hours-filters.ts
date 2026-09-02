@@ -315,6 +315,50 @@ function splitParam(v: string | undefined): string[] | undefined {
   return list.length > 0 ? list : undefined;
 }
 
+// ── Every query param that represents user filtering (2026-09-02) ──────────
+//
+// The one list "Clear filters" clears, and the one list the active-count is
+// computed from. It lives beside the parser deliberately: a dimension added to
+// HoursSearchParams without being added here would produce a Clear button that
+// silently leaves that filter applied, which is worse than no button at all.
+//
+// `page` is included because it is meaningless once the filters change, `view`
+// because a loaded saved view IS a set of filters wearing a name, and
+// `sort`/`dir` because the request asks for the page's intended default view
+// back — not for its default rows in whatever order the last click left them.
+export const HOURS_FILTER_PARAMS = [
+  "jobs",
+  "employees",
+  "sections",
+  "departments",
+  "from",
+  "to",
+  "groupBy",
+  "sort",
+  "dir",
+  "view",
+  "page",
+] as const;
+
+/**
+ * How many filtering CONTROLS are currently doing something, for the toolbar's
+ * "Clear filters (N)" badge.
+ *
+ * Counted per control rather than per param, which is what a reader of the
+ * toolbar means by "how many filters are on": a from/to range is one date
+ * filter, not two, and `sort`+`dir` are one ordering. Neither `page` nor a
+ * default, unfiltered state counts — a page number is not a filter, and "no
+ * selection" is not a selection.
+ */
+export function countActiveHoursFilters(sp: Record<string, string | undefined>): number {
+  const set = (k: string) => Boolean(sp[k] && String(sp[k]).trim() !== "");
+  let n = 0;
+  for (const k of ["jobs", "employees", "sections", "departments", "groupBy", "view"]) if (set(k)) n += 1;
+  if (set("from") || set("to")) n += 1;
+  if (set("sort")) n += 1;
+  return n;
+}
+
 export function parseHoursFilters(sp: HoursSearchParams): HoursFilters {
   return {
     jobIds: splitParam(sp.jobs),

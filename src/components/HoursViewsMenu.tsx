@@ -66,8 +66,20 @@ export function HoursViewsMenu({ sharedViews }: { sharedViews: SharedView[] }) {
     function onClick(e: MouseEvent) {
       if (detailsRef.current?.open && !detailsRef.current.contains(e.target as Node)) detailsRef.current.open = false;
     }
+    // Escape closes, matching the other three toolbar menus (see
+    // useDraftParamMenu). This one does not share that hook — it has no draft to
+    // apply, only actions — so it needs its own handler.
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.key !== "Escape" || !detailsRef.current?.open) return;
+      detailsRef.current.open = false;
+      detailsRef.current.querySelector("summary")?.focus();
+    }
     document.addEventListener("click", onClick);
-    return () => document.removeEventListener("click", onClick);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("click", onClick);
+      document.removeEventListener("keydown", onKeyDown);
+    };
   }, []);
 
   const close = () => {

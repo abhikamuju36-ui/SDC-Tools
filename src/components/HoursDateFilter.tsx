@@ -3,6 +3,8 @@
 import { TOOLBAR_BTN, TOOLBAR_BTN_ACTIVE, TOOLBAR_BTN_NEUTRAL, INPUT, BUTTON_MENU_LINK } from "@/components/ui/classnames";
 import { useDraftParamsMenu } from "@/components/useDraftParamMenu";
 import { MenuStatus, MenuApplyHint } from "@/components/MenuStatus";
+import { useRef } from "react";
+import { dateEditOutcome, dateRangeError } from "@/lib/date-input";
 
 // "Dates ▾" — filter the Hours table to punches whose work date falls in a range.
 // Simplified from ProjectsDateFilter.tsx: Hours has exactly one date dimension (the work
@@ -94,11 +96,52 @@ export function HoursDateFilter({ from, to }: { from: string; to: string }) {
   const draftFrom = draft.from[0] ?? "";
   const draftTo = draft.to[0] ?? "";
   const active = Boolean(from || to);
-  const backwards = Boolean(draftFrom && draftTo && draftFrom > draftTo);
+  const rangeError = dateRangeError(draftFrom, draftTo);
 
   function applyPreset(range: { from: string; to: string }) {
     setValues("from", [range.from]);
     setValues("to", [range.to]);
+  }
+
+  // ── Typing, without the field being overwritten underneath the typist ─────
+  //
+  // See lib/date-input.ts for the two bugs this replaces. In short: a native
+  // date input reports "" for every partial entry, so writing that straight into
+  // state wiped whatever the person had typed so far; and it reports year 0002
+  // on the way to 2026, so committing every complete-looking value queried the
+  // server three times for dates nobody asked for.
+  //
+  // `dateEditOutcome` decides between the three cases. `hold` is the important
+  // one — it means leave the committed value exactly where it is, which is what
+  // stops the re-render that was eating the input.
+  function onDateChange(key: Key, raw: string, el: HTMLInputElement) {
+    const focused = document.activeElement === el;
+    const outcome = dateEditOutcome(raw, focused);
+    if (outcome === "hold") return;
+    setValues(key, outcome === "commit" ? [raw] : []);
+  }
+
+  // Leaving the field settles it: an emptied field now really is cleared, and a
+  // date that was mid-entry is committed if it turned out to be a real one.
+  function onDateBlur(key: Key, raw: string) {
+    const outcome = dateEditOutcome(raw, false);
+    setValues(key, outcome === "commit" ? [raw] : []);
+  }
+
+  const fromRef = useRef<HTMLInputElement>(null);
+  const toRef = useRef<HTMLInputElement>(null);
+
+  // Enter commits from the keyboard without reaching for the mouse, and without
+  // submitting anything (these inputs are not in a form, but a stray Enter inside
+  // a <details> should still do the useful thing rather than nothing).
+  function onDateKeyDown(key: Key, e: React.KeyboardEvent<HTMLInputElement>) {
+    if (e.key !== "Enter") return;
+    e.preventDefault();
+    onDateBlur(key, e.currentTarget.value);
+    // Tab-order courtesy: Enter in "From" moves to "To", which is the order the
+    // range is read and typed in.
+    if (key === "from") toRef.current?.focus();
+    else e.currentTarget.blur();
   }
 
   return (
@@ -114,24 +157,44 @@ export function HoursDateFilter({ from, to }: { from: string; to: string }) {
       <div className="motion-menu-panel absolute right-0 left-auto top-full z-30 mt-2 w-56 rounded-lg border border-sdc-border bg-white p-2.5 shadow-lg">
         <div className="grid grid-cols-[2.5rem_1fr] items-center gap-x-2 gap-y-1.5">
           <span className="text-note text-sdc-gray-600">From</span>
+          {/* `defaultValue`, keyed on the committed value — NOT `value`.
+              A controlled native date input is re-rendered from state on every
+              keystroke, and since a partial entry reads as "", that render is
+              what cleared the field mid-type. Uncontrolled, the browser owns the
+              segments while they are being typed, and the `key` still resyncs the
+              field whenever the value changes from somewhere else: a preset, the
+              Clear button, a saved View, or the Back button. */}
           <input
+            key={`from:${draftFrom}`}
+            ref={fromRef}
             type="date"
-            value={draftFrom}
-            onChange={(e) => setValues("from", e.target.value ? [e.target.value] : [])}
+            defaultValue={draftFrom}
+            onChange={(e) => onDateChange("from", e.target.value, e.currentTarget)}
+            onBlur={(e) => onDateBlur("from", e.target.value)}
+            onKeyDown={(e) => onDateKeyDown("from", e)}
             className={`${INPUT} w-full text-xs`}
             aria-label="Work date from"
           />
           <span className="text-note text-sdc-gray-600">To</span>
           <input
+            key={`to:${draftTo}`}
+            ref={toRef}
             type="date"
-            value={draftTo}
-            onChange={(e) => setValues("to", e.target.value ? [e.target.value] : [])}
+            defaultValue={draftTo}
+            onChange={(e) => onDateChange("to", e.target.value, e.currentTarget)}
+            onBlur={(e) => onDateBlur("to", e.target.value)}
+            onKeyDown={(e) => onDateKeyDown("to", e)}
             className={`${INPUT} w-full text-xs`}
             aria-label="Work date to"
           />
         </div>
 
-        {backwards && <p className="mt-2 text-note font-medium text-sdc-red-text">&quot;From&quot; is after &quot;To&quot; — no punch can match.</p>}
+        {rangeError && (
+          <p role="alert" className="mt-2 text-note font-medium text-sdc-red-text">
+            {rangeError}
+          </p>
+        )}
+        <p className="mt-1.5 text-note text-sdc-muted">Type MM/DD/YYYY or pick from the calendar. Enter or Tab applies.</p>
 
         <div className="mt-2 flex flex-wrap gap-1 border-t border-sdc-border-soft pt-2">
           {PRESETS.map((p) => (
