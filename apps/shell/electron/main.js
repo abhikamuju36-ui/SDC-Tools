@@ -31,6 +31,43 @@ let mainWindow = null;
 let tray = null;
 const appWindows = new Map();
 
+// ── Windows taskbar identity + single-instance ownership ────────────────────
+// Two separate defects used to combine into "clicking the SDC Tools taskbar
+// icon flickers and never brings the window back":
+//
+//  1. No single-instance lock. Any second launch by Windows — a pinned
+//     taskbar/Start shortcut clicked while the launcher was hidden to tray, the
+//     login item, a double-clicked desktop icon — started a SECOND process
+//     that ran the whole whenReady path: another BrowserWindow (so another
+//     taskbar button), another Tray, and another processManager.startAll()
+//     that then fought the first instance for ports 4001-4005. The new window
+//     grabbed focus, its servers failed to bind, and what the user saw was the
+//     flicker / duplicate-window / focus-bouncing behaviour.
+//
+//  2. No AppUserModelID. electron-builder's NSIS shortcut is stamped with the
+//     appId (com.sdc.tools), but the running process never claimed that same
+//     id, so Windows did not treat the live window as belonging to the pinned
+//     shortcut. Activating the shortcut therefore always meant "launch", never
+//     "restore that window" — which is why the taskbar could not be used to
+//     get back to a running SDC Tools at all.
+//
+// The two have to be fixed together: the AUMID is what makes Windows route the
+// activation into this process, and the lock is what makes that activation
+// land on the existing window instead of a fresh one. Keep this string
+// identical to `appId` in electron-builder.yml.
+const APP_USER_MODEL_ID = 'com.sdc.tools';
+app.setAppUserModelId(APP_USER_MODEL_ID);
+
+const _gotInstanceLock = app.requestSingleInstanceLock();
+if (!_gotInstanceLock) {
+  // The primary instance receives 'second-instance' and reveals itself; this
+  // process must leave WITHOUT creating a window, a tray icon or any child
+  // servers. app.quit() is wrong here: it would run before-quit →
+  // performQuit() → processManager.stopAll(), tearing down the PRIMARY
+  // instance's app servers. Exit outright instead.
+  app.exit(0);
+}
+
 // ── Notification store ────────────────────────────────────────────────────────
 const notificationStore = [];
 let notifIdSeq = 0;
@@ -76,6 +113,83 @@ function _saveSettings(data) {
   try { fs.writeFileSync(_settingsFile(), JSON.stringify(data, null, 2)); } catch (_) {}
 }
 
+// ── Window lifecycle tracing ────────────────────────────────────────────────
+// A show/hide/focus loop is invisible in a screen recording but obvious in an
+// ordered event log, so every shell-owned window can emit one. Off by default
+// (it is noisy); set SDC_WINDOW_TRACE=1 to turn it on in a production install,
+// and it is always on in dev. Lines land in the same sdc-tools-diagnostics.log
+// as the load/crash lines, so a restore glitch and a renderer crash can be read
+// against each other in timestamp order.
+const WINDOW_TRACE = process.env.SDC_WINDOW_TRACE === '1' || isDev;
+const _TRACED_EVENTS = [
+  'ready-to-show', 'show', 'hide', 'focus', 'blur',
+  'minimize', 'restore', 'maximize', 'unmaximize', 'close', 'closed',
+];
+
+// Which SDC window the user was actually last using. Restoring has to land
+// them there — if they were in Reports → Job Hour Details, "switch back to SDC
+// Tools" means that window, not the launcher home screen.
+let _lastActiveWindowId = null;
+
+/**
+ * Wire the focus tracking (always) and the event trace (when enabled) onto a
+ * window. Every window the shell creates goes through this, so the log covers
+ * the launcher and all six app windows with one format.
+ */
+function attachWindowLifecycle(label, win) {
+  const id = win.id;
+  win.on('focus', () => { _lastActiveWindowId = id; });
+  if (!WINDOW_TRACE) return;
+  for (const ev of _TRACED_EVENTS) {
+    win.on(ev, () => {
+      // isDestroyed() guard: 'closed' fires after the native window is gone and
+      // any state query on it would throw.
+      const state = win.isDestroyed()
+        ? 'destroyed'
+        : `visible=${win.isVisible()} min=${win.isMinimized()} focus=${win.isFocused()}`;
+      logDiagnostic(`window:${label}`, ev, `id=${id} ${state}`);
+    });
+  }
+}
+
+/**
+ * The one and only "bring this window back" path. Tray, global shortcuts and
+ * Windows taskbar activation (via 'second-instance') all funnel through here so
+ * there is a single restore order and no chance of two callers racing each
+ * other into a show/hide flicker.
+ *
+ * The order is deliberate:
+ *   isMinimized() → restore()   un-minimizes; does not resize or recreate
+ *   !isVisible()  → show()      re-adds the taskbar button after a tray-hide
+ *   focus()                     actually raises it to the foreground
+ *
+ * The existing window object is always reused. Nothing here destroys or
+ * recreates a window, so the loaded child app, its route and its scroll
+ * position survive a restore untouched.
+ */
+function revealWindow(win) {
+  if (!win || win.isDestroyed()) return false;
+  if (win.isMinimized()) win.restore();
+  if (!win.isVisible()) win.show();
+  win.focus();
+  return true;
+}
+
+/**
+ * What a Windows taskbar click on SDC Tools should do: return the user to the
+ * SDC window they were last in, falling back to the launcher.
+ */
+function revealLastActive() {
+  const last = _lastActiveWindowId != null ? BrowserWindow.fromId(_lastActiveWindowId) : null;
+  if (last && !last.isDestroyed() && revealWindow(last)) return;
+  if (revealWindow(mainWindow)) return;
+  // Only reachable if the launcher window was genuinely destroyed (not merely
+  // hidden to tray) — recreating it is then the only way a taskbar click can
+  // still do something useful.
+  logDiagnostic('window:shell', 'reveal-recreate', 'no live window to restore');
+  createMainWindow();
+}
+
 function createMainWindow() {
   mainWindow = new BrowserWindow({
     width: 960,
@@ -100,6 +214,7 @@ function createMainWindow() {
     mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
   }
 
+  attachWindowLifecycle('shell', mainWindow);
   mainWindow.once('ready-to-show', () => mainWindow.show());
 
   // Minimize to tray instead of closing the launcher
@@ -127,7 +242,10 @@ function createTray() {
   tray = new Tray(icon);
   tray.setToolTip('SDC Tools');
   _rebuildTrayMenu();
-  tray.on('double-click', () => { mainWindow?.show(); mainWindow?.focus(); });
+  // Single click is the Windows expectation for a tray icon; double-click is
+  // kept for anyone used to it. Both go through the same reveal path.
+  tray.on('click',        () => revealLastActive());
+  tray.on('double-click', () => revealLastActive());
 }
 
 function _rebuildTrayMenu() {
@@ -139,7 +257,9 @@ function _rebuildTrayMenu() {
     click: () => openAppWindow(app.id),
   }));
   tray.setContextMenu(Menu.buildFromTemplate([
-    { label: 'Show Launcher', click: () => { mainWindow?.show(); mainWindow?.focus(); } },
+    // Explicitly the launcher, not revealLastActive() — this menu item names
+    // the launcher, so it must show the launcher even if a child app was last.
+    { label: 'Show Launcher', click: () => revealWindow(mainWindow) },
     { type: 'separator' },
     ...appItems,
     { type: 'separator' },
@@ -230,8 +350,7 @@ async function openAppWindow(appId, deepPath) {
   if (appWindows.has(appId)) {
     const existing = appWindows.get(appId);
     if (!existing.isDestroyed()) {
-      if (existing.isMinimized()) existing.restore();
-      existing.focus();
+      revealWindow(existing);
       // Already open: navigate the EXISTING window to the deep link rather than
       // just focusing it, which is what "open job 1127 in the Scheduler" has to
       // mean when the Scheduler is already showing some other project.
@@ -385,6 +504,8 @@ async function openAppWindow(appId, deepPath) {
   win.webContents.on('unresponsive', () => {
     _logLoadError('renderer reported unresponsive');
   });
+
+  attachWindowLifecycle(appId, win);
 
   win.loadURL(targetUrl);
   // ready-to-show is the right moment to reveal the window, but it is not
@@ -726,13 +847,14 @@ app.whenReady().then(() => {
   const appOrder = Object.keys(processManager.configs); // ['assemblies','readiness','scheduler','statelogic']
   appOrder.forEach((id, i) => {
     globalShortcut.register(`CommandOrControl+${i + 1}`, () => {
-      mainWindow?.show();
+      // openAppWindow reveals the app window itself; the launcher only needs
+      // restoring so the shortcut still works when it is hidden to tray.
+      revealWindow(mainWindow);
       openAppWindow(id);
     });
   });
   globalShortcut.register('CommandOrControl+0', () => {
-    mainWindow?.show();
-    mainWindow?.focus();
+    revealWindow(mainWindow);
   });
 });
 
@@ -800,6 +922,19 @@ async function pollAppNotifications() {
     }
   }
 }
+
+// Windows routes a pinned-shortcut / Start-menu / login-item activation of an
+// already-running SDC Tools into this event (that is what the AUMID above buys
+// us) instead of letting a competing second process start. Restoring the
+// existing window here is what makes the taskbar a reliable way back.
+app.on('second-instance', (_event, argv) => {
+  logDiagnostic('window:shell', 'second-instance', argv.join(' '));
+  revealLastActive();
+});
+
+// macOS dock-click equivalent. The shell only ships for Windows today, but the
+// handler costs nothing and keeps the reveal path complete.
+app.on('activate', () => revealLastActive());
 
 app.on('window-all-closed', () => {
   // Don't quit — tray keeps the app alive
