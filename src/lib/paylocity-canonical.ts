@@ -45,7 +45,11 @@
 // deliberate, centralized choice rather than an invented sixth department that
 // could be confused with one of the real five.
 export const CANONICAL_DEPARTMENTS = [
-  "Management",
+  // "Project Management (PM)", not "Management" (2026-09-02, by request). The
+  // department and the Function-111 section share one word here, and both read
+  // as "Project Management (PM)" now — abbreviated to "PM" in narrow band
+  // headers by lib/abbrev.ts, which is why the long form is safe to use.
+  "Project Management (PM)",
   "Mechanical Engineering",
   "Controls Engineering",
   "General Engineering",
@@ -56,7 +60,7 @@ export type CanonicalDepartment = (typeof CANONICAL_DEPARTMENTS)[number];
 export const ENGINEERING_OTHER_DEPARTMENT = "Engineering" as const;
 
 export const CANONICAL_SECTIONS = [
-  "Management",
+  "Project Management (PM)",
   "General",
   "System Design & Drawings",
   "Software",
@@ -80,7 +84,7 @@ export type CanonicalFunction = {
 
 // The user's supplied table, verbatim — one row per Function ID they named.
 const NAMED_FUNCTIONS: readonly CanonicalFunction[] = [
-  { functionId: "111", department: "Management", section: "Management" },
+  { functionId: "111", department: "Project Management (PM)", section: "Project Management (PM)" },
   { functionId: "211", department: "Mechanical Engineering", section: "General" },
   { functionId: "311", department: "Controls Engineering", section: "General" },
   { functionId: "312", department: "Controls Engineering", section: "System Design & Drawings" },

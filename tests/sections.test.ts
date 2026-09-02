@@ -12,8 +12,11 @@ import { SECTIONS, ETC_SECTIONS, ETC_TRACKED_CODES, HOURS_IMPORT_CODES, ENGINEER
 
 test("phase-10 section names/groups use the exact canonical wording, not an abbreviation", () => {
   const byCode = new Map(SECTIONS.map((s) => [s.code, s]));
-  assert.equal(byCode.get("10-111")!.group, "Management");
-  assert.equal(byCode.get("10-111")!.name, "Management");
+  // Function 111 reads "Project Management (PM)" since 2026-09-02 (was
+  // "Management"). Both the group and the section name come from the one
+  // canonical table, so both moved together.
+  assert.equal(byCode.get("10-111")!.group, "Project Management (PM)");
+  assert.equal(byCode.get("10-111")!.name, "Project Management (PM)");
   assert.equal(byCode.get("10-211")!.group, "Mechanical Engineering");
   assert.equal(byCode.get("10-211")!.name, "General");
   assert.equal(byCode.get("10-312")!.group, "Controls Engineering");

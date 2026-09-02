@@ -274,12 +274,16 @@ export function codesInDepartment(department: string): string[] {
 // `departmentOrderRank` below — so it always sorts after every real
 // department, never accidentally slotted in the middle by an edit here.
 //
-// "Project Management"/"Manufacturing Operations" -> "Management"/
-// "Manufacturing" (2026-08-20): wording only, matching the centralized
-// canonical vocabulary — see phase10Entry above. Every other entry, and the
+// "Project Management"/"Manufacturing Operations" -> "Project Management (PM)"/
+// "Manufacturing": wording only, matching the centralized canonical vocabulary
+// — see phase10Entry above. (The first of those two became "Management" in
+// 2026-08-20 and "Project Management (PM)" on 2026-09-02.) Every other entry, and the
 // list's own shape, is unchanged.
 export const DEPARTMENT_ORDER: string[] = [
-  "Management",
+  // Renamed 2026-09-02 with the canonical vocabulary — this list is `string[]`,
+  // so a stale entry would not fail the build, it would just silently sort
+  // Project Management last (see departmentOrderRank).
+  "Project Management (PM)",
   "Mechanical Engineering",
   "Controls Engineering",
   "General Engineering",

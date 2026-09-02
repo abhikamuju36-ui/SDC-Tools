@@ -156,14 +156,14 @@ const PARTS_COST_COL_CLASS = "pc-col";
 // blue for the large General Engineering block so it reads as its own zone.
 //
 // Keyed on `s.group`'s actual values — sections.ts's own canonical wording
-// (2026-08-20; "PM"/"ME"/"CE" -> "Management"/"Mechanical Engineering"/
+// (2026-08-20; "PM"/"ME"/"CE" -> "Project Management (PM)"/"Mechanical Engineering"/
 // "Controls Engineering") rather than a hand-typed abbreviation of it. This
 // map going stale after that rename would have been silent: a color lookup
 // miss falls back to `?? ""`, so the header would just lose its band color
 // rather than error — exactly the kind of drift a shared vocabulary is
 // supposed to make impossible.
 const GROUP_HEADER_COLOR: Record<string, string> = {
-  Management: "bg-sdc-gray-100 text-sdc-navy", // neutral brand gray
+  "Project Management (PM)": "bg-sdc-gray-100 text-sdc-navy", // neutral brand gray
   "Mechanical Engineering": "bg-sdc-blue-light text-sdc-navy", // #e6f0fa
   "Controls Engineering": "bg-sdc-green-bg text-sdc-navy", // #eef7de
   "General Engineering": "bg-sdc-blue text-white", // #1574C4

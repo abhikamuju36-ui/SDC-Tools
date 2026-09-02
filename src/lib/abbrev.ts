@@ -10,6 +10,10 @@ const RULES: readonly [RegExp, string][] = [
   [/\bMechanical\b/gi, "Mech"],
   [/\bElectrical\b/gi, "Elec"],
   [/\bManufacturing\b/gi, "Mfg"],
+  // BEFORE the bare-Management rule, and before \bGeneral\b, so the full
+  // canonical label collapses to the initialism rather than to "Project Mgmt
+  // (PM)" — which is both longer and says PM twice.
+  [/\bProject Management \(PM\)/gi, "PM"],
   [/\bManagement\b/gi, "Mgmt"],
   [/\bGeneral\b/gi, "Gen"],
   // Added 2026-08-24. "Programming" is the only word in SECTIONS long enough to

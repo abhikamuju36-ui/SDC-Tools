@@ -153,9 +153,11 @@ test("every department a real code can resolve to has a position in DEPARTMENT_O
 });
 
 test("departmentOrderRank follows the exact given sequence", () => {
-  // "Management"/"Manufacturing" (2026-08-20), not "Project Management"/
-  // "Manufacturing Operations" — see paylocity-canonical.ts.
-  assert.equal(departmentOrderRank("Management"), 0);
+  // The canonical wording, not the HR roster's — see paylocity-canonical.ts.
+  // Function 111's department was "PM", then "Management" (2026-08-20), and is
+  // "Project Management (PM)" since 2026-09-02. "Manufacturing", never
+  // "Manufacturing Operations".
+  assert.equal(departmentOrderRank("Project Management (PM)"), 0);
   assert.equal(departmentOrderRank("Mechanical Engineering"), 1);
   assert.equal(departmentOrderRank("Controls Engineering"), 2);
   assert.ok(departmentOrderRank("Mechanical Build") < departmentOrderRank("Electrical Build"));
@@ -171,17 +173,17 @@ test("an unrecognized department (including UNDEFINED_LABEL) ranks after every r
 
 test("rollupByOperationalTier's department tier sorts by the fixed order, NOT by hours descending", () => {
   // Deliberately built so hours-descending would produce the OPPOSITE order:
-  // Manufacturing has the most hours but must still sort AFTER Management,
-  // which has the fewest.
+  // Manufacturing has the most hours but must still sort AFTER Project
+  // Management, which has the fewest.
   const bySection = [
     { section: "10-413", hours: 500, punchCount: 1 }, // Manufacturing
     { section: "10-211", hours: 200, punchCount: 1 }, // Mechanical Engineering
-    { section: "10-111", hours: 10, punchCount: 1 }, // Management
+    { section: "10-111", hours: 10, punchCount: 1 }, // Project Management (PM)
   ];
   const g = rollupByOperationalTier(bySection, "department");
   assert.deepEqual(
     g.map((r) => r.label),
-    ["Management", "Mechanical Engineering", "Manufacturing"],
+    ["Project Management (PM)", "Mechanical Engineering", "Manufacturing"],
     "must follow DEPARTMENT_ORDER, not the 500/200/10 hours ordering",
   );
 });

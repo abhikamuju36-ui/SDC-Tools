@@ -16,7 +16,8 @@ import {
 // / Section Mapping, 2026-08-20) ────────────────────────────────────────────────
 
 const NAMED_TABLE: [string, string, string][] = [
-  ["111", "Management", "Management"],
+  // Renamed from "Management" on 2026-09-02, by request.
+  ["111", "Project Management (PM)", "Project Management (PM)"],
   ["211", "Mechanical Engineering", "General"],
   ["311", "Controls Engineering", "General"],
   ["312", "Controls Engineering", "System Design & Drawings"],
