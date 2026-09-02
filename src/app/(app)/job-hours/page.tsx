@@ -14,6 +14,8 @@ import { JobProcurement } from "@/components/JobProcurement";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ScrollIntoView } from "@/components/ScrollIntoView";
 import { requirePagePermission } from "@/lib/require-permission";
+import { cookies } from "next/headers";
+import { JOB_HOURS_SELECTION_COOKIE, parseSelectionCookie } from "@/lib/job-hours-selection";
 
 // No-job-selected placeholder, so the dashboard's prop stays non-nullable and
 // the panel has one shape to render.
@@ -48,6 +50,32 @@ export default async function JobHoursPage({
   // treating them alike is what made "remove the last job" impossible before,
   // since the server re-picked one the instant the param went away.
   const explicitlyEmpty = jobsParam !== undefined && jobsParam.trim() === "";
+
+  // ── The remembered selection, resolved HERE rather than after hydration ────
+  //
+  // This is the fix for the wrong-job flash (2026-09-02). The last selection
+  // used to live in localStorage, which only the browser can read, so a bare
+  // /job-hours landing rendered the default job below — 1130, whichever job
+  // happens to have the most hours this month — with its hours, charts, parts
+  // and procurement, and JobSelect then replaced the URL after mount to swap in
+  // the job the user actually wanted. Two server renders, two sets of live
+  // Total ETO calls, and one visible frame of the WRONG JOB'S figures.
+  //
+  // As a cookie it arrives with the document request, so the first job-specific
+  // frame this page ever renders is already the right job. Order matters and is
+  // deliberate: an explicit ?jobs= / ?job= (a deep link from Projects, Job Cost
+  // Explorer, the Scheduler, a bookmark) always beats the memory, and the memory
+  // beats the default. See lib/job-hours-selection.ts.
+  if (selectedJobIds.length === 0 && !explicitlyEmpty) {
+    const remembered = parseSelectionCookie((await cookies()).get(JOB_HOURS_SELECTION_COOKIE)?.value).filter((id) =>
+      idByJobId.has(id),
+    );
+    if (remembered.length > 0) selectedJobIds = remembered;
+  }
+
+  // Nothing asked for and nothing remembered — the landing a first-time visitor
+  // gets. Still the data-richest job, so the page opens on something worth
+  // reading rather than an empty shell.
   if (selectedJobIds.length === 0 && !explicitlyEmpty) {
     const def = await defaultDashboardJobId();
     const j = jobs.find((x) => x.id === def);

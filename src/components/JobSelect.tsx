@@ -5,6 +5,11 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { nextParams, notePendingParams } from "@/lib/url-params";
 import { INPUT } from "@/components/ui/classnames";
 import { groupSelectionState, nextSelectionForGroup } from "@/lib/job-select-groups";
+import {
+  JOB_HOURS_SELECTION_COOKIE,
+  JOB_HOURS_SELECTION_LEGACY_KEY,
+  rememberJobHoursSelection,
+} from "@/lib/job-hours-selection";
 
 // Searchable MULTI-job picker for the Job Hour Details slicer. Writes
 // ?jobs=<jobId,jobId,…>, which the page has always aggregated.
@@ -66,18 +71,35 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
     };
   }, []);
 
-  // Remember the last selection so the page stops snapping back to the server's
-  // data-richest default (1142) on every fresh landing. An explicit ?jobs= /
-  // ?job= (e.g. a deep-link from Projects) always wins — we only restore when
-  // the URL carries no selection at all.
-  const LAST_KEY = "jobhours-last-jobs";
+  // ── Remembering the last selection: now the SERVER's job ──────────────────
+  //
+  // This effect used to read localStorage on mount and `router.replace` the URL
+  // to the remembered job. That is what made a bare /job-hours landing render
+  // job 1130's hours, charts, parts and procurement for a beat before swapping
+  // to the job the user wanted: the server had already rendered its default by
+  // the time this code could run, because localStorage does not exist until
+  // after hydration.
+  //
+  // The selection is a cookie now (lib/job-hours-selection.ts), written in
+  // `apply()` below and read by the page during its FIRST render — so the wrong
+  // job is never rendered, never fetched, and there is no second navigation.
+  //
+  // What remains here is a one-time migration for browsers that still hold the
+  // old localStorage value and no cookie yet. It writes the cookie and does the
+  // same replace this code always did, so an existing user's remembered job
+  // survives the deploy; it can only ever run once per browser, and every
+  // landing after it is resolved server-side.
   useEffect(() => {
-    const sp = new URLSearchParams(window.location.search);
-    if (sp.has("jobs") || sp.has("job")) return;
+    if (document.cookie.includes(`${JOB_HOURS_SELECTION_COOKIE}=`)) return;
     let stored: string | null = null;
-    try { stored = window.localStorage.getItem(LAST_KEY); } catch { /* ignore */ }
+    try { stored = window.localStorage.getItem(JOB_HOURS_SELECTION_LEGACY_KEY); } catch { /* ignore */ }
     if (!stored) return;
-    sp.set("jobs", stored);
+    const ids = stored.split(",").map((s) => s.trim()).filter(Boolean);
+    rememberJobHoursSelection(ids);
+    try { window.localStorage.removeItem(JOB_HOURS_SELECTION_LEGACY_KEY); } catch { /* ignore */ }
+    const sp = new URLSearchParams(window.location.search);
+    if (sp.has("jobs") || sp.has("job") || ids.length === 0) return;
+    sp.set("jobs", ids.join(","));
     router.replace(`${pathname}?${sp.toString()}`);
     // Run once on mount — a stored value only matters for the initial landing.
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -141,7 +163,10 @@ export function JobSelect({ jobs, selected }: { jobs: JobOpt[]; selected: string
     const qs = nextParams(currentQs);
     qs.set("jobs", next.join(","));
     qs.delete("job"); // drop the legacy single-job param
-    try { window.localStorage.setItem(LAST_KEY, next.join(",")); } catch { /* ignore */ }
+    // Remembered for the next landing, where the SERVER reads it. An empty
+    // selection deletes the cookie rather than storing "" — see
+    // selectionCookieAssignment.
+    rememberJobHoursSelection(next);
     const q = qs.toString();
     notePendingParams(currentQs, q);
     router.push(`${pathname}?${q}`, { scroll: false });

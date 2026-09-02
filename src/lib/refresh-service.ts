@@ -463,8 +463,18 @@ export async function refreshAllData(input: {
   // ── Tell everyone (§25.9) ─────────────────────────────────────────────────
   //
   // No cellKey, so every connected tab takes the throttled route refresh
-  // (LiveRefresh) as well as showing the banner — which is right: a refresh moves
-  // figures across every table, not one cell.
+  // (LiveRefresh) — which is right: a refresh moves figures across every table,
+  // not one cell.
+  //
+  // `system: true` since 2026-09-02: this event syncs the tabs but no longer
+  // draws a notification card. It used to draw one — "Refresh for All data in
+  // Application recalculated from (blank) to refreshed at 8:25 AM" — beside the
+  // refresh toast that already said "All application data was refreshed
+  // successfully at 8:25 AM", in plainer words, for the same single action.
+  // Two cards for one thing the user did is the noise, and the fix is to stop
+  // producing the second one rather than to make the stack better at holding
+  // both. The audit row is unaffected: this pass is still fully recorded, it
+  // just no longer interrupts anybody to say so.
   const at = completedAt.toLocaleTimeString("en-US", { hour: "numeric", minute: "2-digit" });
   await recordChanges(
     [
@@ -475,6 +485,7 @@ export async function refreshAllData(input: {
         previousValue: null,
         newValue: status === "ok" ? `refreshed at ${at}` : `refreshed at ${at} with ${failed.length} failure(s)`,
         changeType: status === "ok" ? "recalculated" : "rejected",
+        system: true,
         entityType: "RefreshRun",
         entityId: refreshId,
       },

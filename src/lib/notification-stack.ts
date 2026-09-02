@@ -17,7 +17,11 @@
 // ChangeNotifications never needed. Kept dependency-free, like lib/motion.ts, so
 // `tsx --test` can load it and a render-time bug can never hide a logic bug.
 
-export type ToastKind = "success" | "error" | "info";
+// `warning` added 2026-09-02: the durations below are graded by severity, and
+// without it every non-error had to be either a 2.5s confirmation or a 6s
+// failure — so anything in between ("saved, but two rows were skipped") had to
+// pick a lie.
+export type ToastKind = "success" | "error" | "info" | "warning";
 
 export type ToastItem = {
   id: number;
@@ -41,13 +45,39 @@ export type ToastItem = {
 // number would let a burst of routine toasts push a colleague's change card off
 // screen, or the reverse, and there is no principled way to rank "your export
 // finished" against "Abhi edited cell X" that both halves should have to agree on.
-export const MAX_VISIBLE_TOASTS = 4;
+// 3, matching ChangeNotifications' own VISIBLE. It was 4, on the reasoning that
+// toasts are shorter-lived than change cards and so less likely to pile up —
+// true, but it meant the two halves of one stack had different ideas of "too
+// many", and seven cards can be on screen at once. Three each is the ceiling
+// the notification rules ask for and reads as one list rather than a column of
+// them.
+export const MAX_VISIBLE_TOASTS = 3;
 
-// Errors linger longer than confirmations (§26.9's "say whether retrying is
-// safe" logic elsewhere in this app follows the same instinct: a failure is
-// read more slowly than a success is glanced at and dismissed).
+// ── Graded by severity, not one number for everything ─────────────────────
+//
+// A confirmation is GLANCED at — you already know what you did, the toast only
+// says it worked — so it should be gone before it becomes furniture. A failure
+// is READ, and often re-read, so it gets more than twice as long.
+//
+// Retuned 2026-09-02 (was 4s for everything except errors, which is a long time
+// for "Copied 1101" to sit over the page): success and info now clear in 2.5s,
+// which is enough to register and short enough that a burst of them never
+// accumulates into a wall.
+//
+// Nothing here returns Infinity. A toast that never leaves is a toast the reader
+// must clean up by hand, and the one message in this app that genuinely needs
+// standing attention — a refused edit, which is asking somebody to re-enter a
+// value — is a ChangeNotifications card, which has its own no-expiry rule for
+// exactly that case.
 export function autoDismissMs(type: ToastKind): number {
-  return type === "error" ? 6000 : 4000;
+  switch (type) {
+    case "error":
+      return 6000;
+    case "warning":
+      return 4000;
+    default:
+      return 2500;
+  }
 }
 
 /**

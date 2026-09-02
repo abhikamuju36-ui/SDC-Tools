@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   foldToast,
   capToasts,
@@ -133,4 +135,59 @@ test("a critical toast is NEVER suppressed, even inside a suppressed subtree", (
 test("errors linger longer than confirmations", () => {
   assert.ok(autoDismissMs("error") > autoDismissMs("success"));
   assert.ok(autoDismissMs("error") > autoDismissMs("info"));
+});
+
+// ── Severity grading and the one-action-one-notification rule (2026-09-02) ───
+//
+// Reported with a screenshot: a single refresh produced two cards side by side —
+// a change-notification card ("Refresh for All data in Application recalculated
+// from (blank) to refreshed at 8:25 AM") and the refresh toast that said the
+// same thing in plainer words. Plus every confirmation sat for four seconds.
+
+test("a confirmation clears in about 2.5s; a warning and an error linger", () => {
+  assert.equal(autoDismissMs("success"), 2500);
+  assert.equal(autoDismissMs("info"), 2500);
+  assert.equal(autoDismissMs("warning"), 4000);
+  assert.equal(autoDismissMs("error"), 6000);
+  // The grade must stay monotonic — the whole point is that severity buys time.
+  assert.ok(autoDismissMs("warning") > autoDismissMs("success"));
+  assert.ok(autoDismissMs("error") > autoDismissMs("warning"));
+});
+
+test("nothing is sticky: every severity eventually clears itself", () => {
+  // A toast that never leaves is one the reader has to tidy up by hand. The
+  // message that genuinely needs standing attention (a refused edit) is a
+  // ChangeNotifications card, which has its own no-expiry rule for that case.
+  for (const kind of ["success", "info", "warning", "error"] as const) {
+    assert.ok(Number.isFinite(autoDismissMs(kind)) && autoDismissMs(kind) > 0, kind);
+  }
+});
+
+test("the toast half caps at 3, the same ceiling the change cards use", () => {
+  // Two halves of one stack with different ideas of "too many" is how seven
+  // cards end up on screen at once.
+  assert.equal(MAX_VISIBLE_TOASTS, 3);
+});
+
+test("a warning is capped and folded like any other kind", () => {
+  const w = (id: number) => item({ id, message: `W${id}`, type: "warning" as const });
+  assert.deepEqual(capToasts([w(1), w(2), w(3), w(4)], MAX_VISIBLE_TOASTS).map((t) => t.id), [2, 3, 4]);
+  const folded = foldToast([item({ id: 1, message: "Skipped 2 rows", type: "warning" })], {
+    id: 2, message: "Skipped 2 rows", type: "warning", critical: false,
+  });
+  assert.equal(folded.items.length, 1);
+  assert.equal(folded.items[0].count, 2);
+});
+
+test("a refresh announces itself ONCE — the change event syncs tabs without a card", () => {
+  // The two halves of the fix, asserted where they live: the pass marks its
+  // event `system`, and the card stack skips those. Either one alone puts the
+  // duplicate card back.
+  const service = readFileSync(join(process.cwd(), "src", "lib", "refresh-service.ts"), "utf8");
+  const recordAt = service.indexOf("recordChanges(");
+  assert.ok(recordAt !== -1, "the pass still publishes an event, so open tabs still update");
+  assert.ok(service.slice(recordAt, recordAt + 900).includes("system: true"), "and marks it transport-only");
+
+  const cards = readFileSync(join(process.cwd(), "src", "components", "ChangeNotifications.tsx"), "utf8");
+  assert.match(cards, /if \(c\.system\) continue;/, "the card stack draws nothing for a system event");
 });

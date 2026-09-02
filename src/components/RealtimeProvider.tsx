@@ -50,6 +50,11 @@ export type ChangeEvent = {
   // can be holding different ones. Optional on purpose: a bulk change has no cell.
   cellKey?: string;
   altCellKey?: string;
+  // Transport only — sync on this event, but draw no card for it. Set by the
+  // app's own background work (the refresh pass), whose completion is already
+  // reported by the toast the person who clicked it is watching for. See
+  // `system` in lib/change-log.ts.
+  system?: boolean;
 };
 
 // ── This tab's identity ─────────────────────────────────────────────────────

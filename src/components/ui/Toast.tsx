@@ -110,6 +110,19 @@ function Glyph({ type }: { type: ToastType }) {
       </svg>
     );
   }
+  if (type === "warning") {
+    // The error triangle, deliberately: a warning is the same SHAPE of message —
+    // something needs your attention — at a lower volume, and the colour is what
+    // carries the difference. A third unrelated glyph would just be one more
+    // thing to learn.
+    return (
+      <svg {...common} className="mt-0.5 shrink-0">
+        <path d="M8 1.8 L14.5 13.5 H1.5 Z" strokeLinejoin="round" />
+        <line x1="8" y1="6.2" x2="8" y2="9.5" strokeLinecap="round" />
+        <line x1="8" y1="11.6" x2="8" y2="11.6" strokeLinecap="round" />
+      </svg>
+    );
+  }
   if (type === "info") {
     return (
       <svg {...common} className="mt-0.5 shrink-0">
@@ -203,7 +216,22 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
           (z-20) and below a modal dialog (z-50), so an open dialog always wins
           a spatial overlap rather than being covered by a passive notification. */}
       <div
-        className="pointer-events-none fixed right-4 top-20 z-[45] flex w-[320px] max-w-[calc(var(--app-vw)_-_var(--sidebar-w)_-_2rem)] flex-col gap-2"
+        // ── The clamp that had never actually applied (2026-09-02) ───────────
+        //
+        // This read `max-w-[calc(var(--app-vw) - var(--sidebar-w) - 2rem)]`, and
+        // it did nothing at all: `--sidebar-w` is set on the sidebar element,
+        // which is not an ancestor of this fixed container, so the variable
+        // resolves to nothing here, the calc() is invalid, and the browser drops
+        // the whole declaration. Measured in the running app: computed
+        // max-width `none`. The stack was therefore a hard 320px with no bound,
+        // which is what made it cover the page in the ~480px window the SDC
+        // Tools shell opens.
+        //
+        // `--app-vw` IS declared on :root (globals.css) and already carries the
+        // app-zoom correction, so it resolves here. No sidebar term: the stack
+        // is anchored to the right edge, and 1rem of margin on each side is the
+        // whole requirement.
+        className="pointer-events-none fixed right-4 top-20 z-[45] flex w-[320px] max-w-[calc(var(--app-vw)_-_2rem)] flex-col gap-2"
         aria-live="polite"
         aria-atomic="false"
         aria-label="Notifications"
@@ -220,9 +248,11 @@ export function ToastProvider({ children }: { children: React.ReactNode }) {
             } ${
               t.type === "error"
                 ? "border-sdc-red-border bg-sdc-red-bg text-sdc-red-text"
-                : t.type === "info"
-                  ? "border-sdc-border bg-white text-sdc-navy"
-                  : "border-sdc-green/40 bg-sdc-green-bg text-sdc-green-text"
+                : t.type === "warning"
+                  ? "border-sdc-yellow/70 bg-sdc-yellow-bg text-sdc-yellow-text"
+                  : t.type === "info"
+                    ? "border-sdc-border bg-white text-sdc-navy"
+                    : "border-sdc-green/40 bg-sdc-green-bg text-sdc-green-text"
             }`}
           >
             <Glyph type={t.type} />

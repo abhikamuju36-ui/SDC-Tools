@@ -46,6 +46,20 @@ export type CellChange = {
   previousValue: string | null;
   newValue: string | null;
   changeType: ChangeType;
+  // ── Transport only: sync every tab, but do NOT narrate this to anyone ──────
+  //
+  // A change event does two unrelated jobs: it tells other browsers their data
+  // moved (LiveRefresh reacts to it), and it tells the PERSON what somebody
+  // changed (the notification card). For a cell somebody typed in, both are
+  // wanted. For the hourly refresh pass they are not: the tabs must still
+  // refetch, but the pass is the app's own background work, and announcing it
+  // produced a second card beside the refresh toast that already said the same
+  // thing in better words — one action, two notifications, which is exactly the
+  // noise the notification rules forbid.
+  //
+  // Set true and the event still reaches every browser and still drives the
+  // refetch; ChangeNotifications simply does not draw a card for it.
+  system?: boolean;
   // For joining back to the record, when there is one.
   entityType?: string;
   entityId?: string | number;
@@ -193,6 +207,8 @@ export async function recordChanges(
         // refetching the route. Omitted when the change isn't a single cell.
         ...(c.cellKey ? { cellKey: c.cellKey } : {}),
         ...(c.altCellKey ? { altCellKey: c.altCellKey } : {}),
+        // Carried to the browser so the receiver can sync without narrating.
+        ...(c.system ? { system: true } : {}),
       })),
     );
   } catch (err) {

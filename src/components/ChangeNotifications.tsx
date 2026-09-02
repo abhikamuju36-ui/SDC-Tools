@@ -85,6 +85,13 @@ export function ChangeNotifications() {
   const groups = useMemo(() => {
     const byCell = new Map<string, { head: (typeof changes)[number]; members: typeof changes; refused: boolean }>();
     for (const c of changes) {
+      // A `system` event is the app's own background work — today, the hourly
+      // refresh pass. It still arrives, and LiveRefresh still acts on it, so
+      // every open tab updates; it simply does not get a card. The person who
+      // started a refresh already has one notification about it (the toast),
+      // and the people who did not start it do not need to be interrupted by
+      // a machine finishing a scheduled job. See lib/change-log.ts.
+      if (c.system) continue;
       const key = `${c.tab}|${c.rowRef}|${c.columnName}`;
       const g = byCell.get(key);
       if (g) {
