@@ -74,3 +74,9 @@ __pycache__/
 
 # Rollback dumps written by the repair scripts — data, not code.
 scripts/_backup_*.json
+
+# Generated audit reports (scripts/audit-*.ts --csv). They contain named
+# employees against hours worked, so they stay local: forward the file, don't
+# commit it. Regenerate any time — the scripts are read-only.
+/unmatched-job-hours.csv
+/job-cost-margin-impact.csv

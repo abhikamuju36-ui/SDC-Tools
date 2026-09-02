@@ -110,3 +110,41 @@ export function buildJobLabelIndex(jobs: readonly { jobId: string; jobName: stri
   for (const key of ambiguous) byLabel.delete(key);
   return byLabel;
 }
+
+/**
+ * The base job number in a MACHINE-SUFFIXED job cell — `"1037-02"` -> `"1037"`.
+ *
+ * The remaining case from this file's header note, where it was set aside as "a
+ * machine-suffixed job number; separate problem". Paylocity carries a handful of
+ * cells shaped `<job>-<machine>`: job 1037 built two machines, and time on the
+ * second was booked as "1037-02". `Number("1037-02")` is NaN, so the cell fell
+ * into the NAME branch, matched no job name, and 25.95 hours of Rob Caspio's
+ * Mechanical Build time was rejected as JOB_NOT_FOUND.
+ *
+ * ── Why this does not violate the "never by numeric prefix" rule above ──────
+ *
+ * That rule exists because "2026 SERVICE" and "2026 Spare Parts" are different
+ * Paylocity categories sharing a leading 2026, so a prefix match would merge
+ * Service hours into Spare Parts. The danger there is a NAME whose leading digits
+ * coincide with a real job number.
+ *
+ * This is a much narrower shape: digits, one hyphen, digits, and nothing else. It
+ * cannot match "2026 SERVICE" (letters), "2023_SER" (underscore, letters) or
+ * "Not Defined". And it cannot collide with a hyphenated job NUMBER, because
+ * there are none — measured 2026-09-02 against the live job master: 0 of 240 job
+ * numbers contain any non-digit character. Exactly one unmatched label in all
+ * punch history has this shape.
+ *
+ * The caller must still verify the base against the job master (see
+ * paylocity-workbook.ts) — this only says what to look up, never that it exists.
+ * Returns null for anything that is not this exact shape, so "no opinion" is the
+ * default rather than a guess.
+ */
+export function jobNumberFromMachineSuffix(raw: string | null | undefined): string | null {
+  if (raw == null) return null;
+  // 1-10 digits, one hyphen, 1-3 digits. Bounded on purpose: a longer trailing
+  // group is not a machine number, and an unbounded one would start matching
+  // date-like and part-like strings.
+  const m = /^\s*(\d{1,10})-(\d{1,3})\s*$/.exec(String(raw));
+  return m ? m[1] : null;
+}

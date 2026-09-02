@@ -1,6 +1,8 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { normalizeJobLabel, resolveJobLabel, buildJobLabelIndex } from "../src/lib/job-label";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+import { normalizeJobLabel, resolveJobLabel, buildJobLabelIndex, jobNumberFromMachineSuffix } from "../src/lib/job-label";
 
 // The rule that matters most: "2026 SERVICE" and "2026 Spare Parts" are separate
 // Paylocity categories sharing a leading 2026, and job number 2026 IS
@@ -78,4 +80,41 @@ test("a numeric-looking label is left to the numeric path", () => {
   // be name-matched onto job 1037.
   const idx = buildJobLabelIndex([...JOBS, { jobId: "1037", jobName: "Some Real Job" }]);
   assert.equal(resolveJobLabel("1037-02", idx), null);
+});
+
+// ── The machine-suffixed job number (2026-09-02) ────────────────────────────
+//
+// "1037-02" is machine 02 of job 1037. Number("1037-02") is NaN, so it fell into
+// the NAME branch, matched no job name, and 25.95h of Mechanical Build time was
+// rejected as JOB_NOT_FOUND — the last case this file's header had set aside.
+
+test("a machine suffix resolves to the base job number", () => {
+  assert.equal(jobNumberFromMachineSuffix("1037-02"), "1037");
+  assert.equal(jobNumberFromMachineSuffix(" 1037-02 "), "1037", "whitespace from the cell");
+  assert.equal(jobNumberFromMachineSuffix("1105-1"), "1105");
+});
+
+test("it refuses everything that is not exactly digits-hyphen-digits", () => {
+  // The hazard this file warns about is a NAME whose leading digits coincide
+  // with a job number. None of these may resolve.
+  for (const s of ["2026 SERVICE", "2023_SER", "Not Defined", "2026 Spare Parts", "", "1037", "1037-", "-02", "1037-02-03", "1037-abc", "abc-02"]) {
+    assert.equal(jobNumberFromMachineSuffix(s), null, `"${s}" must not resolve`);
+  }
+  assert.equal(jobNumberFromMachineSuffix(null), null);
+  assert.equal(jobNumberFromMachineSuffix(undefined), null);
+});
+
+test("the trailing group is bounded — a date is not a machine number", () => {
+  // An unbounded suffix would start matching date-like and part-like strings.
+  assert.equal(jobNumberFromMachineSuffix("2026-0902"), null, "4-digit tail is not a machine");
+  assert.equal(jobNumberFromMachineSuffix("1037-002"), "1037", "3 digits is still plausible");
+});
+
+test("the name lookup wins, and the base must exist — asserted at the call site", () => {
+  const src = readFileSync(join(process.cwd(), "src", "lib", "paylocity-workbook.ts"), "utf8");
+  // Suffix is tried ONLY when the name lookup found nothing...
+  assert.match(src, /const suffixBase = byLabel \? null : jobNumberFromMachineSuffix\(rawJob\);/);
+  // ...and only resolves when the base number is in the job master.
+  assert.match(src, /known\?\.has\(normalizeJobNumber\(suffixBase\)\)/);
+  assert.match(src, /jobId = byLabel \?\? bySuffix!/);
 });

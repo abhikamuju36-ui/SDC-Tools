@@ -11,7 +11,7 @@ import {
 import { isTotalControlFunctionId, normalizeFunctionId } from "@/lib/paylocity-canonical";
 import { normalizeSectionId } from "@/lib/paylocity-standard-rules";
 import type { JobHoursRow } from "@/lib/job-hours-source";
-import { resolveJobLabel } from "@/lib/job-label";
+import { resolveJobLabel, jobNumberFromMachineSuffix } from "@/lib/job-label";
 import { normalizeJobNumber as normalizeJobId } from "@/lib/job-filters";
 // The Undefined Hours definition, from the one module that owns it. Imported for use
 // here AND re-exported below, so callers can reach it either way but there is still
@@ -694,11 +694,18 @@ export async function readPaylocityWorkbook(opts?: {
       // IS "2026 Spare Parts", so keying on the leading 2026 would merge Service
       // hours into Spare Parts. See lib/job-label.ts.
       const byLabel = jobIdByLabel ? resolveJobLabel(rawJob, jobIdByLabel) : null;
-      if (!byLabel) {
+      // A machine-suffixed number — "1037-02" is machine 02 of job 1037 — tried
+      // only AFTER the name lookup, so a job genuinely named "1037-02" would
+      // still win, and only when the base number is in the job master. See
+      // jobNumberFromMachineSuffix for why this does not reintroduce the
+      // prefix-matching hazard that rule warns about.
+      const suffixBase = byLabel ? null : jobNumberFromMachineSuffix(rawJob);
+      const bySuffix = suffixBase && known?.has(normalizeJobNumber(suffixBase)) ? normalizeJobNumber(suffixBase) : null;
+      if (!byLabel && !bySuffix) {
         reject("JOB_NOT_FOUND", rawJob);
         continue;
       }
-      jobId = byLabel;
+      jobId = byLabel ?? bySuffix!;
     } else {
       jobId = normalizeJobNumber(rawJob);
       // Numerically fine but the app has no such job. Distinct from the above: this
