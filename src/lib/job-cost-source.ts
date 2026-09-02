@@ -1,7 +1,7 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { validJobTypeFilter } from "@/lib/job-filters";
-import { SECTIONS, PARTS_COST_SECTION } from "@/lib/sections";
+import { SECTIONS, PARTS_COST_SECTION, mapPunchToColumns, billingGroupForSection } from "@/lib/sections";
 import { coveredMonths } from "@/lib/actual-hours";
 import { getPartsCostSpentByJob, getPartsActualByJob } from "@/lib/sync-totaleto";
 import { effectiveNewEtc } from "@/lib/etc";
@@ -30,13 +30,15 @@ import type { HoursByYear, JobCostRow } from "@/lib/job-cost";
 // ME/CE-coded section silently falls through to "other" (found live while
 // migrating; nothing here would have errored, it would just have quietly
 // moved hours off the Eng column).
+// Collapsed onto sections.ts's billingGroupForSection (2026-09-02) — the shared
+// helper added 2026-09-01 for exactly this question. It was a private copy of the
+// same rule, and the comment above records what a private copy costs: the ME/CE
+// rename silently moved hours to "other" and nothing errored. One definition now,
+// so a future rename cannot make two callers disagree.
 const SECTION_BUCKET: Record<string, "eng" | "shop" | "other"> = {};
 for (const s of SECTIONS) {
-  SECTION_BUCKET[s.code] = ["Mechanical Engineering", "Controls Engineering", "General Engineering", "Engineering"].includes(s.group)
-    ? "eng"
-    : s.group === "Shop"
-      ? "shop"
-      : "other";
+  const group = billingGroupForSection(s.code);
+  SECTION_BUCKET[s.code] = group === "Engineering" ? "eng" : group === "Shop" ? "shop" : "other";
 }
 
 // The 1990–2100 "lifetime" window these constants supplied is gone: the Parts
@@ -134,6 +136,23 @@ async function loadJobHoursAndYears(jobPks: number[], throughMonth: string | nul
     y[bucket] += hrs;
   }
 
+  // ── Punches are folded first; the other two eras are already column-keyed ──
+  //
+  // JobHoursDetail.section stores the RAW Paylocity pair, and SECTION_BUCKET
+  // above is keyed on the app's fixed column codes — so an unfolded raw pair
+  // matched nothing and fell through to "other". That is not a cosmetic
+  // mis-label here: computeJobCost's Labor Cost sums Eng and Shop hours ONLY
+  // (see job-cost.ts), so every hour in "other" is costed at zero.
+  //
+  // Measured app-wide on 2026-09-02, before this fold: 45,068 hours of real
+  // engineering and shop labour sat in "other" — Eng 39,798h instead of
+  // 69,845h, Shop 52,439h instead of 67,461h — which is roughly $8.3M of
+  // labour cost missing at the default rates, and profit and margin overstated
+  // by that much on the jobs carrying those codes.
+  //
+  // Same fold, same function, same reason as actual-hours.ts, sync-actuals.ts,
+  // job-hours-detail.ts and tm-hours.ts. `historical` and `frozen` are
+  // app-owned grid data already keyed by column code and must NOT be folded.
   for (const h of historical) addTotal(h.jobId, h.section, Number(h.actualHistoricalHours ?? 0));
   for (const f of frozen) {
     const hrs = Number(f._sum.hoursWorked ?? 0);
@@ -141,9 +160,10 @@ async function loadJobHoursAndYears(jobPks: number[], throughMonth: string | nul
     addYear(f.jobId, f.section, f.month, hrs);
   }
   for (const p of punches) {
-    const hrs = Number(p._sum.hours ?? 0);
-    addTotal(p.jobId, p.section, hrs);
-    addYear(p.jobId, p.section, p.month, hrs);
+    for (const col of mapPunchToColumns(p.section, Number(p._sum.hours ?? 0))) {
+      addTotal(p.jobId, col.section, col.hours);
+      addYear(p.jobId, col.section, p.month, col.hours);
+    }
   }
   return out;
 }

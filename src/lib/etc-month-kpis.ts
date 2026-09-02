@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { ETC_SECTIONS, PARTS_COST_SECTION } from "@/lib/sections";
+import { ETC_SECTIONS, PARTS_COST_SECTION, mapPunchToColumns, billingGroupForSection } from "@/lib/sections";
 import { calcHoursLeft, round2, effectiveNewEtc, newEtcDiff, isNewEtcDecided } from "@/lib/etc";
 
 // KPI cards for the top of the Monthly ETC page: hours worked and variance for
@@ -134,13 +134,27 @@ export async function getEtcMonthKpis(
         select: { section: true, employeeId: true },
       })
     : [];
+  // ── The raw pair has to be folded first (2026-09-02) ──────────────────────
+  //
+  // `section` is the RAW Paylocity pair and SECTION_GROUP is keyed on the ETC
+  // grid's column codes, so a punch coded 13-211, 11-211, 40-311 or 10-311
+  // matched nothing and the person who worked it was counted in NEITHER group.
+  // The hours were never wrong here — this KPI counts PEOPLE — but a headcount
+  // that quietly omits whoever happened to book to an aliased code is a headcount
+  // nobody can reconcile against the roster.
+  //
+  // Same fold as every other punch consumer; billingGroupForSection covers the
+  // codes ETC_SECTIONS has no column for (10-413, 70-*), which SECTION_GROUP
+  // alone misses.
   const engPeople = new Set<string>();
   const shopPeople = new Set<string>();
   for (const p of punches) {
     if (!p.employeeId) continue;
-    const group = SECTION_GROUP.get(p.section);
-    if (group === "Engineering") engPeople.add(p.employeeId);
-    else if (group === "Shop") shopPeople.add(p.employeeId);
+    for (const col of mapPunchToColumns(p.section, 1)) {
+      const group = SECTION_GROUP.get(col.section) ?? billingGroupForSection(col.section);
+      if (group === "Engineering") engPeople.add(p.employeeId);
+      else if (group === "Shop") shopPeople.add(p.employeeId);
+    }
   }
 
   const finish = (

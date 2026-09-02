@@ -7,6 +7,7 @@ import { monthlyCapacityHours, hasYearPolicy } from "@/lib/workforce-capacity-po
 import { fetchSchedulerFatEvents, dedupeFats } from "@/lib/scheduler-db";
 import { getCustomerVisits, type CustomerVisitsResult } from "@/lib/customer-visits";
 import { isValidMonth } from "@/lib/etc";
+import { mapPunchToColumns, billingGroupForSection } from "@/lib/sections";
 import { getDepartmentUtilization, type DepartmentUtilizationResult } from "@/lib/department-utilization";
 import { customerBucket } from "@/lib/dashboard-job-drill";
 import {
@@ -159,11 +160,25 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
       where: { active: true },
       select: { team: true, department: true, discipline: true },
     }),
-    // Actual hours booked in the month, by the stored punch classification — the
-    // same `standardDepartment` column the Hours pages group by. Filtered on the
+    // Actual hours booked in the month, grouped by RAW section pair — folded onto
+    // the app's columns below, then bucketed by billing group. Filtered on the
     // denormalised `month`, so this is one grouped scan, not a per-card query.
+    //
+    // ── Why not `standardDepartment` any more (2026-09-02) ──────────────────
+    //
+    // This grouped by that stored column, which is the rule book's verdict on the
+    // RAW pair — so a punch coded 13-211 or 11-211 reads "Undefined" and was
+    // counted in NEITHER card, while Job Hour Details, Projects and Job Cost fold
+    // those same punches onto 10-211 and count them as Engineering. Measured:
+    // 13,429 hours classified differently by the two screens, led by 10-311
+    // (4,347h across its 30/70 split), 13-211 (1,640h) and 11-211 (1,331h).
+    //
+    // Two screens disagreeing about "Engineering hours this month" is worse than
+    // either answer being imperfect, so this now uses the same rule as every
+    // other hours surface: fold the raw pair, then read the column's billing
+    // group.
     prisma.jobHoursDetail.groupBy({
-      by: ["standardDepartment"],
+      by: ["section"],
       where: { month },
       _sum: { hours: true },
     }),
@@ -286,7 +301,17 @@ export async function getDashboardOverview(month: string, now: Date = new Date()
     teamCounts.set(group.key, row);
   }
 
-  const bookedByDept = new Map(hoursRows.map((r) => [r.standardDepartment, Number(r._sum.hours ?? 0)]));
+  // Raw pair -> app column(s) -> billing group. billingGroupForSection returns
+  // null for PM and for anything with no column (Service 80-*, Spare Parts 90-*,
+  // unmappable pairs); those hours are real but are neither Engineering nor Shop,
+  // so they are deliberately in neither card rather than guessed into one.
+  const bookedByDept = new Map<string, number>();
+  for (const r of hoursRows) {
+    for (const col of mapPunchToColumns(r.section, Number(r._sum.hours ?? 0))) {
+      const group = billingGroupForSection(col.section);
+      if (group) bookedByDept.set(group, (bookedByDept.get(group) ?? 0) + col.hours);
+    }
+  }
   // "No punch rows for this month at all" is a different thing from "zero hours
   // in this department", and only the first justifies hiding the figure. A future
   // month has no rows; a month that has been worked always has some.

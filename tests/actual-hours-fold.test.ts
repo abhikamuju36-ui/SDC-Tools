@@ -121,3 +121,52 @@ test("the allow-list is derived from the signed-in role, server-side", () => {
   assert.match(page, /hasPermission\(role, permission\)/);
   assert.match(page, /allowedPoolCodes=\{allowedPoolCodes\}/);
 });
+
+// ── The other three surfaces that bucket punches (2026-09-02) ───────────────
+//
+// Found by auditing all 13 readers of JobHoursDetail after the first fix: three
+// more consumers keyed the app's fixed columns off the RAW pair. Each is the
+// same bug with a different consequence.
+
+test("Job Cost Explorer folds punches — otherHours is never costed", () => {
+  const src = readFileSync(join(process.cwd(), "src", "lib", "job-cost-source.ts"), "utf8");
+  // Punches fold; the historical and frozen eras are already column-keyed and
+  // must not. Measured before this: 45,068h of Eng/Shop labour sat in "other",
+  // which computeJobCost prices at zero, overstating profit by ~$7.4M.
+  assert.match(src, /for \(const col of mapPunchToColumns\(p\.section/);
+  assert.doesNotMatch(src, /mapPunchToColumns\(h\.section/);
+  assert.doesNotMatch(src, /mapPunchToColumns\(f\.section/);
+  // And it uses the shared billing-group rule rather than its own copy.
+  assert.match(src, /billingGroupForSection\(s\.code\)/);
+});
+
+test("the Dashboard buckets by the folded column, like every other hours surface", () => {
+  const src = readFileSync(join(process.cwd(), "src", "lib", "dashboard-overview.ts"), "utf8");
+  // It grouped by the stored `standardDepartment`, the rule book's verdict on the
+  // RAW pair, so 13,429h that the chart calls Engineering counted in neither card.
+  assert.match(src, /by: \["section"\]/);
+  assert.match(src, /mapPunchToColumns\(r\.section/);
+  assert.match(src, /billingGroupForSection\(col\.section\)/);
+  assert.doesNotMatch(src, /by: \["standardDepartment"\]/);
+});
+
+test("the ETC month headcount counts people who booked to an aliased code", () => {
+  const src = readFileSync(join(process.cwd(), "src", "lib", "etc-month-kpis.ts"), "utf8");
+  assert.match(src, /for \(const col of mapPunchToColumns\(p\.section, 1\)\)/);
+  assert.match(src, /SECTION_GROUP\.get\(col\.section\) \?\? billingGroupForSection\(col\.section\)/);
+});
+
+test("every consumer that buckets punches into fixed columns folds first", () => {
+  // The audit rule itself: if a file both reads JobHoursDetail and maps a section
+  // to one of the app's fixed columns, it has to fold. Listed explicitly so a new
+  // consumer added without the fold fails here rather than in a report.
+  const mustFold = [
+    ["lib", "actual-hours.ts"], ["lib", "sync-actuals.ts"], ["lib", "job-hours-detail.ts"],
+    ["lib", "tm-hours.ts"], ["lib", "hours-explorer.ts"], ["lib", "job-cost-source.ts"],
+    ["lib", "dashboard-overview.ts"], ["lib", "etc-month-kpis.ts"],
+  ];
+  for (const parts of mustFold) {
+    const src = readFileSync(join(process.cwd(), "src", ...parts), "utf8");
+    assert.match(src, /mapPunchToColumns/, `${parts.join("/")} reads punches into columns but does not fold`);
+  }
+});
