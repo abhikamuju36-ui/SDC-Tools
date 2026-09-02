@@ -176,10 +176,17 @@ export function JobHoursDashboard({
   data,
   hoursDetail,
   parts = null,
+  allowedPoolCodes = [],
 }: {
   data: DashData;
   hoursDetail: JobHoursDetailData;
   parts?: JobHoursDashboardParts | null;
+  /**
+   * Standard Fees section codes the signed-in role may see, resolved server-side
+   * from the same permission the Quoted page uses. Defaults to none, so a caller
+   * that does not pass it gets the old behaviour rather than a silent widening.
+   */
+  allowedPoolCodes?: string[];
 }) {
   const [hoursType, setHoursType] = useState<HoursType>("Quoted");
   const planned = (s: { quoted: number; etc: number }) => (hoursType === "Quoted" ? s.quoted : s.etc);
@@ -196,15 +203,28 @@ export function JobHoursDashboard({
       ? s.actual
       : data.monthlyBySection[s.code]?.find((m) => m.month === data.kpis.latestEtcMonth)?.worked ?? 0;
 
+  // ── The Standard Fees pools, gated by PERMISSION not by default (2026-09-02) ─
+  //
   // PM, Manufacturing and both Warranty sections are company-wide "Standard Fees"
-  // pools — planned company-wide rather than quoted per job, and not worked by the
-  // execution team — so this chart excludes all four everywhere below: data, phase
-  // chips, tooltips and drill-through. Same 4 codes the Projects grid already gates
-  // behind its password (see RESTRICTED_SECTION_CODES); reusing that set rather than
-  // a second hand-written list keeps the two from disagreeing later.
+  // pools — planned centrally rather than quoted per job — and the Projects/Quoted
+  // pages gate them on the matching grant (restrictedSectionPermission).
+  //
+  // This chart excluded all four from EVERYONE: data, phase chips, tooltips,
+  // drill-through and the billing-group totals. That hid real punched hours at
+  // every permission level — 556h of Manufacturing on job 1131, 1,178h on 1104,
+  // 1,027h on 1118 — hours that were in the payload, reconciled against the punch
+  // table, and drawn nowhere. Hiding a number from everybody is not access
+  // control; it is a figure nobody can audit.
+  //
+  // `allowedPoolCodes` is resolved on the server from the signed-in role (see
+  // job-hours/page.tsx), so a role holding the grant now sees these sections and a
+  // role without it sees exactly what it saw before. Everything downstream —
+  // chips, bars, totals, drill — reads `executionSections`, so this one filter
+  // governs all of them.
+  const allowedPools = useMemo(() => new Set(allowedPoolCodes), [allowedPoolCodes]);
   const executionSections = useMemo(
-    () => data.sections.filter((s) => !RESTRICTED_SECTION_CODES.has(s.code)),
-    [data.sections],
+    () => data.sections.filter((s) => !RESTRICTED_SECTION_CODES.has(s.code) || allowedPools.has(s.code)),
+    [data.sections, allowedPools],
   );
 
   // ── Every phase the section template defines, DERIVED (§72) ───────────────

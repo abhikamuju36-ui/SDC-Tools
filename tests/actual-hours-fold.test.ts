@@ -91,3 +91,33 @@ test("the chart's totals are summed from the rows it draws", () => {
   const src = readFileSync(join(process.cwd(), "src", "components", "JobHoursDashboard.tsx"), "utf8");
   assert.match(src, /const bgSections = executionSections\.filter/);
 });
+
+// ── Standard Fees pools: gated by permission, not hidden from everyone ──────
+//
+// PM, Manufacturing and both Warranty sections are permission-gated on the
+// Quoted page. Job Hour Details excluded all four unconditionally, so hours that
+// existed in Paylocity, reached this app's tables and reconciled against them
+// were visible at NO permission level — 556h on job 1131, 1,178h on 1104,
+// 1,027h on 1118. Hiding a figure from everybody is not access control.
+
+test("the chart shows a pool section only when the role is allowed it", () => {
+  const src = readFileSync(join(process.cwd(), "src", "components", "JobHoursDashboard.tsx"), "utf8");
+  // The filter must consult the allow-list, not just the restricted set.
+  assert.match(
+    src,
+    /data\.sections\.filter\(\(s\) => !RESTRICTED_SECTION_CODES\.has\(s\.code\) \|\| allowedPools\.has\(s\.code\)\)/,
+  );
+  // Defaulting to none matters: a caller that forgets the prop must get the old,
+  // narrower behaviour rather than a silent widening of access.
+  assert.match(src, /allowedPoolCodes = \[\]/);
+});
+
+test("the allow-list is derived from the signed-in role, server-side", () => {
+  const page = readFileSync(join(process.cwd(), "src", "app", "(app)", "job-hours", "page.tsx"), "utf8");
+  assert.match(page, /const role = pageSession\.user\.role;/);
+  // The SAME permission helper the Quoted page uses — not a second opinion about
+  // who may see these four codes.
+  assert.match(page, /restrictedSectionPermission\(code\)/);
+  assert.match(page, /hasPermission\(role, permission\)/);
+  assert.match(page, /allowedPoolCodes=\{allowedPoolCodes\}/);
+});

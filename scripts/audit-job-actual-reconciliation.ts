@@ -188,10 +188,11 @@ async function auditJob(jobNumber: string): Promise<void> {
   const droppedHours = dropped.reduce((s, [, hrs]) => s + hrs, 0);
 
   // Standard Fees pools: PM, Manufacturing and both Warranty codes are planned
-  // company-wide rather than quoted per job, so JobHoursDashboard.tsx excludes
-  // them from the rendered chart and from its Engineering/Shop totals. Real
-  // hours, deliberately not drawn — so a reconciliation has to name them rather
-  // than let them look like a leak.
+  // company-wide rather than quoted per job, and the chart draws them only for a
+  // role holding the matching grant (2026-09-02 — before that it hid them from
+  // everyone). This script has no session, so it reports them separately: a
+  // reader with the grants sees the full `chart Σ Actual`, a reader without them
+  // sees that figure minus this one.
   const pooled = dash.sections.filter((s) => RESTRICTED_SECTION_CODES.has(s.code) && s.actual !== 0);
   const pooledTotal = pooled.reduce((sum, s) => sum + s.actual, 0);
 
@@ -205,8 +206,8 @@ async function auditJob(jobNumber: string): Promise<void> {
     { check: "Engineering + Shop totals", value: h(bgSum) },
     { check: "difference (chart Σ - E+S)", value: h(chartActualTotal - bgSum) },
     { check: "folded hours with NO chart bar", value: `${dropped.length} / ${h(droppedHours)} h` },
-    { check: "Standard Fees pools (hidden on screen)", value: h(pooledTotal) },
-    { check: "rendered on screen (chart - pools)", value: h(chartActualTotal - pooledTotal) },
+    { check: "Standard Fees pools (permission-gated)", value: h(pooledTotal) },
+    { check: "rendered without the pool grants", value: h(chartActualTotal - pooledTotal) },
     { check: "RAW - rendered - pools  (== 0)", value: h(rawTotal - (chartActualTotal - pooledTotal) - pooledTotal) },
   ];
   table(rows);

@@ -14,6 +14,8 @@ import { JobProcurement } from "@/components/JobProcurement";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { ScrollIntoView } from "@/components/ScrollIntoView";
 import { requirePagePermission } from "@/lib/require-permission";
+import { restrictedSectionPermission, RESTRICTED_SECTION_CODES } from "@/lib/sections";
+import { hasPermission } from "@/lib/permissions";
 import { cookies } from "next/headers";
 import { JOB_HOURS_SELECTION_COOKIE, parseSelectionCookie } from "@/lib/job-hours-selection";
 
@@ -33,7 +35,7 @@ export default async function JobHoursPage({
   // Procurement block once that data is on screen.
   searchParams: Promise<{ jobs?: string; job?: string; section?: string }>;
 }) {
-  await requirePagePermission("job-hour-details:view");
+  const pageSession = await requirePagePermission("job-hour-details:view");
   const { jobs: jobsParam, job: legacyJobParam, section } = await searchParams;
   const jobs = await listDashboardJobs();
   const idByJobId = new Map(jobs.map((j) => [j.jobId, j.id]));
@@ -175,6 +177,28 @@ export default async function JobHoursPage({
   // which is what decides between the warning EmptyState and the plain one below.
   const bomFailed = !!(data && singleJobId) && bom == null;
 
+  // ── Which Standard Fees sections this role may see (2026-09-02) ───────────
+  //
+  // PM, Manufacturing and the two Warranty sections are permission-gated: the
+  // Quoted page hides them from a role without the matching grant and shows them
+  // to a role that has it (see restrictedSectionPermission / lib/permissions.ts).
+  //
+  // This chart used to hide all four from EVERYONE, unconditionally. That was not
+  // a stricter reading of the rule — it was the rule applied without its
+  // condition, and the cost was real hours nobody could see at any permission
+  // level: 556h of Manufacturing on job 1131, 1,178h on 1104, 1,027h on 1118 —
+  // present in the payload and drawn nowhere. A punch that exists in Paylocity
+  // and in this app's own tables has to be visible to somebody.
+  //
+  // Resolved here, from the role requirePagePermission already looked up, and
+  // passed to the client component — the same approach the Quoted page takes, so
+  // there is no extra query and no second notion of who may see what.
+  const role = pageSession.user.role;
+  const allowedPoolCodes = [...RESTRICTED_SECTION_CODES].filter((code) => {
+    const permission = restrictedSectionPermission(code);
+    return permission === null || hasPermission(role, permission);
+  });
+
   return (
     <div className={PAGE_SHELL}>
       <div className="mb-1 flex flex-wrap items-end justify-between gap-4">
@@ -246,6 +270,10 @@ export default async function JobHoursPage({
           <JobHoursDashboard
             data={data}
             hoursDetail={hoursDetail}
+            // The Standard Fees sections THIS role may see. Empty for a role with
+            // none of the three grants, which is what every role got before — see
+            // the note where this is computed.
+            allowedPoolCodes={allowedPoolCodes}
             // `partsCapped` forces null rather than passing the all-zero stub
             // below. That stub used to reach the card, which then rendered
             // Invoiced $0 / Left to invoice $0 / Spent $0 with the explanation
