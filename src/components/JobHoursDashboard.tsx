@@ -6,12 +6,16 @@ import { abbreviateLabel } from "@/lib/abbrev";
 import { SERIES } from "@/components/charts/theme";
 import type { JobHoursDashboard as DashData, HoursType } from "@/lib/job-hours-dashboard";
 import type { JobHoursDetail as JobHoursDetailData } from "@/lib/job-hours-detail";
-import { RESTRICTED_SECTION_CODES } from "@/lib/sections";
+import { POOL_QUOTED_SECTION, RESTRICTED_SECTION_CODES } from "@/lib/sections";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 import { PartsCostSummary } from "@/components/PartsCostSummary";
+import { PartsCostDrill, type PartsDrillMode } from "@/components/PartsCostDrill";
 import type { PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
 import { hours as fmtHours } from "@/components/ui/format";
 import { barDomains, barHeightPct } from "@/lib/bar-scale";
+
+// Project Management, the one section this chart never draws (see executionSections).
+const PM_CODE = POOL_QUOTED_SECTION.ENGINEERING_PM;
 
 // The Parts Cost bullet bar (§52) joins the two hours charts in one row, so
 // its inputs travel as one prop rather than a second top-level component the
@@ -222,8 +226,25 @@ export function JobHoursDashboard({
   // chips, bars, totals, drill — reads `executionSections`, so this one filter
   // governs all of them.
   const allowedPools = useMemo(() => new Set(allowedPoolCodes), [allowedPoolCodes]);
+  // ── PM is off the chart entirely (2026-09-02) ─────────────────────────────
+  //
+  // Project Management (10-111) is not drawn here at ANY permission level, by
+  // request: its quoted figure is a company-wide pool allocation rather than a
+  // per-job estimate, so a "quoted vs actual" bar for it compares two things
+  // that were never meant to line up, and it led the chart as the leftmost
+  // section. Dropping it from `executionSections` — the one row set the bars,
+  // the phase chips, the tooltips, the drill-through and the Engineering/Shop
+  // totals all read — removes the bars, the labels and the PM tier header
+  // together, and the totals stay the sum of the bars actually shown.
+  //
+  // Chart-only: the payload still carries 10-111, `jobActualTotal` below still
+  // counts it against the punch table, and the Quoted/Projects pages and the
+  // Standard Fees pools are untouched. Only this visualization omits it.
   const executionSections = useMemo(
-    () => data.sections.filter((s) => !RESTRICTED_SECTION_CODES.has(s.code) || allowedPools.has(s.code)),
+    () =>
+      data.sections.filter(
+        (s) => s.code !== PM_CODE && (!RESTRICTED_SECTION_CODES.has(s.code) || allowedPools.has(s.code)),
+      ),
     [data.sections, allowedPools],
   );
 
@@ -266,6 +287,19 @@ export function JobHoursDashboard({
   // about WHEN that happened. Stored as a code rather than the row object so it
   // survives a Quoted/ETC toggle re-deriving `hierRows`.
   const [drillCode, setDrillCode] = useState<string | null>(null);
+
+  // ── Parts Cost drill (2026-09-02) ─────────────────────────────────────────
+  //
+  // Which part of the Parts Cost bar is open, or null. Independent of `drillCode`
+  // (the section-hours drill) on purpose: they answer different questions about the
+  // same job and either can be open without disturbing the other. Held here rather
+  // than inside the card because the panel renders full width below the charts row —
+  // a part-level table cannot be read in the ~15% column the card occupies.
+  //
+  // No fetch and no loading state: the rows are already in `parts.financials.lines`,
+  // fetched once for the card itself. Opening this cannot block the page because
+  // there is nothing to wait for.
+  const [partsDrill, setPartsDrill] = useState<PartsDrillMode | null>(null);
 
   // Every remaining execution section the backend sent, at zero hours or not — the
   // template is shown in full, which is what keeps a zero-value category visible
@@ -492,9 +526,32 @@ export function JobHoursDashboard({
           <PartsCostSummary
             financials={parts.financials}
             jobCount={parts.jobCount}
+            onDrill={setPartsDrill}
+            drillMode={partsDrill}
           />
         )}
       </div>
+      {/* Full width, below the row — the detail table has eleven columns and the card
+          that opens it is the narrow one. Rendered as a sibling of the row rather than
+          inside the card, so opening it cannot resize either chart above it (§54.5's
+          reason for `items-start` while a drill is open). */}
+      {parts && partsDrill && (
+        <PartsCostDrill
+          financials={parts.financials}
+          mode={partsDrill}
+          // The same jobs the card's money covers, so the ETC history cannot be
+          // scoped differently from the figure it explains.
+          jobIds={data.jobRefs.map((j) => j.id)}
+          jobLabel={
+            parts.jobCount > 1
+              ? `${parts.jobCount} selected jobs`
+              : `${data.job.jobId} — ${data.job.jobName}`
+          }
+          onModeChange={setPartsDrill}
+          onClose={() => setPartsDrill(null)}
+          className="mt-3"
+        />
+      )}
       </>
       )}
     </div>
@@ -641,12 +698,36 @@ function SectionHierarchyChart({
   const scalePct = (value: number, isTotal: boolean) => barHeightPct(value, isTotal, domains);
   const deptRuns = groupRuns(rows, (r) => `${r.phase}|${r.group}`, (r) => r.group);
   const phaseRuns = groupRuns(rows, (r) => r.phase, (r) => r.phase);
-  // §55: `minmax(0, 1fr)`, not `minmax(60px, 1fr)`, so the columns SHRINK to
-  // fit the card instead of forcing a 640px floor that had to scroll. Equal
-  // fractions keep the tiers (section / dept / phase) lined up by construction.
-  // The bars inside are responsive too (capped at their old width), so a
-  // narrower column narrows the bars rather than clipping them.
-  const colStyle = { gridTemplateColumns: `repeat(${rows.length}, minmax(0, 1fr))` } as const;
+  // ── A floor under the category column (2026-09-02) ────────────────────────
+  //
+  // This was `minmax(0, 1fr)` — §55's deliberate choice, so the columns shrink
+  // to fit the card instead of forcing a scrollbar. On a job with a handful of
+  // sections that is right. On a dense one it is not: measured live on job 1104,
+  // 26 categories share the label row, and every label is squeezed into a slot
+  // far narrower than its own longest WORD:
+  //
+  //     zoom 80%   row 807px   slot 27px   19 of 26 labels overflow
+  //     zoom 100%  row 615px   slot 20px   20 of 26
+  //     zoom 125%  row 462px   slot 14px   26 of 26   <- every one
+  //
+  // The labels already wrap; what cannot wrap is a single word. "Manufacturing"
+  // is 75px on its own and there is no width below that at which it fits, so it
+  // spills across its neighbours and the axis becomes unreadable. Note this is
+  // NOT a zoom bug — it is broken at 100% too — but zoom makes it strictly worse,
+  // because a higher zoom leaves fewer layout pixels for the same 26 columns.
+  //
+  // 78px is measured, not chosen: the widest single word across every category
+  // label in this chart is "Manufacturing" at 75px, plus the column's own 3px of
+  // padding. Every label can therefore wrap onto two or three lines with no word
+  // broken mid-syllable.
+  //
+  // The trade-off §55 rejected is now taken deliberately, because the request
+  // asks for it in those words — "if the chart becomes too dense at a given
+  // zoom, allow internal horizontal scrolling rather than overlapping text".
+  // The scroll only appears when the columns genuinely cannot fit: below that,
+  // `1fr` still spreads them across the full card exactly as before.
+  const CATEGORY_MIN_PX = 78;
+  const colStyle = { gridTemplateColumns: `repeat(${rows.length}, minmax(${CATEGORY_MIN_PX}px, 1fr))` } as const;
 
   // Entrance animation — bars grow up from 0 on mount / when the data changes.
   // Two rAFs so the 0-height paints first.
@@ -725,6 +806,17 @@ function SectionHierarchyChart({
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIES.planned }} /> {plannedLabel}</span>
         <span className="flex items-center gap-1.5"><span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: SERIES.actual }} /> Actual</span>
       </div>
+      {/* ── The scroll frame (2026-09-02) ──────────────────────────────────
+          Wraps the bars AND all three label tiers, so they scroll as one and
+          cannot drift out of alignment — every one of them is laid out from the
+          same `colStyle`, so a shared scroll parent keeps a bar over its own
+          label by construction.
+
+          It only ever scrolls when the columns hit their 78px floor (see
+          CATEGORY_MIN_PX): with room to spare, `1fr` still fills the card and no
+          scrollbar appears at all. `overscroll-x-contain` stops a horizontal
+          fling here from turning into a browser back-navigation. */}
+      <div className="styled-scrollbar overflow-x-auto overscroll-x-contain">
       {/* Bars — with the Quoted−Actual variance called out on top of each group
           (green when Actual is under Quoted, red when over). `barsRef` is the
           collision pass's measurement frame — its own edges are the "don't
@@ -806,7 +898,11 @@ function SectionHierarchyChart({
       <div className="grid gap-x-1 border-t pt-1" style={{ ...colStyle, borderTopColor: TIER_DIVIDER }}>
         {rows.map((r) => (
           <div key={r.code} className="px-0.5 text-center leading-tight">
-            <div className="text-label text-sdc-navy">{r.name}</div>
+            {/* `break-words`: the column floor above fits today's longest word,
+                and this is the backstop for a longer one arriving later — it
+                breaks inside the word rather than spilling over the neighbour,
+                which is the failure this whole change is about. */}
+            <div className="text-label break-words text-sdc-navy">{r.name}</div>
           </div>
         ))}
       </div>
@@ -825,6 +921,7 @@ function SectionHierarchyChart({
             {abbreviateLabel(p.label)}
           </div>
         ))}
+      </div>
       </div>
     </div>
   );

@@ -14,7 +14,7 @@ import {
   zoomLabel,
 } from "@/lib/app-zoom";
 
-// The application's one size control (§45) — `−  100%  +` in the sidebar footer,
+// The application's one size control (§45) — `−  80%  +` in the sidebar footer,
 // where "Text size" used to be. The rules it enforces and why it is CSS `zoom` are
 // in lib/app-zoom.ts; this file is only the control.
 //
@@ -22,7 +22,7 @@ import {
 //
 // The level lives in localStorage, which the server cannot see. Reading it in render
 // would hydrate differently from the server; restoring it in a mount effect would
-// show 100% for a frame on every page load. useSyncExternalStore is the primitive
+// show the default for a frame on every page load. useSyncExternalStore is the primitive
 // for exactly this — a server snapshot of the default, then the real value.
 //
 // Note what this state is FOR: the label and the two disabled ends, and nothing else.
@@ -46,7 +46,7 @@ export function AppZoom({ collapsed }: { collapsed?: boolean }) {
   // block owns the border and padding, so this is just the label + stepper.
   //
   // 1.6rem (24px) rather than the 20px the text-size stepper used: this control is
-  // inside the zoomed subtree, so at the 75% floor it renders 18px — §45 wants every
+  // inside the zoomed subtree, so at the 50% floor it renders 12px — §45 wants every
   // control usable at every level, and the control that ends a bad zoom is the one
   // that must never become too small to click. Deliberately NOT counter-scaled with
   // `zoom: calc(1 / var(--app-zoom))`: it would hold a constant size while its
@@ -85,11 +85,13 @@ export function AppZoom({ collapsed }: { collapsed?: boolean }) {
     <button
       type="button"
       onClick={() => writeZoom(DEFAULT_ZOOM)}
-      // Not disabled at 100%: a disabled control is unreadable at 40% opacity, and
-      // this is primarily a READOUT. Clicking it there is simply a no-op.
+      // Not disabled at the default: a disabled control is unreadable at 40% opacity,
+      // and this is primarily a READOUT. Clicking it there is simply a no-op.
       className="min-w-[2.6rem] rounded-[5px] px-1 py-0.5 text-center font-mono text-note tabular-nums text-[#C3D1E0] hover:bg-[#0E3157]"
-      aria-label={`Zoom: ${zoomLabel(zoom)}. Reset to 100%`}
-      title="Reset the zoom to 100%"
+      // The default is stated from DEFAULT_ZOOM rather than written out, so the
+      // label cannot claim a level the button does not actually set.
+      aria-label={`Zoom: ${zoomLabel(zoom)}. Reset to ${zoomLabel(DEFAULT_ZOOM)}`}
+      title={`Reset the zoom to ${zoomLabel(DEFAULT_ZOOM)}`}
     >
       {zoomLabel(zoom)}
     </button>

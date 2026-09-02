@@ -47,23 +47,37 @@
 // overlay covers the viewport exactly at every zoom level.)
 
 /**
- * The offered levels, smallest first. §45 asks for "a practical range such as
- * 75/80/90/100/110/125/150" and safe limits — this is that list verbatim, and the
- * first and last entries ARE the limits: `snapZoom` cannot return anything outside
- * it, so there is no separate MIN/MAX to keep in step.
+ * The offered levels, smallest first: 50/60/70/80/90/100, an even 10% grid. The
+ * first and last entries ARE the limits — `snapZoom` cannot return anything outside
+ * the list, so there is no separate MIN/MAX to keep in step.
  *
- * Coarser above 100% than below it on purpose. Zooming out is a "fit more on the
- * screen" adjustment and wants fine control near the default; zooming in is a
- * legibility adjustment, and someone who needs 150% is not served by being walked
- * there in 5% increments.
+ * ── Why the range moved down (2026-09-02) ─────────────────────────────────
+ *
+ * The original list was 75/80/90/100/110/125/150, built around 100% as the design
+ * size with room to magnify. In practice this application is used the other way
+ * round: the grids, the Job Hour Details chart and the ETC matrix are all wide, and
+ * what people reach for is "fit more on the screen", not "make it bigger". Nothing
+ * above 100% was earning its place, and the uneven 5/10/15/25% gaps meant the
+ * stepper's travel per click changed depending where you were on the list.
+ *
+ * So: one even 10% step throughout, nothing above 100% (the browser's own Ctrl+
+ * still magnifies, and composes with this), and a 50% floor — the smallest level
+ * the sidebar control itself stays comfortably clickable at.
  */
 // `readonly number[]`, not `as const`: every function below does arithmetic and
 // index lookups on these, and a tuple of literal types turns each of those into a
 // cast. The list being fixed is what the `readonly` says; the exact values are not
 // something any caller should be typed against.
-export const ZOOM_STEPS: readonly number[] = [0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5];
+export const ZOOM_STEPS: readonly number[] = [0.5, 0.6, 0.7, 0.8, 0.9, 1];
 
-export const DEFAULT_ZOOM = 1;
+/**
+ * 80%, not 100% — the level this app is actually laid out to be read at, so a new
+ * user lands on the fitted view rather than having to discover the control. It is a
+ * member of ZOOM_STEPS, which matters: stepping away from a default that is not on
+ * the list and back again would be impossible, since snapZoom would round it to a
+ * neighbour first.
+ */
+export const DEFAULT_ZOOM = 0.8;
 export const MIN_ZOOM = ZOOM_STEPS[0];
 export const MAX_ZOOM = ZOOM_STEPS[ZOOM_STEPS.length - 1];
 
@@ -81,9 +95,17 @@ const EVENT = "sdc-app-zoom-change";
 export function snapZoom(value: unknown): number {
   const n = typeof value === "number" ? value : parseFloat(String(value));
   if (!Number.isFinite(n)) return DEFAULT_ZOOM;
+  // Compared in WHOLE PERCENT, not in the raw factors, because the distances that
+  // decide a tie are not representable in binary floating point: for a saved 0.75,
+  // `Math.abs(0.7 - 0.75)` is 0.049999999999999996 while `Math.abs(0.8 - 0.75)` is
+  // 0.05000000000000004, so the exact midpoint between two 10% steps silently
+  // resolves DOWNWARD and a retired 75% would land on 70%. In percent those are 5
+  // and 5, a real tie — and `<=` then breaks it upward, since the list ascends. That
+  // is the documented normalization: 75 -> 80, 85 -> 90, 110 -> 100, 40 -> 50.
+  const pct = n * 100;
   let best = ZOOM_STEPS[0];
   for (const step of ZOOM_STEPS) {
-    if (Math.abs(step - n) < Math.abs(best - n)) best = step;
+    if (Math.abs(Math.round(step * 100) - pct) <= Math.abs(Math.round(best * 100) - pct)) best = step;
   }
   return best;
 }
@@ -91,8 +113,10 @@ export function snapZoom(value: unknown): number {
 /**
  * One step out (`-1`) or in (`+1`), clamped at the ends of the list.
  *
- * Index-based rather than arithmetic, because the steps are deliberately uneven —
- * multiplying by a constant ratio would not land on 110% or 125%.
+ * Index-based rather than arithmetic. The list happens to be an even 10% grid now,
+ * so `current ± 0.1` would give the same answers — but the list is the definition of
+ * what is offered, and walking it by index keeps that true if it ever stops being
+ * evenly spaced again.
  */
 export function stepZoom(current: number, delta: -1 | 1): number {
   const from = ZOOM_STEPS.indexOf(snapZoom(current));
@@ -107,7 +131,7 @@ export function isMaxZoom(z: number): boolean {
   return snapZoom(z) === MAX_ZOOM;
 }
 
-/** "100%" — every step is a whole percentage, so no rounding decisions leak into the UI. */
+/** "80%" — every step is a whole percentage, so no rounding decisions leak into the UI. */
 export function zoomLabel(z: number): string {
   return `${Math.round(snapZoom(z) * 100)}%`;
 }

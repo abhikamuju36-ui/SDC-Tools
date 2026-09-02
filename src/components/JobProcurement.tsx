@@ -113,6 +113,8 @@ type PersistedState = {
   to: string;
   upcomingWeek: number;
   hiddenPartCols: ColKey[];
+  /** One-shot marker: the Left to Invoice column has been revealed once (see below). */
+  leftToInvoiceShown?: boolean;
   colWidths: Partial<Record<ColKey, number>>;
 };
 
@@ -152,7 +154,29 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   const [from, setFrom] = useState(() => saved.from ?? "");
   const [to, setTo] = useState(() => saved.to ?? "");
   // Default hidden columns (fresh users; anyone with a stored set keeps theirs).
-  const [hidden, setHidden] = useState<Set<ColKey>>(() => new Set(saved.hiddenPartCols ?? DEFAULT_HIDDEN_COLS));
+  // ── Why a stored set gets one forced correction (2026-09-02) ──────────────
+  //
+  // `saved.hiddenPartCols` wins over DEFAULT_HIDDEN_COLS, which is right — a user
+  // who arranged their columns should keep them. But it means anyone who has EVER
+  // opened the Columns menu has "leftspend" written into their stored set from when
+  // it was hidden by default, so simply dropping it from the defaults would ship
+  // Left to Invoice to new users only, and to nobody who actually uses this table.
+  //
+  // So the column is unhidden once, per browser, and the marker below records that
+  // it has happened. Hiding it again afterwards sticks: this cannot run twice.
+  // ── Which population the table is showing (2026-09-02) ────────────────────
+  //
+  // "all" is the default and is the honest one: it is the job's whole purchase
+  // population, and its footer equals the Parts Cost card. The other two exist
+  // because "just the BOM" and "just the charges that are not BOM parts" are both
+  // real questions — not because either is the true list.
+  const [scope, setScope] = useState<"all" | "bom" | "nonbom">("all");
+  const [hidden, setHidden] = useState<Set<ColKey>>(() => {
+    const stored = saved.hiddenPartCols;
+    if (!stored) return new Set(DEFAULT_HIDDEN_COLS);
+    if (saved.leftToInvoiceShown) return new Set(stored);
+    return new Set(stored.filter((k) => k !== "leftspend"));
+  });
   const [upcomingWeek, setUpcomingWeek] = useState<number>(() => saved.upcomingWeek ?? 1);
   // Shared by the risk cards mounted below and passed down unchanged — one
   // clock for the whole drawer, so a card and a table row cannot disagree about
@@ -163,7 +187,7 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   // Persist everything under one key.
   useEffect(() => {
     if (typeof window === "undefined") return;
-    const data: PersistedState = { tab, view, query, status: [...status], category, manufacturer, supplier, dateType, from, to, upcomingWeek, hiddenPartCols: [...hidden], colWidths };
+    const data: PersistedState = { tab, view, query, status: [...status], category, manufacturer, supplier, dateType, from, to, upcomingWeek, hiddenPartCols: [...hidden], leftToInvoiceShown: true, colWidths };
     try {
       window.localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
     } catch {
@@ -317,6 +341,64 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   // than rendering this whole component.)
   const parts = useMemo<FlatPart[]>(() => flattenBomParts(bom, partsLines, activeAttribution), [bom, partsLines, activeAttribution]);
 
+  // ── The one number that closes the gap to the Parts Cost card ─────────────
+  //
+  // This table is the BOM. Its money columns now carry every PO line a BOM part has
+  // (2026-09-02) — but a job also has PO lines for part numbers that are on no BOM
+  // row at all: freight, tariffs, credit-card and miscellaneous purchases, parts
+  // bought for a revision the BOM no longer shows. Measured on job 1101: $88,642 of
+  // $791,609, across 51 part numbers the BOM does not carry.
+  //
+  // Before this, that money was simply absent and nothing said so, which is how the
+  // footer came to read $290,266 beside a card reading $730,483 with no way to tell
+  // whether either was wrong. Stating it turns the difference into an equation the
+  // reader can check:
+  //
+  //     BOM rows + unmatched PO lines = the job's lifetime figure
+  //
+  // Computed over the UNFILTERED parts (and every line), because it describes the
+  // job, not the current view — a supplier filter must not change what "unmatched"
+  // means. `actualAmount`, not `invoicedAmount`: the GL-posted basis the card uses.
+  const scopedParts = useMemo(
+    () => (scope === "all" ? parts : parts.filter((p) => (scope === "nonbom" ? p.nonBom : !p.nonBom))),
+    [parts, scope],
+  );
+
+  const reconcile = useMemo(() => {
+    let jobTotal = 0;
+    let jobInvoiced = 0;
+    for (const l of partsLines ?? []) {
+      jobTotal += l.totalPrice;
+      jobInvoiced += l.actualAmount;
+    }
+    let matchedTotal = 0;
+    let matchedInvoiced = 0;
+    for (const p of parts) {
+      matchedTotal += p.totalPrice;
+      matchedInvoiced += p.invoicedAmount;
+    }
+    const nonBom = parts.filter((p) => p.nonBom);
+    // BOM parts with nothing bought against them yet are priced from the BOM
+    // (unit x qty), not from a purchase line — so they must come OUT before the
+    // table's total is compared against the job's PO spend, or the comparison is
+    // estimate-versus-actual wearing one label. Job 1101: $3,630 of them.
+    const estimated = parts
+      .filter((p) => p.matchReason === "no-purchase")
+      .reduce((sum, p) => sum + p.totalPrice, 0);
+    return {
+      jobTotal,
+      jobInvoiced,
+      estimated,
+      nonBomRows: nonBom.length,
+      nonBomTotal: nonBom.reduce((sum, p) => sum + p.totalPrice, 0),
+      nonBomInvoiced: nonBom.reduce((sum, p) => sum + p.invoicedAmount, 0),
+      // What the rows on screen do NOT account for. Should be zero now that every
+      // purchase line becomes a row — surfaced rather than assumed, because "the
+      // total matches" is a claim this footer should be able to prove each render.
+      unexplained: jobTotal - (matchedTotal - estimated),
+    };
+  }, [parts, partsLines]);
+
   // Top summary line. `noPO` is a real procurement gap — nothing purchased,
   // nothing pulled from stock, no process schedule — and is counted separately
   // from the parts that are covered without a PO, which get their own figure so
@@ -423,8 +505,10 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
           The "No Purchase Order" figure it shows is isUncoveredPart's, via
           computeRiskCards — the same rule as the readiness line directly above
           it and the Parts List's own "Uncovered (no PO)" filter. */}
+      {/* BOM parts only: these cards are about delivery readiness, and a freight
+          charge or a tariff has no delivery state to be at risk. */}
       <RiskCards
-        parts={parts}
+        parts={useMemo(() => parts.filter((p) => !p.nonBom), [parts])}
         onOpenPoGroup={openPoGroup}
         onJumpToPart={jumpToPartRow}
         now={now}
@@ -452,7 +536,11 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
         <AssembliesTab key={bom.jobId} bom={bom} onPartClick={drillToPart} onOpenPo={openPoFor} />
       ) : (
         <PartsListTab
-          parts={parts}
+          parts={scopedParts}
+          scope={scope}
+          setScope={setScope}
+          allParts={parts}
+          reconcile={reconcile}
           state={partsState}
           drill={drill}
           vendors={bom.vendors}
@@ -1011,13 +1099,29 @@ function PartsDetailTable({
 // DATE column, "Invoiced" — not to be confused with "invoiced", the Invoiced
 // $ money column, which stays visible) and "req"/"exp" (Required/Expected
 // Date), which are NOW in the default-visible 13 rather than hidden.
-const DEFAULT_HIDDEN_COLS: ColKey[] = ["parent", "category", "invoiceddate", "lead", "due", "pctinv", "leftspend"];
+// "leftspend" (Left to Invoice) left this list 2026-09-02 — it is one of the
+// financial columns now, beside Total $ and Invoiced $, rather than an optional
+// extra behind the Columns menu.
+const DEFAULT_HIDDEN_COLS: ColKey[] = ["parent", "category", "invoiceddate", "lead", "due", "pctinv"];
 
 // Invoiced+range window fetch status — passed down so PartsListTab can show a
 // fail-soft status message and PartsTableView can render the reconciliation
 // footer row. `active` mirrors JobProcurement's own activeAttribution check
 // (null falls back to lifetime figures everywhere); when active is true,
 // unattachedAmount/unattachedCount are meaningful.
+/** What the Parts List's own totals do and do not cover, stated in the footer. */
+type JobReconcile = {
+  jobTotal: number;
+  jobInvoiced: number;
+  nonBomRows: number;
+  nonBomTotal: number;
+  nonBomInvoiced: number;
+  /** BOM parts with no purchase line — priced from the BOM, not from spend. */
+  estimated: number;
+  /** Job lifetime minus every PURCHASED row the table draws. Zero is the expected value. */
+  unexplained: number;
+};
+
 type WindowStatus = {
   requested: boolean; // Invoiced mode + a range is set, whether or not it has resolved yet
   pending: boolean;
@@ -1072,12 +1176,25 @@ const DEFAULT_COL_WIDTH: Record<ColKey, number> = {
   exp: 84,
   lead: 60,
   due: 68,
-  unit: 72,
-  total: 72,
-  invoiced: 72,
-  pctinv: 52,
-  leftspend: 84,
-  status: 120,
+  // ── The financial group, widened 2026-09-02 ──────────────────────────────
+  //
+  // These were 72/72/72/84 with `status` at 120, and the headers crowded into each
+  // other: at text-micro, "Invoiced $" plus its sort chevron plus 2×8px of padding
+  // does not fit 72px, so the label truncated into its neighbour's border and the
+  // group read as one smeared band. Sized to the widest thing each column actually
+  // has to hold — a 7-character currency figure and its own header — rather than to
+  // whatever kept the table from scrolling. The table is `width: totalWidth` inside
+  // an `overflow-auto` scroller, so the extra width costs horizontal scroll, which
+  // is the correct trade and what the request asks for.
+  unit: 84,
+  total: 92,
+  invoiced: 96,
+  pctinv: 64,
+  leftspend: 104,
+  // "NON-BOM", "JOIN FIX", "NO PART NO" plus the badge padding.
+  match: 96,
+  // RECEIVED / DUE SOON in 2d / NO PO, plus the badge padding around them.
+  status: 132,
 };
 const MIN_COL_WIDTH = 48;
 
@@ -1091,6 +1208,10 @@ function PartsListTab({
   onCopy,
   onOpenPo,
   windowStatus,
+  reconcile,
+  scope,
+  setScope,
+  allParts,
 }: {
   parts: FlatPart[];
   state: PartsListState;
@@ -1100,6 +1221,11 @@ function PartsListTab({
   onCopy: (text: string, label?: string) => void;
   onOpenPo: (supplier: string | null, poNumber: string | null) => void;
   windowStatus: WindowStatus;
+  reconcile: JobReconcile;
+  scope: "all" | "bom" | "nonbom";
+  setScope: (s: "all" | "bom" | "nonbom") => void;
+  /** Every row regardless of scope — for the chip counts, which must not move when the scope does. */
+  allParts: FlatPart[];
 }) {
   const { view, setView, query, setQuery, status, setStatus, category, setCategory, manufacturer, setManufacturer, supplier, setSupplier, dateType, setDateType, from, setFrom, to, setTo, hidden, setHidden, colWidths, setColWidths, clearFilters } = state;
   const { toast } = useToast();
@@ -1181,7 +1307,16 @@ function PartsListTab({
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
     return parts.filter((p) => {
-      if (status.size < ALL_STATUS_KEYS.length) {
+      // ── Status does not apply to a non-BOM charge (2026-09-02) ───────────
+      //
+      // Every status here is a BOM-delivery state: received, due soon, late,
+      // uncovered. A freight charge or a tariff has no delivery state, so it can
+      // only ever fail this test — which is exactly what happened: 99 non-BOM rows
+      // were synthesized, the scope chip counted them, and every one was then
+      // filtered off the screen by a filter that has no opinion about them. A row
+      // the user cannot see is the bug this whole change exists to remove, so the
+      // status filter is scoped to the rows it actually describes.
+      if (!p.nonBom && status.size < ALL_STATUS_KEYS.length) {
         // OR across every CURRENTLY SELECTED status, each judged by its own
         // rule — unchanged from the single-select version, just no longer
         // limited to exactly one bucket at a time. "noPO" still resolves via
@@ -1237,13 +1372,17 @@ function PartsListTab({
   // ALL_COLS's static label describes (that array also drives the Columns-
   // visibility menu, so it has to stay mode-agnostic) — a per-render override
   // here makes the change visible in the header, not just discoverable by
-  // hovering a tooltip. % Inv/Left to Spend need no header change: every cell
+  // hovering a tooltip. % Inv/Left to Invoice need no header change: every cell
   // in those columns already renders "—" when null (PartRowCells), which is
   // self-evident on its own — the title still explains why.
   const windowedRangeLabel = windowStatus.active ? `${from || "…"} – ${to || "…"}` : "";
   const visibleCols = ALL_COLS.filter((c) => !hidden.has(c.key)).map((c) => {
     if (!windowStatus.active) return c;
-    if (c.key === "invoiced") return { ...c, label: "Invoiced $ (window)", title: `Invoiced within ${windowedRangeLabel}, not lifetime` };
+    // The header stays "Invoiced $" — the window is explained in the tooltip and,
+    // permanently visible, in the footer's scope line. "(window)" inside a 96px
+    // header cell was two thirds of the label and truncated the part that says what
+    // the column IS, which is the opposite of clarifying it.
+    if (c.key === "invoiced") return { ...c, title: `Invoiced within ${windowedRangeLabel}, not lifetime` };
     if (c.key === "pctinv" || c.key === "leftspend") return { ...c, title: "Not meaningful for a windowed Invoiced $ figure" };
     return c;
   });
@@ -1261,6 +1400,20 @@ function PartsListTab({
           value={view}
           onChange={(v) => setView(v as "list" | "card")}
           options={[{ value: "list", label: "List" }, { value: "card", label: "Card" }]}
+        />
+        {/* ── BOM / non-BOM scope (2026-09-02) ────────────────────────────────
+            "All" is the default because it is the job's whole purchase population
+            and its totals equal the Parts Cost card. The counts come from the
+            unfiltered set, so switching scope never changes what the chips claim
+            is available. */}
+        <Segmented
+          value={scope}
+          onChange={(v) => setScope(v as "all" | "bom" | "nonbom")}
+          options={[
+            { value: "all", label: `All ${num(allParts.length)}` },
+            { value: "bom", label: `BOM ${num(allParts.filter((p) => !p.nonBom).length)}` },
+            { value: "nonbom", label: `Non-BOM ${num(allParts.filter((p) => p.nonBom).length)}` },
+          ]}
         />
         {/* Columns toggle (table mode only) */}
         {view === "list" && (
@@ -1355,7 +1508,7 @@ function PartsListTab({
           No parts match the current filters.
         </p>
       ) : view === "list" ? (
-        <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} colWidths={colWidths} setColWidths={setColWidths} windowStatus={windowStatus} />
+        <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} colWidths={colWidths} setColWidths={setColWidths} windowStatus={windowStatus} rangeLabel={windowedRangeLabel} reconcile={reconcile} scope={scope} setScope={setScope} />
       ) : (
         <PartsCardView parts={filtered} vendors={vendors} onCopy={onCopy} onOpenPo={onOpenPo} />
       )}
@@ -1373,6 +1526,10 @@ function PartsTableView({
   colWidths,
   setColWidths,
   windowStatus,
+  rangeLabel,
+  reconcile,
+  scope,
+  setScope,
 }: {
   parts: FlatPart[];
   cols: { key: ColKey; label: string; align?: "right"; title?: string }[];
@@ -1382,6 +1539,12 @@ function PartsTableView({
   colWidths: Partial<Record<ColKey, number>>;
   setColWidths: (updater: (prev: Partial<Record<ColKey, number>>) => Partial<Record<ColKey, number>>) => void;
   windowStatus: WindowStatus;
+  /** "2026-08-01 – 2026-08-31" while an Invoiced window is active, "" otherwise. */
+  rangeLabel: string;
+  /** Job-lifetime totals and the part of them that is not a BOM part. */
+  reconcile: JobReconcile;
+  scope: "all" | "bom" | "nonbom";
+  setScope: (s: "all" | "bom" | "nonbom") => void;
 }) {
   const widthOf = (key: ColKey) => colWidths[key] ?? DEFAULT_COL_WIDTH[key];
   const totalWidth = cols.reduce((s, c) => s + widthOf(c.key), 0);
@@ -1513,38 +1676,117 @@ function PartsTableView({
               );
             })}
           </tbody>
+          {/* ── One row high, always (2026-09-02) ────────────────────────────
+              `whitespace-nowrap` and a fixed `h-7` on the totals row, because a
+              sticky footer's height comes straight off the visible table: every
+              pixel it grows is a pixel of rows the user stops seeing. Nothing in
+              this row is long enough to need two lines — the reconciliation
+              sentence that DID need them has its own row below now. */}
           <tfoot className="sticky bottom-0 z-[2]">
-            <tr className="border-t-2 border-sdc-blue bg-sdc-navy text-xs font-bold text-white">
+            <tr className="h-7 border-t-2 border-sdc-blue bg-sdc-navy text-xs font-bold text-white">
               {cols.map((c, idx) => (
-                <td key={c.key} className={`overflow-hidden border-r border-white/15 px-2 py-2 align-middle font-mono font-bold tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
+                <td key={c.key} className={`overflow-hidden whitespace-nowrap border-r border-white/15 px-2 py-1 align-middle font-mono font-bold tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
                   {footCell(c.key, idx)}
                 </td>
               ))}
             </tr>
-            {/* Reconciliation row — invoiced money in this window that doesn't
-                attach to any part row shown above (non-PO AP lines: freight,
-                tariffs, direct reimbursements; or a PO line for a part outside
-                the current BOM). Never silently dropped — this is what makes
-                the grand total match the Monthly ETC Parts Spent drill exactly
-                rather than falling quietly short by whatever doesn't attach to
-                a BOM part. Deliberately NOT reactive to Status/Category/
-                Manufacturer/Supplier/search — it reflects the whole window,
-                not "the currently-visible rows", so it stays a stable
-                structural figure rather than one that silently moves with an
-                unrelated filter. Shown only when the Invoiced $ column itself
-                is visible (nothing to align it under otherwise) and there's
-                actually something to report. */}
-            {windowStatus.active && windowStatus.unattachedAmount !== 0 && cols.some((c) => c.key === "invoiced") && (
-              <tr className="bg-sdc-navy text-label font-semibold text-white/80">
-                {cols.map((c, idx) => (
-                  <td key={c.key} className={`overflow-hidden border-r border-white/10 px-2 py-1.5 align-middle font-mono tabular-nums ${c.align === "right" ? "text-right" : ""}`}>
-                    {c.key === "invoiced"
-                      ? usd(windowStatus.unattachedAmount)
-                      : idx === 0
-                        ? `Other invoiced this window — no matching part row (${num(windowStatus.unattachedCount)} line${windowStatus.unattachedCount === 1 ? "" : "s"})`
-                        : ""}
-                  </td>
-                ))}
+            {/* ── The reconciliation line, out of the Qty column (2026-09-02) ──
+                Invoiced money in this window that doesn't attach to any part row
+                above: non-PO AP lines (freight, tariffs, direct reimbursements), or
+                a PO line for a part outside the current BOM. Never silently
+                dropped — this is what makes the grand total match the Monthly ETC
+                Parts Spent drill exactly rather than falling quietly short by
+                whatever doesn't attach to a BOM part.
+
+                It used to be rendered as a normal footer row, which put a
+                twelve-word sentence in the FIRST column — `qty`, 52px wide, with
+                `overflow-hidden` — where it wrapped to roughly ten lines and dragged
+                every other cell in the row to that height. That is the whole of the
+                oversized navy block: not a sticky-footer bug, one long string in the
+                narrowest column in the table.
+
+                A single `colSpan` cell instead, so the text has the full table width
+                and occupies exactly one line. The amount is stated inline rather than
+                aligned under Invoiced $ deliberately — it is NOT part of that column's
+                total (see the scope note below), and sitting under it implied it was.
+
+                Deliberately NOT reactive to Status/Category/Manufacturer/Supplier/
+                search: it reflects the whole window, not the currently-visible rows,
+                so it stays a stable structural figure rather than one that silently
+                moves with an unrelated filter. That difference in scope is now stated
+                on the strip itself rather than left for the reader to infer. */}
+            {/* ── The equation, and a way into every part of it (2026-09-02) ──
+                This began as a sentence: "$88,643 more sits on 90 part numbers with
+                no BOM row". That is an assertion the reader cannot check — and on
+                job 1101 it was also partly wrong, since four of those "non-BOM"
+                lines were a BOM part whose number is punctuated differently
+                upstream, a join failure the summary was quietly absorbing.
+
+                Those lines are rows in this table now, each carrying its own
+                classified reason, so the summary no longer stands in for data
+                nobody can reach. What is left here is the arithmetic, with the
+                non-BOM half clickable: press it and the table switches to exactly
+                the rows the figure is made of. */}
+            <tr className="bg-sdc-navy text-label text-white/70">
+              <td colSpan={cols.length} className="border-t border-white/10 px-2 py-1 align-middle">
+                <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <span>
+                    {num(parts.length)} row{parts.length === 1 ? "" : "s"} shown
+                    {scope === "all" ? "" : scope === "bom" ? " · BOM parts only" : " · non-BOM charges only"}, every PO
+                    line each part has.
+                  </span>
+                  {scope !== "nonbom" && reconcile.nonBomRows > 0 && (
+                    <button
+                      type="button"
+                      onClick={() => setScope("nonbom")}
+                      className="motion-interactive rounded px-1 underline decoration-dotted underline-offset-2 hover:bg-white/10 hover:text-white"
+                      title="Show only the charges that are not BOM parts"
+                    >
+                      {num(reconcile.nonBomRows)} are not BOM parts ·{" "}
+                      <span className="font-mono font-semibold tabular-nums text-white">{usd(reconcile.nonBomTotal)}</span>
+                    </button>
+                  )}
+                  {scope === "nonbom" && (
+                    <button
+                      type="button"
+                      onClick={() => setScope("all")}
+                      className="motion-interactive rounded px-1 underline decoration-dotted underline-offset-2 hover:bg-white/10 hover:text-white"
+                    >
+                      Show all rows
+                    </button>
+                  )}
+                  <span className="text-white/55">
+                    Job lifetime{" "}
+                    <span className="font-mono font-semibold tabular-nums text-white/80">{usd(reconcile.jobTotal)}</span>
+                    {Math.abs(reconcile.unexplained) > 0.5 ? (
+                      // Never silently absorbed: if the rows do not add up to the
+                      // job's own total, that is the one thing worth shouting.
+                      <span className="text-sdc-yellow"> · {usd(reconcile.unexplained)} unaccounted — report this</span>
+                    ) : (
+                      " · fully accounted for by the rows above"
+                    )}
+                  </span>
+                </span>
+              </td>
+            </tr>
+            {windowStatus.active && windowStatus.unattachedAmount !== 0 && (
+              <tr className="bg-sdc-navy text-label text-white/80">
+                <td colSpan={cols.length} className="border-t border-white/10 px-2 py-1 align-middle">
+                  <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                    <span>
+                      Other invoiced{rangeLabel ? ` in ${rangeLabel}` : ""} with no matching part row:{" "}
+                      <span className="font-mono font-semibold tabular-nums text-white">
+                        {usd(windowStatus.unattachedAmount)}
+                      </span>{" "}
+                      · {num(windowStatus.unattachedCount)} line{windowStatus.unattachedCount === 1 ? "" : "s"}
+                    </span>
+                    {/* The scopes, named. The totals row above sums the rows on
+                        screen after every filter; this figure covers the whole date
+                        window. Two different questions, and the request is explicit
+                        that they must not read as one number. */}
+                    <span className="text-white/55">— not included in the totals above, which cover the visible rows only</span>
+                  </span>
+                </td>
               </tr>
             )}
           </tfoot>

@@ -57,22 +57,29 @@ function code(path: string): string {
 
 // ── The step list (§45: "consistent increments", "safe minimum and maximum") ─
 
-test("the offered levels are the ones §45 asks for, in order", () => {
-  assert.deepEqual([...ZOOM_STEPS], [0.75, 0.8, 0.9, 1, 1.1, 1.25, 1.5]);
+test("the offered levels are an even 10% grid from 50% to 100%, in order", () => {
+  // Changed 2026-09-02 from 75/80/90/100/110/125/150. Pinned as a literal list
+  // because it IS the spec: exactly six levels, nothing above 100%, nothing below
+  // 50%, and one uniform step so the − and + buttons travel the same distance
+  // wherever you are on the list.
+  assert.deepEqual([...ZOOM_STEPS], [0.5, 0.6, 0.7, 0.8, 0.9, 1]);
+  for (let i = 1; i < ZOOM_STEPS.length; i++) {
+    assert.equal(Math.round((ZOOM_STEPS[i] - ZOOM_STEPS[i - 1]) * 100), 10, "every gap is exactly 10%");
+  }
   const sorted = [...ZOOM_STEPS].sort((a, b) => a - b);
   assert.deepEqual([...ZOOM_STEPS], sorted, "stepZoom walks this list by index, so it must be ordered");
 });
 
-test("the default is 100% and it is one of the offered levels", () => {
-  // §45: "The default must be 100%." If it were not IN the list, stepping away from it
-  // and back would be impossible — snapZoom would round it to a neighbour first.
-  assert.equal(DEFAULT_ZOOM, 1);
+test("the default is 80% and it is one of the offered levels", () => {
+  // If it were not IN the list, stepping away from it and back would be impossible —
+  // snapZoom would round it to a neighbour first.
+  assert.equal(DEFAULT_ZOOM, 0.8);
   assert.ok(ZOOM_STEPS.includes(DEFAULT_ZOOM));
 });
 
 test("the limits are the ends of the list, so there is no second source of bounds", () => {
-  assert.equal(MIN_ZOOM, 0.75);
-  assert.equal(MAX_ZOOM, 1.5);
+  assert.equal(MIN_ZOOM, 0.5);
+  assert.equal(MAX_ZOOM, 1);
   assert.equal(MIN_ZOOM, Math.min(...ZOOM_STEPS));
   assert.equal(MAX_ZOOM, Math.max(...ZOOM_STEPS));
 });
@@ -90,7 +97,7 @@ test("anything unusable lands on the default rather than on screen", () => {
 test("out-of-range values clamp to the limits instead of applying", () => {
   // 0.02 would make the app unreadable; 8 would show four cells. Neither is reachable —
   // and note these clamp rather than falling back to the default: a hand-edited 8 means
-  // "as large as possible", and 150% is that.
+  // "as large as possible", and 100% is that.
   assert.equal(snapZoom(0.02), MIN_ZOOM);
   assert.equal(snapZoom("1e-9"), MIN_ZOOM);
   assert.equal(snapZoom(-3), MIN_ZOOM);
@@ -98,11 +105,32 @@ test("out-of-range values clamp to the limits instead of applying", () => {
 });
 
 test("a level retired in a later release snaps to its nearest survivor", () => {
-  // The upgrade path: someone saved 95% or 135% while that step existed. They get the
-  // closest offered level, not the default and not a crash.
-  assert.equal(snapZoom(0.95), 0.9);
-  assert.equal(snapZoom(1.35), 1.25);
+  // The upgrade path, and the whole reason snapZoom compares in whole percent: every
+  // one of these was a real saved value under the old 75/80/90/100/110/125/150 list,
+  // and 0.75 and 0.85 sit at the EXACT midpoint of two surviving levels. The float
+  // distances there are unequal in binary (0.049999999999999996 vs 0.05000000000000004),
+  // so comparing the raw factors would resolve both downward. Ties go up.
+  assert.equal(snapZoom(0.75), 0.8);
+  assert.equal(snapZoom(0.85), 0.9);
+  assert.equal(snapZoom(0.95), 1);
+  assert.equal(snapZoom(1.1), 1);
+  assert.equal(snapZoom(1.25), 1);
+  assert.equal(snapZoom(1.5), 1);
+  assert.equal(snapZoom(0.4), 0.5);
   assert.equal(snapZoom(1.02), 1);
+});
+
+test("the pre-paint script normalizes a retired level the same way snapZoom does", () => {
+  // The script cannot import snapZoom, so it inlines the rounding. If the two ever
+  // disagree, a saved 75% paints at 75% and the sidebar reads 80% — the app visibly
+  // contradicting its own control until the next click.
+  const layout = readFileSync(join(SRC, "app", "layout.tsx"), "utf8");
+  const script = layout.slice(layout.indexOf("dangerouslySetInnerHTML"));
+  const inlined = (n: number) => Math.min(MAX_ZOOM, Math.max(MIN_ZOOM, Math.round(n * 10) / 10));
+  assert.ok(script.includes("Math.round(n*10)/10"), "the script must snap, not merely clamp");
+  for (const saved of [0.75, 0.85, 0.95, 1.1, 1.25, 1.5, 0.4, 0.02, 8]) {
+    assert.equal(inlined(saved), snapZoom(saved), `${saved} must restore where snapZoom puts it`);
+  }
 });
 
 test("every offered level snaps to itself", () => {
@@ -123,7 +151,7 @@ test("stepping walks the list one level at a time, both ways", () => {
 });
 
 test("stepping stops at the ends instead of wrapping or overflowing", () => {
-  // Wrapping would take someone who clicked − once too often from 75% to 150%.
+  // Wrapping would take someone who clicked − once too often from 50% to 100%.
   assert.equal(stepZoom(MIN_ZOOM, -1), MIN_ZOOM);
   assert.equal(stepZoom(MAX_ZOOM, 1), MAX_ZOOM);
   assert.ok(isMinZoom(stepZoom(MIN_ZOOM, -1)), "the − button must report itself disabled there");
@@ -135,7 +163,7 @@ test("stepping from an off-list value joins the list rather than compounding the
   // offered level and stays on the list from then on.
   assert.equal(stepZoom(0.86, 1), 1); // 0.86 -> 0.9 -> up one
   assert.equal(stepZoom(0.86, -1), 0.8);
-  assert.equal(stepZoom(0.97, 1), 1.1); // 0.97 -> 1 -> up one
+  assert.equal(stepZoom(0.97, 1), 1); // 0.97 -> 1, already at the ceiling
 });
 
 test("every level reads as a whole percentage", () => {
@@ -144,18 +172,20 @@ test("every level reads as a whole percentage", () => {
   for (const step of ZOOM_STEPS) {
     const label = zoomLabel(step);
     assert.match(label, /^\d{2,3}%$/, `${step} formatted as ${label}`);
-    // Rounded, and it has to be: `1.1 * 100` is 110.00000000000001 in binary floating
+    // Rounded, and it has to be: `0.7 * 100` is 70.00000000000001 in binary floating
     // point, which is why zoomLabel rounds rather than interpolating the raw product.
     assert.equal(label, `${Math.round(step * 100)}%`);
   }
-  assert.equal(zoomLabel(DEFAULT_ZOOM), "100%");
+  assert.deepEqual(ZOOM_STEPS.map(zoomLabel), ["50%", "60%", "70%", "80%", "90%", "100%"]);
+  assert.equal(zoomLabel(DEFAULT_ZOOM), "80%");
 });
 
 // ── The pre-paint restore (§45: "apply it immediately", no flash) ────────────
 
 test("the pre-paint script and the step list agree on the key, the variable and the bounds", () => {
   // The script is a string in layout.tsx, so it cannot import any of this. If the range
-  // is ever widened here and not there, a saved 175% would be silently clamped to 150%
+  // is ever changed here and not there, a saved 175% would be silently clamped to the
+  // script's own stale ceiling
   // on every load — the app would just quietly disagree with its own control.
   const layout = readFileSync(join(SRC, "app", "layout.tsx"), "utf8");
   const script = layout.slice(layout.indexOf("dangerouslySetInnerHTML"));
@@ -165,13 +195,19 @@ test("the pre-paint script and the step list agree on the key, the variable and 
   assert.ok(script.includes(`Math.max(${MIN_ZOOM},`), `the script's lower clamp must be ${MIN_ZOOM}`);
 });
 
-test("the zoom is applied by CSS reading one variable, with a 1 default", () => {
+test("the zoom is applied by CSS reading one variable, defaulting to DEFAULT_ZOOM", () => {
   // Why it must be declared in CSS: applyZoom only ever writes the custom property, so a
   // browser that has never had a preference set — and the server-rendered first paint —
-  // needs the stylesheet to supply the 1. And `html { zoom: var(…) }` is what makes
-  // changing the level a single property write rather than a re-render (§45's "do not
-  // rerender every table cell").
-  assert.match(CSS, /--app-zoom:\s*1;/, "globals.css must declare the default zoom");
+  // takes its level from the stylesheet. Asserted against DEFAULT_ZOOM rather than a
+  // literal, so the no-preference paint and the control can never disagree about what
+  // "default" means. And `html { zoom: var(…) }` is what makes changing the level a
+  // single property write rather than a re-render (§45's "do not rerender every table
+  // cell").
+  assert.match(
+    CSS,
+    new RegExp(`--app-zoom:\\s*${String(DEFAULT_ZOOM).replace(".", "\\.")};`),
+    `globals.css must declare the default zoom as ${DEFAULT_ZOOM}`,
+  );
   assert.match(CSS, /html\s*\{[^}]*zoom:\s*var\(--app-zoom\)/, "html must apply it");
 });
 
@@ -250,4 +286,40 @@ test("the zoom control lives in the sidebar, so it is on every page", () => {
     [join("src", "components", "Sidebar.tsx")],
     "exactly one place may render it",
   );
+});
+
+// ── The chart's category column has a floor (2026-09-02) ───────────────────
+//
+// Reported as a zoom bug: labels overlapping on Job Hour Details. Measured on
+// job 1104 (26 categories), the label row and its slots:
+//
+//     zoom  80%  row 807px  slot 27px  19 of 26 labels overflowed
+//     zoom 100%  row 615px  slot 20px  20 of 26
+//     zoom 125%  row 462px  slot 14px  26 of 26
+//
+// So it was broken at 100% too — zoom aggravates it (fewer layout px for the
+// same column count) but does not cause it. The cause was `minmax(0, 1fr)`:
+// §55 chose it so the chart never forces a scrollbar, which is right until a
+// single WORD cannot fit. "Manufacturing" is 75px and cannot wrap.
+test("the chart's columns cannot shrink below the widest single word", () => {
+  const src = readFileSync(join(process.cwd(), "src", "components", "JobHoursDashboard.tsx"), "utf8");
+  const m = /const CATEGORY_MIN_PX = (\d+)/.exec(src);
+  assert.ok(m, "the floor is a named constant, not a literal buried in a template");
+  const min = Number(m![1]);
+  // 75px is the measured width of "Manufacturing", the widest single word in
+  // any category label; the rest is the column's own padding.
+  assert.ok(min >= 76, `column floor ${min}px is under the 75px widest word — labels will overflow again`);
+  assert.match(src, /minmax\(\$\{CATEGORY_MIN_PX\}px, 1fr\)/, "floor applied to the shared column template");
+});
+
+test("bars and all three label tiers scroll inside ONE frame, so they stay aligned", () => {
+  const src = readFileSync(join(process.cwd(), "src", "components", "JobHoursDashboard.tsx"), "utf8");
+  // Every tier is laid out from the same `colStyle`; a shared scroll parent is
+  // what keeps a bar over its own label once the floor forces scrolling.
+  assert.match(src, /overflow-x-auto overscroll-x-contain/);
+  const frameAt = src.indexOf("overflow-x-auto overscroll-x-contain");
+  const barsAt = src.indexOf("ref={barsRef}");
+  const tier3At = src.indexOf("Tier 3 — phase");
+  assert.ok(frameAt < barsAt, "the frame opens before the bars");
+  assert.ok(barsAt < tier3At, "and encloses every tier, not just the bars");
 });

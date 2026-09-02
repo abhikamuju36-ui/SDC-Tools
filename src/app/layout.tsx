@@ -54,15 +54,24 @@ export default function RootLayout({
             paint is a zoom the user watches being applied — the whole interface
             would visibly jump on every page load.
 
-            The 0.75/1.5 bounds are ZOOM_STEPS' first and last entries, duplicated
+            The 0.5/1 bounds are ZOOM_STEPS' first and last entries, duplicated
             here because this string cannot import anything.
-            tests/app-zoom.test.ts asserts the two agree, so widening the range
+            tests/app-zoom.test.ts asserts the two agree, so changing the range
             without touching this line fails the suite rather than silently
-            clamping. Wrapped in try/catch because localStorage throws outright in
-            some privacy modes, and a preference is never worth a blank page. */}
+            clamping.
+
+            `Math.round(n*10)/10` is snapZoom's normalization, inlined: the offered
+            levels are an even 10% grid, so rounding to the nearest tenth lands on
+            one of them, and it rounds halves UP exactly as snapZoom does — a saved
+            0.75 from the old 75/80/90/100/110/125/150 list restores as 0.8, not
+            0.7. Without it a retired level would paint at its own size and then
+            disagree with the readout in the sidebar until the next click.
+
+            Wrapped in try/catch because localStorage throws outright in some
+            privacy modes, and a preference is never worth a blank page. */}
         <script
           dangerouslySetInnerHTML={{
-            __html: `try{var r=localStorage.getItem('sdc-app-zoom-v1');if(r){var n=parseFloat(r);if(!isNaN(n))document.documentElement.style.setProperty('--app-zoom',String(Math.min(1.5,Math.max(0.75,n))));}}catch(e){}`,
+            __html: `try{var r=localStorage.getItem('sdc-app-zoom-v1');if(r){var n=parseFloat(r);if(!isNaN(n))document.documentElement.style.setProperty('--app-zoom',String(Math.min(1,Math.max(0.5,Math.round(n*10)/10))));}}catch(e){}`,
           }}
         />
         <SessionProvider>{children}</SessionProvider>

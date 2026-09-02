@@ -123,7 +123,11 @@
    * The sidebar control rewrites this one property on <html>; the pre-paint script
    * in layout.tsx restores it before first paint. Nothing else in the app sets any
    * size-related custom property. */
-  --app-zoom: 1;
+  /* The no-preference default, and it must match DEFAULT_ZOOM in lib/app-zoom.ts:
+   * applyZoom only ever writes the custom property, so a browser that has never
+   * set a level — and the server-rendered first paint — takes the level from here.
+   * tests/app-zoom.test.ts asserts the two agree. */
+  --app-zoom: 0.8;
 
   /* Viewport lengths, corrected for the zoom.
    *

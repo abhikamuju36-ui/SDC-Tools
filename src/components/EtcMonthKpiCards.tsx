@@ -134,6 +134,66 @@ export type { OffGridJob };
 // that backwards here while the grid had it right would be worse than not showing
 // it at all.
 
+// ── The summary's expand/collapse control (2026-09-02) ──────────────────────
+//
+// Was the words "Hide summary" / "Show summary", set in the app's muted label size
+// with a dotted underline. It worked, and nobody could find it: at 10px in the same
+// grey as every other caption on the page, beside a month title in the same grey, it
+// read as part of the card's chrome rather than as the one thing in that header you
+// can press.
+//
+// A chevron instead — up when the summary is open, down when it is away, which is the
+// one collapse idiom nobody has to learn. The glyph is this codebase's own: the same
+// `M4 9 L8 5 L12 9` path SortableHeader and the drill caret already use, rotated
+// rather than swapped for the other direction, per drill-design.test.ts's rule that
+// "the caret rotates rather than swapping glyph". A second chevron drawn a second way
+// would be one more thing to keep in step.
+//
+// ── An icon alone is not an affordance ─────────────────────────────────────
+//
+// So it gets all three: a hover tooltip (`title`), a real accessible name that states
+// the ACTION and changes with state ("Hide summary" open, "Show summary" collapsed —
+// not "summary", which tells a screen-reader user nothing about what pressing it
+// does), and a bordered ghost button that reads as pressable at rest. It is a real
+// <button>, so Enter and Space work and the focus ring is the browser's own — nothing
+// here reimplements either.
+//
+// Fixed square geometry, which also retires a workaround: the old control reserved
+// `min-w-[6.5rem]` because "Hide summary" and "Show summary" are different widths and
+// it walked left and right as you used it (§36.14). An icon that only rotates cannot
+// change width, so there is nothing left to reserve.
+//
+// 1.6rem, the same size the zoom stepper in the sidebar settled on and for the same
+// reason: this sits inside the zoomed subtree (§45), so at the 50% floor it renders
+// 12 device px. Measured at 1.4rem first — 13.4px at the default 0.8 zoom — which is
+// under any reasonable target size for something people are meant to find easily.
+function SummaryToggle({ open, onToggle }: { open: boolean; onToggle: () => void }) {
+  const label = open ? "Hide summary" : "Show summary";
+  return (
+    <button
+      type="button"
+      onClick={onToggle}
+      aria-expanded={open}
+      aria-label={label}
+      title={label}
+      className="motion-interactive inline-flex h-[1.6rem] w-[1.6rem] shrink-0 items-center justify-center rounded-md border border-sdc-border bg-white text-sdc-muted shadow-sm hover:bg-sdc-blue-light hover:text-sdc-blue-dark"
+    >
+      <svg
+        viewBox="0 0 16 16"
+        width="11"
+        height="11"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        aria-hidden
+        className={`motion-interactive ${open ? "" : "rotate-180"}`}
+      >
+        <path d="M4 9 L8 5 L12 9" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
 export function EtcMonthKpiCards({
   month,
   kpis,
@@ -623,18 +683,9 @@ export function EtcMonthKpiCards({
           stacked layout wants it: a floating "Hide summary" above a bordered card reads
           as belonging to the page rather than to the thing it hides. */}
       <div className={`mb-1.5 flex items-center justify-end ${stripOpen ? "hidden" : ""}`}>
-        <button
-          type="button"
-          onClick={() => setStripOpen(!stripOpen)}
-          aria-expanded={stripOpen}
-          // Right-aligned in a fixed slot: "Hide summary" and "Show summary" are
-          // different widths, and without the reservation the control walked left and
-          // right as it was used (§36.14: "avoid replacing text with differently sized
-          // content").
-          className="motion-interactive min-w-[6.5rem] text-right text-label font-medium text-sdc-muted underline decoration-dotted underline-offset-2 hover:text-sdc-navy"
-        >
-          {stripOpen ? "Hide summary" : "Show summary"}
-        </button>
+        {/* Collapsed, the control has no card header to belong to, so the button's
+            own border is what keeps it from reading as a stray mark on the page. */}
+        <SummaryToggle open={stripOpen} onToggle={() => setStripOpen(!stripOpen)} />
       </div>
       {/* ── ONE summary card (§37.1) ─────────────────────────────────────────
           Six separate bordered cards became one: one outer border, one background,
@@ -694,16 +745,11 @@ export function EtcMonthKpiCards({
           puts them away. The month was previously nowhere on the card — the strip sat
           under a month picker and inherited its meaning from position alone, which is
           fine until somebody screenshots it. */}
-      <div className="flex items-baseline justify-between gap-3 border-b border-sdc-border bg-white px-3 py-2">
+      {/* items-center, not items-baseline: the toggle is an icon button with no text
+          baseline of its own, so baseline alignment hung it below the month title. */}
+      <div className="flex items-center justify-between gap-3 border-b border-sdc-border bg-white px-3 py-2">
         <h2 className="text-label font-semibold uppercase tracking-wide text-sdc-muted">{monthTitle}</h2>
-        <button
-          type="button"
-          onClick={() => setStripOpen(false)}
-          aria-expanded
-          className="motion-interactive shrink-0 text-label font-medium text-sdc-muted underline decoration-dotted underline-offset-2 hover:text-sdc-navy"
-        >
-          Hide summary
-        </button>
+        <SummaryToggle open onToggle={() => setStripOpen(false)} />
       </div>
       <div className={KPI_GRID_CLASS}>
         {/* Every block, from the one place that decides what the blocks are. The

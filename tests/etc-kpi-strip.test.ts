@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   buildKpiBlocks,
   kpiDetailState,
@@ -619,4 +621,75 @@ test("toggling notifies the open page, so the card reappears without a reload", 
     writeKpiStripOpen(false);
     assert.equal(notified, 2, "an unmounted page must not keep being notified");
   });
+});
+
+// ── The summary toggle is an icon button, not a text link (2026-09-02) ──────
+//
+// It was the words "Hide summary" in the app's muted label size with a dotted
+// underline — 10px of grey beside a month title in the same 10px grey, which read as
+// caption text rather than as the one pressable thing in that header. Replaced by a
+// chevron button. Source-level assertions: this is a `"use client"` component and
+// this suite has no DOM, so what is pinned is the contract an icon control has to
+// meet to be findable and usable at all.
+
+const KPI_CARDS = readFileSync(
+  join(import.meta.dirname, "..", "src", "components", "EtcMonthKpiCards.tsx"),
+  "utf8",
+);
+const KPI_CODE = KPI_CARDS.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+
+test("the text control is gone and both toggles are the same icon button", () => {
+  // Comments stripped: the note explaining what this replaced quotes the old wording,
+  // and a guard that trips on its own documentation is a guard someone deletes.
+  assert.ok(
+    !/>\s*\{?\s*stripOpen \? "Hide summary"/.test(KPI_CODE),
+    "the text link must not come back",
+  );
+  // Collapsed and expanded were two separately styled controls. One component now, so
+  // they cannot drift apart in size, glyph or label.
+  assert.equal((KPI_CODE.match(/<SummaryToggle\b/g) ?? []).length, 2);
+  assert.match(KPI_CODE, /function SummaryToggle\(/);
+});
+
+test("the accessible name states the action and changes with state", () => {
+  // "summary" alone would tell a screen-reader user what the thing IS, not what
+  // pressing it does — and would say the same in both states.
+  assert.match(KPI_CODE, /const label = open \? "Hide summary" : "Show summary";/);
+  assert.match(KPI_CODE, /aria-label=\{label\}/, "a name, for assistive tech");
+  assert.match(KPI_CODE, /title=\{label\}/, "a hover tooltip, for everyone else");
+  assert.match(KPI_CODE, /aria-expanded=\{open\}/);
+});
+
+test("it is a real button, so the keyboard works without reimplementing it", () => {
+  // Enter/Space, focus order and the focus ring all come free from <button>; a div
+  // with an onClick would need all three hand-rolled, and typically gets two.
+  const toggle = KPI_CODE.slice(KPI_CODE.indexOf("function SummaryToggle("));
+  assert.match(toggle.slice(0, 900), /<button\s/, "must be a button element");
+  assert.match(toggle.slice(0, 900), /type="button"/, "never a form submit");
+});
+
+test("the chevron rotates rather than swapping glyph, like every other caret here", () => {
+  // drill-design.test.ts already pins this rule for the drill caret, and
+  // SortableHeader follows it. A second chevron drawn a second way is one more thing
+  // to keep in step.
+  const toggle = KPI_CODE.slice(KPI_CODE.indexOf("function SummaryToggle("));
+  assert.equal((toggle.slice(0, 1400).match(/<path /g) ?? []).length, 1, "one path, not two glyphs");
+  assert.match(toggle, /M4 9 L8 5 L12 9/, "the app's own chevron path");
+  assert.match(toggle, /open \? "" : "rotate-180"/, "up when open, down when collapsed");
+  assert.match(toggle, /aria-hidden/, "the glyph is decorative — the button carries the name");
+});
+
+test("the icon-only control still reads as pressable at rest", () => {
+  // An icon with no border or hover state on a dense page is a mark, not a control.
+  const toggle = KPI_CODE.slice(KPI_CODE.indexOf("function SummaryToggle("));
+  assert.match(toggle, /border border-sdc-border/);
+  assert.match(toggle, /hover:/);
+});
+
+test("the header aligns the toggle on centre, not on a baseline it does not have", () => {
+  // An icon button has no text baseline, so `items-baseline` hung it below the month
+  // title. Pinned because the class is invisible until someone looks at the header.
+  const header = KPI_CODE.slice(KPI_CODE.indexOf("{monthTitle}") - 400, KPI_CODE.indexOf("{monthTitle}"));
+  assert.match(header, /items-center/);
+  assert.ok(!/items-baseline/.test(header));
 });

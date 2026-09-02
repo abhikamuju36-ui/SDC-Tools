@@ -3,6 +3,7 @@
 import { usd } from "@/components/ui/format";
 import { card } from "@/components/ui/classnames";
 import { reconcilePartsCostRounding, sharedBarMax, scaleToPct, type PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
+import type { PartsDrillMode } from "@/components/PartsCostDrill";
 
 // Fixed palette (2026-08-11, by request) — no longer the SDC-blue ramp, but
 // still fixed constants rather than anything data-derived, so the same dollar
@@ -199,6 +200,8 @@ function SegmentMarker({ color, label, value, note, informational }: { color: st
 export function PartsCostSummary({
   financials,
   jobCount = 1,
+  onDrill,
+  drillMode = null,
 }: {
   // The one Parts Cost reconciliation (src/lib/parts-cost-financials.ts,
   // audit "Audit Parts Cost Projection Formula Across All Projects",
@@ -213,6 +216,15 @@ export function PartsCostSummary({
   // across a multi-job selection (unlike the BOM below them), so the card
   // follows the slicer — it just has to say how many jobs it's adding up.
   jobCount?: number;
+  // ── Drill-through (2026-09-02) ────────────────────────────────────────────
+  //
+  // The card raises WHICH part of the bar was clicked; the panel itself is rendered
+  // by the page, full width below the charts row, because an eleven-column part-level
+  // table cannot be read in the ~15% column this card occupies. Optional, so the card
+  // still renders as a plain summary anywhere with nowhere to put a drill.
+  onDrill?: (mode: PartsDrillMode) => void;
+  /** Which drill is open, so the segment that opened it can show it is the active one. */
+  drillMode?: PartsDrillMode | null;
 }) {
   const failedJobs = financials.failedJobs;
   // Treat a ZERO quote as "nothing on file", not as a $0 target — an absent
@@ -333,11 +345,45 @@ export function PartsCostSummary({
   // displayed beside the bar — while `heightPct` still scales off the raw,
   // full-precision figure, since the bar's geometry has no rounding-sum
   // problem to begin with (only the printed dollar labels do).
-  const segments: { key: string; label: string; value: number; color: string; heightPct: number }[] = [
+  // Which of the two competing estimates of the same future money is the larger,
+  // and therefore the one the bar's top segment is actually drawn from.
+  const etcIsDriving = (financials.etc ?? 0) >= leftToInvoiceAmount;
+
+  const segments: { key: string; label: string; note?: string; value: number; color: string; heightPct: number }[] = [
     { key: "invoiced", label: "Invoiced", value: invoicedDisplay, color: BAR_INVOICED, heightPct: pct(invoiced) },
   ];
   if (hasProjection) {
-    segments.push({ key: "etc", label: "ETC", value: etcDisplay, color: BAR_PROJECTED, heightPct: pct(projIncrement) });
+    // ── "To complete", not "ETC" (2026-09-02) ────────────────────────────────
+    //
+    // This segment was labelled "ETC" while drawing `projIncrement` — the RESIDUAL,
+    // which is the larger of ETC and Left to be invoiced (never both; adding them
+    // double-counts, the 2026-08-17 fix). Those are not the same number and can
+    // differ by an order of magnitude: measured on job 1131, ETC $2,000 against a
+    // segment drawn at $13,018. So the legend named one figure and showed another.
+    //
+    // The label is not wrong in plain English — the residual genuinely is an
+    // estimate to complete. It is wrong in THIS app's vocabulary, where "ETC" is a
+    // proper noun: a whole tab, a specific grid figure, `financials.etc`. The bare
+    // word cannot mean something that is not that number.
+    //
+    // "To complete" keeps the connection for anyone who knew it as ETC, without
+    // claiming the word. It is also deliberately not "Remaining": that would sit
+    // directly above a chip called "Left to be invoiced", two labels both meaning
+    // "what's left", a dollar apart on this job — a clearer name traded for an
+    // ambiguous pair.
+    //
+    // The label is FIXED across jobs and months; the `note` carries which of the two
+    // terms is driving it. Stability in the label, accuracy in the note — the
+    // alternative (a label that switches to "Left to be invoiced" when that term
+    // wins) would render two near-identical legend rows with different values.
+    segments.push({
+      key: "etc",
+      label: "To complete",
+      note: etcIsDriving ? "from ETC" : "from open POs",
+      value: etcDisplay,
+      color: BAR_PROJECTED,
+      heightPct: pct(projIncrement),
+    });
   }
   // Chips read in the same top-to-bottom order the segments stack visually —
   // the topmost segment ("ETC", when present) listed first — even though
@@ -554,17 +600,57 @@ export function PartsCostSummary({
                   barPx(pct(projTotal)) exactly (2026-08-17: was Invoiced +
                   Left to be invoiced + ETC before the double-count fix — see
                   this file's header). */}
+              {/* ── Each segment is its own drill target (2026-09-02) ──────
+                  A <button> per segment rather than one handler on the stack with
+                  hit-testing by offsetY: the segments are already separate elements,
+                  so the browser's hit-testing is exact, and each gets a real
+                  accessible name, focus and Enter/Space for free. A segment can be a
+                  couple of pixels tall on a lopsided job, which is why the CAPTION
+                  below is a target too — a 2px click target is not a way to reach
+                  anything. */}
               <div className="flex w-full flex-col-reverse">
-                {segments.map((s, i) => (
-                  <div key={s.key} className={`w-full flex-shrink-0 ${i === segments.length - 1 ? "rounded-t-sm" : ""}`} style={{ height: barPx(s.heightPct), background: s.color }} />
-                ))}
+                {segments.map((s, i) =>
+                  onDrill ? (
+                    <button
+                      key={s.key}
+                      type="button"
+                      onClick={() => onDrill(s.key === "etc" ? "etc" : "invoiced")}
+                      aria-label={`${s.label} ${usd(s.value)} — show the detail behind this`}
+                      title={`${s.label} — click for detail`}
+                      className={`motion-interactive w-full flex-shrink-0 cursor-pointer ${i === segments.length - 1 ? "rounded-t-sm" : ""} ${
+                        drillMode === (s.key === "etc" ? "etc" : "invoiced") ? "ring-2 ring-sdc-blue" : "hover:opacity-80"
+                      }`}
+                      style={{ height: barPx(s.heightPct), background: s.color }}
+                    />
+                  ) : (
+                    <div key={s.key} className={`w-full flex-shrink-0 ${i === segments.length - 1 ? "rounded-t-sm" : ""}`} style={{ height: barPx(s.heightPct), background: s.color }} />
+                  ),
+                )}
               </div>
             </div>
-            <div className="flex h-8 items-start justify-center text-center text-note font-medium leading-tight text-sdc-gray-600">
-              Actual /
-              <br />
-              Projection
-            </div>
+            {/* The caption is the whole-bar target — the reliable one, since it stays
+                a fixed 32px however thin the segments above it become. */}
+            {onDrill ? (
+              <button
+                type="button"
+                onClick={() => onDrill("projection")}
+                aria-label="Actual / Projection — show every row behind this bar"
+                title="Click for the full parts-cost detail behind this bar"
+                className={`motion-interactive flex h-8 items-start justify-center rounded text-center text-note font-medium leading-tight underline decoration-dotted underline-offset-2 ${
+                  drillMode === "projection" ? "text-sdc-blue-dark" : "text-sdc-gray-600 hover:text-sdc-navy"
+                }`}
+              >
+                Actual /
+                <br />
+                Projection
+              </button>
+            ) : (
+              <div className="flex h-8 items-start justify-center text-center text-note font-medium leading-tight text-sdc-gray-600">
+                Actual /
+                <br />
+                Projection
+              </div>
+            )}
           </div>
         </div>
 
@@ -589,9 +675,23 @@ export function PartsCostSummary({
             bar no longer draws it as its own stack. */}
         <div className="flex shrink-0 flex-col gap-1">
           {labelOrder.map((s) => (
-            <SegmentMarker key={s.key} color={s.color} label={s.label} value={s.value} />
+            <SegmentMarker key={s.key} color={s.color} label={s.label} value={s.value} note={s.note} />
           ))}
-          <SegmentMarker color={BAR_SPENT} label="Left to be invoiced" value={leftToInvoiceDisplay} note="Included in ETC" informational />
+          {onDrill ? (
+            // The legend names it, so the legend is where it gets inspected — it is
+            // not a segment of the bar any more (2026-08-17), so there is nothing in
+            // the bar itself to click for it.
+            <button
+              type="button"
+              onClick={() => onDrill("left")}
+              aria-label={`Left to be invoiced ${usd(leftToInvoiceDisplay)} — show the rows behind this`}
+              className={`motion-interactive rounded text-left ${drillMode === "left" ? "ring-1 ring-sdc-blue" : "hover:bg-sdc-blue-light/50"}`}
+            >
+              <SegmentMarker color={BAR_SPENT} label="Left to be invoiced" value={leftToInvoiceDisplay} note="Included in To complete" informational />
+            </button>
+          ) : (
+            <SegmentMarker color={BAR_SPENT} label="Left to be invoiced" value={leftToInvoiceDisplay} note="Included in To complete" informational />
+          )}
         </div>
       </div>
 

@@ -160,13 +160,31 @@ test("the Parts Cost card's bar stacks exactly two segments — Invoiced and ETC
   );
 });
 
-test("Left to be invoiced is still shown, as an informational chip labelled Included in ETC", () => {
+test("Left to be invoiced is still shown, as an informational chip naming the segment it sits inside", () => {
   const src = code("src", "components", "PartsCostSummary.tsx");
+  // The note said "Included in ETC" until 2026-09-02, when the segment it referred
+  // to was renamed "To complete" (that segment draws the RESIDUAL — the larger of
+  // ETC and Left to be invoiced — not `financials.etc`, and the two differ by an
+  // order of magnitude on job 1131). A note pointing at a segment name that no
+  // longer exists is worse than no note, so the two move together — which is what
+  // this asserts.
   assert.match(
     src,
-    /<SegmentMarker color=\{BAR_SPENT\} label="Left to be invoiced" value=\{leftToInvoiceDisplay\} note="Included in ETC" informational \/>/,
-    "Left to be invoiced must remain visible, explicitly marked as informational (not a bar segment) and labelled as included in ETC",
+    /label="Left to be invoiced" value=\{leftToInvoiceDisplay\} note="Included in To complete" informational/,
+    "Left to be invoiced must remain visible, marked informational (not a bar segment), and name the segment it is inside",
   );
+  assert.ok(!/note="Included in ETC"/.test(src), "the note must not name a segment that no longer exists");
+});
+
+test("the bar's second segment is named for what it draws, with the basis in its note", () => {
+  const src = code("src", "components", "PartsCostSummary.tsx");
+  // Fixed label, per-job note. The alternative — switching the label to "Left to be
+  // invoiced" whenever that term wins — would render two near-identical legend rows
+  // a dollar apart (the segment and the informational chip), which reads as broken.
+  assert.match(src, /label: "To complete"/);
+  assert.match(src, /note: etcIsDriving \? "from ETC" : "from open POs"/);
+  assert.match(src, /const etcIsDriving = \(financials\.etc \?\? 0\) >= leftToInvoiceAmount/);
+  assert.ok(!/label: "ETC",/.test(src), "the bare proper noun must not label the residual");
 });
 
 test("Total Parts Cost Spent is untouched by the fix — still Invoiced + Left to be invoiced", () => {

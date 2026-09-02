@@ -15,7 +15,7 @@
 // every job row's Standard Fee on the grid live — the sheet's cross-linked
 // formulas.
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { usd as currency, usdExact as currencyExact, hours as fmtHours } from "@/components/ui/format";
 import { useStandardPoolCell, useStandardPoolTotals, useStandardPoolDirty } from "@/components/EtcStandardColumns";
 import { PoolAutosave } from "@/components/PoolAutosave";
@@ -95,6 +95,13 @@ const GROUP_TINT: Record<string, string> = {
 };
 const INPUT = "w-20 rounded border border-sdc-border px-1.5 py-0.5 text-right text-xs outline-none focus:border-sdc-blue";
 
+/**
+ * Session-only, and session-only on purpose: this is "I had it open a moment ago",
+ * not a saved preference. localStorage would carry an expanded panel into next week's
+ * first visit, which is the default this change exists to remove.
+ */
+const PANEL_OPEN_KEY = "sdc-etc-standard-fees-open";
+
 export function StandardPoolPanel({
   month,
   carriedFrom,
@@ -131,7 +138,61 @@ export function StandardPoolPanel({
   initialStatus: MonthlyReportStatus | null;
 }) {
   const groups = [...new Set(rows.map((r) => r.group))];
-  const [open, setOpen] = useState(true);
+  // ── Collapsed by default, every time the page is entered (2026-09-02) ──────
+  //
+  // This was `useState(true)`, so an authorized user got the panel open on arrival and
+  // the 320px it occupies came straight off the Monthly ETC grid — a grid that is
+  // already the widest thing in the app. Permission to open the panel is not the same
+  // as a request to have it open: the role check decides whether the card EXISTS (see
+  // StandardFeesCard — an unauthorized user gets no rail, no header and no reserved
+  // space at all), and this decides whether it is unfolded, which is the user's call.
+  //
+  // Collapsing is pure layout. The panel keeps its state and its data while folded —
+  // the collapsed rail is a different element, but this component does not unmount, so
+  // expanding again costs no fetch, and the grid beside it is never re-rendered by
+  // either direction (it is a sibling: `min-w-0 flex-1` next to this `shrink-0` aside,
+  // so it simply takes the width back).
+  const [open, setOpen] = useState(false);
+
+  // ── ...except across a deliberate reload of this same page ─────────────────
+  //
+  // "App Refresh" in the sidebar is `window.location.reload()`, and so is Ctrl+R.
+  // Someone who opened this panel, then refreshed to pick up new figures, meant to
+  // stay where they were — dropping them back to collapsed would make the panel feel
+  // like it forgets. A client-side navigation INTO this tab (Projects -> Monthly ETC)
+  // is a fresh entry and must not restore, which is exactly the distinction the
+  // Navigation Timing type draws: only a genuine reload reports "reload".
+  //
+  // In an effect and not a useState initializer, deliberately: this component is
+  // server-rendered, and reading sessionStorage during the first render would hydrate
+  // differently from the server. The cost is one frame collapsed before it opens, on a
+  // reload — a frame during which the whole page is painting anyway.
+  useEffect(() => {
+    try {
+      const nav = performance.getEntriesByType("navigation")[0] as PerformanceNavigationTiming | undefined;
+      if (nav?.type === "reload") {
+        if (sessionStorage.getItem(PANEL_OPEN_KEY) === "1") setOpen(true);
+      } else {
+        // A fresh entry: clear the marker so a later reload cannot resurrect a state
+        // from an earlier visit to this tab.
+        sessionStorage.removeItem(PANEL_OPEN_KEY);
+      }
+    } catch {
+      /* storage blocked (private modes) — collapsed is the correct fallback */
+    }
+  }, []);
+
+  // One place that both toggles do their writing, so the stored marker cannot drift
+  // from what is on screen.
+  const setPanelOpen = (next: boolean) => {
+    setOpen(next);
+    try {
+      if (next) sessionStorage.setItem(PANEL_OPEN_KEY, "1");
+      else sessionStorage.removeItem(PANEL_OPEN_KEY);
+    } catch {
+      /* not persisted; the panel still opens and closes for this session */
+    }
+  };
   // Unsaved pulled/rate edits: Submit Standard Sheet freezes from the SAVED pool values,
   // so it must be blocked until "Save Pool Cells" persists what's on screen —
   // otherwise the frozen fees silently differ from the live grid.
@@ -151,7 +212,7 @@ export function StandardPoolPanel({
       <aside className="motion-fade w-9 shrink-0 self-start overflow-hidden border border-sdc-border border-t-[#808080] bg-[#D6E4F0] shadow-sm">
         <button
           type="button"
-          onClick={() => setOpen(true)}
+          onClick={() => setPanelOpen(true)}
           aria-expanded={false}
           title="Expand Standard Fees panel"
           className="flex h-full min-h-[120px] w-full flex-col items-center gap-2 py-2 text-sm font-semibold text-sdc-blue-dark hover:bg-[#c9dcef]"
@@ -166,11 +227,16 @@ export function StandardPoolPanel({
   return (
     <aside className="motion-fade w-[320px] shrink-0 self-start overflow-hidden border border-sdc-border border-t-[#808080] bg-white shadow-sm">
       <div className="flex items-center justify-between gap-2 border-b border-sdc-border bg-[#D6E4F0] px-3 py-2">
+        {/* `flex-1` so the whole width of the header bar to the left of the status
+            text is the collapse target, rather than the chevron and title alone. The
+            status text stays OUTSIDE the button: nesting it would either swallow its
+            own tooltip or put non-interactive content inside a control. */}
         <button
           type="button"
-          onClick={() => setOpen((v) => !v)}
+          onClick={() => setPanelOpen(false)}
           aria-expanded={open}
-          className="flex min-w-0 items-center gap-1.5 text-sm font-semibold text-sdc-blue-dark"
+          title="Collapse Standard Fees panel"
+          className="flex min-w-0 flex-1 items-center gap-1.5 text-left text-sm font-semibold text-sdc-blue-dark"
         >
           <span className="inline-block rotate-90 text-xs">▶</span>
           <span className="truncate">Standard Fees — {month}</span>

@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import {
   poolCategoryForPunch,
   POOL_CATEGORIES,
@@ -126,4 +128,50 @@ test("a job quoted only for ETC grid sections contributes nothing to any pool", 
   // And it IS a real quote: the job is not unquoted, which is the distinction
   // the panel now makes visible instead of hiding.
   assert.ok(quoted1169.length > 0);
+});
+
+// ── The panel opens CLOSED (2026-09-02) ─────────────────────────────────────
+//
+// It defaulted to `useState(true)`, so anyone with standards:view lost 320px of the
+// Monthly ETC grid on arrival whether they wanted the panel or not. Permission to
+// open a panel is not a request to have it open — and the two are easy to conflate
+// again, since the role check and the collapse state live in different components.
+// Source-level assertions because this is a `"use client"` component with no DOM in
+// this suite; the behaviour itself was driven in the running app.
+
+test("the Standard Fees panel starts collapsed, and only a reload can restore it open", () => {
+  const src = readFileSync(join(process.cwd(), "src", "components", "StandardPoolPanel.tsx"), "utf8");
+  assert.match(src, /const \[open, setOpen\] = useState\(false\)/, "the panel must not initialize expanded");
+  // Only a genuine reload restores. A client-side navigation into Monthly ETC is a
+  // fresh entry and must start collapsed, however the tab was left earlier.
+  assert.match(src, /nav\?\.type === "reload"/);
+  assert.match(src, /sessionStorage/, "session-only: a saved preference would reinstate the old default");
+  // Comments stripped first — the note explaining why localStorage is wrong here
+  // mentions it by name, and a guard that trips on its own documentation gets deleted.
+  const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(!/localStorage/.test(code), "localStorage would carry an expanded panel into a future visit");
+});
+
+test("both toggles write through the one setter, so the marker cannot drift", () => {
+  const src = readFileSync(join(process.cwd(), "src", "components", "StandardPoolPanel.tsx"), "utf8");
+  // A stray setOpen would change the panel without updating what a reload restores.
+  const strays = src.match(/setOpen\(/g) ?? [];
+  assert.equal(strays.length, 2, "expected only the reload restore and setPanelOpen's own call");
+  assert.match(src, /onClick=\{\(\) => setPanelOpen\(true\)\}/, "the collapsed rail expands");
+  assert.match(src, /onClick=\{\(\) => setPanelOpen\(false\)\}/, "the header collapses");
+});
+
+test("the header's collapse target spans the bar, not just the chevron", () => {
+  const src = readFileSync(join(process.cwd(), "src", "components", "StandardPoolPanel.tsx"), "utf8");
+  const header = src.slice(src.indexOf("aria-expanded={open}") - 400, src.indexOf("aria-expanded={open}") + 200);
+  assert.match(header, /flex-1/, "the toggle should fill the header width");
+});
+
+test("an unauthorized role gets no panel at all — not a collapsed one", () => {
+  // Criterion 3 is about reserved space as much as secrecy: the rail, the header and
+  // the gap must all be absent, which is what returning null (rather than rendering a
+  // collapsed aside) achieves. `initialData` is null for a role without standards:view.
+  const card = readFileSync(join(process.cwd(), "src", "components", "StandardFeesCard.tsx"), "utf8");
+  assert.match(card, /const show = initialData != null && !hidden;/);
+  assert.match(card, /if \(!show\) return null;/);
 });

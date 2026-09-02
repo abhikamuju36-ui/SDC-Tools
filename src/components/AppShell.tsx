@@ -1,6 +1,7 @@
 import Sidebar from "@/components/Sidebar";
 import ExcelCellFocus from "@/components/ExcelCellFocus";
 import ColumnResize from "@/components/ColumnResize";
+import ScrollHandoff from "@/components/ScrollHandoff";
 import { ToastProvider } from "@/components/ui/Toast";
 import { DEFAULT_PREFS, sidebarWidthCss, type SidebarPrefs } from "@/lib/sidebar-prefs";
 
@@ -80,6 +81,11 @@ export default function AppShell({
             and Excel-style cell focus are unaffected. */}
         <ExcelCellFocus />
         <ColumnResize />
+        {/* Nested-scroll handoff for every scroll container in the app, from one
+            document-level listener. Mounted here rather than per page for the same
+            reason the two above are: a page cannot forget to include it, and a
+            container that appears after a client-side navigation is covered. */}
+        <ScrollHandoff />
       </div>
     </ToastProvider>
   );

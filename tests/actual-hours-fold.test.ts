@@ -103,13 +103,35 @@ test("the chart's totals are summed from the rows it draws", () => {
 test("the chart shows a pool section only when the role is allowed it", () => {
   const src = readFileSync(join(process.cwd(), "src", "components", "JobHoursDashboard.tsx"), "utf8");
   // The filter must consult the allow-list, not just the restricted set.
+  // Matched loosely across whitespace because the same filter also drops PM
+  // unconditionally (see the PM test below) and so no longer fits one line —
+  // what this pins is the allow-list clause, not the formatting around it.
   assert.match(
     src,
-    /data\.sections\.filter\(\(s\) => !RESTRICTED_SECTION_CODES\.has\(s\.code\) \|\| allowedPools\.has\(s\.code\)\)/,
+    /!RESTRICTED_SECTION_CODES\.has\(s\.code\)\s*\|\|\s*allowedPools\.has\(s\.code\)/,
   );
   // Defaulting to none matters: a caller that forgets the prop must get the old,
   // narrower behaviour rather than a silent widening of access.
   assert.match(src, /allowedPoolCodes = \[\]/);
+});
+
+// ── PM is not drawn on this chart at all (2026-09-02) ──────────────────────
+//
+// Project Management (10-111) is a company-wide pool allocation, not a per-job
+// estimate, so a quoted-vs-actual bar for it compares two incomparable figures.
+// It is excluded from `executionSections`, which every part of the chart reads —
+// bars, labels, tier headers, drill-through and the Engineering/Shop totals —
+// so one filter removes it everywhere rather than four places that can drift.
+
+test("the chart never draws the PM section, at any permission level", () => {
+  const src = readFileSync(join(process.cwd(), "src", "components", "JobHoursDashboard.tsx"), "utf8");
+  // Excluded ahead of the allow-list clause, so holding the PM grant does not
+  // put it back on the chart.
+  assert.match(src, /s\.code !== PM_CODE/);
+  assert.match(src, /const PM_CODE = POOL_QUOTED_SECTION\.ENGINEERING_PM;/);
+  // Chart-only: the punch-table reconciliation total still counts every
+  // section, PM included, so removing the bars cannot silently drop hours.
+  assert.match(src, /const jobActualTotal = data\.sections\.reduce/);
 });
 
 test("the allow-list is derived from the signed-in role, server-side", () => {

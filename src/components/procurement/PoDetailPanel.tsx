@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { MATCH_REASON_LABEL, MATCH_REASON_TEXT } from "@/lib/parts-match-reason";
 import type { BomPart, PoLineGroup } from "@/lib/job-bom";
 import { usd } from "@/components/ui/format";
 import { useColumnSort } from "@/components/useColumnSort";
@@ -182,6 +183,7 @@ export type ColKey =
   | "invoiced"
   | "pctinv"
   | "leftspend"
+  | "match"
   | "status";
 
 export const ALL_COLS: { key: ColKey; label: string; align?: "right"; title?: string }[] = [
@@ -202,8 +204,29 @@ export const ALL_COLS: { key: ColKey; label: string; align?: "right"; title?: st
   { key: "unit", label: "Unit $", align: "right" },
   { key: "total", label: "Total $", align: "right" },
   { key: "invoiced", label: "Invoiced $", align: "right" },
+  // ── "Left to Invoice", immediately after Invoiced $ (2026-09-02) ──────────
+  //
+  // Same column, same arithmetic (`totalPrice - invoicedAmount`, see po-detail.ts's
+  // enrich) — renamed and moved, not added. It was called "Left to Spend" and sat
+  // after % Inv, which is why it read as a procurement figure ("how much of this
+  // budget is still unspent") rather than the billing figure it actually is: what
+  // remains to invoice on work already costed. The two are the same number and
+  // opposite questions, and the name was answering the wrong one.
+  //
+  // Ordered here rather than at the end because ALL_COLS is the single source of
+  // column order for the header, the body, the sticky footer AND the Columns menu —
+  // so this one move puts it beside Invoiced $ everywhere, with no second list to
+  // keep in step.
+  { key: "leftspend", label: "Left to Invoice", align: "right", title: "Total $ − Invoiced $. Negative when a part has been over-invoiced." },
   { key: "pctinv", label: "% Inv", align: "right" },
-  { key: "leftspend", label: "Left to Spend", align: "right" },
+  // ── Why every row can say what it is (2026-09-02) ────────────────────────
+  //
+  // The table now carries purchase lines that have no BOM row — freight, tariffs,
+  // outside processes, fees, reimbursements, credits, and parts bought against a
+  // superseded revision — because reporting them as a footer summary meant $88,643
+  // on job 1101 that nobody could click into. This column is what keeps that
+  // honest: a row that is not a BOM part says so, and says which kind.
+  { key: "match", label: "Match", title: "Whether this row is a BOM part, and if not, what the charge is" },
   { key: "status", label: "Status" },
 ];
 
@@ -255,6 +278,7 @@ export function partsListSortColumns(now: number): SortColumns<FlatPart, ColKey>
     invoiced: { type: "currency", value: (p) => p.invoicedAmount },
     pctinv: { type: "number", value: (p) => p.pctInvoiced },
     leftspend: { type: "currency", value: (p) => p.leftToSpend },
+  match: { type: "text", value: (p) => MATCH_REASON_LABEL[p.matchReason] },
     status: { type: "status", value: (p) => p.st.label },
   };
 }
@@ -361,6 +385,21 @@ export function PartRowCells({
         return (
           <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-gray-600" title={p.pctInvoiced === null ? "Not meaningful for a windowed Invoiced $ figure" : undefined}>
             {p.pctInvoiced === null ? "—" : `${p.pctInvoiced}%`}
+          </span>
+        );
+      case "match":
+        return (
+          <span
+            className={`inline-block rounded px-1.5 py-0.5 text-micro font-semibold ${
+              p.matchReason === "matched"
+                ? "text-sdc-muted"
+                : p.matchReason.startsWith("join-")
+                  ? "bg-sdc-yellow-bg text-sdc-yellow-text"
+                  : "bg-sdc-gray-100 text-sdc-gray-600"
+            }`}
+            title={MATCH_REASON_TEXT[p.matchReason]}
+          >
+            {MATCH_REASON_LABEL[p.matchReason]}
           </span>
         );
       case "leftspend":
