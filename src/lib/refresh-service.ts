@@ -295,12 +295,18 @@ export type RefreshRunRecord = {
   status: string;
   sourcesOk: number;
   sourcesFailed: number;
+  // The per-source outcomes this pass recorded, already parsed (2026-09-02).
+  // Carried here so the Dashboard's source-health panel can say WHICH source was
+  // slow or broken, and for how many passes in a row — the run row's own counts
+  // only ever said how many. Never throws on a malformed value: a bad JSON blob
+  // yields no per-source detail, not a failed dashboard.
+  steps: { source: string; label: string; status: string; detail: string; ms?: number }[];
 };
 
 // The last few passes, for the dashboard's own "when was this last refreshed" line.
 export async function recentRefreshRuns(limit = 5): Promise<RefreshRunRecord[]> {
   const rows = await prisma.$queryRaw<Record<string, unknown>[]>`
-    SELECT refreshId, \`trigger\`, userName, startedAt, completedAt, durationMs, status, sourcesOk, sourcesFailed
+    SELECT refreshId, \`trigger\`, userName, startedAt, completedAt, durationMs, status, sourcesOk, sourcesFailed, steps
     FROM RefreshRun ORDER BY id DESC LIMIT ${limit}`;
   return rows.map((r) => ({
     refreshId: String(r.refreshId),
@@ -312,7 +318,18 @@ export async function recentRefreshRuns(limit = 5): Promise<RefreshRunRecord[]> 
     status: String(r.status),
     sourcesOk: Number(r.sourcesOk ?? 0),
     sourcesFailed: Number(r.sourcesFailed ?? 0),
+    steps: parseSteps(r.steps),
   }));
+}
+
+function parseSteps(raw: unknown): RefreshRunRecord["steps"] {
+  if (typeof raw !== "string" || raw.length === 0) return [];
+  try {
+    const parsed: unknown = JSON.parse(raw);
+    return Array.isArray(parsed) ? (parsed as RefreshRunRecord["steps"]) : [];
+  } catch {
+    return [];
+  }
 }
 
 // ── The one refresh ─────────────────────────────────────────────────────────

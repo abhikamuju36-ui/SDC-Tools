@@ -3,7 +3,8 @@ import { prisma } from "@/lib/prisma";
 import { getDataQuality, getPunchExplorer } from "@/lib/data-quality";
 import { DashboardTabs } from "@/components/DashboardTabs";
 import { DataQualityPanel } from "@/components/DataQualityPanel";
-import { recentRefreshRuns } from "@/lib/refresh-service";
+import { recentRefreshRuns, currentRefresh } from "@/lib/refresh-service";
+import { buildSourceHealth } from "@/lib/source-health";
 import { PageTitle } from "@/components/ui/Typography";
 import { BUTTON_PRIMARY, PAGE_SHELL } from "@/components/ui/classnames";
 import { requirePagePermission } from "@/lib/require-permission";
@@ -67,7 +68,7 @@ export default async function Home({
   // client state alone.
   const onQualityTab = sp.tab === "quality";
 
-  const [overview, dataQuality, explorer, freshnessRows, refreshRuns] = await Promise.all([
+  const [overview, dataQuality, explorer, freshnessRows, refreshRuns, liveRefresh] = await Promise.all([
     getDashboardOverview(month),
     // The Power BI report's Data Quality page, rebuilt locally — see
     // lib/data-quality.ts for where each rule comes from.
@@ -76,8 +77,14 @@ export default async function Home({
       ? getPunchExplorer({ from: sp.dqFrom, to: sp.dqTo, employeeId: sp.dqEmp, functionId: sp.dqFn, monthToDate: sp.dqMtd === "1" })
       : null,
     prisma.powerBiFreshness.findMany(),
-    // The last pass (§25.11), so the card can say who refreshed and when.
-    recentRefreshRuns(1),
+    // The last few passes (§25.11). ONE would answer "who refreshed and when",
+    // which is all the old card asked; the health panel also draws each source's
+    // own recent outcomes from these, which is what makes "failing since 6am"
+    // distinguishable from "failed once just now" — see lib/source-health.ts.
+    recentRefreshRuns(6),
+    // So a source being worked on right now reads as refreshing rather than as
+    // whatever it was on the last completed pass.
+    currentRefresh(),
     // Which jobs actually have a Scheduler project, so a FAT row is never a dead
     // link. Fail-soft: an unreachable Scheduler yields an empty set (no links).
   ]);
@@ -131,7 +138,7 @@ export default async function Home({
                 a muted band label and a lighter container, so it stays findable
                 without competing with a business figure. */}
             <Band label="System" tone="muted">
-              <RefreshScheduleCard freshnessRows={freshnessRows} lastRun={refreshRuns[0] ?? null} />
+              <RefreshScheduleCard health={buildSourceHealth({ freshness: freshnessRows, runs: refreshRuns, running: liveRefresh })} />
             </Band>
           </div>
         }
