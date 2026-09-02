@@ -3,7 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { loadActualHoursBySection } from "@/lib/actual-hours";
 import { validJobTypeFilter } from "@/lib/job-filters";
 import { checkSchedulerToken } from "@/lib/scheduler-api-auth";
-import { SECTIONS, mapPunchToColumns } from "@/lib/sections";
+import { SECTIONS } from "@/lib/sections";
 
 // Per-section quoted / actual / ETC hours for one job, for SDC_Scheduler's Job
 // Hours page. Read-only, server-to-server, same SCHEDULER_SHARED_TOKEN guard as
@@ -81,30 +81,31 @@ export async function GET(
     loadActualHoursBySection([job.id]),
   ]);
 
-  // loadActualHoursBySection keys on JobHoursDetail.section, which STORES THE RAW
-  // Paylocity pair — not a canonical section code. Those have to be folded onto
-  // the fixed columns before anything is aggregated, exactly as the ETC grid,
-  // syncActualHours, the ETC-month drill and T&M all do.
+  // ── The fold now happens in loadActualHoursBySection (2026-09-02) ──────────
   //
-  // Skipping the fold is not a cosmetic error. Measured on 2026-08-26 before it
-  // was added, 35-59% of a job's actual hours fell into an "Other" bucket
-  // (3,598h of 9,902h on one job) because raw codes like 10-311, 12-211, 13-211,
-  // 14-211, 40-311 and 90-211 are not themselves SECTIONS entries. Per-section
-  // actuals would not have matched this app's own grid — precisely the drift
-  // loadActualHoursBySection exists to prevent.
+  // This endpoint used to fold here itself, and the reason is worth keeping:
+  // JobHoursDetail.section STORES THE RAW Paylocity pair, not a canonical
+  // section code, so the raw pairs have to be folded onto the fixed columns
+  // before anything is aggregated. Measured on 2026-08-26 before this endpoint
+  // did that, 35-59% of a job's actual hours fell into an "Other" bucket (3,598h
+  // of 9,902h on one job) because raw codes like 10-311, 12-211, 13-211, 14-211,
+  // 40-311 and 90-211 are not themselves SECTIONS entries.
   //
-  // `resolve` is intentionally omitted. The only resolver available reads Power
-  // BI for punch-code metadata, and hours must not depend on Power BI; omitting
-  // it falls back to the hand-written SECTION_ALIASES table, so this endpoint has
-  // no Power BI dependency at all. Note 10-311 SPLITS 30/70 across 10-312/10-313,
-  // so this is a fan-out, not a rename — never flatten it to a 1:1 map.
-  const rawActuals = actualMap.get(job.id) ?? new Map<string, number>();
-  const actuals = new Map<string, number>();
-  for (const [rawSection, hours] of rawActuals) {
-    for (const part of mapPunchToColumns(rawSection, hours)) {
-      actuals.set(part.section, (actuals.get(part.section) ?? 0) + part.hours);
-    }
-  }
+  // What was never true is that this endpoint was alone in needing it. The same
+  // omission was costing the Job Hour Details chart 1,410h on job 1131 and the
+  // Projects grid, Quoted page and projects export 45,069h in total — so the
+  // fold moved INTO the loader, where it applies to every consumer at once
+  // instead of being re-implemented by whoever notices next. Folding again here
+  // is verified idempotent (2026-09-02: 228 jobs, 2,127 section values, zero
+  // differences) but it is a second copy of a rule that now has one home, so it
+  // is gone.
+  //
+  // The loader omits `resolve` for the reason this endpoint did: the only
+  // resolver available reads Power BI for punch-code metadata, and hours must not
+  // depend on Power BI. It falls back to the hand-written SECTION_ALIASES table,
+  // so this endpoint still has no Power BI dependency at all — and 10-311 still
+  // SPLITS 30/70 across 10-312/10-313 in there, a fan-out rather than a rename.
+  const actuals = actualMap.get(job.id) ?? new Map<string, number>();
 
   // Union of sections that have an estimate and sections that have hours — a
   // section worked but never quoted has to appear, or the page under-reports

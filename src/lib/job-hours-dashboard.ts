@@ -36,6 +36,11 @@ export type SectionHours = {
 // disagrees across screens" failure class this app has hit before).
 /** Phase band for punch codes with no ETC/Quoted column of their own. */
 const OFF_GRID_PHASE = "Service & Spare Parts";
+// Phase band for codes the approved rule book has no entry for at all — in
+// practice malformed Section-Function pairs from the Paylocity export. Separate
+// from OFF_GRID_PHASE because "we do not know what this is" and "this is Service
+// work" are different statements, and only one of them is true here.
+const UNMAPPED_PHASE = "Unmapped";
 
 const BILLING_GROUP_BY_CODE = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]));
 // NOTE the fallback: "Shop" is correct only for the 17 SECTIONS codes, every one
@@ -224,17 +229,40 @@ export async function getJobHoursDashboard(jobIdOrIds: number | number[]): Promi
   // exists for these phases, so a diff badge showing the whole actual as "over"
   // is the truth about unbudgeted work rather than a gap in this query.
   const gridCodes = new Set(SECTIONS.map((s) => s.code));
+  // ── Every off-grid code with hours, not just Service/Spare Parts (2026-09-02) ─
+  //
+  // This filter used to require SERVICE_AND_SPARE_PARTS_CODES, and the note above
+  // explains why: taking every code SECTIONS omits would have added ~57.7k hours
+  // to this chart, dominated by 10-414 (11,006h) and 40-311 (12,620h), while the
+  // other pages went on reporting the narrower figure.
+  //
+  // That reasoning was right about the risk and wrong about those two codes.
+  // Neither is off-grid: SECTION_ALIASES maps 10-414 -> 10-413 and 40-311 ->
+  // 40-211, signed off, and every other consumer folds them there. They only
+  // looked unhoused because actual-hours.ts was handing this function RAW pairs
+  // without applying that fold — fixed there now, so those 57.7k hours land in
+  // the columns they belong to rather than needing a bar of their own.
+  //
+  // What is genuinely left over is 6.75% of all punch hours (10,289h measured
+  // app-wide), and it is not a scope question: it is malformed phase prefixes in
+  // the Paylocity export — "1-411", "1-412", "-111", "5-414" — that the rule book
+  // has no entry for and cannot be guessed into one. classifyPunchCode returns
+  // department "Undefined" for all of them, so billingGroupForOffGridCode keeps
+  // every one out of the Engineering and Shop totals; widening this filter
+  // therefore cannot move either total, only make hours visible that were being
+  // dropped without a trace. A number nobody can categorise still has to be
+  // shown, or the chart quietly disagrees with the punch table it is drawn from.
   const offGridSections: SectionHours[] = [...actualBy.entries()]
-    .filter(([code, hours]) => !gridCodes.has(code) && SERVICE_AND_SPARE_PARTS_CODES.has(code) && hours > 0)
+    .filter(([code, hours]) => !gridCodes.has(code) && hours > 0)
     .sort(([a], [b]) => a.localeCompare(b))
     .map(([code, hours]) => {
       const c = classifyPunchCode(code);
       return {
         code,
-        name: c.taskDescription,
-        // Its own phase band, so these cluster together on the tiered axis
-        // instead of interleaving with the quoted grid sections.
-        phase: OFF_GRID_PHASE,
+        name: c.taskDescription === "Undefined" ? `Unmapped ${code}` : c.taskDescription,
+        // Service/Spare Parts keep their own band; an unmappable code must not be
+        // labelled as Service work it may have nothing to do with.
+        phase: SERVICE_AND_SPARE_PARTS_CODES.has(code) ? OFF_GRID_PHASE : UNMAPPED_PHASE,
         group: c.department,
         billingGroup: billingGroupForOffGridCode(code),
         quoted: 0,

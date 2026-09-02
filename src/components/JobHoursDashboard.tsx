@@ -263,7 +263,21 @@ export function JobHoursDashboard({
   // already carries, rather than read from the server's whole-job
   // `data.billingGroups`, so the totals answer to the one filter instead of
   // silently disagreeing about what's selected.
-  const bgSections = data.sections.filter((s) => !hiddenPhases.has(s.phase));
+  // ── The totals are the sum of the BARS (2026-09-02) ───────────────────────
+  //
+  // This filtered `data.sections`, not `executionSections`, so the Standard Fees
+  // pools were excluded from every bar and then added back into Engineering
+  // Total and Shop Total. Measured on job 1131: the Shop bars summed to 904.23
+  // while Shop Total read 1,104.77 — the 200.54h difference being Manufacturing
+  // (10-413), a section the chart deliberately does not draw. A total that
+  // exceeds the things it totals is unreconcilable by anyone reading the screen,
+  // and it is the same class of mistake as computing bars and totals from two
+  // datasets.
+  //
+  // Now derived from the identical row set the bars are, so Engineering Total is
+  // by construction the sum of the Engineering bars and Shop Total the sum of the
+  // Shop bars, under whatever phase filter is active.
+  const bgSections = executionSections.filter((s) => !hiddenPhases.has(s.phase));
   const bgSums = new Map<string, { quoted: number; etc: number; actual: number }>();
   for (const s of bgSections) {
     const cur = bgSums.get(s.billingGroup) ?? { quoted: 0, etc: 0, actual: 0 };

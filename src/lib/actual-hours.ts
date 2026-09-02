@@ -1,6 +1,6 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { PARTS_COST_SECTION } from "@/lib/sections";
+import { PARTS_COST_SECTION, mapPunchToColumns } from "@/lib/sections";
 
 // THE definition of "actual hours worked to date", for every report that shows
 // one. Both the Projects grid and the Job Hour Details dashboard call this, so
@@ -47,6 +47,31 @@ export async function coveredMonths(): Promise<string[]> {
 // are simply absent; callers already treat a miss as zero.
 export type ActualHoursBySection = Map<number, Map<string, number>>;
 
+// ── The fold this file was missing (2026-09-02) ─────────────────────────────
+//
+// JobHoursDetail.section stores the RAW Paylocity pair ("40-311", "10-414",
+// "13-211") — since 2026-08-21 it is deliberately never rewritten at write time,
+// and each consumer folds it onto the app's fixed columns itself. Every other
+// consumer does: sync-actuals.ts for JobMonthlyActualHours and the ETC grid's
+// Hours Worked, job-hours-detail.ts for the drill under the chart, tm-hours.ts
+// for the T&M cards. This file never did — it grouped by the raw pair and handed
+// the raw codes to callers as though they were column codes.
+//
+// The consequence, measured on job 1131 before the fix: 3,442.36 punch hours in
+// the table, 2,032.03 drawn by the chart. 1,410.33 hours — 41% of the job — had
+// no bar to land in and were silently dropped by the caller, which iterates the
+// fixed SECTIONS list. Every one of those codes has a signed-off destination:
+// 40-311 -> 40-211 (490h), 10-414 -> 10-413 (355h), 13/14/15/11/12-211 -> 10-211
+// (399h), 40-412 -> 40-411, 10-311 -> its documented 30/70 split, and so on.
+//
+// It also meant the chart disagreed with its OWN drill-through, which folds.
+//
+// mapPunchToColumns is that fold, and calling it here is what makes this
+// function's answer mean the same thing as every other page's. It is called with
+// no resolver, exactly as the other query-time consumers call it: the
+// model-derived resolver exists only during import, and SECTION_ALIASES is the
+// documented static fallback.
+
 export async function loadActualHoursBySection(jobPks: number[]): Promise<ActualHoursBySection> {
   const out: ActualHoursBySection = new Map();
   if (jobPks.length === 0) return out;
@@ -76,9 +101,13 @@ export async function loadActualHoursBySection(jobPks: number[]): Promise<Actual
     sections.set(section, (sections.get(section) ?? 0) + hours);
   };
 
+  // Eras 1 and 2 are app-owned grid data, already keyed by column code — only the
+  // punches carry a raw pair that has to be folded. See the note above.
   for (const h of historical) add(h.jobId, h.section, Number(h.actualHistoricalHours ?? 0));
   for (const f of frozen) add(f.jobId, f.section, Number(f._sum.hoursWorked ?? 0));
-  for (const p of punches) add(p.jobId, p.section, Number(p._sum.hours ?? 0));
+  for (const p of punches) {
+    for (const col of mapPunchToColumns(p.section, Number(p._sum.hours ?? 0))) add(p.jobId, col.section, col.hours);
+  }
 
   return out;
 }
@@ -116,7 +145,12 @@ export async function loadMonthlyWorkedBySection(jobPks: number[]): Promise<Reco
     months.set(month, (months.get(month) ?? 0) + worked);
   };
   for (const f of frozen) add(f.section, f.month, Number(f._sum.hoursWorked ?? 0));
-  for (const p of punches) add(p.section, p.month, Number(p._sum.hours ?? 0));
+  // Folded exactly as the cumulative figure above is — a timeline that did not
+  // would stop adding up to the bar it explains, which is the one thing this
+  // drill-down is for.
+  for (const p of punches) {
+    for (const col of mapPunchToColumns(p.section, Number(p._sum.hours ?? 0))) add(col.section, p.month, col.hours);
+  }
 
   const out: Record<string, { month: string; worked: number }[]> = {};
   for (const [section, months] of bySection) {
