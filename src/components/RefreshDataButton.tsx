@@ -303,7 +303,8 @@ export function RefreshDataButton({
       title={
         running
           ? busyDescription
-          : "Refresh Data — pull the latest hours, parts costs, jobs and pools from every source, for the whole app. Runs the same pass as the hourly schedule."
+          : "Refresh Data — pulls the latest business data from Paylocity, Total ETO and the other configured sources, for the whole app. " +
+            "Runs the same pass as the hourly schedule. (To reload a stale-looking screen without touching data, use App Refresh.)"
       }
     >
       {/* The reservation, per caller. MEASURED in the running app, not derived from a

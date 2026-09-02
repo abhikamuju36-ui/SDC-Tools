@@ -17,6 +17,7 @@ import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import { isEtcDirty } from "@/lib/etc-dirty-tracker";
 import { RefreshDataButton } from "@/components/RefreshDataButton";
 import { AppZoom } from "@/components/AppZoom";
+import { AppRefreshButton } from "@/components/AppRefreshButton";
 import {
   COLLAPSED_WIDTH,
   DEFAULT_PREFS,
@@ -843,6 +844,26 @@ export default function Sidebar({
             Font size, Row height and Column width steppers, so the same app could
             be at two densities on two tabs. See lib/app-zoom.ts. */}
         <AppZoom collapsed={collapsed} />
+
+        {/* ── App Refresh, on its own row (2026-09-02) ─────────────────────────
+            The SECOND refresh: it reloads this tab's frontend and changes no data
+            — see AppRefreshButton for why the two are deliberately separate
+            controls rather than one.
+
+            Its own row rather than a third button beside Refresh Data and
+            Collapse. The note above records what happened the last time this
+            footer's widths were guessed at: at 128px the two existing labels
+            already fill the row, and a third would have clipped all three. Full
+            width expanded, full rail collapsed, so no label competes for space in
+            either state. */}
+        <div className={`flex pt-1 ${collapsed ? "flex-col" : ""}`}>
+          <AppRefreshButton
+            compact={collapsed}
+            className={`motion-interactive flex h-[30px] w-full items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] text-xs whitespace-nowrap text-[#C3D1E0] shadow-[inset_0_0_0_1px_#17395C] hover:bg-[#0E3157] disabled:opacity-60 ${
+              collapsed ? "shrink-0" : "px-2"
+            }`}
+          />
+        </div>
 
         {/* Side-by-side in the mock rather than the two stacked full-width rows
             this used to be — it reclaims a row of vertical space. Stacks again
