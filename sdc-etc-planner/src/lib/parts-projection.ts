@@ -1,4 +1,5 @@
 import type { PartsCostLine } from "@/lib/sync-totaleto";
+import { isSdcVendor } from "@/lib/vendor-normalize";
 
 // ── Parts Cost projection: Dan's model ───────────────────────────────────────
 //
@@ -10,10 +11,15 @@ import type { PartsCostLine } from "@/lib/sync-totaleto";
 //   invoiced, and add only the uncovered difference.
 //
 //     adjustedEtc        = max(0, priorEtc - partsSpentThisMonth)
-//     yetToInvoice       = eligible external remaining exposure (excludes in-house SDC)
-//     additionalExposure = max(0, yetToInvoice - adjustedEtc)
+//     openBalance        = purchased - invoiced  (EVERY open commitment)
+//     additionalExposure = max(0, openBalance - adjustedEtc)
 //     totalProjection    = invoiced + adjustedEtc + additionalExposure
-//                        = invoiced + max(adjustedEtc, yetToInvoice)
+//                        = invoiced + max(adjustedEtc, openBalance)
+//
+// Which guarantees `totalProjection >= purchased`, because max(adjustedEtc,
+// openBalance) >= openBalance and purchased = invoiced + openBalance. That invariant
+// is the whole point of the 2026-09-03 correction below, and it is asserted per-job
+// in tests/parts-projection.test.ts.
 //
 // The bar reads, bottom to top: invoiced (blue), adjustedEtc (yellow),
 // additionalExposure (red, and only when there is any).
@@ -48,11 +54,38 @@ import type { PartsCostLine } from "@/lib/sync-totaleto";
 // which is what makes it trustworthy: nothing is snapshotted, so nothing can be
 // reconstructed wrongly.
 
-// ── In-house SDC (§6) ───────────────────────────────────────────────────────
+// ── In-house SDC (§6), and the mistake that was made with it ────────────────
 //
-// Dan: "do not include In-house SDC" in the remaining external invoice exposure —
+// Dan: "do not include In-house SDC" in the remaining EXTERNAL INVOICE EXPOSURE —
 // it is work SDC does itself, so no supplier invoice is ever coming for it, and
 // counting it as exposure overstates what the job still owes the outside world.
+//
+// ── CORRECTED 2026-09-03: that exclusion must not reach the TOTAL ──────────
+//
+// The first implementation applied it to the projected total as well, which quietly
+// asserts that in-house work costs the job nothing. It is on a purchase order, it is
+// committed, and it is inside Purchased — so excluding it made the card project a
+// job finishing for LESS than money already committed. Audited across ten jobs, 7
+// projected below Purchased, and the shortfall was the in-house open balance almost
+// to the dollar:
+//
+//     1101   purchased 791,609   projection 776,971   under by 14,639  (in-house 14,639)
+//     1104   purchased 821,469   projection 783,096   under by 38,373  (in-house 38,373)
+//     1142   purchased 1,584,820 projection 1,542,939 under by 41,880  (in-house 41,880)
+//
+// 1142 is the clearest failure: its EXTERNAL open balance is 0 and its in-house
+// balance is 41,880, so the projection came out exactly equal to invoiced and ignored
+// the committed work entirely. Reported by Abhi as "how can the projection be less
+// than spent + open POs" — it could not, and that was the bug.
+//
+// So the exposure term in the total is now the whole open balance. The in-house
+// figure survives as REPORTING — "of the open balance, this much will not arrive as a
+// supplier invoice" — which is the useful half of §6 and the half that cannot
+// corrupt a total.
+//
+// Rejected alternative: `invoiced + adjustedEtc + inHouseOpen`. It also fixes 1101,
+// but on 1148 it gives 1,997,975 because it stacks in-house on top of an ETC that a
+// manager would already have counted it inside — the double-count §16 forbids.
 //
 // The classification is on MANUFACTURER, and deliberately not on supplier. Measured
 // across jobs 1101/1104/1131 (5,000 lines): manufacturer carries "SDC" (2,011 lines)
@@ -68,10 +101,19 @@ import type { PartsCostLine } from "@/lib/sync-totaleto";
 //
 // The match is on a word boundary rather than equality so "SDC ASSY" is caught,
 // while a hypothetical outside vendor like "SDCO Inc" is not.
-const IN_HOUSE_MANUFACTURER = /^SDC(\s|$)/;
-
+// Delegates to lib/vendor-normalize.ts (2026-09-03) rather than carrying its own
+// regex. It used to test /^SDC(\s|$)/ here — a second, independent definition of "is
+// this SDC", which is precisely the duplication the vendor normalization was asked to
+// remove. Two rules that agree today drift the moment one is edited, and this one
+// decides money: it excludes in-house work from external invoice exposure.
+//
+// Same behaviour on today's data, checked: the manufacturer field carries only "SDC"
+// (2,174 lines) and "SDC ASSY" (14), and isSdcVendor matches both. It is also STRICTER
+// in the direction that matters — the payment and expense conduits are refused, so a
+// card purchase from an outside maker can never be reclassified as work SDC never
+// invoices.
 export function isInHouseSdc(line: Pick<PartsCostLine, "manufacturer">): boolean {
-  return IN_HOUSE_MANUFACTURER.test((line.manufacturer ?? "").trim().toUpperCase());
+  return isSdcVendor(line.manufacturer);
 }
 
 /** One row's remaining exposure, on the app's canonical basis. */
@@ -137,9 +179,12 @@ export type PartsProjection = {
   adjustedEtcRaw: number | null;
   /** Yellow. The same figure floored at 0, because a bar cannot have negative height. */
   adjustedEtc: number;
-  /** Eligible external exposure still to be invoiced. */
-  yetToInvoice: number;
-  /** Red. `max(0, yetToInvoice - adjustedEtc)` — exposure the adjusted forecast does not cover. */
+  /**
+   * EVERY open commitment: purchased - invoiced. This is what the total is built on,
+   * so the projection can never fall below what the job has already committed.
+   */
+  openBalance: number;
+  /** Red. `max(0, openBalance - adjustedEtc)` — commitments the adjusted forecast does not cover. */
   additionalExposure: number;
   /** The bar's height: `invoiced + adjustedEtc + additionalExposure`. */
   totalProjection: number;
@@ -157,11 +202,12 @@ export function computePartsProjection(input: {
   invoiced: number;
   priorEtc: number | null;
   partsSpentThisMonth: number;
-  yetToInvoice: number;
+  /** purchased - invoiced. EVERY open commitment, in-house included — see the header. */
+  openBalance: number;
 }): PartsProjection {
   const invoiced = num(input.invoiced);
   const partsSpentThisMonth = num(input.partsSpentThisMonth);
-  const yetToInvoice = Math.max(0, num(input.yetToInvoice));
+  const openBalance = Math.max(0, num(input.openBalance));
   const etcKnown = input.priorEtc != null && Number.isFinite(input.priorEtc);
   const priorEtc = etcKnown ? (input.priorEtc as number) : null;
 
@@ -172,8 +218,8 @@ export function computePartsProjection(input: {
   const adjustedEtc = adjustedEtcRaw == null ? 0 : Math.max(0, adjustedEtcRaw);
 
   // §7 and §16: only the UNCOVERED difference is added. Adding the whole
-  // `yetToInvoice` on top of `adjustedEtc` would count the covered portion twice.
-  const additionalExposure = Math.max(0, yetToInvoice - adjustedEtc);
+  // `openBalance` on top of `adjustedEtc` would count the covered portion twice.
+  const additionalExposure = Math.max(0, openBalance - adjustedEtc);
   const totalProjection = invoiced + adjustedEtc + additionalExposure;
 
   return {
@@ -182,7 +228,7 @@ export function computePartsProjection(input: {
     partsSpentThisMonth,
     adjustedEtcRaw,
     adjustedEtc,
-    yetToInvoice,
+    openBalance,
     additionalExposure,
     totalProjection,
     // §12: the line marks where ETC coverage ends, so it only means something when

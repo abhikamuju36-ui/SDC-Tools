@@ -9,6 +9,7 @@ import { usd, usd2 } from "@/components/ui/format";
 import { loadPartsEtcHistory, type PartsEtcMonth } from "@/lib/parts-etc-history-actions";
 import type { PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
+import { normalizeVendor } from "@/lib/vendor-normalize";
 
 // Drill-through for the Parts Cost card's Actual / Projection bar.
 //
@@ -170,7 +171,18 @@ export function PartsCostDrill({
   const sort = useColumnSort<ColKey>({ key: "invoiced", direction: "desc" });
 
   const rows: Row[] = useMemo(
-    () => financials.lines.map((l) => ({ ...l, leftToInvoice: l.totalPrice - l.actualAmount })),
+    // Vendor names normalized here too (2026-09-03). This panel reads the RAW
+    // PartsCostLine rather than FlatPart, so it does not inherit po-detail.ts's
+    // normalization — without this the drill would show "SDC" beside a Parts List
+    // showing "Steven Douglas Corp (SDC)" for the same line, and its own search box
+    // would not find the canonical name.
+    () =>
+      financials.lines.map((l) => ({
+        ...l,
+        supplier: normalizeVendor(l.supplier),
+        manufacturer: normalizeVendor(l.manufacturer),
+        leftToInvoice: l.totalPrice - l.actualAmount,
+      })),
     [financials.lines],
   );
 
@@ -252,8 +264,8 @@ export function PartsCostDrill({
       hint: "Every GL-posted line on this job, all POs, all dates. The bar's blue section",
     },
     {
-      label: "Yet to invoice",
-      value: usd(financials.yetToInvoice),
+      label: "Left to invoice",
+      value: usd(financials.openBalance),
       hint:
         financials.inHouseRows > 0
           ? `External remaining exposure. Excludes ${usd(financials.inHouseExcluded)} on ${financials.inHouseRows} in-house (SDC) row${financials.inHouseRows === 1 ? "" : "s"}, which produce no supplier invoice`
@@ -264,7 +276,7 @@ export function PartsCostDrill({
           {
             label: "In-house (SDC) excluded",
             value: usd(financials.inHouseExcluded),
-            hint: `Remaining exposure on ${financials.inHouseRows} row${financials.inHouseRows === 1 ? "" : "s"} SDC builds itself. Reported so 'Yet to invoice' reconciles against the ${usd(financials.yetToInvoiceAllRows)} whole open balance`,
+            hint: `Remaining exposure on ${financials.inHouseRows} row${financials.inHouseRows === 1 ? "" : "s"} SDC builds itself. Reported so 'Yet to invoice' reconciles against the ${usd(financials.openBalance)} whole open balance`,
           },
         ]
       : []),
@@ -406,7 +418,7 @@ export function PartsCostDrill({
               {financials.additionalExposure > 0 ? (
                 <>
                   {" "}
-                  Here {usd(financials.yetToInvoice)} of exposure exceeds it by{" "}
+                  Here {usd(financials.openBalance)} of exposure exceeds it by{" "}
                   <span className="font-semibold">{usd(financials.additionalExposure)}</span>, which is the red section.
                   For the rows behind that exposure, switch to{" "}
                   <button
@@ -419,7 +431,7 @@ export function PartsCostDrill({
                   .
                 </>
               ) : (
-                <> Here the remainder covers the whole {usd(financials.yetToInvoice)} of exposure, so none is red.</>
+                <> Here the remainder covers the whole {usd(financials.openBalance)} of exposure, so none is red.</>
               )}
             </p>
           </div>

@@ -8,6 +8,7 @@ import { usd } from "@/components/ui/format";
 import { useToast } from "@/components/ui/Toast";
 import { DragScroll } from "@/components/DragScroll";
 import { normPn, attributeInvoicedWindow, type WindowAttribution } from "@/lib/parts-cost-window-attribution";
+import { normalizeVendor } from "@/lib/vendor-normalize";
 import { loadPartsListInvoicedInWindow } from "@/lib/hours-detail-actions";
 import { sequenced } from "@/lib/request-sequence";
 import { useColumnSort } from "@/components/useColumnSort";
@@ -947,7 +948,11 @@ const PARTS_DETAIL_COLUMNS: SortColumns<BomPart, PartsDetailSortKey> = {
   desc: { type: "text", value: (p) => p.desc || null },
   // Sorts on exactly what the cell displays, same convention as every
   // "status"-typed column in this app (DataQualityExplorer, etc.).
-  mfr: { type: "text", value: (p) => (p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || null) },
+  // `p.manufacturer` arrives already canonical from po-detail.ts, so the old
+  // `=== "SDC" ? "In-house (SDC)"` relabel is gone (2026-09-03): it was a SECOND
+  // spelling of the same company, invented at the display layer, and it is exactly
+  // what made the filter list and the table disagree.
+  mfr: { type: "text", value: (p) => p.manufacturer || null },
   supplier: { type: "text", value: (p) => p.supplier },
   // `poId` is null for STOCK/PROCESS/NO-PO rows alike — nulls already sort
   // last in both directions (compareByType), which reads correctly here:
@@ -1034,7 +1039,7 @@ function PartsDetailTable({
                   </td>
                   <td className="px-2 py-1.5 text-note font-semibold text-sdc-navy" title={p.desc}><span className="line-clamp-1">{p.desc || "—"}</span></td>
                   <td className="px-2 py-1.5 text-note font-semibold text-sdc-gray-600" title={p.manufacturer}>
-                    <span className="line-clamp-1">{p.manufacturer === "SDC" ? "In-house (SDC)" : p.manufacturer || "—"}</span>
+                    <span className="line-clamp-1">{p.manufacturer || "—"}</span>
                   </td>
                   <td className="px-2 py-1.5 text-note text-sdc-gray-600" title={p.supplier ?? ""}>
                     <span className="line-clamp-1">{p.supplier || "—"}</span>
@@ -1324,8 +1329,14 @@ function PartsListTab({
     const sups = new Set<string>();
     for (const p of parts) {
       if (p.category) cats.add(p.category);
-      if (p.manufacturer) mfrs.add(p.manufacturer);
-      if (p.supplier) sups.add(p.supplier);
+      // Normalized before they reach the Set, so SDC can only ever produce ONE
+      // option — the reported bug was two, each matching a subset of the job's SDC
+      // parts. `p.manufacturer`/`p.supplier` are already canonical (po-detail.ts);
+      // normalizing again is idempotent and makes this line independent of that.
+      const mfrOpt = normalizeVendor(p.manufacturer);
+      const supOpt = normalizeVendor(p.supplier);
+      if (mfrOpt) mfrs.add(mfrOpt);
+      if (supOpt) sups.add(supOpt);
     }
     const sort = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
     return { cats: sort(cats), mfrs: sort(mfrs), sups: sort(sups) };
@@ -1356,8 +1367,10 @@ function PartsListTab({
         if (!matches) return false;
       }
       if (category !== "all" && p.category !== category) return false;
-      if (manufacturer !== "all" && p.manufacturer !== manufacturer) return false;
-      if (supplier !== "all" && p.supplier !== supplier) return false;
+      // Compared through the same function that built the options, so a selected
+      // option always matches every aliased line behind it.
+      if (manufacturer !== "all" && normalizeVendor(p.manufacturer) !== manufacturer) return false;
+      if (supplier !== "all" && normalizeVendor(p.supplier) !== supplier) return false;
       if (from || to) {
         if (windowStatus.active) {
           // Invoiced mode, window resolved: inclusion is "did this part have
@@ -1544,6 +1557,116 @@ function PartsListTab({
 }
 
 
+// ── Paging, so a 628-row job is not one endless scroll (2026-09-03, by request) ──
+//
+// Reported on job 1101: 628 rows in a single scroll container, and the sticky footer
+// totals are 600 rows away from the top of the list. A page of 50 rows is the ask.
+//
+// The rule that matters here, and the one this whole file has had to relearn twice
+// already: **paging changes what is DRAWN, never what is COUNTED.** The column
+// totals, the row counts and the reconciliation strip all stay over every filtered
+// row, because they answer questions about the job rather than about the page. A
+// footer that silently summed only the visible page would be the same
+// scope-mixing bug the reconciliation strip was rewritten to remove.
+const PARTS_PAGE_SIZE = 50;
+
+/**
+ * The page slice, with the page clamped and reset when the row set changes
+ * underneath it.
+ *
+ * `signature` is what detects that change — filters, the scope chip, a different
+ * job. Without it, filtering 628 rows down to 12 while sitting on page 4 leaves an
+ * empty table and no obvious way back.
+ *
+ * Reset during render rather than in an effect: an effect would paint the stale page
+ * for one frame first, and `set-state-in-effect` is an error in this codebase's lint
+ * config (two pre-existing violations already fail CI). This is the same
+ * derive-state-from-props pattern PartsCostNewEtcCell uses for `serverValue`.
+ */
+function usePartsPage(total: number, signature: string) {
+  const [page, setPage] = useState(0);
+  const [seenSignature, setSeenSignature] = useState(signature);
+  if (seenSignature !== signature) {
+    setSeenSignature(signature);
+    setPage(0);
+  }
+  const pageCount = Math.max(1, Math.ceil(total / PARTS_PAGE_SIZE));
+  // Clamp rather than trust: `total` can shrink between renders.
+  const current = Math.min(page, pageCount - 1);
+  const from = current * PARTS_PAGE_SIZE;
+  const to = Math.min(from + PARTS_PAGE_SIZE, total);
+  return {
+    page: current,
+    pageCount,
+    from,
+    to,
+    setPage,
+    /** Below one page there is nothing to page through, so the controls hide. */
+    needed: total > PARTS_PAGE_SIZE,
+  };
+}
+
+function PartsPager({
+  from,
+  to,
+  total,
+  page,
+  pageCount,
+  setPage,
+  label,
+}: {
+  from: number;
+  to: number;
+  total: number;
+  page: number;
+  pageCount: number;
+  setPage: (n: number) => void;
+  /** What the rows are, so the count reads as a sentence rather than a bare number. */
+  label: string;
+}) {
+  const btn =
+    "motion-interactive rounded border border-sdc-border px-2 py-0.5 text-label font-medium text-sdc-gray-600 hover:bg-sdc-blue-light/50 hover:text-sdc-navy disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent";
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-sdc-border bg-sdc-gray-50 px-2 py-1.5">
+      <span className="text-label text-sdc-gray-600">
+        Rows{" "}
+        <span className="font-mono font-semibold tabular-nums text-sdc-navy">
+          {num(from + 1)}–{num(to)}
+        </span>{" "}
+        of <span className="font-mono font-semibold tabular-nums text-sdc-navy">{num(total)}</span> {label}
+      </span>
+      <span className="ml-auto flex items-center gap-1">
+        <button type="button" className={btn} onClick={() => setPage(0)} disabled={page === 0} title="First page">
+          ‹‹
+        </button>
+        <button type="button" className={btn} onClick={() => setPage(page - 1)} disabled={page === 0}>
+          Prev
+        </button>
+        <span className="px-1 font-mono text-label tabular-nums text-sdc-gray-600">
+          {page + 1} / {pageCount}
+        </span>
+        <button
+          type="button"
+          className={btn}
+          onClick={() => setPage(page + 1)}
+          disabled={page >= pageCount - 1}
+        >
+          Next
+        </button>
+        <button
+          type="button"
+          className={btn}
+          onClick={() => setPage(pageCount - 1)}
+          disabled={page >= pageCount - 1}
+          title="Last page"
+        >
+          ››
+        </button>
+      </span>
+    </div>
+  );
+}
+
 function PartsTableView({
   parts,
   cols,
@@ -1583,6 +1706,13 @@ function PartsTableView({
   const sort = useColumnSort<ColKey>();
   const sortColumns = useMemo(() => partsListSortColumns(now), [now]);
   const sortedParts = sortRows(parts, sort.sort, sortColumns);
+
+  // Sorted FIRST, then sliced — so page 1 is the top of the sort rather than the
+  // first fifty rows re-sorted among themselves. The signature resets the page
+  // whenever the filtered set changes; the sort key is in it too, since re-sorting
+  // makes the current page's contents arbitrary.
+  const pager = usePartsPage(sortedParts.length, `${parts.length}|${sort.sort?.key ?? ""}|${sort.sort?.direction ?? ""}|${scope}`);
+  const pageParts = sortedParts.slice(pager.from, pager.to);
 
   // Drag-to-resize: listeners are added on mousedown and torn down on mouseup;
   // stopPropagation keeps a drag from also triggering the row click.
@@ -1674,7 +1804,22 @@ function PartsTableView({
     // 0.96, up from 0.74 (2026-08-14, by request — "increase vertical height
     // ~30%") — kept in step with the Card view below (view === "card") and the
     // Assemblies tab above, so switching between them doesn't visibly jump.
-    <DragScroll className="max-h-[calc(var(--app-vh)_*_0.96)] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
+    /* The pager sits OUTSIDE the scroll container so it stays visible while the rows
+       move. The border and rounding move out with it; DragScroll keeps only the
+       scrolling, which is what it is for. */
+    <div className="overflow-hidden rounded-xl border border-sdc-border bg-white shadow-sm">
+      {pager.needed && (
+        <PartsPager
+          from={pager.from}
+          to={pager.to}
+          total={sortedParts.length}
+          page={pager.page}
+          pageCount={pager.pageCount}
+          setPage={pager.setPage}
+          label={scope === "all" ? "in this view" : scope === "bom" ? "BOM rows in this view" : "non-BOM rows in this view"}
+        />
+      )}
+      <DragScroll className="max-h-[calc(var(--app-vh)_*_0.96)] overflow-auto styled-scrollbar">
       <table className="table-fixed border-collapse text-left" style={{ width: totalWidth, minWidth: "100%" }}>
         <colgroup>
             {cols.map((c) => (
@@ -1710,7 +1855,7 @@ function PartsTableView({
             </tr>
           </thead>
           <tbody>
-            {sortedParts.map((p, i) => {
+            {pageParts.map((p, i) => {
               // Row tint by status (STATUS_ROW_BG) so each row reads by its
               // status at a glance. Precedence: drill-flash (inline style, set
               // imperatively) > the status tint's hover > the status tint.
@@ -1838,6 +1983,18 @@ function PartsTableView({
                           {num(visible.bomRows)} BOM, {num(visible.nonBomRows)} non-BOM
                         </>
                       )}
+                      {/* Paging is a THIRD scope on this strip, and it has to say so
+                          for the same reason the other two do (2026-09-03). The
+                          counts either side of this are over every filtered row; only
+                          50 of them are drawn. Leaving that unsaid would put "628
+                          rows" directly beneath a table showing 50 — the exact
+                          confusion the two labelled lines exist to prevent. */}
+                      {pager.needed && (
+                        <span className="text-white/55">
+                          {" · "}
+                          {num(pager.from + 1)}–{num(pager.to)} on this page
+                        </span>
+                      )}
                     </span>
                     {/* The scope chip's own state in words, rather than left to be
                         inferred from a count that is merely smaller than expected. */}
@@ -1945,7 +2102,8 @@ function PartsTableView({
             )}
           </tfoot>
         </table>
-    </DragScroll>
+      </DragScroll>
+    </div>
   );
 }
 

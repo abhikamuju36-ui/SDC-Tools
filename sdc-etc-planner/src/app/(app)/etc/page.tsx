@@ -22,6 +22,7 @@ import { EtcIssuesIndicator } from "@/components/EtcIssuesIndicator";
 // function exported from a "use client" module cannot be called there.
 import { buildEtcIssues } from "@/lib/etc-issues";
 import { PartsCostNewEtcCell } from "@/components/PartsCostNewEtcCell";
+import { readPartsEtcBreakout } from "@/lib/parts-etc-breakout";
 import { EtcSectionCells } from "@/components/EtcSectionCells";
 import {
   StandardRatesProvider,
@@ -64,7 +65,27 @@ import { DragScroll } from "@/components/DragScroll";
 // department block has these same 5 columns; Parts Cost and the Total rollup
 // use the sheet's own label variants.
 const SUB_COLUMNS = ["Prior ETC", "Hours Worked Month", "Hours Left", "New ETC", "Diff"] as const;
-const PARTS_COST_SUB_COLUMNS = ["Prior ETC", "Money Spent Month", "Money Left", "New ETC", "Diff"] as const;
+// ── "Left to Invoice" / "Left to Purchase" added 2026-09-03, by request ──────
+//
+// They break New ETC into the two things it is made of, and they sit immediately
+// before it so the row reads left-to-right as the sum it is:
+//
+//     Left to Invoice  +  Left to Purchase  =  the New ETC seed
+//
+// Both are LIVE Total ETO figures, which makes them the first thing on this page to
+// touch an upstream system — every other Parts Cost column here is an EtcEntry read.
+// lib/parts-etc-breakout.ts carries the fetch and the three leashes on it; measured
+// across all 49 jobs of 2026-08 it costs ~3s in one batched query plus a bounded BOM
+// fan-out.
+const PARTS_COST_SUB_COLUMNS = [
+  "Prior ETC",
+  "Money Spent Month",
+  "Money Left",
+  "Left to Invoice",
+  "Left to Purchase",
+  "New ETC",
+  "Diff",
+] as const;
 const TOTAL_SUB_COLUMNS = ["Prior ETC", "Hours Worked", "Hours Left", "Total New ETC", "Diff"] as const;
 
 // Why a Total (New ETC) cell is blank (§51). A blank with no explanation reads as
@@ -261,6 +282,10 @@ function subColHeaderBg(col: string): string {
   if (col === "Prior ETC") return "bg-[#5E91D3] text-sdc-gray-700";
   if (col === "Hours Worked Month" || col === "Hours Worked" || col === "Money Spent Month") return HOURS_WORKED_BG;
   if (col === "Hours Left" || col === "Money Left") return HOURS_LEFT_BG;
+  // The two breakout columns share HOURS_LEFT_BG with Money Left: all three answer
+  // "what is still outstanding", and giving them their own tint would imply a
+  // different kind of figure rather than a finer split of the same one.
+  if (col === "Left to Invoice" || col === "Left to Purchase") return HOURS_LEFT_BG;
   if (col === "New ETC" || col === "Total New ETC") return "bg-[#F2F2F2]";
   return "";
 }
@@ -286,6 +311,10 @@ function colHeaderLabel(col: string) {
 function subColBodyBg(col: string): string {
   if (col === "Hours Worked Month" || col === "Hours Worked" || col === "Money Spent Month") return HOURS_WORKED_BG;
   if (col === "Hours Left" || col === "Money Left") return HOURS_LEFT_BG;
+  // The two breakout columns share HOURS_LEFT_BG with Money Left: all three answer
+  // "what is still outstanding", and giving them their own tint would imply a
+  // different kind of figure rather than a finer split of the same one.
+  if (col === "Left to Invoice" || col === "Left to Purchase") return HOURS_LEFT_BG;
   if (col === "New ETC" || col === "Total New ETC") return "bg-[#F2F2F2]";
   if (col === "Diff") return "bg-white";
   return "";
@@ -1025,7 +1054,20 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
     Engineering: { prior: 0, worked: 0, newEtc: 0, diff: 0 },
     Shop: { prior: 0, worked: 0, newEtc: 0, diff: 0 },
   };
-  const partsCostGrandTotal = { prior: 0, worked: 0, newEtc: 0 };
+  // ── The two breakout columns' data (2026-09-03) ───────────────────────────
+  //
+  // Deliberately AFTER the grid's own database reads and wrapped so it cannot throw:
+  // this is the only upstream call on the page, and a Total ETO outage must cost two
+  // columns rather than the month-end page. `readPartsEtcBreakout` already returns
+  // nulls on failure; the catch is for the unexpected.
+  const partsBreakout = await readPartsEtcBreakout(
+    jobs.filter((j) => j.jobId).map((j) => ({ pk: j.id, jobNumber: j.jobId })),
+  ).catch((e) => {
+    console.error("[etc] parts breakout failed; Left to Invoice/Purchase will read —:", e);
+    return null;
+  });
+
+  const partsCostGrandTotal = { prior: 0, worked: 0, newEtc: 0, leftToInvoice: 0, leftToPurchase: 0 };
 
   return (
     // EtcGridView wraps the toolbar AND the grid, because the menu and the cells are
@@ -1885,9 +1927,16 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                           ? partsCostRiskTitle(moneyLeft, Math.max(effectiveNewEtcCost, 0), partsRisk.shortfall, currencyExact)
                           : null;
 
+                        const breakout = partsBreakout?.byJobPk.get(job.id);
+                        // Unknown halves contribute nothing to the totals rather than
+                        // zero, so a column footer never reads as a confident figure
+                        // built partly out of failures. The header says how many jobs
+                        // are missing when any are.
                         partsCostGrandTotal.prior += prior;
                         partsCostGrandTotal.worked += spent;
                         partsCostGrandTotal.newEtc += effectiveNewEtcCost;
+                        partsCostGrandTotal.leftToInvoice += breakout?.leftToInvoice ?? 0;
+                        partsCostGrandTotal.leftToPurchase += breakout?.leftToPurchase ?? 0;
 
                         return (
                           <Fragment key="parts-cost">
@@ -1948,6 +1997,31 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                               }
                             >
                               {currency(moneyLeft)}
+                            </td>
+                            {/* ── The breakout, immediately left of New ETC ─────
+                                Both read "—" rather than $0 when unknown. A zero
+                                here would say "nothing outstanding", which is the
+                                opposite of not having been able to ask — on the two
+                                figures that seed the manager's forecast. */}
+                            <td
+                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-muted`}
+                              title={
+                                breakout?.leftToInvoice == null
+                                  ? "Left to Invoice could not be read from Total ETO for this job"
+                                  : `${currencyExact(breakout.leftToInvoice)} on a purchase order, not yet invoiced (live from Total ETO)`
+                              }
+                            >
+                              {breakout?.leftToInvoice == null ? "—" : currency(breakout.leftToInvoice)}
+                            </td>
+                            <td
+                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-muted`}
+                              title={
+                                breakout?.leftToPurchase == null
+                                  ? "Left to Purchase could not be read from Total ETO for this job"
+                                  : `${currencyExact(breakout.leftToPurchase)} of BOM parts with nothing bought against them yet, priced from the BOM (unit x qty) rather than from spend`
+                              }
+                            >
+                              {breakout?.leftToPurchase == null ? "—" : currency(breakout.leftToPurchase)}
                             </td>
                             <PartsCostNewEtcCell
                               name={`newEtcOverride__${partsCostEntry.id}`}
@@ -2207,6 +2281,18 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                             title={`${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(t.prior)}) − Money Spent (${currencyExact(t.worked)})`}
                           >
                             {currency(moneyLeft)}
+                          </td>
+                          <td
+                            className={`border-l border-sdc-border ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-navy`}
+                            title={`${currencyExact(t.leftToInvoice)} on purchase orders, not yet invoiced, across every job shown`}
+                          >
+                            {currency(t.leftToInvoice)}
+                          </td>
+                          <td
+                            className={`border-l border-sdc-border ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-navy`}
+                            title={`${currencyExact(t.leftToPurchase)} of BOM parts not bought yet, across every job shown`}
+                          >
+                            {currency(t.leftToPurchase)}
                           </td>
                           {/* Parts Cost New ETC is manager-editable
                               (PartsCostNewEtcCell), so its grand total has to move

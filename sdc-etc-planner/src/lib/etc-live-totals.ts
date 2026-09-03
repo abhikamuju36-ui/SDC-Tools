@@ -389,3 +389,57 @@ export function readEtcLiveFooterTotals(): { sections: Map<string, SectionTotals
 export function subscribeEtcLiveTotals(cb: () => void): () => void {
   return subscribe(cb);
 }
+
+// ── The New ETC breakout, live (2026-09-03) ──────────────────────────────────
+//
+// Parts Cost New ETC is now the SUM of two manager-entered cells, Left to Invoice and
+// Left to Purchase. Those are client components; the New ETC cell that shows their
+// total is rendered by the page, so it cannot see their state.
+//
+// Same shape, and for the same reason, as `publishPartsCell` above: the two inputs
+// publish here, EtcLiveTotals patches the New ETC cell and the Parts Cost footer from
+// it. Without this the sum would only be right after a reload.
+export type PartsBreakoutHalf = "invoice" | "purchase";
+
+const breakout = new Map<number, { invoice: number | null; purchase: number | null }>();
+
+export function publishPartsBreakout(jobId: number, which: PartsBreakoutHalf, value: number | null): void {
+  const prev = breakout.get(jobId) ?? { invoice: null, purchase: null };
+  if (prev[which] === value) return; // no-op republish, e.g. a re-render with the same text
+  breakout.set(jobId, { ...prev, [which]: value });
+  emit();
+}
+
+export function forgetPartsBreakout(jobId: number, which: PartsBreakoutHalf): void {
+  const prev = breakout.get(jobId);
+  if (!prev) return;
+  const next = { ...prev, [which]: null };
+  if (next.invoice === null && next.purchase === null) breakout.delete(jobId);
+  else breakout.set(jobId, next);
+  emit();
+}
+
+/**
+ * The live New ETC for a job: the two halves added.
+ *
+ * Null when NEITHER has been entered — that is a cell nobody has answered, and it must
+ * render blank rather than $0. When only one is entered the other counts as 0, because
+ * a manager who filled one half and left the other empty has said something about the
+ * total; treating that as "unknown" would blank a figure they can see the inputs for.
+ */
+export function readPartsBreakoutSum(jobId: number): number | null {
+  const b = breakout.get(jobId);
+  if (!b || (b.invoice === null && b.purchase === null)) return null;
+  return (b.invoice ?? 0) + (b.purchase ?? 0);
+}
+
+/** Every job with at least one half entered, for the footer total. */
+export function readPartsBreakoutTotals(): { invoice: number; purchase: number } {
+  let invoice = 0;
+  let purchase = 0;
+  for (const b of breakout.values()) {
+    invoice += b.invoice ?? 0;
+    purchase += b.purchase ?? 0;
+  }
+  return { invoice, purchase };
+}

@@ -62,10 +62,17 @@ export type PartsCostFinancials = {
   adjustedEtcRaw: number | null;
   /** Yellow: the same figure floored at 0. */
   adjustedEtc: number;
-  /** Eligible external remaining exposure — EXCLUDES in-house SDC (spec §6). */
-  yetToInvoice: number;
-  /** The same figure including in-house rows, for the reconciliation. */
-  yetToInvoiceAllRows: number;
+  /**
+   * EVERY open commitment: `purchased − invoiced`. The projection is built on this,
+   * which is what keeps it from ever falling below what the job has committed.
+   */
+  openBalance: number;
+  /**
+   * The part of `openBalance` that will arrive as a SUPPLIER invoice — in-house SDC
+   * excluded. Reported only; it must not size the total. Applying this exclusion to
+   * the projection was the 2026-09-03 bug (see lib/parts-projection.ts).
+   */
+  externalOpen: number;
   /** Remaining exposure on in-house SDC rows, excluded from `yetToInvoice`. */
   inHouseExcluded: number;
   inHouseRows: number;

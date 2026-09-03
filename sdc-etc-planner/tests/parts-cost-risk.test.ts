@@ -111,3 +111,69 @@ test("the warning is wired to the Parts Cost cells only, not the hours columns",
     "the hours cells must not consult the Parts Cost risk rule",
   );
 });
+
+// ── The Parts Cost column set and its cells must stay in step ───────────────
+//
+// Added 2026-09-03 with the Left to Invoice / Left to Purchase columns. The grid is
+// one wide table with hand-written body cells and a `colSpan` computed from the
+// column array, so adding a column in one place and not the other shifts every job
+// row by one column against its own headers — silent, and wrong in a way that looks
+// like a data bug rather than a layout one.
+
+const ETC_PAGE = readFileSync(join(process.cwd(), "src", "app", "(app)", "etc", "page.tsx"), "utf8");
+
+const withoutComments = (t: string) =>
+  t
+    .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+    .replace(/\/\*[\s\S]*?\*\//g, "")
+    .replace(/^\s*\/\/.*$/gm, "");
+
+const fragmentCells = (key: string) => {
+  const start = ETC_PAGE.indexOf(`<Fragment key="${key}">`);
+  assert.ok(start > -1, `no <Fragment key="${key}"> in the ETC page`);
+  const body = withoutComments(ETC_PAGE.slice(start, ETC_PAGE.indexOf("</Fragment>", start)));
+  // Comments must be stripped first: this file discusses `<td>` in prose, and counting
+  // those was how the first version of this check reported a false mismatch.
+  return (body.match(/<td\b/g)?.length ?? 0) + (body.match(/<PartsCostNewEtcCell\b/g)?.length ?? 0);
+};
+
+test("the Parts Cost columns include the New ETC breakout, in reading order", () => {
+  const declared = /const PARTS_COST_SUB_COLUMNS = \[([\s\S]*?)\] as const;/.exec(ETC_PAGE);
+  assert.ok(declared, "PARTS_COST_SUB_COLUMNS changed shape");
+  const cols = [...declared[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+  assert.deepEqual(cols, [
+    "Prior ETC",
+    "Money Spent Month",
+    "Money Left",
+    "Left to Invoice",
+    "Left to Purchase",
+    "New ETC",
+    "Diff",
+  ]);
+  // The two new ones sit immediately before New ETC, so the row reads left-to-right
+  // as the sum it is: Left to Invoice + Left to Purchase = the New ETC seed.
+  assert.equal(cols.indexOf("Left to Purchase") + 1, cols.indexOf("New ETC"));
+});
+
+test("every Parts Cost row renders exactly one cell per declared column", () => {
+  const declared = /const PARTS_COST_SUB_COLUMNS = \[([\s\S]*?)\] as const;/.exec(ETC_PAGE)!;
+  const count = [...declared[1].matchAll(/"([^"]+)"/g)].length;
+  assert.equal(fragmentCells("parts-cost"), count, "a job row is out of step with its headers");
+  assert.equal(fragmentCells("parts-cost-total"), count, "the grand-total row is out of step");
+  // The no-entry placeholder maps the array, so it cannot drift.
+  assert.match(ETC_PAGE, /PARTS_COST_SUB_COLUMNS\.map\(\(col, ci\)/);
+});
+
+test("the breakout renders an em dash when unknown, never a zero", () => {
+  // null means "could not be read from Total ETO". A $0 would say "nothing
+  // outstanding" — the opposite — on the two figures that seed the forecast.
+  assert.match(ETC_PAGE, /breakout\?\.leftToInvoice == null \? "—" : currency\(breakout\.leftToInvoice\)/);
+  assert.match(ETC_PAGE, /breakout\?\.leftToPurchase == null \? "—" : currency\(breakout\.leftToPurchase\)/);
+});
+
+test("a Total ETO outage costs two columns, not the month-end page", () => {
+  // This is the page managers close the month on, and these columns are the only
+  // upstream call on it. The fetch is awaited with a catch that degrades to nulls.
+  assert.match(ETC_PAGE, /readPartsEtcBreakout\(/);
+  assert.match(ETC_PAGE, /\.catch\(\(e\) => \{[\s\S]{0,200}return null;/);
+});

@@ -33,7 +33,17 @@ test("the panel sums the same rows and the same fields the card's totals come fr
   // must read those two fields off the same `lines` array, not re-derive either from
   // a second source that can drift.
   assert.match(FIN, /const invoiced = actualTotal\(lines\)/);
-  assert.match(DRILL_CODE, /financials\.lines\.map\(\(l\) => \(\{ \.\.\.l, leftToInvoice: l\.totalPrice - l\.actualAmount \}\)\)/);
+  // Asserted on substance rather than on the exact one-line formatting (2026-09-03):
+  // that construction gained vendor normalization and became multi-line, which broke
+  // this match while changing none of the money. What has to stay true is that both
+  // money fields come off the SAME `financials.lines` array the card summed — so they
+  // are asserted individually, and the map is asserted to read that array.
+  assert.match(DRILL_CODE, /financials\.lines\.map\(\(l\) => \(\{/);
+  assert.match(DRILL_CODE, /leftToInvoice: l\.totalPrice - l\.actualAmount,/);
+  assert.ok(
+    !/getPartsCostForJobs|loadPartsCost/.test(DRILL_CODE),
+    "the panel must not fetch its own lines — a second source is a second chance to disagree with the bar",
+  );
   assert.match(DRILL_CODE, /invoiced \+= r\.actualAmount/);
   assert.match(DRILL_CODE, /purchased \+= r\.totalPrice/);
 });
@@ -120,7 +130,7 @@ test("the panel proves the bar with every figure the model uses", () => {
   for (const label of [
     "Purchased / committed",
     "Invoiced actual (lifetime)",
-    "Yet to invoice",
+    "Left to invoice",
     "Prior-month ETC",
     "Parts spent this month",
     "Adjusted ETC",
@@ -134,7 +144,7 @@ test("the panel proves the bar with every figure the model uses", () => {
   // a panel that can disagree with the bar it explains.
   for (const field of [
     "financials.purchased",
-    "financials.yetToInvoice",
+    "financials.openBalance",
     "financials.priorEtc",
     "financials.partsSpentThisMonth",
     "financials.adjustedEtc",
@@ -146,7 +156,7 @@ test("the panel proves the bar with every figure the model uses", () => {
   // The in-house exclusion has to be auditable, or "Yet to invoice" is a figure that
   // silently disagrees with the open balance the Parts List shows (§6).
   assert.match(DRILL_CODE, /label: "In-house \(SDC\) excluded"/);
-  assert.match(DRILL_CODE, /financials\.yetToInvoiceAllRows/);
+  assert.match(DRILL_CODE, /financials\.openBalance/);
 });
 
 test("the job-wide zero floor on Left to be invoiced is surfaced, not reconciled away", () => {

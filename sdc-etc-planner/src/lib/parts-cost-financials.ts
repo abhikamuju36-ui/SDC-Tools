@@ -101,7 +101,7 @@ export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate
     return {
       budget: null, invoiced: 0, leftToInvoice: 0, etc: null, totalSpent: 0, projection: 0,
       purchased: 0, priorEtc: null, priorEtcSource: "none", partsSpentThisMonth: 0,
-      adjustedEtcRaw: null, adjustedEtc: 0, yetToInvoice: 0, yetToInvoiceAllRows: 0,
+      adjustedEtcRaw: null, adjustedEtc: 0, openBalance: 0, externalOpen: 0,
       inHouseExcluded: 0, inHouseRows: 0, additionalExposure: 0, coverageLine: null,
       etcUnknown: true, etcMonth: null,
       variance: null, variancePct: null, failedJobs: 0, lineCount: 0, lines: [],
@@ -173,11 +173,16 @@ export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate
   // Excludes in-house SDC: work SDC does itself never produces a supplier invoice,
   // so counting it overstates what the job still owes the outside world (spec §6).
   const yet = computeYetToInvoice(lines);
+  // `yet.allRows` — the WHOLE open balance — not `yet.amount`, which excludes
+  // in-house SDC. Passing the external figure here was the 2026-09-03 bug: it made
+  // the projection fall below Purchased on 7 of 10 audited jobs, by exactly the
+  // in-house balance. See lib/parts-projection.ts's header. `yet.amount` is still
+  // reported, as the part of the balance that will not arrive as a supplier invoice.
   const projected = computePartsProjection({
     invoiced,
     priorEtc: priorEtc.priorEtc,
     partsSpentThisMonth: priorEtc.partsSpentThisMonth,
-    yetToInvoice: yet.amount,
+    openBalance: yet.allRows,
   });
   const etc = priorEtc.priorEtc;
   const projectionTotal = projected.totalProjection;
@@ -199,8 +204,8 @@ export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate
     partsSpentThisMonth: projected.partsSpentThisMonth,
     adjustedEtcRaw: projected.adjustedEtcRaw,
     adjustedEtc: projected.adjustedEtc,
-    yetToInvoice: projected.yetToInvoice,
-    yetToInvoiceAllRows: yet.allRows,
+    openBalance: projected.openBalance,
+    externalOpen: yet.amount,
     inHouseExcluded: yet.inHouseExcluded,
     inHouseRows: yet.inHouseRows,
     additionalExposure: projected.additionalExposure,

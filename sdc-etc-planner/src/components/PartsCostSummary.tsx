@@ -135,14 +135,6 @@ const CAPTION_H = "2rem";
  * honest answer; inventing a filter would imply a line-level attribution that does
  * not exist.
  */
-/** "2026-08" -> "August 2026". Null-safe: a mixed selection has no single month. */
-function etcMonthLabel(month: string): string {
-  const [y, m] = month.split("-").map(Number);
-  if (!y || !m) return month;
-  // UTC throughout, so a machine west of Greenwich cannot render the month before.
-  return `${new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-US", { month: "long", timeZone: "UTC" })} ${y}`;
-}
-
 function segmentDrillMode(key: string): PartsDrillMode {
   if (key === "etc") return "etc";
   if (key === "uncovered") return "left";
@@ -266,7 +258,11 @@ export function PartsCostSummary({
   const invoiced = financials.invoiced; // base segment — "Invoiced"
   const spent = financials.totalSpent; // Invoiced + Left to be invoiced — NOT the bar's total (see below)
   const projTotal = financials.projection; // = invoiced + max(leftToInvoice, etc) as of 2026-08-19 — the bar's own total height
-  const leftToInvoiceAmount = financials.leftToInvoice; // informational only — "Left to be invoiced", included in ETC (or the floor, when ETC hasn't caught up — see below)
+  // `financials.leftToInvoice` is deliberately NOT read here any more. It is the
+  // open balance over ALL rows; the card's "Left to invoice" row shows the EXTERNAL
+  // figure (financials.yetToInvoice, in-house SDC excluded), because that is the one
+  // the projection is built on. Reading both would put two different numbers under
+  // one name on the same card.
   // "ETC" — the bar's second (and last) segment. Deliberately the RESIDUAL
   // (projTotal - invoiced), not `financials.etc` directly (2026-08-19): since
   // the fix for job 1119 (Karl Storz), `projTotal` can be `invoiced +
@@ -294,7 +290,7 @@ export function PartsCostSummary({
   // month's forecast drawn down by this month's spend — §20 is explicit that
   // confusing the two is the mistake to avoid, and an earlier version of this card
   // made exactly it.
-  const yetToInvoiceAmount = financials.yetToInvoice;
+  const openBalanceAmount = financials.openBalance;
   const adjustedEtcAmount = financials.adjustedEtc;
   const additionalAmount = financials.additionalExposure;
   const coverageLineAmount = financials.coverageLine;
@@ -316,21 +312,38 @@ export function PartsCostSummary({
   // round for DISPLAY only, letting the LAST term in each sum absorb whatever
   // rounding residue is left, so both displayed subtotals always equal the
   // sum of the figures shown beside them.
-  // Only Invoiced needs the reconciled rounding now: the open balance is no longer
-  // printed as a segment beside it (the table states it as a derived reference row),
-  // so there is no second figure that has to sum with it to a displayed total.
-  const [invoicedDisplay] = reconcilePartsCostRounding([invoiced, leftToInvoiceAmount]);
   const projTotalDisplay = Math.round(projTotal);
-  // The three printed segments must sum to the printed total. Invoiced and uncovered
-  // round on their own; the COVERED figure absorbs whatever residue is left, so
-  // Invoiced + ETC-covered + Uncovered always equals the total above the bar even
-  // though each was rounded independently. Same mechanism as before, one more term.
-  // The three printed segments must sum to the printed total. Invoiced and the red
-  // band round on their own; the YELLOW figure absorbs whatever residue is left, so
-  // Invoiced + Adjusted ETC + Uncovered always equals the figure above the bar even
-  // though each was rounded independently.
+
+  // ── Which figure absorbs the rounding residue (fixed 2026-09-03) ──────────
+  //
+  // The three printed segments must sum to the printed total, or the card visibly
+  // fails to add up. Rounding each independently does not guarantee that, so one of
+  // them absorbs the difference.
+  //
+  // It used to be the ETC ADJUSTED figure, and that was the wrong choice — it
+  // produced a bug reported on job 1101. There, prior-month ETC is $5,621.59 against
+  // $10,795.96 spent this month, so the adjusted ETC is negative and floors to
+  // exactly $0: there is no yellow segment at all. But the residue still landed on
+  // it, and the card printed:
+  //
+  //     ETC adjusted    $1
+  //     $5,622 prior-month ETC − $10,796 spent this month
+  //
+  // A row whose own stated arithmetic gives a negative number, displaying $1. Worse
+  // than a cosmetic slip: it invents a forecast that does not exist, on the one row
+  // people are checking, directly under the subtraction that disproves it.
+  //
+  // INVOICED absorbs it instead. It is the largest term by orders of magnitude
+  // ($730,483 against $0 here), so a ±$1 shift is invisible in it, and — the actual
+  // point — a term that is genuinely zero now prints as zero, because it is rounded
+  // from its own value rather than derived by subtraction.
+  //
+  // reconcilePartsCostRounding is no longer used here: it distributes a residue
+  // across a set, which is the wrong shape for this. What is needed is one named
+  // absorber, chosen because it can afford it.
+  const adjustedEtcDisplay = Math.round(adjustedEtcAmount);
   const additionalDisplay = Math.round(additionalAmount);
-  const adjustedEtcDisplay = Math.max(0, projTotalDisplay - invoicedDisplay - additionalDisplay);
+  const invoicedDisplay = projTotalDisplay - adjustedEtcDisplay - additionalDisplay;
 
   // ── ONE shared scale for both bars (2026-08-10c, by request) ──────────────
   //
@@ -446,86 +459,90 @@ export function PartsCostSummary({
   const spentThisMonth = financials.partsSpentThisMonth;
   const priorEtcAmount = financials.priorEtc;
 
+  // ── Five rows, by request (2026-09-03) ────────────────────────────────────
+  //
+  // Purchased, Invoiced, Left to invoice, ETC adjusted, Total projection — and each
+  // one carries the arithmetic that produced it, so the column can be checked on
+  // sight rather than taken on trust.
+  //
+  // The earlier eight-row version listed the inputs separately (prior-month ETC,
+  // yet-to-invoice, uncovered exposure, in-house excluded). Those figures have not
+  // gone anywhere: each is now inside the derivation of the row it feeds, which is
+  // where a reader wants it. The full set is still in the drill-through.
+  //
+  // ── One thing that had to be got right, or the column would not tie ──────
+  //
+  // "Left to invoice" here is the EXTERNAL remaining exposure — it excludes in-house
+  // SDC, because that work never produces a supplier invoice. So it is NOT simply
+  // `Purchased − Invoiced`: on job 1101 that subtraction gives $61,126 while the
+  // external figure is $44,992, and the projection is built on the second. Writing
+  // "Purchased − Invoiced" as this row's derivation would have been a visible lie in
+  // a table whose whole purpose is to be checkable, so the derivation names the
+  // exclusion explicitly and the numbers reconcile.
+  // Reported, not subtracted: in-house work is committed cost, it simply will not
+  // arrive as a supplier invoice. Subtracting it from the total was the 2026-09-03
+  // bug that made the projection fall below Purchased.
+  const inHouseNote =
+    financials.inHouseExcluded > 0.5
+      ? ` · ${usd(Math.round(financials.inHouseExcluded))} of it in-house (no supplier invoice)`
+      : "";
+
   const breakdown: BreakdownRow[] = [
+    {
+      key: "purchased",
+      swatch: null,
+      label: "Purchased",
+      derivation: "every parts line's total cost on this job",
+      value: Math.round(financials.purchased),
+      kind: "reference",
+    },
     {
       key: "invoiced",
       swatch: BAR_INVOICED,
-      label: "Invoiced actual",
+      label: "Invoiced",
       derivation: "GL-posted parts spend, all POs, lifetime",
       value: invoicedDisplay,
       kind: "segment",
     },
-  ];
-  if (adjustedEtcAmount > 0.5) {
-    breakdown.push({
+    {
+      key: "left",
+      swatch: hasAdditional ? BAR_UNCOVERED : null,
+      label: "Left to invoice",
+      // The WHOLE open balance now, so this row is exactly Purchased − Invoiced and
+      // the column ties without a caveat. The in-house split is reported alongside
+      // rather than subtracted out — it is committed cost either way, and removing it
+      // from the total was the bug this replaced.
+      derivation: `${usd(Math.round(financials.purchased))} purchased − ${usd(invoicedDisplay)} invoiced${inHouseNote}`,
+      value: Math.round(openBalanceAmount),
+      kind: hasAdditional ? "segment" : "reference",
+    },
+    {
       key: "etc",
-      swatch: BAR_PROJECTED,
-      label: "Adjusted ETC remaining",
+      swatch: adjustedEtcAmount > 0.5 ? BAR_PROJECTED : null,
+      label: "ETC adjusted",
       derivation:
         priorEtcAmount == null
-          ? "prior-month ETC less this month's parts spend"
-          : `${usd(Math.round(priorEtcAmount))} prior ETC − ${usd(Math.round(spentThisMonth))} spent this month`,
+          ? "no prior-month ETC on file for this job"
+          : `${usd(Math.round(priorEtcAmount))} prior-month ETC − ${usd(Math.round(spentThisMonth))} spent this month`,
       value: adjustedEtcDisplay,
-      kind: "segment",
-    });
-  }
-  if (hasAdditional) {
-    breakdown.push({
-      key: "uncovered",
-      swatch: BAR_UNCOVERED,
-      label: "Uncovered invoice exposure",
-      derivation: `${usd(Math.round(yetToInvoiceAmount))} yet to invoice − ${usd(adjustedEtcDisplay)} adjusted ETC`,
-      value: additionalDisplay,
-      kind: "segment",
-    });
-  }
-  breakdown.push({
-    key: "total",
-    swatch: null,
-    label: "Projected total",
-    derivation:
-      breakdown.length === 1
-        ? "nothing forecast or outstanding — the invoiced actual"
-        : `sum of the ${breakdown.length} above`,
-    value: projTotalDisplay,
-    kind: "total",
-  });
-
-  // The inputs, so the derivations above are checkable too.
-  breakdown.push({
-    key: "yet",
-    swatch: null,
-    label: "Yet to invoice",
-    derivation:
-      financials.inHouseRows > 0
-        ? `${usd(Math.round(financials.yetToInvoiceAllRows))} open balance − ${usd(Math.round(financials.inHouseExcluded))} in-house SDC (${financials.inHouseRows} rows)`
-        : "purchased less GL-posted, on rows that bill externally",
-    value: Math.round(yetToInvoiceAmount),
-    kind: "reference",
-  });
-  if (priorEtcAmount != null) {
-    breakdown.push({
-      key: "prior",
+      kind: adjustedEtcAmount > 0.5 ? "segment" : "reference",
+    },
+    {
+      key: "total",
       swatch: null,
-      label: "Prior-month ETC",
-      derivation:
-        financials.priorEtcSource === "quoted-parts"
-          ? "first ETC month — opens at the quoted parts value"
-          : financials.etcMonth
-            ? `last month's confirmed New ETC, carried into ${etcMonthLabel(financials.etcMonth)}`
-            : "last month's confirmed New ETC, carried forward",
-      value: Math.round(priorEtcAmount),
-      kind: "reference",
-    });
-  }
-  breakdown.push({
-    key: "purchased",
-    swatch: null,
-    label: "Purchased / committed",
-    derivation: `${usd(invoicedDisplay)} invoiced + ${usd(Math.round(financials.yetToInvoiceAllRows))} open balance`,
-    value: Math.round(financials.purchased),
-    kind: "reference",
-  });
+      label: "Total projection",
+      // Spelling out WHICH of the two rides on top of Invoiced, rather than printing
+      // `max(...)` at someone. The red band, when there is one, is named here too —
+      // it has no row of its own now, and an unexplained colour in the bar would be
+      // worse than a longer sentence.
+      derivation: hasAdditional
+        ? `${usd(invoicedDisplay)} invoiced + ${usd(adjustedEtcDisplay)} ETC adjusted + ${usd(additionalDisplay)} beyond it (red)`
+        : `${usd(invoicedDisplay)} invoiced + ${usd(adjustedEtcDisplay)} ETC adjusted`,
+      value: projTotalDisplay,
+      kind: "total",
+    },
+  ];
+
 
   // ── A thin segment still has to be seeable (2026-09-03, by request) ───────
   //
@@ -816,7 +833,7 @@ export function PartsCostSummary({
                   title={
                     "ETC coverage ends here. The red section above this line is remaining invoice exposure not " +
                     `covered by the adjusted ETC. Adjusted ETC ${usd(Math.round(adjustedEtcAmount))} against ` +
-                    `${usd(Math.round(yetToInvoiceAmount))} still to invoice; ${usd(additionalDisplay)} uncovered.`
+                    `${usd(Math.round(openBalanceAmount))} still to invoice; ${usd(additionalDisplay)} uncovered.`
                   }
                 />
               )}

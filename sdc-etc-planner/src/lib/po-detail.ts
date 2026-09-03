@@ -14,6 +14,7 @@ import type { BomNode, BomPart, JobBom, PoLineGroup, Vendor } from "@/lib/job-bo
 import type { PartsCostLine } from "@/lib/sync-totaleto";
 import { normPn, type WindowAttribution } from "@/lib/parts-cost-window-attribution";
 import { alternateKeys, classifyUnmatched, type MatchReason } from "@/lib/parts-match-reason";
+import { normalizeVendor } from "@/lib/vendor-normalize";
 import { isUncoveredPart } from "@/lib/job-bom-rules";
 
 // A minimal shape shared by BOM leaf parts (Assemblies detail table) and the
@@ -409,7 +410,19 @@ export function flattenBomParts(bom: JobBom, partsLines: PartsCostLine[], active
     const matchReason: MatchReason = !pnLines ? "no-purchase" : (recovered ?? "matched");
     if (pnLines) for (const l of pnLines) usedLines.add(l);
     const line = pnLines?.[0] ?? null;
-    const supplier = p.supplier ?? line?.supplier ?? null;
+    // ── Vendor names normalized here, once (2026-09-03) ────────────────────
+    //
+    // This is the single point every Parts List consumer reads through — the table,
+    // the supplier/manufacturer filter options, the search haystack, the sort, the
+    // card view and the export all take their vendor strings from FlatPart. So
+    // normalizing here is what makes the filter list agree with the table, which was
+    // the reported bug: SDC appeared under several names and picking one option
+    // returned a subset of the job's SDC parts.
+    //
+    // lib/vendor-normalize.ts holds the mapping and the two lookalikes it refuses to
+    // merge. The RAW value is untouched on the underlying PartsCostLine, so anything
+    // reconciling against Total ETO still can.
+    const supplier = normalizeVendor(p.supplier ?? line?.supplier ?? null);
     // ── EVERY PO line for this part, not just the newest (2026-09-02) ────────
     //
     // This read `line.totalPrice` — the single newest PO line — as the part's cost.
@@ -455,6 +468,11 @@ export function flattenBomParts(bom: JobBom, partsLines: PartsCostLine[], active
           : 0;
     const flat: FlatPart = {
       ...p,
+      // After the spread, so it overrides the BomPart's raw value.
+      // `?? ""` keeps BomPart's non-nullable `manufacturer: string` contract — a blank
+      // stays blank rather than becoming null, which is what every consumer of a BOM
+      // row already expects.
+      manufacturer: normalizeVendor(p.manufacturer) ?? "",
       parentPN,
       parentDesc,
       sectionId,
@@ -534,8 +552,8 @@ export function flattenBomParts(bom: JobBom, partsLines: PartsCostLine[], active
       desc: first.description ?? "",
       qty: lines.reduce((s2, l) => s2 + l.quantity, 0),
       unitPrice: first.unitPrice,
-      supplier: first.supplier,
-      manufacturer: first.manufacturer,
+      supplier: normalizeVendor(first.supplier),
+      manufacturer: normalizeVendor(first.manufacturer),
       poId: first.poNumber,
       expectedDate: null,
       requiredDate: null,

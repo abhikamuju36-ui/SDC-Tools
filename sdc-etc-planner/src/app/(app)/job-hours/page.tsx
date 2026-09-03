@@ -152,7 +152,7 @@ export async function JobHoursView({ params }: { params: { jobs?: string; job?: 
           // rather than false: there is no prior ETC to report here, and claiming one
           // of 0 would be a forecast nobody made.
           purchased: 0, priorEtc: null, priorEtcSource: "none", partsSpentThisMonth: 0,
-          adjustedEtcRaw: null, adjustedEtc: 0, yetToInvoice: 0, yetToInvoiceAllRows: 0,
+          adjustedEtcRaw: null, adjustedEtc: 0, openBalance: 0, externalOpen: 0,
           inHouseExcluded: 0, inHouseRows: 0, additionalExposure: 0, coverageLine: null,
           etcUnknown: true, etcMonth: null,
           variance: null, variancePct: null, failedJobs: 0, lineCount: 0, lines: [],

@@ -174,51 +174,70 @@ test("the Parts Cost bar stacks Invoiced, Adjusted ETC and only the uncovered ex
     "the whole exposure must never be a segment height — only the uncovered excess",
   );
   // And the three printed figures must reconcile against the printed total.
+  // ── The residue absorber, and why it is Invoiced (fixed 2026-09-03) ──────
+  //
+  // It used to be the ETC-adjusted figure, derived by subtraction so the three
+  // printed segments would sum to the printed total. That produced a reported bug on
+  // job 1101: prior ETC $5,621.59 against $10,795.96 spent leaves a NEGATIVE adjusted
+  // ETC, floored to exactly $0 — no yellow segment — and yet the row printed "$1",
+  // sitting directly under its own subtraction that gives a negative.
+  //
+  // So the two remainder terms are now rounded from their own values, and INVOICED
+  // absorbs the difference: it is larger by orders of magnitude, so ±$1 is invisible
+  // in it, and a term that is genuinely zero prints as zero.
+  assert.match(src, /const adjustedEtcDisplay = Math\.round\(adjustedEtcAmount\)/);
+  assert.match(src, /const additionalDisplay = Math\.round\(additionalAmount\)/);
   assert.match(
     src,
-    /const adjustedEtcDisplay = Math\.max\(0, projTotalDisplay - invoicedDisplay - additionalDisplay\)/,
-    "the yellow figure must absorb rounding residue so the three segments sum to the total",
+    /const invoicedDisplay = projTotalDisplay - adjustedEtcDisplay - additionalDisplay/,
+    "Invoiced must absorb the residue, so a zero adjusted ETC cannot print as $1",
   );
 });
 
-test("the open balance is a derived reference row, not an additive figure", () => {
+test("the open balance is stated, and never added on top of the forecast", () => {
   const src = code("src", "components", "PartsCostSummary.tsx");
-  // The vertical chip list became a breakdown table (2026-09-03, by request: "show
-  // what each colour denotes, and how that number was arrived at"). So these figures
-  // are now table ROWS with their arithmetic beside them, rather than `label=` props
-  // on a chip component.
+  // The table was cut to five rows by request (2026-09-03): Purchased, Invoiced,
+  // Left to invoice, ETC adjusted, Total projection. The figures that had their own
+  // rows before — prior-month ETC, in-house excluded, uncovered exposure — now live
+  // inside the derivation of the row they feed.
   //
-  // The invariant is unchanged and is what the `kind` field encodes: the open balance
-  // is a `reference` row — an input the coloured rows were derived from — never a
-  // `segment`, because stacking it on the forecast double-counts the part the
-  // forecast already covers (§16).
-  assert.match(src, /label: "Yet to invoice",[\s\S]{0,400}kind: "reference"/);
-  assert.match(src, /label: "Purchased \/ committed",[\s\S]{0,400}kind: "reference"/);
+  // The invariant is unchanged: the open balance is COMPARED against the forecast,
+  // never stacked on top of it (§16). What proves that here is the total's own
+  // derivation, which adds Invoiced + ETC adjusted (+ only the excess beyond it),
+  // and never Invoiced + ETC + the whole balance.
+  assert.match(src, /label: "Left to invoice"/);
+  assert.match(src, /label: "Total projection"/);
+  assert.match(
+    src,
+    /invoiced \+ \$\{usd\(adjustedEtcDisplay\)\} ETC adjusted \+ \$\{usd\(additionalDisplay\)\} beyond it/,
+    "the total must add only the excess beyond the forecast, not the whole open balance",
+  );
   assert.ok(!/label="Left to be invoiced"/.test(src), "unexplained duplicate wording");
   assert.ok(!/label: "To complete"/.test(src), "the bare phrase the spec rules out");
-  // A reference row must not carry a filled swatch — that would imply a band in the
-  // bar that is not there.
-  assert.match(src, /key: "yet",\s*\n\s*swatch: null/);
-  assert.match(src, /key: "purchased",\s*\n\s*swatch: null/);
+
+  // CORRECTED 2026-09-03. "Left to invoice" is now the WHOLE open balance, so the row
+  // IS exactly Purchased − Invoiced and ties without a caveat. The in-house figure is
+  // reported beside it rather than subtracted from it — it is committed cost either
+  // way, and taking it out of the total made the projection fall below Purchased on 7
+  // of 10 audited jobs.
+  assert.match(src, /value: Math\.round\(openBalanceAmount\)/, "the row is the whole open balance");
+  assert.match(src, /in-house \(no supplier invoice\)/, "the in-house split is reported, not subtracted");
 });
 
-test("the table states the PRIOR-month ETC and how it was arrived at", () => {
+test("the ETC row is the PRIOR month's, drawn down by this month's spend", () => {
   const src = code("src", "components", "PartsCostSummary.tsx");
   // §20, as a guard: substituting the current month's New ETC is the specific mistake
-  // the spec calls out, and an earlier version of this card made it.
-  assert.match(src, /label: "Prior-month ETC"/);
-  assert.match(src, /value: Math\.round\(priorEtcAmount\)/);
+  // the spec calls out, and an earlier version of this card made it. The prior-month
+  // figure no longer has its own row — it is the first term of this row's derivation,
+  // which is a stronger statement than a bare row was, because it shows the drawdown.
+  assert.match(src, /label: "ETC adjusted"/);
+  assert.match(
+    src,
+    /prior-month ETC − \$\{usd\(Math\.round\(spentThisMonth\)\)\} spent this month/,
+    "the row must show prior ETC minus this month's spend, not just the result",
+  );
   assert.ok(!/label="Current Parts ETC"/.test(src), "the current month's entry is not the forecast the bar draws");
   assert.ok(!/etcIsDriving/.test(src), "nothing competes with the forecast for the segment any more");
-
-  // ── The point of the table: every coloured row shows its own arithmetic ──
-  //
-  // Not a static caption — the derivation has the actual inputs substituted in, so a
-  // reader can check the figure beside it. If these ever became fixed strings the
-  // table would look reliable while proving nothing.
-  assert.match(src, /prior ETC − \$\{usd\(Math\.round\(spentThisMonth\)\)\} spent this month/);
-  assert.match(src, /yet to invoice − \$\{usd\(adjustedEtcDisplay\)\} adjusted ETC/);
-  assert.match(src, /open balance − \$\{usd\(Math\.round\(financials\.inHouseExcluded\)\)\} in-house SDC/);
 });
 
 test("Invoiced + the open balance is still stated, now as the table's Purchased row", () => {
@@ -232,7 +251,7 @@ test("Invoiced + the open balance is still stated, now as the table's Purchased 
   // it ($780,324 against $821,469 on job 1104), so leaving the two as unexplained
   // neighbours was itself the confusion.
   const src = code("src", "components", "PartsCostSummary.tsx");
-  assert.match(src, /label: "Purchased \/ committed"/);
+  assert.match(src, /label: "Purchased"/);
   assert.match(src, /value: Math\.round\(financials\.purchased\)/);
   assert.ok(!/Total Parts Cost Spent:/.test(src), "the standalone line is gone, not duplicated");
 });
@@ -367,11 +386,13 @@ test("the Parts Cost card's base bar segment comes from `financials.invoiced`, n
   // states the same figure WITH its derivation. The guard's intent — that the figure
   // is the sum of what is displayed rather than re-derived from another source —
   // moves to that row's own arithmetic, asserted above.
-  assert.match(
-    src,
-    /label: "Purchased \/ committed",[\s\S]{0,200}invoiced \+ \$\{usd\(Math\.round\(financials\.yetToInvoiceAllRows\)\)\} open balance/,
-    "the purchased row must show how it was arrived at",
-  );
+  // The table was cut to five rows, and "Purchased / committed" became simply
+  // "Purchased" as the first of them. Its own derivation is now plain English rather
+  // than a sum, because the row directly beneath it (Left to invoice) is what shows
+  // the split.
+  assert.match(src, /label: "Purchased"/);
+  assert.match(src, /value: Math\.round\(financials\.purchased\)/);
+  assert.ok(!/Total Parts Cost Spent:/.test(src), "the standalone line is gone, not duplicated");
 });
 
 test("the aggregate Parts Actual sums the per-line field, via the one shared function", () => {

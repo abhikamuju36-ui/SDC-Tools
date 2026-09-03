@@ -248,3 +248,55 @@ test("a failed batch read reports every job failed, never a confident zero", () 
   assert.match(FIN, /const failedJobs = byJob \? 0 : jobs\.length;/);
   assert.match(FIN, /const lines: PartsCostLine\[\] = byJob \? jobs\.flatMap\(\(j\) => byJob\.get\(j\.jobId\) \?\? \[\]\) : \[\];/);
 });
+
+// ── Paging draws less, counts the same (2026-09-03) ─────────────────────────
+//
+// The Parts List pages at 50 rows, requested because job 1101 put 628 rows in one
+// scroll container. The hazard is the one this file's footer already exists to
+// prevent: a total that quietly covers only the visible page while the strip above
+// it says 628. These guards pin the separation.
+//
+// Asserted against PROC, which has comments stripped — so every match below is on
+// real code, not on a comment describing it.
+
+test("the page slice is what renders; the totals still cover every filtered row", () => {
+  assert.match(PROC, /const PARTS_PAGE_SIZE = 50;/);
+  // Sorted first, then sliced — otherwise page 1 is the first 50 rows re-sorted
+  // among themselves rather than the top of the sort.
+  assert.match(PROC, /const pageParts = sortedParts\.slice\(pager\.from, pager\.to\)/);
+  assert.match(PROC, /\{pageParts\.map\(\(p, i\) => \{/, "the tbody must render the page slice");
+
+  // The column totals and the row counts must still reduce over `parts` — the whole
+  // filtered set — never over the page.
+  assert.match(PROC, /const tot = parts\.reduce\(/, "column totals stay over every filtered row");
+  assert.match(
+    PROC,
+    /for \(const p of parts\) if \(!p\.nonBom\) bomRows\+\+;/,
+    "row counts stay over every filtered row",
+  );
+  assert.ok(
+    !/pageParts\.reduce\(/.test(PROC),
+    "nothing may be summed from the page slice — that is the scope bug this footer exists to prevent",
+  );
+});
+
+test("the footer says how many of the counted rows are actually drawn", () => {
+  // Paging is a third scope on the strip, alongside "filtered" and "whole job", and
+  // it has to be stated for the same reason: otherwise "628 rows" sits directly
+  // above a table showing 50.
+  assert.match(PROC, /on this page/);
+  assert.match(PROC, /\{num\(pager\.from \+ 1\)\}–\{num\(pager\.to\)\}/);
+});
+
+test("the page resets when the row set changes underneath it", () => {
+  // Filtering 628 rows down to 12 while sitting on page 4 would otherwise leave an
+  // empty table and no obvious way back. The signature carries the filter count, the
+  // sort and the scope chip — re-sorting makes the current page's contents arbitrary.
+  assert.match(PROC, /function usePartsPage\(total: number, signature: string\)/);
+  assert.match(PROC, /if \(seenSignature !== signature\) \{/);
+  // Reset during render, not in an effect: `set-state-in-effect` is an error in this
+  // repo's lint config, and an effect would paint the stale page for a frame first.
+  assert.ok(!/useEffect\(\(\) => \{\s*setPage\(0\)/.test(PROC));
+  // And the page is clamped, because `total` can shrink between renders.
+  assert.match(PROC, /const current = Math\.min\(page, pageCount - 1\)/);
+});

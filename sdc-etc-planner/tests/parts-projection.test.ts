@@ -8,8 +8,8 @@ import {
 } from "../src/lib/parts-projection";
 import type { PartsCostLine } from "../src/lib/sync-totaleto";
 
-const proj = (invoiced: number, priorEtc: number | null, spent: number, yetToInvoice: number) =>
-  computePartsProjection({ invoiced, priorEtc, partsSpentThisMonth: spent, yetToInvoice });
+const proj = (invoiced: number, priorEtc: number | null, spent: number, openBalance: number) =>
+  computePartsProjection({ invoiced, priorEtc, partsSpentThisMonth: spent, openBalance });
 
 const line = (over: Partial<PartsCostLine>): PartsCostLine => ({
   purchaseDate: null,
@@ -78,7 +78,7 @@ test("the total is both the sum of the three segments and invoiced + max(adjuste
 test("§16 — the covered portion is never counted twice", () => {
   // The forbidden form is invoiced + adjustedEtc + FULL yetToInvoice.
   const p = proj(500_000, 100_000, 40_000, 85_000);
-  const doubleCounted = p.invoiced + p.adjustedEtc + p.yetToInvoice;
+  const doubleCounted = p.invoiced + p.adjustedEtc + p.openBalance;
   assert.equal(doubleCounted, 645_000);
   assert.equal(p.totalProjection, 585_000);
   assert.equal(doubleCounted - p.totalProjection, 60_000, "exactly the adjusted ETC, counted twice");
@@ -272,15 +272,80 @@ test("bad data cannot produce a NaN or negative segment", () => {
     proj(500_000, NaN, 25_000, 60_000),
   ]) {
     assert.ok(Number.isFinite(p.totalProjection));
-    assert.ok(p.adjustedEtc >= 0 && p.additionalExposure >= 0 && p.yetToInvoice >= 0);
+    assert.ok(p.adjustedEtc >= 0 && p.additionalExposure >= 0 && p.openBalance >= 0);
     assert.equal(p.invoiced + p.adjustedEtc + p.additionalExposure, p.totalProjection);
   }
   assert.equal(proj(500_000, NaN, 25_000, 60_000).etcUnknown, true, "a NaN prior ETC is unknown, not zero");
 });
 
-test("a negative yet-to-invoice is not exposure", () => {
+test("a negative open balance is not exposure", () => {
   const p = proj(500_000, 10_000, 0, -2_000);
-  assert.equal(p.yetToInvoice, 0);
+  assert.equal(p.openBalance, 0);
   assert.equal(p.additionalExposure, 0);
   assert.equal(p.totalProjection, 510_000);
+});
+
+// ── The invariant that was missing (2026-09-03) ─────────────────────────────
+//
+// Reported: "how can the projection be less than spent + open POs?" It could not, and
+// the answer was that the exposure term excluded in-house SDC while Purchased did
+// not. Audited over ten jobs, 7 projected BELOW Purchased by exactly the in-house
+// open balance. This is the guard that would have caught it.
+
+test("the projection can NEVER fall below what is already committed", () => {
+  // purchased = invoiced + openBalance, and the projection adds
+  // max(adjustedEtc, openBalance) on top of invoiced — so it is >= purchased by
+  // construction. Swept rather than sampled, including the shapes that broke it.
+  for (const invoiced of [0, 1, 732_019, 1_542_939]) {
+    for (const openBalance of [0, 1, 41_880, 59_590, 525_808]) {
+      for (const priorEtc of [null, 0, 1, 5_622, 649_898]) {
+        for (const spent of [0, 10_796, 38_204]) {
+          const p = proj(invoiced, priorEtc, spent, openBalance);
+          const purchased = invoiced + openBalance;
+          assert.ok(
+            p.totalProjection >= purchased - 0.005,
+            `projection ${p.totalProjection} < purchased ${purchased} ` +
+              `(invoiced ${invoiced}, open ${openBalance}, prior ${priorEtc}, spent ${spent})`,
+          );
+        }
+      }
+    }
+  }
+});
+
+test("the audited jobs that used to project below Purchased no longer do", () => {
+  // The three clearest failures from the audit, with their real figures.
+  //
+  //   1101  purchased 791,609  was projecting 776,971  (in-house open 14,639)
+  //   1104  purchased 821,469  was projecting 783,096  (in-house open 38,373)
+  //   1142  purchased 1,584,820 was projecting 1,542,939 — its EXTERNAL open balance
+  //         is 0 and its in-house balance is 41,880, so the old formula came out
+  //         exactly equal to invoiced and ignored the committed work entirely.
+  const cases: [string, number, number, number | null, number, number][] = [
+    // label, invoiced, openBalance, priorEtc, spentMonth, expected projection
+    ["1101", 732_019, 59_590, 5_622, 10_796, 791_609],
+    ["1104", 770_858, 50_611, 6_426, 5_962, 821_469],
+    ["1142", 1_542_939, 41_880, 0, 0, 1_584_819],
+  ];
+  for (const [label, invoiced, open, prior, spent, expected] of cases) {
+    const p = proj(invoiced, prior, spent, open);
+    assert.ok(
+      Math.abs(p.totalProjection - expected) < 1.5,
+      `${label}: projection ${p.totalProjection}, expected about ${expected}`,
+    );
+    assert.ok(p.totalProjection >= invoiced + open - 0.005, `${label} still projects below purchased`);
+  }
+});
+
+test("an ETC above the open balance still drives the projection, and stays above Purchased", () => {
+  // Job 1148: adjusted ETC 649,898 against an open balance of 525,808. The forecast
+  // is the larger term, so it rides on top — and the result clears Purchased with
+  // room, which is the correct reading of "we expect to spend more than we have
+  // committed so far".
+  const p = proj(1_205_120, 688_101, 38_204, 525_808);
+  assert.equal(p.adjustedEtc, 649_897);
+  assert.equal(p.totalProjection, 1_205_120 + 649_897);
+  assert.ok(p.totalProjection > 1_205_120 + 525_808);
+  // And in-house is nowhere in this figure — it is not stacked on top of the ETC,
+  // which would be the double-count the header's rejected alternative describes.
 });
