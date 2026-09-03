@@ -94,8 +94,22 @@ New-Item -ItemType Junction -Path "D:/AI Projects/sdc-abhi/node_modules" `
          -Target "D:/AI Projects/Centrailized library/node_modules"
 ```
 
-`apps/assemblies` and `sdc-etc-planner` also need their own local `node_modules`
-junctioned.
+`apps/assemblies` also needs its own local `node_modules` junctioned.
+
+**`sdc-etc-planner` must NOT be junctioned — it needs a real install.** Next 16 builds
+with Turbopack, which refuses a junctioned `node_modules` outright:
+
+```
+Symlink [project]/node_modules is invalid, it points out of the filesystem root
+```
+
+`tsc` and the test suite are fine with the junction; only `next build` fails, and it
+fails as a hard panic rather than a warning. So in each worktree:
+
+```bash
+cd "<worktree>/sdc-etc-planner" && npm ci        # ~45s, 622 packages
+npx prisma generate                              # generated code, not committed
+```
 
 **One gotcha, found setting this up:** a fresh worktree fails `tsc` in the Reports app
 with `Cannot find name 'RouteContext'`. Those are Next.js *generated* types under
