@@ -1,5 +1,21 @@
-import { runDax } from "@/lib/powerbi-client";
-import { normalizePbiJobId } from "@/lib/job-hours-source";
+// ── T&M dollar cards: MIGRATED OFF POWER BI (2026-09-02) ───────────────────
+//
+// The company has moved to this app reading Total ETO and Paylocity directly, and
+// the "Job Hours Report - Management Level" model stopped refreshing on 2026-07-31.
+// These cards were the last thing still querying it, so the page was serving a
+// five-week-old world and returning $0 for any range past July without saying why.
+//
+// The measures, the drill and the date defaults now live in lib/tm-parts-source.ts
+// against Total ETO. What stays here is the vocabulary the UI and the tests already
+// speak: the filter shape, the card definitions and the row types. `buildTmFilters`
+// and `buildTmPartsDrillDax` are kept because tests/tm-report.test.ts pins the DAX
+// they produce — that is now a record of what the Power BI page did, useful while
+// anyone is still reconciling against the old report, and dead weight once nobody
+// is. Nothing in the running app calls them.
+//
+// This file no longer imports runDax, which also removes @azure/msal-node and keytar
+// from anything that value-imports it — see the bundling note further down.
+
 
 // ── T&M tab data layer — Parts/dollar cards + shared filter helper ─────────
 //
@@ -141,48 +157,6 @@ function toIsoDateOrNull(value: unknown): string | null {
   if (!value) return null;
   const d = new Date(String(value));
   return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
-}
-
-export async function fetchTmMetrics(filters: TmFilters): Promise<TmPartsMetrics> {
-  // ── One round trip, but each card carries its OWN filters ─────────────────
-  //
-  // This was a single CALCULATETABLE wrapping ROW([measure], [measure],
-  // [measure]) — which forced all three cards to share one filter context and
-  // one date basis, and made every KPI depend on a Power BI measure that the
-  // drill then had to re-describe by hand.
-  //
-  // Each amount is now CALCULATE(SUM(<column>), <that card's own filters>),
-  // built from partsCardFilters() — the exact same function
-  // buildTmPartsDrillDax() calls. A card's KPI and its drill therefore read the
-  // same rows through the same filters by construction; they cannot drift, and
-  // a card can have its own date basis (which SDC Manufactured Parts needs).
-  //
-  // Still ONE query, so this costs no more round trips than the version it
-  // replaces.
-  const INDENT = ",\n      ";
-  const amount = (key: TmPartsDrillKey): string =>
-    `CALCULATE(SUM('Part Purchase'[${PARTS_CARDS[key].amountColumn}]),
-      ${partsCardFilters(filters, key).join(INDENT)}
-    )`;
-
-  const dax = `
-EVALUATE
-ROW(
-  "Job Display", CALCULATE([Job Display],
-      ${buildTmFilters(filters).join(INDENT)}
-    ),
-  "Part Invoiced Amount", ${amount("partInvoicedAmount")},
-  "SDC Manufactured Parts Sales Price", ${amount("sdcManufacturedPartsSalesPrice")},
-  "Expense Reports", ${amount("expenseReports")}
-)`;
-  const rows = (await runDax(dax)) as Record<string, unknown>[];
-  const row = rows[0] ?? {};
-  return {
-    jobDisplay: String(row["Job Display"] ?? ""),
-    partInvoicedAmount: num(row["Part Invoiced Amount"]),
-    sdcManufacturedPartsSalesPrice: num(row["SDC Manufactured Parts Sales Price"]),
-    expenseReports: num(row["Expense Reports"]),
-  };
 }
 
 // ── Drill-through row-level detail (Parts cards only) ───────────────────────
@@ -331,48 +305,17 @@ CALCULATETABLE(
 )`;
 }
 
-export async function fetchTmPartsDrill(filters: TmFilters, key: TmPartsDrillKey): Promise<TmPartsDrillRow[]> {
-  const dax = buildTmPartsDrillDax(filters, key);
-  const rows = (await runDax(dax)) as Record<string, unknown>[];
-  return rows.map((r) => ({
-    jobId: normalizePbiJobId(String(r["Job Id"] ?? "")),
-    jobName: String(r["Job Name"] ?? ""),
-    partNumber: String(r["Part Number"] ?? ""),
-    description: String(r["Description"] ?? ""),
-    supplier: String(r["Supplier"] ?? ""),
-    poNumber: String(r["PO Number"] ?? ""),
-    purchaseDate: toIsoDateOrNull(r["Purchase Date"]),
-    invoicedDate: toIsoDateOrNull(r["Invoiced Date"]),
-    quantity: num(r["Quantity"]),
-    unitPrice: num(r["Unit Price"]),
-    totalPrice: num(r["Total Price"]),
-    invoicedAmount: num(r["Invoiced Amount"]),
-  }));
-}
-
 // The reconciliation check (KPI Total / Detail Total / Difference) lives in
-// tm-drill-reconcile.ts, NOT here — this file imports runDax (a Node-only
-// Power BI client pulling in @azure/msal-node/keytar/fs) at module scope, so
-// anything imported BY VALUE from here drags that whole chain into whatever
-// bundle imports it. The reconciliation check is read from a client
-// component (TmReportClient.tsx) for its dev-only console log, which broke
-// the production build the one time these lived in this file together:
-// Turbopack tried to put keytar's native binary and Node's `fs`/`module`
-// into a browser chunk. Every OTHER export in this file is fine to stay
-// value-imported only from server components/actions (tm/page.tsx,
-// tm-drill-actions.ts) — see those two files' own imports for the pattern
-// client code must keep instead (`import type` only from this file).
+// tm-drill-reconcile.ts, not here. That split was originally forced: this file
+// imported runDax at module scope, so anything value-imported from it dragged
+// @azure/msal-node, keytar and `fs` into whatever bundle took it — Turbopack once
+// tried to put keytar's native binary into a browser chunk and broke the build.
+//
+// That constraint is GONE as of the 2026-09-02 migration; this file is now types and
+// pure helpers. The split stays anyway, because it is the right shape on its own
+// merits and because lib/tm-parts-source.ts (which the server path uses) is
+// `server-only` and inherits the same rule. Client code should still `import type`
+// from here.
 
 // Prefills the two date pickers on first load only — not part of the
 // displayed metrics, and never used to filter them.
-export async function fetchTmDateDefaults(): Promise<TmDateDefaults> {
-  const dax = `EVALUATE ROW("AsOf", [Estimated to Complete As Of Date], "RefreshedThru", [Hours Refreshed Thru])`;
-  const rows = (await runDax(dax)) as Record<string, unknown>[];
-  const row = rows[0] ?? {};
-  const toIso = (value: unknown): string | null => {
-    if (!value) return null;
-    const d = new Date(String(value));
-    return Number.isNaN(d.getTime()) ? null : d.toISOString().slice(0, 10);
-  };
-  return { asOfDate: toIso(row["AsOf"]), hoursRefreshedThru: toIso(row["RefreshedThru"]) };
-}

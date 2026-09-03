@@ -2,17 +2,18 @@ import { PageTitle } from "@/components/ui/Typography";
 import { PAGE_SHELL } from "@/components/ui/classnames";
 import { requirePagePermission } from "@/lib/require-permission";
 import { listDashboardJobs } from "@/lib/job-hours-dashboard";
-import { fetchTmMetrics, fetchTmDateDefaults, type TmMetrics, type TmPartsMetrics } from "@/lib/tm-report";
+import type { TmMetrics, TmPartsMetrics } from "@/lib/tm-report";
+import { loadTmPartsLines, tmMetricsFrom, loadTmDateDefaults } from "@/lib/tm-parts-source";
 import { getTmHoursTotals, resolveTmJobPks, type TmHoursTotals } from "@/lib/tm-hours";
 import { resolveTmDateRange } from "@/lib/tm-drill-validate";
 import { TmReportClient } from "@/components/TmReportClient";
 
 // "T&M" — native recreation of the Power BI "Job Hours Report - Management
 // Level" report's own "T&M" page, for its three dollar cards (see
-// src/lib/tm-report.ts for the exact field → measure mapping — those still
-// come from a live Power BI query). The four Hours cards read the app's own
-// local Paylocity ingest instead (src/lib/tm-hours.ts) — the same pipeline
-// Monthly ETC's own hours already use, per explicit request (2026-08-19).
+// src/lib/tm-parts-source.ts). Both halves now read the company's own systems
+// directly — parts from Total ETO, hours from the Paylocity ingest — with no
+// Power BI left on this page (2026-09-02: the model was retired and had been
+// stale since 2026-07-31).
 export default async function TmPage({
   searchParams,
 }: {
@@ -21,7 +22,7 @@ export default async function TmPage({
   await requirePagePermission("tm:view");
   const { jobs: jobsParam, start, end } = await searchParams;
 
-  const [jobs, dateDefaults] = await Promise.all([listDashboardJobs(), fetchTmDateDefaults()]);
+  const [jobs, dateDefaults] = await Promise.all([listDashboardJobs(), loadTmDateDefaults()]);
   const idByJobId = new Set(jobs.map((j) => j.jobId));
 
   const selectedJobIds = (jobsParam ?? "").split(",").map((s) => s.trim()).filter((s) => idByJobId.has(s));
@@ -56,12 +57,11 @@ export default async function TmPage({
   // resolveTmDateRange's own header for the two bugs this replaced.
   const { startDate, endDate } = resolveTmDateRange(start, end, fallbackStart, fallbackEnd);
 
-  // Two independent sources, two independent failure modes: a Power BI outage
-  // shouldn't blank out hours that a local database read already has, and
-  // vice versa. Only an HOURS failure blocks the whole page (matching the old
-  // single-error behavior) — hours failing means something's wrong with the
-  // app's own database, which is a lot more serious than the dollar cards'
-  // Power BI connection having a bad moment.
+  // Two independent sources, two independent failure modes: a Total ETO outage
+  // shouldn't blank out hours that a local database read already has, and vice
+  // versa. Only an HOURS failure blocks the whole page — hours failing means
+  // something's wrong with the app's own database, which is a lot more serious
+  // than the upstream parts read having a bad moment.
   let hoursTotals: TmHoursTotals | null = null;
   let hoursError: string | null = null;
   try {
@@ -73,7 +73,8 @@ export default async function TmPage({
   let partsMetrics: TmPartsMetrics | null = null;
   let partsError: string | null = null;
   try {
-    partsMetrics = await fetchTmMetrics({ jobIds: selectedJobIds, startDate, endDate });
+    const partsFilters = { jobIds: selectedJobIds, startDate, endDate };
+    partsMetrics = tmMetricsFrom(await loadTmPartsLines(partsFilters), partsFilters);
   } catch (err) {
     partsError = err instanceof Error ? err.message : "Could not reach Power BI.";
   }

@@ -1,9 +1,8 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
-import { getJobPartsCost, type PartsCostLine } from "@/lib/sync-totaleto";
+import { getPartsCostForJobs, type PartsCostLine } from "@/lib/sync-totaleto";
 import { computePartsBudgetProjection, purchasedTotal, actualTotal } from "@/lib/parts-budget-projection";
-import { withTimeoutOrNull, UPSTREAM_BUDGET_MS } from "@/lib/with-timeout";
-import { mapWithConcurrency } from "@/lib/map-concurrent";
+import { withTimeoutOrNull } from "@/lib/with-timeout";
 // The type and the pure rounding helper live in a sibling module with no
 // "server-only"/Prisma/TotalETO dependency (see its own header) so a CLIENT
 // component (PartsCostSummary.tsx) can import `reconcilePartsCostRounding`
@@ -92,8 +91,8 @@ async function resolveEtcMonth(jobIds: number[], asOfDate: Date | undefined): Pr
   return latest?.month ?? null;
 }
 
-/** How many per-job Total ETO parts calls may be in flight at once. See the note at the call site. */
-const PARTS_FETCH_CONCURRENCY = 6;
+/** One call covering the whole selection now, so the window is sized for the set rather than one job. */
+const PARTS_BATCH_BUDGET_MS = 120_000;
 
 export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate?: Date }): Promise<PartsCostFinancials> {
   if (jobIds.length === 0) {
@@ -104,25 +103,33 @@ export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate
   const quoted = jobs.reduce((s, j) => s + Number(j.costQuoted ?? 0), 0);
   const budget = quoted > 0 ? quoted : null;
 
-  // Bounded rather than Promise.all (2026-08-24). This is one live Total ETO
-  // call PER JOB, so an unbounded map meant a 59-job selection became 59
-  // simultaneous upstream requests — which is exactly why the caller used to cap
-  // parts at 12 jobs and show $0 above that. Capping the fan-out here is what
-  // makes lifting that cap defensible: a whole-Active-group selection now
-  // resolves in waves instead of a thundering herd.
+  // ── ONE round trip, not one per job (2026-09-02) ──────────────────────────
   //
-  // 6 is a deliberate compromise, not a tuned figure: high enough that 59 jobs
-  // is ~10 waves rather than 59 sequential round trips, low enough to stay well
-  // inside what Total ETO handles comfortably. Each call keeps its own
-  // UPSTREAM_BUDGET_MS timeout, so one wedged job delays a slot, never the
-  // whole aggregate.
-  const perJob = await mapWithConcurrency(jobs, PARTS_FETCH_CONCURRENCY, (j) =>
-    withTimeoutOrNull(`TotalETO parts (job ${j.jobId})`, UPSTREAM_BUDGET_MS, () => getJobPartsCost(j.jobId), (e) =>
-      console.error(`getPartsCostFinancials: getJobPartsCost failed for job ${j.jobId}:`, e),
-    ),
+  // This fanned out at 6 concurrent calls — a bounded improvement on the 59
+  // simultaneous requests it replaced in 2026-08-24, but still one Total ETO
+  // round trip per job. `getPartsCostForJobs` is the SAME SQL through the same
+  // template, scoped by an IN list instead of a single id, so the rows and their
+  // mapping are unchanged and only the number of connections differs. Measured on
+  // the identical work in T&M: 5,766ms across 239 jobs became 571ms.
+  //
+  // It also ended the burst of `Connection is closing` / `aborted` errors this
+  // page produced under load, which were the fan-out colliding with itself.
+  //
+  // ── The failure mode moved, deliberately ──────────────────────────────────
+  //
+  // Per job it was partial: one job times out, its rows are lost, `failedJobs`
+  // counts it and the card says so. One query is all-or-nothing, so a failed read
+  // reports EVERY job as failed rather than returning an empty set with
+  // `failedJobs: 0`. That distinction is the whole point — the second would render
+  // $0 as though it were an answer, on a card people read as a budget position.
+  const byJob = await withTimeoutOrNull(
+    `TotalETO parts (${jobs.length} jobs)`,
+    PARTS_BATCH_BUDGET_MS,
+    () => getPartsCostForJobs(jobs.map((j) => j.jobId)),
+    (e) => console.error("getPartsCostFinancials: getPartsCostForJobs failed:", e),
   );
-  const failedJobs = perJob.filter((v) => v == null).length;
-  const lines: PartsCostLine[] = perJob.flatMap((v) => v?.lines ?? []);
+  const failedJobs = byJob ? 0 : jobs.length;
+  const lines: PartsCostLine[] = byJob ? jobs.flatMap((j) => byJob.get(j.jobId) ?? []) : [];
 
   const etcMonth = await resolveEtcMonth(jobs.map((j) => j.id), opts?.asOfDate);
   const projection = await computePartsBudgetProjection(jobs.map((j) => j.id), lines, etcMonth).catch(() => null);

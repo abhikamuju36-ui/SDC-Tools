@@ -188,3 +188,26 @@ test("an exact key cannot re-take a line an earlier part already recovered", () 
   assert.match(PO, /const altClaimed = new Set<PartsCostLine>\(\);/);
   assert.match(PO, /altClaimed\.add\(l\);/);
 });
+
+// ── One round trip per selection, not one per job (2026-09-02) ─────────────
+//
+// Both the Parts Cost card and T&M fanned out at 6 concurrent Total ETO calls.
+// Measured on the same work: 5,766ms across 239 jobs became 571ms; the card's own
+// 40-job selection now resolves in 496ms. The 35-job reconciliation above was
+// re-run against the new path and is unchanged — same lines, same totals.
+
+test("the Parts Cost card reads the whole selection in one query", () => {
+  const FIN = readFileSync(join(SRC, "lib", "parts-cost-financials.ts"), "utf8");
+  assert.match(FIN, /getPartsCostForJobs\(jobs\.map\(\(j\) => j\.jobId\)\)/);
+  assert.ok(!/mapWithConcurrency/.test(FIN), "the per-job fan-out is gone");
+  assert.ok(!/getJobPartsCost\(/.test(FIN), "and so is the per-job call");
+});
+
+test("a failed batch read reports every job failed, never a confident zero", () => {
+  // Per job this was partial — one job times out, `failedJobs` counts it. One query
+  // is all-or-nothing, and an empty set with failedJobs 0 would render $0 as though
+  // it were an answer, on a card people read as a budget position.
+  const FIN = readFileSync(join(SRC, "lib", "parts-cost-financials.ts"), "utf8");
+  assert.match(FIN, /const failedJobs = byJob \? 0 : jobs\.length;/);
+  assert.match(FIN, /const lines: PartsCostLine\[\] = byJob \? jobs\.flatMap\(\(j\) => byJob\.get\(j\.jobId\) \?\? \[\]\) : \[\];/);
+});

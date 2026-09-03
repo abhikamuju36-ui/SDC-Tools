@@ -1,7 +1,8 @@
 "use server";
 
 import { auth } from "@/lib/auth";
-import { fetchTmPartsDrill, type TmPartsDrillKey, type TmPartsDrillRow } from "@/lib/tm-report";
+import type { TmPartsDrillKey, TmPartsDrillRow } from "@/lib/tm-report";
+import { loadTmPartsLines, tmDrillRowsFrom } from "@/lib/tm-parts-source";
 import { getTmHoursDrillRows, resolveTmJobPks, type TmHoursDrillKey, type TmHoursDrillRow } from "@/lib/tm-hours";
 import { sanitizeJobIds, isValidDateRange } from "@/lib/tm-drill-validate";
 import { withDrillErrors } from "@/lib/drill-error";
@@ -97,6 +98,9 @@ export async function loadTmPartsDrill(
     metric: key,
     context: { jobIds: cleanJobIds, startDate, endDate, source: "powerbi" },
     upstream: UPSTREAM_FOR.powerbi,
-    run: () => fetchTmPartsDrill({ jobIds: cleanJobIds, startDate, endDate }, key),
+    run: async () => {
+      const filters = { jobIds: cleanJobIds, startDate, endDate };
+      return tmDrillRowsFrom(await loadTmPartsLines(filters), key, filters);
+    },
   });
 }

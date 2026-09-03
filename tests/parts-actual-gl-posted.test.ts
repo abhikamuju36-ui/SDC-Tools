@@ -211,7 +211,7 @@ test("the GL-posted rule tests the DoNotExport flag, not the export date", () =>
 
 test("both branches of the per-line parts query carry an ActualAmount", () => {
   const src = SYNC_TOTALETO();
-  const detail = src.slice(src.indexOf("const PARTS_DETAIL_SQL"), src.indexOf("export async function getJobPartsInvoicedInMonth"));
+  const detail = src.slice(src.indexOf("const partsDetailSql"), src.indexOf("export async function getJobPartsInvoicedInMonth"));
   const occurrences = detail.match(/AS ActualAmount/g) ?? [];
   assert.equal(
     occurrences.length,
@@ -223,7 +223,7 @@ test("both branches of the per-line parts query carry an ActualAmount", () => {
 
 test("narrowing the money must not narrow InvoicedQty", () => {
   const src = SYNC_TOTALETO();
-  const detail = src.slice(src.indexOf("const PARTS_DETAIL_SQL"), src.indexOf("export async function getJobPartsInvoicedInMonth"));
+  const detail = src.slice(src.indexOf("const partsDetailSql"), src.indexOf("export async function getJobPartsInvoicedInMonth"));
   const inv = detail.slice(detail.indexOf("LEFT JOIN ( SELECT APDD.PurchaseDetailID"));
   assert.match(inv, /SUM\(APDocQty\) AS InvoicedQty/, "InvoicedQty must still count every billed document");
   assert.doesNotMatch(
@@ -257,7 +257,7 @@ test("the per-line invoiced subquery does not group by BatchEntryTypeID", () => 
   // alone rather than "fixed" blind — but PARTS_DETAIL_SQL, which feeds every
   // per-line view and the new ActualAmount, must never acquire it.
   const src = SYNC_TOTALETO();
-  const detail = src.slice(src.indexOf("const PARTS_DETAIL_SQL"), src.indexOf("export async function getJobPartsInvoicedInMonth"));
+  const detail = src.slice(src.indexOf("const partsDetailSql"), src.indexOf("export async function getJobPartsInvoicedInMonth"));
   assert.doesNotMatch(
     detail,
     /GROUP BY APDD\.PurchaseDetailID,\s*BatchEntryTypeID/,

@@ -630,9 +630,19 @@ const LINE_TOTAL_PRICE = `
     END * POD.PurchasePrice * POH.PurchaseCurrRate
   END + ISNULL(INV.TotalInvoicedAmount, 0)`;
 
-const PARTS_DETAIL_SQL = `
+// ── One statement, two scopes (2026-09-02) ─────────────────────────────────
+//
+// Parameterized by its WHERE clauses rather than copied, because the alternative is
+// two near-identical 60-line queries over the same tables that must be kept in step
+// forever — and this one carries the GL-posted split, the open-balance term and the
+// Extra Costs branch, every one of which has already been the subject of a fix.
+//
+// `JobId` is selected in both branches so a multi-job result can be split back out
+// per job. The per-job caller ignores it.
+const partsDetailSql = (where: { pod: string; ec: string }) => `
 SELECT
-   CONVERT(varchar(10), POH.PurchaseDate, 23) AS PurchaseDate
+   POD.ProjectID AS JobId
+  ,CONVERT(varchar(10), POH.PurchaseDate, 23) AS PurchaseDate
   ,CONVERT(varchar(10), INV.APDocDate, 23) AS InvoicedDate
   ,SUP.CName AS Supplier
   ,IM.Manufacturer AS Manufacturer
@@ -666,12 +676,13 @@ FROM tblPurchaseOrderHeader POH WITH(NOLOCK)
               WHERE BatchEntryTypeID NOT IN (2, 3) AND APDD.PurchaseDetailID IS NOT NULL
               GROUP BY APDD.PurchaseDetailID ) INV ON POD.PurchaseDetailID = INV.PurchaseDetailID
   LEFT JOIN vwReceiverLogSummed RLS WITH(NOLOCK) ON RLS.PurchaseDetailID = POD.PurchaseDetailID
-WHERE POD.ProjectID = @job
+WHERE ${where.pod}
 
 UNION ALL
 
 SELECT
-   CONVERT(varchar(10), EC.APDocDate, 23) AS PurchaseDate
+   EC.ProjectID AS JobId
+  ,CONVERT(varchar(10), EC.APDocDate, 23) AS PurchaseDate
   ,CONVERT(varchar(10), EC.APDocDate, 23) AS InvoicedDate
   ,EC.Vendor AS Supplier
   ,NULL AS Manufacturer
@@ -691,7 +702,74 @@ SELECT
   ,CASE WHEN ISNULL(APBD.APDocDoNotExport, 0) = 0 THEN EC.decExtraCostingValue ELSE 0 END AS ActualAmount
 FROM vwCostingExtraCostsDetailed EC WITH(NOLOCK)
   LEFT JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = EC.APDocID
-WHERE EC.ProjectID = @job`;
+WHERE ${where.ec}`;
+
+/** The per-job form — unchanged behaviour, now one instantiation of the template. */
+const PARTS_DETAIL_SQL = partsDetailSql({ pod: "POD.ProjectID = @job", ec: "EC.ProjectID = @job" });
+
+/** One recordset row -> one PartsCostLine. Shared so the two scopes cannot map differently. */
+function toPartsCostLine(r: Record<string, unknown>): PartsCostLine {
+  return {
+    purchaseDate: (r.PurchaseDate as string) ?? null,
+    invoicedDate: (r.InvoicedDate as string) ?? null,
+    supplier: (r.Supplier as string) ?? null,
+    manufacturer: (r.Manufacturer as string) ?? null,
+    category: (r.Category as string) ?? null,
+    poNumber: (r.PONumber as string) ?? null,
+    partNumber: (r.PartNumber as string) ?? null,
+    description: (r.Description as string) ?? null,
+    quantity: Number(r.Qty) || 0,
+    unitPrice: Number(r.UnitPrice) || 0,
+    totalPrice: Number(r.TotalPrice) || 0,
+    invoicedAmount: Number(r.InvoicedAmount) || 0,
+    actualAmount: Number(r.ActualAmount) || 0,
+  };
+}
+
+/** The same "drop zero-noise rows, newest purchase first" pass both scopes apply. */
+function meaningfulLines(lines: PartsCostLine[]): PartsCostLine[] {
+  const out = lines.filter((l) => l.totalPrice !== 0 || l.invoicedAmount !== 0 || l.quantity !== 0);
+  out.sort((a, b) => (b.purchaseDate ?? "").localeCompare(a.purchaseDate ?? ""));
+  return out;
+}
+
+/**
+ * Every part line for MANY jobs, in ONE round trip.
+ *
+ * The per-job function fanned out at 6 concurrent connections, which is fine for a
+ * card showing one job and slow for a page showing all of them: T&M's "All Jobs"
+ * took 5.8s over 239 jobs. This is the same rows through the same template and the
+ * same mapping — one query instead of 239.
+ *
+ * Job ids are coerced to integers and inlined, which is safe BECAUSE of that
+ * coercion: a value that is not a finite number never reaches the string. Inlined
+ * rather than passed through STRING_SPLIT so the plan sees a plain integer IN list.
+ */
+export async function getPartsCostForJobs(jobIds: string[]): Promise<Map<string, PartsCostLine[]>> {
+  const out = new Map<string, PartsCostLine[]>();
+  const numeric = [...new Set(jobIds.map((j) => Number(j)).filter((n) => Number.isFinite(n) && n > 0))];
+  if (numeric.length === 0) return out;
+  const list = numeric.join(",");
+
+  const pool = await sql.connect({ ...config, requestTimeout: 300000 });
+  try {
+    const result = await pool
+      .request()
+      .query(partsDetailSql({ pod: `POD.ProjectID IN (${list})`, ec: `EC.ProjectID IN (${list})` }));
+    const byJob = new Map<string, PartsCostLine[]>();
+    for (const r of result.recordset) {
+      const job = String(Number(r.JobId));
+      const arr = byJob.get(job);
+      const line = applyRefundSign(toPartsCostLine(r));
+      if (arr) arr.push(line);
+      else byJob.set(job, [line]);
+    }
+    for (const [job, lines] of byJob) out.set(job, meaningfulLines(lines));
+    return out;
+  } finally {
+    await pool.close();
+  }
+}
 
 // ── Genuinely month-scoped invoice lines, for the Parts Spent drill (2026-08-07) ──
 //
@@ -830,29 +908,14 @@ export async function getJobPartsCost(jobId: string): Promise<JobPartsCost> {
   const pool = await sql.connect({ ...config, requestTimeout: 120000 });
   try {
     const result = await pool.request().input("job", sql.Int, numericJob).query(PARTS_DETAIL_SQL);
-    const lines: PartsCostLine[] = result.recordset.map((r) => ({
-      purchaseDate: r.PurchaseDate ?? null,
-      invoicedDate: r.InvoicedDate ?? null,
-      supplier: r.Supplier ?? null,
-      manufacturer: r.Manufacturer ?? null,
-      category: r.Category ?? null,
-      poNumber: r.PONumber ?? null,
-      partNumber: r.PartNumber ?? null,
-      description: r.Description ?? null,
-      quantity: Number(r.Qty) || 0,
-      unitPrice: Number(r.UnitPrice) || 0,
-      totalPrice: Number(r.TotalPrice) || 0,
-      invoicedAmount: Number(r.InvoicedAmount) || 0,
-      actualAmount: Number(r.ActualAmount) || 0,
-    }))
+    const lines: PartsCostLine[] = result.recordset.map(toPartsCostLine)
       // PARTS_DETAIL_SQL has its OWN amount expressions and never touches
       // AP_LINE_AMOUNT, so this is the only place the refund rule reaches these
       // lines — and the reduce below builds purchased / paid / actual from them,
       // so the totals inherit it too. See lib/parts-refund.ts.
       .map(applyRefundSign);
     // Sort newest purchase first; drop fully-zero noise rows.
-    const meaningful = lines.filter((l) => l.totalPrice !== 0 || l.invoicedAmount !== 0 || l.quantity !== 0);
-    meaningful.sort((a, b) => (b.purchaseDate ?? "").localeCompare(a.purchaseDate ?? ""));
+    const meaningful = meaningfulLines(lines);
     const purchased = meaningful.reduce((s, l) => s + l.totalPrice, 0);
     const paid = meaningful.reduce((s, l) => s + l.invoicedAmount, 0);
     const actual = meaningful.reduce((s, l) => s + l.actualAmount, 0);
