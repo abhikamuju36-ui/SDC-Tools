@@ -4,10 +4,12 @@ import {
   EMPTY_WORKSPACE,
   MAX_TABS,
   openTab,
+  openableRoutes,
   activateTab,
   setTabParams,
   closeTab,
   moveTab,
+  navigateTab,
   enterSplit,
   exitSplit,
   setSplitRatio,
@@ -19,6 +21,7 @@ import {
   tabLabel,
   type Workspace,
 } from "../src/lib/workspace";
+import { SPLIT_ROUTES } from "../src/lib/split-view";
 
 const ws = (paths: string[], over: Partial<Workspace> = {}): Workspace => ({
   tabs: paths.map((p) => ({ path: p, params: {} })),
@@ -96,6 +99,29 @@ test("at the cap, the oldest tab NOT in use is replaced", () => {
   // Nothing that was in use got dropped.
   assert.ok(w.tabs.some((t) => t.path === "/hours"), "the tab that was active survived");
   assert.ok(w.tabs.some((t) => t.path === "/build-readiness"), "a split tab survived");
+});
+
+// ── Navigating an existing tab (what the sidebar does while split) ─────────
+
+test("navigating a tab keeps its position and the split intact", () => {
+  // Opening a NEW tab here would leave the split showing the two it already had, so
+  // the page the user asked for would render nowhere they can see.
+  let w = ws(["/etc", "/job-hours"], { active: 1, split: { left: 0, right: 1, ratio: 60 } });
+  w = navigateTab(w, 1, "/quoted");
+  assert.deepEqual(w.tabs.map((t) => t.path), ["/etc", "/quoted"], "replaced in place, not appended");
+  assert.deepEqual(w.split, { left: 0, right: 1, ratio: 60 }, "the split is untouched");
+  assert.equal(w.tabs[w.split!.left].path, "/etc", "the other pane did not move");
+});
+
+test("navigating drops the params of the route being left", () => {
+  const w = navigateTab(ws(["/etc"]), 0, "/jobs", { month: "2026-08", q: "1131" });
+  assert.deepEqual(w.tabs[0].params, { q: "1131" }, "/jobs has no month");
+});
+
+test("navigating to an unhostable route, or a tab that does not exist, changes nothing", () => {
+  const w = ws(["/etc"]);
+  assert.deepEqual(navigateTab(w, 0, "/admin/users"), w);
+  assert.deepEqual(navigateTab(w, 4, "/jobs"), w);
 });
 
 // ── Closing: the operation most likely to corrupt the workspace ────────────
@@ -281,4 +307,58 @@ test("workspaceHref and tab labels are what the tab bar renders", () => {
   assert.equal(workspaceHref(EMPTY_WORKSPACE), "/w");
   assert.equal(tabLabel({ path: "/etc", params: {} }), "Monthly ETC");
   assert.equal(tabLabel({ path: "/job-hours", params: {} }), "Job Hour Details");
+});
+
+// ── The bug class that broke split view, guarded here too ──────────────────
+//
+// Split view's first draft got six of the twelve routes' param lists wrong, and every
+// one of those presented as "my filters vanish". The tab URL namespaces those same
+// params by INDEX, so a route whose params do not survive the round trip fails the
+// same way — silently, and only for that one page.
+
+test("every route's full param set survives the URL, on every tab index", () => {
+  // Filled with a value that is distinguishable per route AND per key, so a param that
+  // comes back attached to the wrong tab or the wrong key fails rather than coincides.
+  const tabs = SPLIT_ROUTES.map((r, i) => ({
+    path: r.path,
+    params: Object.fromEntries(r.params.map((k) => [k, `${i}-${k}`])),
+  }));
+
+  // More routes than MAX_TABS, so this runs in windows — which also exercises the
+  // highest tab indices rather than only t0 and t1.
+  for (let start = 0; start < tabs.length; start += MAX_TABS) {
+    const window_ = tabs.slice(start, start + MAX_TABS);
+    const ws: Workspace = { tabs: window_, active: window_.length - 1, split: null };
+    const back = decodeWorkspace(Object.fromEntries(new URLSearchParams(encodeWorkspace(ws))));
+    assert.deepEqual(back, ws, `routes ${start}..${start + window_.length - 1} did not round-trip`);
+  }
+});
+
+test("a full workspace at the cap round-trips with its split intact", () => {
+  const tabs = SPLIT_ROUTES.slice(0, MAX_TABS).map((r) => ({
+    path: r.path,
+    params: Object.fromEntries(r.params.map((k) => [k, k])),
+  }));
+  const ws: Workspace = { tabs, active: 6, split: { left: 6, right: 7, ratio: 35 } };
+  assert.deepEqual(decodeWorkspace(Object.fromEntries(new URLSearchParams(encodeWorkspace(ws)))), ws);
+});
+
+test("the tab bar can offer every route the workspace can host", () => {
+  // Two-way, like split-view's own guard: a route the bar cannot offer is unreachable
+  // except by URL, and a route the bar offers but the workspace refuses is a dead entry.
+  assert.deepEqual(
+    openableRoutes().map((r) => r.path),
+    SPLIT_ROUTES.map((r) => r.path),
+  );
+  for (const r of SPLIT_ROUTES) {
+    assert.equal(openTab(EMPTY_WORKSPACE, r.path).tabs.length, 1, `${r.path} could not be opened as a tab`);
+  }
+});
+
+test("the sidebar targets the active tab even while split, so one pane changes and not the other", () => {
+  const w: Workspace = { ...ws(["/etc", "/job-hours", "/quoted"]), active: 1, split: { left: 0, right: 1, ratio: 50 } };
+  assert.equal(sidebarTarget(w), 1);
+  const after = navigateTab(w, sidebarTarget(w), "/hours");
+  assert.equal(after.tabs[after.split!.left].path, "/etc", "the pane the user was NOT in is untouched");
+  assert.equal(after.tabs[after.split!.right].path, "/hours");
 });

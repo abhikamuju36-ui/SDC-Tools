@@ -1094,9 +1094,11 @@ export default function Sidebar({
           menu={navMenu}
           onClose={() => setNavMenu(null)}
           openHref={splitNav.hrefFor(navMenu.href)}
+          newTabTarget={splitNav.newTabHrefFor(navMenu.href)}
           splitTarget={splitNav.splitHrefFor(navMenu.href)}
           refusal={splitNav.refusalFor(navMenu.href)}
           isSplit={splitNav.isSplit}
+          isWorkspace={splitNav.isWorkspace}
           onNavigate={(href) => {
             setNavMenu(null);
             if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Leave this page anyway?")) return;
@@ -1112,19 +1114,25 @@ function NavContextMenu({
   menu,
   onClose,
   openHref,
+  newTabTarget,
   splitTarget,
   refusal,
   isSplit,
+  isWorkspace,
   onNavigate,
 }: {
   menu: { href: string; label: string; x: number; y: number };
   onClose: () => void;
   openHref: string;
+  /** null when this page cannot open as a tab — see useSplitNav.newTabHrefFor. */
+  newTabTarget: string | null;
   /** null when this item cannot open in a split — see useSplitNav.splitHrefFor. */
   splitTarget: string | null;
   /** Why this page cannot open beside the other pane, when that is the reason it is refused. */
   refusal: string | null;
   isSplit: boolean;
+  /** True when the tabbed workspace is on screen, which changes what Open means. */
+  isWorkspace: boolean;
   onNavigate: (href: string) => void;
 }) {
   const ref = useRef<HTMLDivElement | null>(null);
@@ -1156,7 +1164,10 @@ function NavContextMenu({
   // fixed y would put the second entry off-screen, and this menu is anchored to
   // items that run the full height of the sidebar.
   const MENU_W = 208;
-  const MENU_H = 76;
+  // Three entries plus the heading. Kept in step with the markup below by hand — it
+  // only decides where the menu is anchored near a window edge, so being a few pixels
+  // out is a cosmetic nudge rather than a clipped control.
+  const MENU_H = 108;
   const x = Math.min(menu.x, (typeof window === "undefined" ? 1920 : window.innerWidth) - MENU_W - 8);
   const y = Math.min(menu.y, (typeof window === "undefined" ? 1080 : window.innerHeight) - MENU_H - 8);
 
@@ -1178,11 +1189,43 @@ function NavContextMenu({
         className="motion-interactive block w-full px-3 py-1.5 text-left text-label text-sdc-navy hover:bg-sdc-blue-light/60"
       >
         Open
-        {/* While split, a plain Open lands in the active pane — the same thing a
-            left-click does. Saying so here is the one place the behaviour can be
-            explained at the moment the choice is being made. */}
-        {isSplit && <span className="text-sdc-gray-400"> in the active pane</span>}
+        {/* Where a plain Open actually lands depends on the layout, and this is the one
+            place it can be explained at the moment the choice is being made. In the
+            workspace with no split it reuses or adds a tab; with a split open — either
+            layout — it lands in the pane the sidebar is pointed at. */}
+        {isSplit ? (
+          <span className="text-sdc-gray-400"> in the active pane</span>
+        ) : isWorkspace ? (
+          <span className="text-sdc-gray-400"> in this tab set</span>
+        ) : null}
       </button>
+      {/* ── Open in a new tab ────────────────────────────────────────────────
+          The only way INTO the tabbed workspace from an ordinary page: the tab strip
+          lives on /w, so without this entry a second tab could only be reached by
+          typing a URL. */}
+      {newTabTarget ? (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => onNavigate(newTabTarget)}
+          className="motion-interactive block w-full px-3 py-1.5 text-left text-label text-sdc-navy hover:bg-sdc-blue-light/60"
+        >
+          Open in a new tab
+        </button>
+      ) : (
+        <span
+          role="menuitem"
+          aria-disabled
+          className="block cursor-not-allowed px-3 py-1.5 text-label text-sdc-gray-300"
+          title={
+            isSplit
+              ? "Expand one pane first — tabs and the two-pane split are separate layouts"
+              : "This page can't be opened as a tab"
+          }
+        >
+          Open in a new tab
+        </span>
+      )}
       {splitTarget ? (
         <button
           type="button"

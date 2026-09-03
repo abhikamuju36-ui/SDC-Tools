@@ -113,6 +113,30 @@ export function openTab(ws: Workspace, path: string, params: Record<string, stri
   return { ...ws, tabs, active: tabs.length - 1 };
 }
 
+/**
+ * Point an EXISTING tab at a different route, keeping its position in the strip.
+ *
+ * This is what a sidebar click does while the split is open, and it is deliberately
+ * different from `openTab`. Opening a new tab there would leave the split showing the
+ * two tabs it already had, so the page the user just asked for would render nowhere
+ * they can see — the click would look like it did nothing. Replacing the active tab's
+ * route instead means the pane they were working in changes and the other pane is
+ * untouched, which is the same contract /split has had since it shipped
+ * (`navigateActivePane`).
+ *
+ * Params are dropped rather than carried across: they belong to the route being left.
+ * A stale `month` following you to a route with no month would sit in the URL looking
+ * meaningful and doing nothing — the same reason pickParams filters.
+ */
+export function navigateTab(ws: Workspace, id: TabId, path: string, params: Record<string, string> = {}): Workspace {
+  const p = normalizePath(path);
+  if (!isSplittable(p)) return ws;
+  if (!ws.tabs[id]) return ws;
+  const tabs = [...ws.tabs];
+  tabs[id] = { path: p, params: pickParams(p, params) };
+  return { ...ws, tabs, active: id };
+}
+
 export function activateTab(ws: Workspace, id: TabId): Workspace {
   if (id < 0 || id >= ws.tabs.length) return ws;
   return { ...ws, active: id };

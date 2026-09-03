@@ -37,7 +37,10 @@ const APP = join(process.cwd(), "src", "app", "(app)");
  * cap would be measured against the whole workspace rather than against the pane
  * the content actually lives in.
  */
-const EXEMPT_PAGES = ["jobs/[id]/page.tsx", "jobs/new/page.tsx", "split/page.tsx"];
+// `split` and `w` host OTHER pages' views rather than having a body of their own, so
+// PAGE_SHELL is applied by each view inside them — one gutter, from the page that owns
+// the content. Putting it on the host as well would double every pane's padding.
+const EXEMPT_PAGES = ["jobs/[id]/page.tsx", "jobs/new/page.tsx", "split/page.tsx", "w/page.tsx"];
 
 const isExempt = (file: string) => EXEMPT_PAGES.some((e) => file.split("\\").join("/").endsWith(e));
 
