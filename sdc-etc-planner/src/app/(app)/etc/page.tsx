@@ -23,6 +23,7 @@ import { EtcIssuesIndicator } from "@/components/EtcIssuesIndicator";
 import { buildEtcIssues } from "@/lib/etc-issues";
 import { PartsCostNewEtcCell } from "@/components/PartsCostNewEtcCell";
 import { readPartsEtcBreakout } from "@/lib/parts-etc-breakout";
+import { showsPartsBreakout } from "@/lib/parts-breakout-scope";
 import { EtcSectionCells } from "@/components/EtcSectionCells";
 import {
   StandardRatesProvider,
@@ -77,6 +78,11 @@ const SUB_COLUMNS = ["Prior ETC", "Hours Worked Month", "Hours Left", "New ETC",
 // lib/parts-etc-breakout.ts carries the fetch and the three leashes on it; measured
 // across all 49 jobs of 2026-08 it costs ~3s in one batched query plus a bounded BOM
 // fan-out.
+// Not every month has all seven — see lib/parts-breakout-scope.ts. The two breakout
+// columns start at August 2026, so the grid derives its own list from this one and
+// EVERY consumer must use that derived list: the header colSpans, the body cells, the
+// totals row and the footer's colSpan all have to agree, and a header one cell wider
+// than its body is the failure this list-of-one prevents.
 const PARTS_COST_SUB_COLUMNS = [
   "Prior ETC",
   "Money Spent Month",
@@ -570,6 +576,15 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
   // A malformed ?month= (typo'd URL) must not flow into queries/date math —
   // fall back to the default month instead of rendering a nonsense view.
   const month = (monthParam && isValidMonth(monthParam) ? monthParam : undefined) || distinctMonths[0]?.month || currentMonth();
+
+  // ── Do Left to Invoice / Left to Purchase exist for this month? ───────────
+  //
+  // August 2026 onward, by request (lib/parts-breakout-scope.ts carries the why).
+  // Everything downstream keys off this one boolean rather than re-deriving it.
+  const showBreakout = showsPartsBreakout(month);
+  const partsCostCols: readonly (typeof PARTS_COST_SUB_COLUMNS)[number][] = showBreakout
+    ? PARTS_COST_SUB_COLUMNS
+    : PARTS_COST_SUB_COLUMNS.filter((c) => c !== "Left to Invoice" && c !== "Left to Purchase");
   const inProgressSet = new Set(inProgressMonths.map((m) => m.month));
   const lockedMonthList = distinctMonths.map((m) => m.month).filter((m) => !inProgressSet.has(m));
 
@@ -1060,12 +1075,18 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
   // this is the only upstream call on the page, and a Total ETO outage must cost two
   // columns rather than the month-end page. `readPartsEtcBreakout` already returns
   // nulls on failure; the catch is for the unexpected.
-  const partsBreakout = await readPartsEtcBreakout(
-    jobs.filter((j) => j.jobId).map((j) => ({ pk: j.id, jobNumber: j.jobId })),
-  ).catch((e) => {
-    console.error("[etc] parts breakout failed; Left to Invoice/Purchase will read —:", e);
-    return null;
-  });
+  //
+  // Skipped outright on a month without the columns: this is the page's only upstream
+  // call, and there is no reason to spend ~3s of Total ETO on a figure that has
+  // nowhere to render.
+  const partsBreakout = showBreakout
+    ? await readPartsEtcBreakout(
+        jobs.filter((j) => j.jobId).map((j) => ({ pk: j.id, jobNumber: j.jobId })),
+      ).catch((e) => {
+        console.error("[etc] parts breakout failed; Left to Invoice/Purchase will read —:", e);
+        return null;
+      })
+    : null;
 
   const partsCostGrandTotal = { prior: 0, worked: 0, newEtc: 0, leftToInvoice: 0, leftToPurchase: 0 };
 
@@ -1363,7 +1384,7 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                   >
                     Total (New ETC)
                   </th>
-                  <th colSpan={PARTS_COST_SUB_COLUMNS.length} className={`${PHASE_EDGE} bg-sdc-gray-100 px-3 py-1.5 text-center text-sdc-gray-700`}>
+                  <th colSpan={partsCostCols.length} className={`${PHASE_EDGE} bg-sdc-gray-100 px-3 py-1.5 text-center text-sdc-gray-700`}>
                     Parts Cost
                   </th>
                   {showStandards && (
@@ -1403,7 +1424,7 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                   ))}
                   {/* Parts Cost has no Engineering/Shop split — one green Total
                       block spanning down to the column-label row, as printed. */}
-                  <th rowSpan={3} colSpan={PARTS_COST_SUB_COLUMNS.length} className={`${PHASE_EDGE} bg-sdc-green px-2 py-1 text-center text-white`}>
+                  <th rowSpan={3} colSpan={partsCostCols.length} className={`${PHASE_EDGE} bg-sdc-green px-2 py-1 text-center text-white`}>
                     Total
                   </th>
                 </tr>
@@ -1501,7 +1522,7 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                       </th>
                     ))
                   )}
-                  {PARTS_COST_SUB_COLUMNS.map((col, i) => (
+                  {partsCostCols.map((col, i) => (
                     <th
                       key={`parts-cost-${col}`}
                       className={`${i === 0 ? PHASE_EDGE : "border-l border-sdc-border"} px-1 py-1.5 text-center text-label ${
@@ -1848,7 +1869,7 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                       {(() => {
                         const partsCostEntry = entryByCode.get(PARTS_COST_SECTION);
                         if (!partsCostEntry) {
-                          return PARTS_COST_SUB_COLUMNS.map((col, ci) => (
+                          return partsCostCols.map((col, ci) => (
                             <td
                               key={`parts-cost-${col}`}
                               className={`${ci === 0 ? PHASE_EDGE : "border-l border-sdc-border"} overflow-hidden px-2 py-1 text-center align-middle whitespace-nowrap text-sdc-gray-400 ${
@@ -2002,7 +2023,12 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                                 Both read "—" rather than $0 when unknown. A zero
                                 here would say "nothing outstanding", which is the
                                 opposite of not having been able to ask — on the two
-                                figures that seed the manager's forecast. */}
+                                figures that seed the manager's forecast.
+
+                                Absent entirely before August 2026, matching the
+                                header — see lib/parts-breakout-scope.ts. */}
+                            {showBreakout && (
+                            <>
                             <td
                               className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-muted`}
                               title={
@@ -2023,6 +2049,8 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                             >
                               {breakout?.leftToPurchase == null ? "—" : currency(breakout.leftToPurchase)}
                             </td>
+                            </>
+                            )}
                             <PartsCostNewEtcCell
                               name={`newEtcOverride__${partsCostEntry.id}`}
                               // For the live Total ETC $ chain — see
@@ -2134,7 +2162,7 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                 })}
                 {visibleJobs.length === 0 && (
                   <NoJobsMessageRow
-                    baseColSpan={3 + (visibleCols.length + visibleGroups.length) * SUB_COLUMNS.length + PARTS_COST_SUB_COLUMNS.length}
+                    baseColSpan={3 + (visibleCols.length + visibleGroups.length) * SUB_COLUMNS.length + partsCostCols.length}
                     standardsColumnCount={showStandards ? STANDARD_LEAF_COLUMNS.length : 0}
                     message={jobs.length === 0 ? "No active jobs found." : "No jobs match the Billable filter."}
                   />
@@ -2282,6 +2310,8 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                           >
                             {currency(moneyLeft)}
                           </td>
+                          {showBreakout && (
+                          <>
                           <td
                             className={`border-l border-sdc-border ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-navy`}
                             title={`${currencyExact(t.leftToInvoice)} on purchase orders, not yet invoiced, across every job shown`}
@@ -2294,6 +2324,8 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                           >
                             {currency(t.leftToPurchase)}
                           </td>
+                          </>
+                          )}
                           {/* Parts Cost New ETC is manager-editable
                               (PartsCostNewEtcCell), so its grand total has to move
                               with it the same way the hours columns do. */}

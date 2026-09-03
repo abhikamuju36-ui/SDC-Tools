@@ -73,6 +73,19 @@ export function totalEtoConfig(requestTimeout: number = TOTALETO_TIMEOUT.sync): 
     options: { trustServerCertificate: true, encrypt: false },
     connectionTimeout: 15_000,
     requestTimeout,
+    // ── Bounded, and idle connections handed back ────────────────────────────
+    //
+    // mssql's defaults are max 10 / min 0 / idle 30s. `min: 0` is the important one
+    // and is kept: pools below are long-lived, so anything above zero would hold
+    // connections on the SQL box for the life of the process. With zero, an idle pool
+    // holds nothing and the next query reopens as needed.
+    //
+    // max is lowered to 5 because there are now a handful of pools (one per distinct
+    // requestTimeout) rather than one: 5 x a few pools is a sane ceiling on what this
+    // app can hold against Total ETO, and no query path here needs more than a
+    // handful of concurrent connections (the widest fan-out in the app is 6, and it
+    // is spread across pools).
+    pool: { max: 5, min: 0, idleTimeoutMillis: 30_000 },
   };
 }
 
@@ -136,24 +149,92 @@ export function describeTotalEtoFailure(error: unknown): string {
   }
 }
 
+// ── One long-lived pool per timeout, and never sql.connect (2026-09-03) ─────
+//
+// This replaces `sql.connect(config)` + `pool.close()`, which every Total ETO call
+// site used and which is actively broken. Both faults are visible in
+// node_modules/mssql/lib/global-connection.js:
+//
+//   1. `connect(config)` begins `if (!globalConnection)`. The config is therefore
+//      used ONLY on the first call in the process; every later call gets the pool
+//      that already exists and its config is SILENTLY DISCARDED. So
+//      `sql.connect({ ...config, requestTimeout: 300000 })` did not give that query
+//      300 seconds — it gave it whichever timeout won the race at startup.
+//
+//   2. `pool.close()` on the global pool sets `globalConnection = null` and closes
+//      the pool FOR EVERY CONCURRENT USER. Any in-flight request on it fails with
+//      `Error: aborted`.
+//
+// Fault 2 is the cause of the bug this was written for. The Monthly ETC grid's
+// Left to Purchase column read $0 on every job, from
+// `[parts-etc-breakout] batched parts lines failed: Error: aborted` — the 49-job
+// parts-lines query takes ~3s, which is a wide window for any other Total ETO
+// caller (the hourly refresh, a BOM read, another user's page) to finish and close
+// the pool underneath it. A one-job query usually won that race, which is exactly
+// why this looked like "only breaks with a lot of jobs".
+//
+// The fix is to stop sharing the GLOBAL pool and stop closing pools at all. A
+// dedicated `new sql.ConnectionPool` per distinct requestTimeout, cached and kept
+// open, is what a connection pool is for: honours each caller's timeout (fault 1),
+// cannot be closed under a concurrent request (fault 2), and with `min: 0` holds no
+// connections while idle, so nothing leaks.
+//
+// The cache hangs off globalThis so a dev hot-reload re-evaluating this module
+// reuses the pools it already opened rather than stacking a new set on every edit
+// — the same reason lib/prisma.ts does it.
+type PoolCache = Map<number, Promise<sql.ConnectionPool>>;
+const globalForPools = globalThis as typeof globalThis & { __sdcTotalEtoPools?: PoolCache };
+const poolCache: PoolCache = (globalForPools.__sdcTotalEtoPools ??= new Map());
+
 /**
- * Opens a pool, runs `work`, and ALWAYS closes it.
+ * The shared pool for this timeout, opening it on first use.
  *
- * Every one of the ~20 call sites this replaces wrote its own
- * `const pool = await sql.connect(config); try { ... } finally { await
- * pool.close(); }`. Identical each time, and the one place to get it wrong is the
- * close — a pool leaked on an error path is a connection the SQL box keeps.
+ * A pool that has died (network drop, server restart) is discarded and rebuilt
+ * rather than handed out — otherwise one transient outage would poison every later
+ * query in the process.
+ */
+export async function totalEtoPool(requestTimeout: number = TOTALETO_TIMEOUT.sync): Promise<sql.ConnectionPool> {
+  const cached = poolCache.get(requestTimeout);
+  if (cached) {
+    try {
+      const pool = await cached;
+      if (pool.connected) return pool;
+    } catch {
+      // Fall through and rebuild. The rejection is already reported to whoever
+      // awaited it first; a later caller should get a fresh attempt, not a replay.
+    }
+    poolCache.delete(requestTimeout);
+  }
+
+  const opening = new sql.ConnectionPool(totalEtoConfig(requestTimeout)).connect();
+  poolCache.set(requestTimeout, opening);
+  // A failed open must not stay cached, or the process never retries. Guarded on
+  // identity so a rebuild that has already replaced this entry is not evicted.
+  opening.catch(() => {
+    if (poolCache.get(requestTimeout) === opening) poolCache.delete(requestTimeout);
+  });
+  return opening;
+}
+
+/**
+ * Runs `work` against the shared pool for `requestTimeout`.
+ *
+ * Deliberately does NOT close anything — see the header. `work` may safely run
+ * concurrently with any other caller.
  */
 export async function withTotalEto<T>(
   work: (pool: sql.ConnectionPool) => Promise<T>,
   requestTimeout: number = TOTALETO_TIMEOUT.sync,
 ): Promise<T> {
-  const pool = await sql.connect(totalEtoConfig(requestTimeout));
-  try {
-    return await work(pool);
-  } finally {
-    await pool.close();
-  }
+  const pool = await totalEtoPool(requestTimeout);
+  return work(pool);
+}
+
+/** Closes every cached pool. For a test teardown or a deliberate shutdown, not for a request. */
+export async function closeTotalEtoPools(): Promise<void> {
+  const entries = [...poolCache.entries()];
+  poolCache.clear();
+  await Promise.allSettled(entries.map(async ([, p]) => (await p).close()));
 }
 
 /**

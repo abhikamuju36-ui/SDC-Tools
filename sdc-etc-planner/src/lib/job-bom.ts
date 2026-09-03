@@ -1,6 +1,6 @@
 import "server-only";
 import sql from "mssql";
-import { totalEtoConfig, TOTALETO_TIMEOUT } from "@/lib/totaleto-connection";
+import { totalEtoConfig, TOTALETO_TIMEOUT, totalEtoPool } from "@/lib/totaleto-connection";
 import {
   type BomContext,
   type BomNode,
@@ -359,7 +359,10 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
   let pullRows: PullRow[] = [];
   let processRows: ProcessRow[] = [];
   try {
-    pool = await sql.connect(config);
+    // The SHARED pool, never closed — see totaleto-connection.ts. This used to open
+    // mssql's global pool and close it in the finally below, which is what let a BOM
+    // read finishing mid-query abort somebody else's Total ETO request.
+    pool = await totalEtoPool(TOTALETO_TIMEOUT.bom);
     const [specR, topR, bomR, poR, pullR, procR] = await Promise.all([
       pool.request().input("job", sql.Int, numericJob).query(SPECS_SQL),
       pool.request().input("job", sql.Int, numericJob).query(TOP_SQL),
@@ -376,8 +379,6 @@ export async function getJobBom(jobId: string): Promise<JobBom> {
     processRows = procR.recordset as ProcessRow[];
   } catch {
     return empty;
-  } finally {
-    if (pool) await pool.close();
   }
 
   if (bomRows.length === 0) return empty;

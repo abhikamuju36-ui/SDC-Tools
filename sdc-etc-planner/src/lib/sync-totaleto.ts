@@ -1,5 +1,5 @@
 import sql from "mssql";
-import { totalEtoConfig, TOTALETO_TIMEOUT } from "@/lib/totaleto-connection";
+import { TOTALETO_TIMEOUT, withTotalEto } from "@/lib/totaleto-connection";
 import { prisma } from "@/lib/prisma";
 import { VALID_JOB_TYPES } from "@/lib/job-filters";
 import { applyRefundSign, sqlRefundSigned } from "@/lib/parts-refund";
@@ -85,8 +85,7 @@ FROM [dbo].[vwCostingExtraCostsDetailed] [EC] WITH(NOLOCK)`;
 // Locked months are protected by syncPartsCost's own isMonthLocked guard, so applying
 // this rule cannot rewrite a submitted month's stored figures.
 export async function getPartsCostPurchasedByJob(monthStart: Date, monthEndExclusive: Date): Promise<Map<string, number>> {
-  const pool = await sql.connect({ ...config, requestTimeout: 120000 });
-  try {
+  return withTotalEto(async (pool) => {
     const result = await pool
       .request()
       .input("start", sql.DateTime, monthStart)
@@ -111,9 +110,7 @@ export async function getPartsCostPurchasedByJob(monthStart: Date, monthEndExclu
       if (Number.isFinite(purchased)) map.set(String(Number(r.JobId)), purchased);
     }
     return map;
-  } finally {
-    await pool.close();
-  }
+  }, 120000);
 }
 
 // ── Money Spent Month, reconciled to the Total ETO report (§41) ──────────────
@@ -230,8 +227,7 @@ export async function getPartsCostBookedByJob(
   monthStart: Date,
   monthEndExclusive: Date,
 ): Promise<PartsBookedByJob> {
-  const pool = await sql.connect({ ...config, requestTimeout: 180000 });
-  try {
+  return withTotalEto(async (pool) => {
     const amt = AP_LINE_AMOUNT;
     const result = await pool
       .request()
@@ -282,9 +278,7 @@ export async function getPartsCostBookedByJob(
       unmatchedLines: Number(un.recordset[0]?.Lines ?? 0),
       unmatchedAmount: Number(un.recordset[0]?.Amt ?? 0),
     };
-  } finally {
-    await pool.close();
-  }
+  }, 180000);
 }
 
 // ── Row-count baseline, for detecting a join fan-out (§82) ──────────────────
@@ -307,8 +301,7 @@ export async function getPartsCostBookedByJob(
 // match only rules out the join MULTIPLYING rows, which is the specific
 // failure mode this exists to catch.
 export async function getApLineCountByJob(monthStart: Date, monthEndExclusive: Date): Promise<Map<string, number>> {
-  const pool = await sql.connect({ ...config, requestTimeout: 120000 });
-  try {
+  return withTotalEto(async (pool) => {
     const result = await pool
       .request()
       .input("start", sql.DateTime, monthStart)
@@ -324,9 +317,7 @@ export async function getApLineCountByJob(monthStart: Date, monthEndExclusive: D
     const counts = new Map<string, number>();
     for (const r of result.recordset) counts.set(String(Number(r.JobId)), Number(r.Lines) || 0);
     return counts;
-  } finally {
-    await pool.close();
-  }
+  }, 120000);
 }
 
 // Net AP-document amount per job over an arbitrary window, as a SINGLE query —
@@ -340,8 +331,7 @@ export async function getApLineCountByJob(monthStart: Date, monthEndExclusive: D
 // getPartsCostSpentByJob's already-proven-safe one-query shape for a wide
 // window instead of extending the two-query function into an untested range.
 export async function getPartsInvoicedByJob(monthStart: Date, monthEndExclusive: Date): Promise<Map<string, number>> {
-  const pool = await sql.connect({ ...config, requestTimeout: 180000 });
-  try {
+  return withTotalEto(async (pool) => {
     const amt = AP_LINE_AMOUNT;
     const result = await pool
       .request()
@@ -361,9 +351,7 @@ export async function getPartsInvoicedByJob(monthStart: Date, monthEndExclusive:
       if (Number.isFinite(n)) net.set(String(Number(r.JobId)), n);
     }
     return net;
-  } finally {
-    await pool.close();
-  }
+  }, 180000);
 }
 
 // ── THE definition of Parts Actual (2026-08-10) ─────────────────────────────
@@ -457,8 +445,7 @@ export async function getPartsInvoicedByJob(monthStart: Date, monthEndExclusive:
 // stay absent, which is what protects the 116 pre-TotalETO jobs whose actuals were
 // entered by hand (see syncPartsCostActual).
 export async function getPartsActualByJob(): Promise<Map<string, number>> {
-  const pool = await sql.connect({ ...config, requestTimeout: 180000 });
-  try {
+  return withTotalEto(async (pool) => {
     const result = await pool.request().query(
       `SELECT JobId, SUM(Actual) AS Actual FROM (
          SELECT APDD.ProjectID AS JobId, SUM(${AP_LINE_AMOUNT}) AS Actual
@@ -490,9 +477,7 @@ export async function getPartsActualByJob(): Promise<Map<string, number>> {
       if (Number.isFinite(actual)) map.set(String(Number(r.JobId)), actual);
     }
     return map;
-  } finally {
-    await pool.close();
-  }
+  }, 180000);
 }
 
 // Parts COMMITMENT (not actual) per job, straight from TotalETO — SUM(Total
@@ -530,8 +515,7 @@ export async function getPartsActualByJob(): Promise<Map<string, number>> {
 // getJobPartsCost already computes one job at a time; this is that same computation as
 // one aggregate query across every job, which is what both callers actually need.
 export async function getPartsCostSpentByJob(): Promise<Map<string, number>> {
-  const pool = await sql.connect({ ...config, requestTimeout: 120000 });
-  try {
+  return withTotalEto(async (pool) => {
     const result = await pool.request().query(
       `WITH pp AS (\n${PART_PURCHASE_SQL}\n)\n` +
         `SELECT [Job ID] AS JobId, SUM([Total Price]) AS Spent FROM pp ` +
@@ -544,9 +528,7 @@ export async function getPartsCostSpentByJob(): Promise<Map<string, number>> {
       if (Number.isFinite(spent)) map.set(String(Number(r.JobId)), spent);
     }
     return map;
-  } finally {
-    await pool.close();
-  }
+  }, 120000);
 }
 
 // Frozen copy of getPartsCostSpentByJob's PRE-2026-08-07 behavior — windowed on
@@ -557,8 +539,7 @@ export async function getPartsCostSpentByJob(): Promise<Map<string, number>> {
 // run and still reproduce the numbers their own commentary discusses. The real app
 // never calls this; do not add a new caller.
 export async function legacyPartsCostSpentByJobWindowed(monthStart: Date, monthEndExclusive: Date): Promise<Map<string, number>> {
-  const pool = await sql.connect({ ...config, requestTimeout: 120000 });
-  try {
+  return withTotalEto(async (pool) => {
     const result = await pool
       .request()
       .input("start", sql.DateTime, monthStart)
@@ -575,9 +556,7 @@ export async function legacyPartsCostSpentByJobWindowed(monthStart: Date, monthE
       if (Number.isFinite(spent)) map.set(String(Number(r.JobId)), spent);
     }
     return map;
-  } finally {
-    await pool.close();
-  }
+  }, 120000);
 }
 
 // ── Per-job Parts Cost detail (live) — for the Job Hour Details dashboard ────
@@ -751,8 +730,7 @@ export async function getPartsCostForJobs(jobIds: string[]): Promise<Map<string,
   if (numeric.length === 0) return out;
   const list = numeric.join(",");
 
-  const pool = await sql.connect({ ...config, requestTimeout: 300000 });
-  try {
+  return withTotalEto(async (pool) => {
     const result = await pool
       .request()
       .query(partsDetailSql({ pod: `POD.ProjectID IN (${list})`, ec: `EC.ProjectID IN (${list})` }));
@@ -766,9 +744,7 @@ export async function getPartsCostForJobs(jobIds: string[]): Promise<Map<string,
     }
     for (const [job, lines] of byJob) out.set(job, meaningfulLines(lines));
     return out;
-  } finally {
-    await pool.close();
-  }
+  }, 300000);
 }
 
 // ── Genuinely month-scoped invoice lines, for the Parts Spent drill (2026-08-07) ──
@@ -814,8 +790,7 @@ export async function getPartsCostForJobs(jobIds: string[]): Promise<Map<string,
 export async function getJobPartsInvoicedInMonth(jobId: string, monthStart: Date, monthEndExclusive: Date): Promise<JobPartsCost> {
   const numericJob = Number(jobId);
   if (!Number.isFinite(numericJob)) return { purchased: 0, paid: 0, actual: 0, leftToPay: 0, lines: [] };
-  const pool = await sql.connect({ ...config, requestTimeout: 120000 });
-  try {
+  return withTotalEto(async (pool) => {
     // §82: was two hand-typed copies of the AP-line-amount expression (one for
     // InvoicedAmount, one inside the ActualAmount CASE) instead of this shared
     // AP_LINE_AMOUNT constant — the same formula getPartsCostBookedByJob (the
@@ -897,16 +872,13 @@ export async function getJobPartsInvoicedInMonth(jobId: string, monthStart: Date
     const paid = meaningful.reduce((s, l) => s + l.invoicedAmount, 0);
     const actual = meaningful.reduce((s, l) => s + l.actualAmount, 0);
     return { purchased: paid, paid, actual, leftToPay: 0, lines: meaningful };
-  } finally {
-    await pool.close();
-  }
+  }, 120000);
 }
 
 export async function getJobPartsCost(jobId: string): Promise<JobPartsCost> {
   const numericJob = Number(jobId);
   if (!Number.isFinite(numericJob)) return { purchased: 0, paid: 0, actual: 0, leftToPay: 0, lines: [] };
-  const pool = await sql.connect({ ...config, requestTimeout: 120000 });
-  try {
+  return withTotalEto(async (pool) => {
     const result = await pool.request().input("job", sql.Int, numericJob).query(PARTS_DETAIL_SQL);
     const lines: PartsCostLine[] = result.recordset.map(toPartsCostLine)
       // PARTS_DETAIL_SQL has its OWN amount expressions and never touches
@@ -920,9 +892,7 @@ export async function getJobPartsCost(jobId: string): Promise<JobPartsCost> {
     const paid = meaningful.reduce((s, l) => s + l.invoicedAmount, 0);
     const actual = meaningful.reduce((s, l) => s + l.actualAmount, 0);
     return { purchased, paid, actual, leftToPay: purchased - paid, lines: meaningful };
-  } finally {
-    await pool.close();
-  }
+  }, 120000);
 }
 
 // Credentials come from the environment, same as every other integration in
@@ -931,9 +901,11 @@ export async function getJobPartsCost(jobId: string): Promise<JobPartsCost> {
 // Set TOTALETO_DB_USER / TOTALETO_DB_PASSWORD in .env (gitignored).
 // The connection config moved to lib/totaleto-connection.ts (2026-09-01):
 // this file held one of FOUR byte-identical copies, which is what made a single
-// shared credential failure look like four unrelated ones. `config` below is that
-// shared definition, with this file's own requestTimeout.
-const config = totalEtoConfig(TOTALETO_TIMEOUT.sync);
+// shared credential failure look like four unrelated ones.
+//
+// The local `config` is gone too (2026-09-03). Every query here now goes through
+// `withTotalEto`, which owns the pool as well as the config — see that file's header
+// for why closing a pool per call was corrupting concurrent queries.
 
 interface TotalEtoProject {
   "Job ID": number;
@@ -1030,8 +1002,7 @@ export async function syncPartsCostActual(): Promise<{ jobsUpdated: number; jobs
 }
 
 export async function syncFromTotalEto(): Promise<{ jobsUpdated: number; skippedNoType: number }> {
-  const pool = await sql.connect(config);
-  try {
+  return withTotalEto(async (pool) => {
     const projects = await pool.request().query<TotalEtoProject>(`
       SELECT
         P.ProjectID AS [Job ID],
@@ -1101,7 +1072,5 @@ export async function syncFromTotalEto(): Promise<{ jobsUpdated: number; skipped
     }
 
     return { jobsUpdated, skippedNoType };
-  } finally {
-    await pool.close();
-  }
+  }, TOTALETO_TIMEOUT.sync);
 }

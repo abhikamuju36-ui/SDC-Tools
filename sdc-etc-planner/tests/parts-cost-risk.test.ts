@@ -128,6 +128,16 @@ const withoutComments = (t: string) =>
     .replace(/\/\*[\s\S]*?\*\//g, "")
     .replace(/^\s*\/\/.*$/gm, "");
 
+/** How many of that row's cells sit inside a `{showBreakout && (<>…</>)}` fragment. */
+const gatedCellsIn = (key: string) => {
+  const start = ETC_PAGE.indexOf(`<Fragment key="${key}">`);
+  assert.ok(start > -1, `no <Fragment key="${key}"> in the ETC page`);
+  const body = withoutComments(ETC_PAGE.slice(start, ETC_PAGE.indexOf("</Fragment>", start)));
+  const gate = /\{showBreakout && \(\s*<>([\s\S]*?)<\/>\s*\)\}/.exec(body);
+  if (!gate) return 0;
+  return (gate[1].match(/<td[\s>]/g)?.length ?? 0) + (gate[1].match(/<PartsBreakoutCell[\s>]/g)?.length ?? 0);
+};
+
 const fragmentCells = (key: string) => {
   const start = ETC_PAGE.indexOf(`<Fragment key="${key}">`);
   assert.ok(start > -1, `no <Fragment key="${key}"> in the ETC page`);
@@ -160,8 +170,36 @@ test("every Parts Cost row renders exactly one cell per declared column", () => 
   const count = [...declared[1].matchAll(/"([^"]+)"/g)].length;
   assert.equal(fragmentCells("parts-cost"), count, "a job row is out of step with its headers");
   assert.equal(fragmentCells("parts-cost-total"), count, "the grand-total row is out of step");
-  // The no-entry placeholder maps the array, so it cannot drift.
-  assert.match(ETC_PAGE, /PARTS_COST_SUB_COLUMNS\.map\(\(col, ci\)/);
+  // The no-entry placeholder maps the RENDERED list, so it cannot drift. That is
+  // `partsCostCols`, not the full constant — see the month test below.
+  assert.match(ETC_PAGE, /partsCostCols\.map\(\(col, ci\)/);
+});
+
+test("before August 2026 the Parts Cost rows shrink by exactly the two breakout columns", () => {
+  // The constant above is the SUPERSET of columns. What renders is `partsCostCols`,
+  // which drops Left to Invoice and Left to Purchase on any month before 2026-08 (see
+  // lib/parts-breakout-scope.ts). So the header can be seven or five wide, and every
+  // row has to shrink WITH it — a body one cell wider than its header shifts every
+  // Parts Cost column after the gap, which is wrong without looking broken.
+  const declared = /const PARTS_COST_SUB_COLUMNS = \[([\s\S]*?)\] as const;/.exec(ETC_PAGE)!;
+  const superset = [...declared[1].matchAll(/"([^"]+)"/g)].map((m) => m[1]);
+
+  // The derivation drops exactly the two, and nothing else.
+  const dropped = superset.filter((c) => !["Left to Invoice", "Left to Purchase"].includes(c));
+  assert.equal(dropped.length, superset.length - 2, "the derivation must remove exactly two columns");
+  assert.match(
+    ETC_PAGE,
+    /PARTS_COST_SUB_COLUMNS\.filter\(\(c\) => c !== "Left to Invoice" && c !== "Left to Purchase"\)/,
+    "the pre-August list must be derived from the constant, not typed out again",
+  );
+
+  // And each row hides exactly two cells behind the same flag the header uses, so the
+  // five-column month is the layout every month had before this feature existed.
+  for (const key of ["parts-cost", "parts-cost-total"]) {
+    const gated = gatedCellsIn(key);
+    assert.equal(gated, 2, `the ${key} row hides ${gated} cells behind showBreakout, not 2`);
+    assert.equal(fragmentCells(key) - gated, superset.length - 2, `the ${key} row's pre-August width is wrong`);
+  }
 });
 
 test("the breakout renders an em dash when unknown, never a zero", () => {

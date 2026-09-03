@@ -63,12 +63,29 @@ export async function getEstimateToClose(): Promise<EstimateToCloseRow[]> {
   });
 }
 
-// Runs a read-only query against the warehouse and returns the rows. Opens
-// and closes a fresh pool per call — these syncs run on a slow cadence, so
-// pooling isn't worth the added lifecycle complexity.
+// Runs a read-only query against the warehouse and returns the rows. Opens and closes
+// a fresh pool per call — these syncs run on a slow cadence, so pooling isn't worth the
+// added lifecycle complexity.
+//
+// ── Why a dedicated ConnectionPool and not the global one (2026-09-03) ──────
+//
+// This used to call mssql's `connect()`, which is not "a fresh pool per call" — it is
+// ONE GLOBAL pool for the process. That function begins `if (!globalConnection)`, so
+// the config below was applied only if this happened to be the first query in the
+// process and was otherwise DISCARDED: this function would be handed whatever pool
+// already existed and run Fabric warehouse SQL against Total ETO, or the reverse.
+// Different server, different database, different auth (an Azure AD access token here,
+// NTLM there), different encrypt setting — silently swapped.
+//
+// The `close()` below made it worse in the other direction: it closed the global pool,
+// aborting any Total ETO query in flight elsewhere. That is the bug documented in
+// lib/totaleto-connection.ts, which is where it was found.
+//
+// A dedicated pool is what the comment above always claimed, and it makes the two
+// systems incapable of reaching each other's connections.
 export async function queryWarehouse<T = Record<string, unknown>>(query: string): Promise<T[]> {
   const token = await getToken();
-  const pool = await sql.connect({
+  const pool = await new sql.ConnectionPool({
     server: SERVER,
     port: 1433,
     database: DATABASE,
@@ -76,7 +93,7 @@ export async function queryWarehouse<T = Record<string, unknown>>(query: string)
     options: { encrypt: true },
     connectionTimeout: 30000,
     requestTimeout: 120000,
-  } as sql.config);
+  } as sql.config).connect();
   try {
     const result = await pool.request().query(query);
     return result.recordset as T[];
