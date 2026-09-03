@@ -3,6 +3,8 @@
 import Image from "next/image";
 import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import { useSplitNav } from "@/components/useSplitNav";
+import { splitRoute, closePaneHref } from "@/lib/split-view";
 import {
   applyNavOrder,
   moveItem,
@@ -324,6 +326,18 @@ export default function Sidebar({
   initial?: SidebarPrefs;
 }) {
   const pathname = usePathname();
+  // ── Split view (2026-09-03) ────────────────────────────────────────────────
+  //
+  // Two things this adds to every nav item. A plain click follows `hrefFor`, which
+  // is the item's own href normally and — while a split is open — the same /split
+  // URL with only the ACTIVE pane's route replaced, so navigating one pane cannot
+  // disturb the other. And a right-click offers "Open in Split View", which keeps
+  // the page you are on and opens the item beside it.
+  //
+  // See components/useSplitNav.ts for the URL derivation and lib/split-view.ts for
+  // why a split is one document with a namespaced URL rather than two frames.
+  const splitNav = useSplitNav();
+  const [navMenu, setNavMenu] = useState<{ href: string; label: string; x: number; y: number } | null>(null);
   const router = useRouter();
   // Every item is filtered against visibleHrefs — computed server-side from
   // the SAME map proxy.ts uses to decide whether a direct URL visit is let
@@ -656,9 +670,21 @@ export default function Sidebar({
                 return (
                   <Link
                     key={item.href}
-                    href={item.href}
+                    // Not `item.href`: while split, this resolves to the /split URL
+                    // that swaps ONLY the active pane. `item.href` is still what the
+                    // context menu and the drag payload use, since those are about
+                    // the item itself rather than about where a click lands.
+                    href={splitNav.hrefFor(item.href)}
                     onClick={handleNavClick}
-                    title={collapsed ? item.label : `${item.label} — drag to reorder, or Alt+↑/↓`}
+                    onContextMenu={(e) => {
+                      // Only where a split is actually possible — an admin route has
+                      // no pane view, and a menu whose only entry is disabled is
+                      // worse than the browser's own menu.
+                      if (!splitRoute(item.href)) return;
+                      e.preventDefault();
+                      setNavMenu({ href: item.href, label: item.label, x: e.clientX, y: e.clientY });
+                    }}
+                    title={collapsed ? item.label : `${item.label} — right-click to open in split view; drag to reorder, or Alt+↑/↓`}
                     // Reorderable by drag, and by Alt+Arrow for anyone not using a
                     // mouse. Only within this group: the headings above say what
                     // these links are, so a link that moved out from under one
@@ -845,6 +871,56 @@ export default function Sidebar({
             be at two densities on two tabs. See lib/app-zoom.ts. */}
         <AppZoom collapsed={collapsed} />
 
+        {/* ── Split View, on its own row (2026-09-03) ──────────────────────────
+            The discoverable half of the feature. The right-click menu on a nav item
+            is the useful entry point — it is the only one that can say WHICH page to
+            open beside this one — but a context menu discovers nobody, so this
+            states that the feature exists and what the gesture is.
+
+            Its behaviour depends on which state you are in, and it only ever does
+            the unambiguous thing:
+              not split  There is no way to guess which page you want beside this
+                         one, so this does not open a split. It points at the
+                         gesture that can, and stays disabled-looking rather than
+                         picking a page for you.
+              split      Closes it, leaving the active pane full width — the same
+                         thing Ctrl+\ does, which is why the shortcut is on the
+                         label rather than hidden in a tooltip.
+
+            Full width in both states, and label-free when collapsed, for the same
+            reason recorded in App Refresh's note directly below: this footer's
+            widths have been guessed wrong before, and at 128px two labels already
+            fill a row. */}
+        <div className="flex pt-1">
+          {splitNav.isSplit ? (
+            <button
+              type="button"
+              onClick={() => {
+                if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Leave this page anyway?")) return;
+                // The pane you are working in is the one that survives.
+                router.push(closePaneHref(splitNav.state!, splitNav.state!.active === "l" ? "r" : "l"));
+              }}
+              title="Close split view (Ctrl+\) — the active pane fills the window"
+              className={`motion-interactive flex h-[30px] w-full items-center justify-center gap-[7px] rounded-[7px] bg-[#123A63] text-xs whitespace-nowrap text-[#DCE8F5] shadow-[inset_0_0_0_1px_#1E568F] hover:bg-[#17497C] ${
+                collapsed ? "shrink-0" : "px-2"
+              }`}
+            >
+              <SplitIcon />
+              {!collapsed && <span>Exit Split View</span>}
+            </button>
+          ) : (
+            <div
+              title="Right-click any page in the sidebar and choose “Open in Split View” to open it beside this one"
+              className={`flex h-[30px] w-full cursor-default items-center justify-center gap-[7px] rounded-[7px] bg-[#0B2846] text-xs whitespace-nowrap text-[#5A7391] shadow-[inset_0_0_0_1px_#17395C] ${
+                collapsed ? "shrink-0" : "px-2"
+              }`}
+            >
+              <SplitIcon />
+              {!collapsed && <span>Split View</span>}
+            </div>
+          )}
+        </div>
+
         {/* ── App Refresh, on its own row (2026-09-02) ─────────────────────────
             The SECOND refresh: it reloads this tab's frontend and changes no data
             — see AppRefreshButton for why the two are deliberately separate
@@ -1002,6 +1078,152 @@ export default function Sidebar({
           {appVersionLabel()}
         </div>
       </div>
+
+      {/* ── The nav item's context menu (2026-09-03) ────────────────────────────
+          Rendered once at the aside's own level rather than inside each of the
+          fourteen nav items: one open menu at a time is the invariant, and a menu
+          nested inside the item would be clipped by the nav's `overflow` and would
+          inherit the item's hover styling.
+
+          Fixed-positioned at the pointer, like a native context menu. It is
+          deliberately NOT a full popover system — two entries, no submenus, no
+          icons; the sidebar already has a drag-reorder interaction on these same
+          items and a heavier menu here would start competing with it. */}
+      {navMenu && (
+        <NavContextMenu
+          menu={navMenu}
+          onClose={() => setNavMenu(null)}
+          openHref={splitNav.hrefFor(navMenu.href)}
+          splitTarget={splitNav.splitHrefFor(navMenu.href)}
+          refusal={splitNav.refusalFor(navMenu.href)}
+          isSplit={splitNav.isSplit}
+          onNavigate={(href) => {
+            setNavMenu(null);
+            if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Leave this page anyway?")) return;
+            router.push(href);
+          }}
+        />
+      )}
     </aside>
+  );
+}
+
+function NavContextMenu({
+  menu,
+  onClose,
+  openHref,
+  splitTarget,
+  refusal,
+  isSplit,
+  onNavigate,
+}: {
+  menu: { href: string; label: string; x: number; y: number };
+  onClose: () => void;
+  openHref: string;
+  /** null when this item cannot open in a split — see useSplitNav.splitHrefFor. */
+  splitTarget: string | null;
+  /** Why this page cannot open beside the other pane, when that is the reason it is refused. */
+  refusal: string | null;
+  isSplit: boolean;
+  onNavigate: (href: string) => void;
+}) {
+  const ref = useRef<HTMLDivElement | null>(null);
+
+  // Dismiss on anything that isn't a click inside the menu. `pointerdown` rather
+  // than `click` so the menu closes on the press, before the underlying element
+  // gets a chance to act on the same gesture; capture phase so a stopPropagation
+  // somewhere in the nav cannot strand an open menu on screen.
+  useEffect(() => {
+    const onDown = (e: PointerEvent) => {
+      if (!ref.current?.contains(e.target as Node)) onClose();
+    };
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape") onClose();
+    };
+    window.addEventListener("pointerdown", onDown, true);
+    window.addEventListener("keydown", onKey);
+    // A scroll or a resize moves the item this menu is anchored to, so the anchor
+    // stops meaning anything — close rather than float somewhere unrelated.
+    window.addEventListener("resize", onClose);
+    return () => {
+      window.removeEventListener("pointerdown", onDown, true);
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("resize", onClose);
+    };
+  }, [onClose]);
+
+  // Keep the menu inside the viewport: near the bottom of a short window a
+  // fixed y would put the second entry off-screen, and this menu is anchored to
+  // items that run the full height of the sidebar.
+  const MENU_W = 208;
+  const MENU_H = 76;
+  const x = Math.min(menu.x, (typeof window === "undefined" ? 1920 : window.innerWidth) - MENU_W - 8);
+  const y = Math.min(menu.y, (typeof window === "undefined" ? 1080 : window.innerHeight) - MENU_H - 8);
+
+  return (
+    <div
+      ref={ref}
+      role="menu"
+      aria-label={`${menu.label} options`}
+      className="fixed z-50 min-w-[13rem] overflow-hidden rounded-md border border-sdc-border bg-white py-1 shadow-lg"
+      style={{ left: x, top: y }}
+    >
+      <p className="truncate px-3 pb-1 pt-0.5 text-micro font-semibold uppercase tracking-wide text-sdc-gray-400">
+        {menu.label}
+      </p>
+      <button
+        type="button"
+        role="menuitem"
+        onClick={() => onNavigate(openHref)}
+        className="motion-interactive block w-full px-3 py-1.5 text-left text-label text-sdc-navy hover:bg-sdc-blue-light/60"
+      >
+        Open
+        {/* While split, a plain Open lands in the active pane — the same thing a
+            left-click does. Saying so here is the one place the behaviour can be
+            explained at the moment the choice is being made. */}
+        {isSplit && <span className="text-sdc-gray-400"> in the active pane</span>}
+      </button>
+      {splitTarget ? (
+        <button
+          type="button"
+          role="menuitem"
+          onClick={() => onNavigate(splitTarget)}
+          className="motion-interactive block w-full px-3 py-1.5 text-left text-label text-sdc-navy hover:bg-sdc-blue-light/60"
+        >
+          Open in Split View
+          {isSplit && <span className="text-sdc-gray-400"> (other pane)</span>}
+        </button>
+      ) : (
+        // Shown disabled rather than omitted, so the menu has the same shape
+        // everywhere and the reason is stated instead of the entry just missing.
+        <span
+          role="menuitem"
+          aria-disabled
+          className="block cursor-not-allowed px-3 py-1.5 text-label text-sdc-gray-300"
+          title={refusal ?? "This page can't be opened beside the one you're on"}
+        >
+          Open in Split View
+        </span>
+      )}
+      {refusal && (
+        // Stated in the menu rather than only in a tooltip: this is the one refusal
+        // in the feature that is a deliberate design limit rather than an oversight,
+        // so it is worth a sentence at the moment someone runs into it.
+        <p className="border-t border-sdc-border px-3 pb-0.5 pt-1 text-micro leading-snug text-sdc-gray-400">
+          {refusal}.
+        </p>
+      )}
+    </div>
+  );
+}
+
+// Two panes with a divider between them - the same shape browsers and editors use
+// for this, so it reads as "split" without a label in the collapsed rail.
+function SplitIcon() {
+  return (
+    <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>
+      <rect x="1.5" y="2.5" width="13" height="11" rx="1.5" />
+      <line x1="8" y1="2.5" x2="8" y2="13.5" />
+    </svg>
   );
 }

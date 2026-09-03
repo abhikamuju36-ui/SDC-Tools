@@ -88,7 +88,44 @@ test("the footer proves it adds up, and says so when it does not", () => {
   assert.match(PROC, /unexplained: jobTotal - \(matchedTotal - estimated\)/);
   assert.match(PROC, /p\.matchReason === "no-purchase"/);
   assert.match(PROC, /Math\.abs\(reconcile\.unexplained\) > 0\.5/);
-  assert.match(PROC, /unaccounted — report this/);
+  // Wording changed 2026-09-03 (the footer rewrite) — "Mismatch — $X unaccounted,
+  // report this" replaces "$X unaccounted — report this". Still the same guard:
+  // whatever the phrasing, a footer that cannot prove the sum must say so on screen.
+  assert.match(PROC, /unaccounted, report this/);
+  // The status is a word, not left for the reader to infer from two numbers.
+  assert.match(PROC, /Fully reconciled/);
+  assert.match(PROC, /Partially reconciled/);
+});
+
+test("the footer states both halves of the equation, and both add up to the job total", () => {
+  // The old strip named only the non-BOM half and the job total, leaving "so what is
+  // the BOM, then" as arithmetic for the reader. Both addends are stated now.
+  //
+  // `bomPurchased` must exclude `estimated` for the same reason `unexplained` does:
+  // a BOM part with nothing bought is priced unit x qty from the BOM, so including it
+  // would print BOM + non-BOM = a number LARGER than the job total, by exactly that
+  // amount. An equation on screen that visibly does not balance is worse than no
+  // equation, which is the whole point of this rewrite.
+  assert.match(PROC, /bomPurchased: parts\.reduce\(\(sum, p\) => sum \+ p\.totalPrice, 0\) - nonBomTotal - estimated/);
+  assert.match(PROC, /usd\(reconcile\.bomPurchased\)/);
+  assert.match(PROC, /usd\(reconcile\.nonBomTotal\)/);
+  assert.match(PROC, /usd\(reconcile\.jobTotal\)/);
+});
+
+test("the footer never mixes the visible-row scope with the job scope", () => {
+  // The reported confusion: one sentence counted the rows left after every filter
+  // ("56 rows shown") and then quoted a job-lifetime total ("Job lifetime $36,931"),
+  // two different scopes with nothing marking the seam. They are two labelled lines
+  // now, and the money line says "Whole job" whenever the row line is narrowed.
+  assert.match(PROC, /narrowed: parts\.length < reconcile\.allRows/);
+  assert.match(PROC, /visible\.narrowed \? "Whole job" : "Totals"/);
+  // Row counts come off the RENDERED rows, so the count always matches what scrolls.
+  assert.match(PROC, /for \(const p of parts\) if \(!p\.nonBom\) bomRows\+\+;/);
+  // The awkward phrasing the request named, gone from the rendered output. Each is
+  // still allowed to appear in a comment explaining why it went.
+  const rendered = PROC.slice(PROC.indexOf('<tr className="bg-sdc-navy text-label text-white/70">'));
+  assert.ok(!/every PO line each part has/.test(rendered), "the run-on sentence must not return");
+  assert.ok(!/fully accounted for by the rows above/.test(rendered));
 });
 
 test("the residual describes the job, not the current filter", () => {

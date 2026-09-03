@@ -46,10 +46,7 @@ import { UtilizationPanel } from "@/components/dashboard/UtilizationPanel";
 // its issue badge, the Manage Jobs button, and the refresh-status card (moved to
 // the bottom — it is a caveat on the figures, not one of them).
 
-export default async function Home({
-  searchParams,
-}: {
-  searchParams: Promise<{
+export async function DashboardView({ params }: { params: {
     tab?: string;
     m?: string;
     dqFrom?: string;
@@ -57,10 +54,9 @@ export default async function Home({
     dqEmp?: string;
     dqFn?: string;
     dqMtd?: string;
-  }>;
-}) {
+  } }) {
   await requirePagePermission("dashboard:view");
-  const sp = await searchParams;
+  const sp = params;
   const month = dashboardMonth(sp.m);
   // The Data Quality explorer classifies every punch in the window, so it runs
   // only when that tab is actually open. The dashboard's landing view must not
@@ -145,4 +141,30 @@ export default async function Home({
       />
     </div>
   );
+}
+
+
+// -- Route entry point --
+//
+// The page's body lives in `DashboardView` above so that BOTH this route and the split
+// view can render it. Split view renders two views in ONE document (see
+// lib/split-view.ts for why one document rather than two frames), which means a
+// pane cannot be a route and therefore cannot read `searchParams` - there is only
+// one URL, and two panes reading it would collide. So the body takes its context as
+// a plain argument, and the two callers differ only in where they read that context
+// from: this wrapper reads the URL, a pane reads its own `l.`/`r.` namespace.
+//
+// Nothing about this route's behaviour changes: same URL, same params, same server
+// render. `searchParams` is still awaited HERE, which is what keeps this route
+// dynamic exactly as before.
+export default async function Home({ searchParams }: { searchParams: Promise<{
+    tab?: string;
+    m?: string;
+    dqFrom?: string;
+    dqTo?: string;
+    dqEmp?: string;
+    dqFn?: string;
+    dqMtd?: string;
+  }> }) {
+  return <DashboardView params={await searchParams} />;
 }

@@ -59,7 +59,7 @@ export type PartsDrillMode = "projection" | "invoiced" | "left" | "etc";
 const MODE_TITLE: Record<PartsDrillMode, string> = {
   projection: "Parts Cost Detail — Actual / Projection",
   invoiced: "Parts Cost Detail — Invoiced",
-  left: "Parts Cost Detail — Left to be invoiced",
+  left: "Parts Cost Detail — Yet to invoice",
   etc: "Parts Cost Detail — ETC",
 };
 
@@ -215,54 +215,103 @@ export function PartsCostDrill({
   // difference that is only floating-point noise.
   const floored = mode !== "invoiced" && Math.abs(financials.leftToInvoice - sums.left) > 0.005;
 
-  const etcRidesOnTop = (financials.etc ?? 0) >= financials.leftToInvoice;
+  // ── The breakdown, in the order spec §14 lists it (2026-09-03) ────────────
+  //
+  // Every input to the bar plus the two figures it is judged against, so the panel
+  // PROVES the picture rather than restating it. Three rows exist purely so the
+  // arithmetic checks on sight, which is what §23's "difference must be zero" asks:
+  //
+  //     Prior-month ETC − Parts spent this month  = Adjusted ETC
+  //     Yet to invoice  − Adjusted ETC            = Additional exposure   (when > 0)
+  //     Invoiced + Adjusted ETC + Additional      = Total projection
+  //
+  // The list is rebuilt rather than extended: its previous version described the
+  // coverage model (an "ETC-covered remaining" row and a "Current Parts ETC" taken
+  // from the latest SUBMITTED entry), and neither quantity exists in this model.
+  // §20 is explicit that the current month's New ETC must not stand in for the prior
+  // month's, so showing it here would invite exactly that confusion.
+  const adjustedIsFloored =
+    financials.adjustedEtcRaw != null && financials.adjustedEtcRaw < -0.005;
 
   const totals: { label: string; value: string; hint?: string }[] = [
     { label: "Budget", value: financials.budget == null ? "—" : usd(financials.budget) },
+    {
+      label: "Purchased / committed",
+      value: usd(financials.purchased),
+      hint: "Every parts line's total cost on this job, invoiced or not",
+    },
     // ── Scope in the label, not only in a hint (2026-09-02) ─────────────────
     //
     // The Parts List footer also says "Invoiced", and on job 1101 it says $290,266
     // against this card's $730,483 — the same word for a BOM-matched, newest-PO-line,
     // filtered subset and for the job's whole life. The two are reconcilable (see
     // that footer's own scope line) but only if each says which it is.
-    { label: "Invoiced (lifetime)", value: usd(financials.invoiced), hint: "Every GL-posted line on this job, all POs, all dates" },
-    { label: "Left to be invoiced", value: usd(financials.leftToInvoice), hint: "Committed on an open PO, not yet posted" },
-    { label: "ETC", value: financials.etc == null ? "—" : usd(financials.etc), hint: "This month's Parts New ETC, as entered on the Monthly ETC grid" },
-    // ── Why the bar's yellow segment is not simply "ETC" (measured on job 1131) ──
-    //
-    // The card labels its second segment "ETC", but what it DRAWS is the residual:
-    // `projection − invoiced`, which is the LARGER of ETC and Left to be invoiced.
-    // On 1131 those differ by an order of magnitude — ETC $2,000, Left to be invoiced
-    // $13,017, segment $13,018 — so a panel that showed only the raw ETC would print
-    // $2,000 beside a bar visibly drawn at $13,018 and read as a mismatch.
-    //
-    // Both are stated, and the residual is named as the thing the bar draws, so the
-    // tie-back is exact in every case rather than only on jobs where ETC happens to
-    // be the larger term.
     {
-      label: "Residual on the bar",
-      value: usd(financials.projection - financials.invoiced),
-      hint: "The bar's second segment: the larger of ETC and Left to be invoiced, never both",
+      label: "Invoiced actual (lifetime)",
+      value: usd(financials.invoiced),
+      hint: "Every GL-posted line on this job, all POs, all dates. The bar's blue section",
     },
     {
-      label: "Actual / Projection",
+      label: "Yet to invoice",
+      value: usd(financials.yetToInvoice),
+      hint:
+        financials.inHouseRows > 0
+          ? `External remaining exposure. Excludes ${usd(financials.inHouseExcluded)} on ${financials.inHouseRows} in-house (SDC) row${financials.inHouseRows === 1 ? "" : "s"}, which produce no supplier invoice`
+          : "External remaining exposure — purchased less GL-posted, on rows that will produce a supplier invoice",
+    },
+    ...(financials.inHouseRows > 0
+      ? [
+          {
+            label: "In-house (SDC) excluded",
+            value: usd(financials.inHouseExcluded),
+            hint: `Remaining exposure on ${financials.inHouseRows} row${financials.inHouseRows === 1 ? "" : "s"} SDC builds itself. Reported so 'Yet to invoice' reconciles against the ${usd(financials.yetToInvoiceAllRows)} whole open balance`,
+          },
+        ]
+      : []),
+    {
+      label: "Prior-month ETC",
+      value: financials.priorEtc == null ? "—" : usd(financials.priorEtc),
+      hint:
+        financials.priorEtcSource === "quoted-parts"
+          ? "This job's FIRST parts ETC month, so the forecast opens at the quoted parts value rather than at zero"
+          : `The previous month's confirmed New ETC, carried forward${financials.etcMonth ? ` into ${financials.etcMonth}` : ""}. NOT this month's New ETC entry`,
+    },
+    {
+      label: "Parts spent this month",
+      value: usd(financials.partsSpentThisMonth),
+      hint: `The selected month's booked parts cost — the same 'Money Spent Month' the Monthly ETC grid shows${financials.etcMonth ? ` for ${financials.etcMonth}` : ""}`,
+    },
+    {
+      label: "Adjusted ETC",
+      value: usd(financials.adjustedEtc),
+      hint: adjustedIsFloored
+        ? `Prior-month ETC − parts spent this month = ${usd(financials.adjustedEtcRaw!)}, shown as $0 because a bar cannot have negative height. The month has already spent past its own forecast`
+        : "Prior-month ETC − parts spent this month. The bar's yellow section",
+    },
+    {
+      label: "Additional exposure",
+      value: usd(financials.additionalExposure),
+      hint:
+        financials.additionalExposure > 0
+          ? "Yet to invoice − Adjusted ETC. Remaining exposure the adjusted forecast does not cover — the bar's red section"
+          : "Nothing: the adjusted ETC covers the whole remaining exposure, so there is no red section",
+    },
+    {
+      label: "Total projection",
       value: usd(financials.projection),
-      // Spelling out WHICH residual is riding on top is the difference between a
-      // number someone can check and one they have to take on faith — the bar adds
-      // the larger of ETC and Left to be invoiced, never both (that double-counts)
-      // and never neither's floor.
-      hint: etcRidesOnTop ? "Invoiced + ETC (the larger residual)" : "Invoiced + Left to be invoiced (the larger residual)",
+      hint: "Invoiced + Adjusted ETC + Additional exposure. Equivalently, Invoiced + max(Adjusted ETC, Yet to invoice)",
     },
     {
       label: "Projection vs Budget",
       value: financials.variance == null ? "—" : `${financials.variance > 0 ? "+" : "−"}${usd(Math.abs(financials.variance))}`,
+      hint: "Total projection − Budget. Over is positive",
     },
   ];
 
   const MODES: { key: PartsDrillMode; label: string }[] = [
     { key: "projection", label: "All rows" },
     { key: "invoiced", label: "Invoiced" },
-    { key: "left", label: "Left to be invoiced" },
+    { key: "left", label: "Yet to invoice" },
     { key: "etc", label: "ETC" },
   ];
 
@@ -338,22 +387,39 @@ export function PartsCostDrill({
               part-level breakdown of it. What it IS made of is the drawdown below: each month opens at the previous
               month&apos;s close, is reduced by the parts booked against the job, and ends where the manager left it.
             </p>
+            {/* Rewritten 2026-09-03 for Dan's model. Two earlier versions of this
+                paragraph described projections the card no longer draws — first "the
+                larger of ETC and Left to be invoiced", then a coverage split of the
+                open balance. */}
             <p>
-              The bar adds the <span className="font-semibold">larger</span> of ETC and Left to be invoiced on top of
-              Invoiced — never both, which would double-count money that is in each — so the residual riding on Invoiced
-              here is {etcRidesOnTop ? "ETC" : "Left to be invoiced"}.{" "}
-              {!etcRidesOnTop && (
+              The bar starts from the <span className="font-semibold">prior month&apos;s</span> ETC and draws it down by
+              this month&apos;s parts spend
+              {financials.priorEtc != null && (
                 <>
-                  For the rows behind it, switch to{" "}
+                  {" "}
+                  — {usd(financials.priorEtc)} less {usd(financials.partsSpentThisMonth)} leaves{" "}
+                  <span className="font-semibold">{usd(financials.adjustedEtc)}</span>
+                </>
+              )}
+              . What is still to be invoiced externally is then compared against that remainder, and only the
+              uncovered difference is added on top.
+              {financials.additionalExposure > 0 ? (
+                <>
+                  {" "}
+                  Here {usd(financials.yetToInvoice)} of exposure exceeds it by{" "}
+                  <span className="font-semibold">{usd(financials.additionalExposure)}</span>, which is the red section.
+                  For the rows behind that exposure, switch to{" "}
                   <button
                     type="button"
                     onClick={() => onModeChange("left")}
                     className="font-semibold text-sdc-blue-dark underline underline-offset-2"
                   >
-                    Left to be invoiced
+                    Yet to invoice
                   </button>
                   .
                 </>
+              ) : (
+                <> Here the remainder covers the whole {usd(financials.yetToInvoice)} of exposure, so none is red.</>
               )}
             </p>
           </div>

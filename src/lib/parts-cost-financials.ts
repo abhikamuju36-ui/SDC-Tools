@@ -1,6 +1,8 @@
 import "server-only";
 import { prisma } from "@/lib/prisma";
 import { getPartsCostForJobs, type PartsCostLine } from "@/lib/sync-totaleto";
+import { computePartsProjection, computeYetToInvoice } from "@/lib/parts-projection";
+import { readPriorEtcByJob, sumPriorEtc } from "@/lib/parts-prior-etc";
 import { computePartsBudgetProjection, purchasedTotal, actualTotal } from "@/lib/parts-budget-projection";
 import { withTimeoutOrNull } from "@/lib/with-timeout";
 // The type and the pure rounding helper live in a sibling module with no
@@ -96,7 +98,14 @@ const PARTS_BATCH_BUDGET_MS = 120_000;
 
 export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate?: Date }): Promise<PartsCostFinancials> {
   if (jobIds.length === 0) {
-    return { budget: null, invoiced: 0, leftToInvoice: 0, etc: null, totalSpent: 0, projection: 0, variance: null, variancePct: null, failedJobs: 0, lineCount: 0, lines: [] };
+    return {
+      budget: null, invoiced: 0, leftToInvoice: 0, etc: null, totalSpent: 0, projection: 0,
+      purchased: 0, priorEtc: null, priorEtcSource: "none", partsSpentThisMonth: 0,
+      adjustedEtcRaw: null, adjustedEtc: 0, yetToInvoice: 0, yetToInvoiceAllRows: 0,
+      inHouseExcluded: 0, inHouseRows: 0, additionalExposure: 0, coverageLine: null,
+      etcUnknown: true, etcMonth: null,
+      variance: null, variancePct: null, failedJobs: 0, lineCount: 0, lines: [],
+    };
   }
 
   const jobs = await prisma.job.findMany({ where: { id: { in: jobIds } }, select: { id: true, jobId: true, costQuoted: true } });
@@ -135,11 +144,45 @@ export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate
   const projection = await computePartsBudgetProjection(jobs.map((j) => j.id), lines, etcMonth).catch(() => null);
 
   const invoiced = actualTotal(lines);
+  // `toComplete` in the spec's vocabulary: the remaining open parts exposure, which
+  // is the same figure the card has always shown as "Left to be invoiced". One
+  // quantity, two names — never two addends (spec §8).
   const leftToInvoice = projection ? projection.committedNotPosted : Math.max(0, purchasedTotal(lines) - invoiced);
-  const etc = projection ? projection.estimateToPurchase : null;
   const totalSpent = invoiced + leftToInvoice;
-  const projectionTotal = projection ? projection.total : totalSpent;
 
+  // ── Dan's projection model (2026-09-03) ───────────────────────────────────
+  //
+  //   adjustedEtc        = max(0, priorEtc - partsSpentThisMonth)
+  //   yetToInvoice       = external remaining exposure, EXCLUDING in-house SDC
+  //   additionalExposure = max(0, yetToInvoice - adjustedEtc)
+  //   totalProjection    = invoiced + adjustedEtc + additionalExposure
+  //
+  // lib/parts-projection.ts holds the arithmetic, the in-house classification and
+  // their tests (including both worked examples from the spec and job 1101's real
+  // figures). lib/parts-prior-etc.ts resolves the two ETC inputs off the selected
+  // month's own Monthly ETC row, so the card and the grid cannot disagree.
+  //
+  // `computePartsBudgetProjection` is still called above — it supplies
+  // `committedNotPosted`, which the card still shows as the whole open balance — but
+  // its own `total` now feeds nothing. That figure was the ETC-driven projection
+  // this replaces.
+  const priorByJob = await readPriorEtcByJob(jobs.map((j) => j.id), etcMonth).catch(() => null);
+  const priorEtc = priorByJob
+    ? sumPriorEtc(jobs.map((j) => j.id), priorByJob)
+    : { priorEtc: null, partsSpentThisMonth: 0, source: "none" as const, month: null };
+  // Excludes in-house SDC: work SDC does itself never produces a supplier invoice,
+  // so counting it overstates what the job still owes the outside world (spec §6).
+  const yet = computeYetToInvoice(lines);
+  const projected = computePartsProjection({
+    invoiced,
+    priorEtc: priorEtc.priorEtc,
+    partsSpentThisMonth: priorEtc.partsSpentThisMonth,
+    yetToInvoice: yet.amount,
+  });
+  const etc = priorEtc.priorEtc;
+  const projectionTotal = projected.totalProjection;
+
+  // Against the whole projected exposure, never against invoiced alone (spec §11).
   const variance = budget != null ? projectionTotal - budget : null;
   const variancePct = budget != null && budget !== 0 ? (variance! / budget) * 100 : null;
 
@@ -150,6 +193,20 @@ export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate
     etc,
     totalSpent,
     projection: projectionTotal,
+    purchased: purchasedTotal(lines),
+    priorEtc: projected.priorEtc,
+    priorEtcSource: priorEtc.source,
+    partsSpentThisMonth: projected.partsSpentThisMonth,
+    adjustedEtcRaw: projected.adjustedEtcRaw,
+    adjustedEtc: projected.adjustedEtc,
+    yetToInvoice: projected.yetToInvoice,
+    yetToInvoiceAllRows: yet.allRows,
+    inHouseExcluded: yet.inHouseExcluded,
+    inHouseRows: yet.inHouseRows,
+    additionalExposure: projected.additionalExposure,
+    coverageLine: projected.coverageLine,
+    etcUnknown: projected.etcUnknown,
+    etcMonth: priorEtc.month ?? etcMonth,
     variance,
     variancePct,
     failedJobs,

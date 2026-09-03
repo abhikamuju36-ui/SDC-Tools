@@ -17,7 +17,7 @@ import { requirePagePermission } from "@/lib/require-permission";
 // snapshot is missing or stale (see triggerBuildReadinessRefresh) — the
 // client then polls for progress. This starts it BEFORE the first paint so a
 // cold cache doesn't wait an extra client round-trip to begin.
-export default async function BuildReadinessPage() {
+export async function BuildReadinessView() {
   await requirePagePermission("build-readiness:view");
   await triggerBuildReadinessRefresh(false);
   const [data, views] = await Promise.all([getBuildReadinessData(), listBuildReadinessViews()]);
@@ -37,4 +37,18 @@ export default async function BuildReadinessPage() {
       </div>
     </div>
   );
+}
+
+
+// -- Route entry point --
+//
+// The page's body lives in `BuildReadinessView` above so that BOTH this route and the split
+// view can render it. Split view renders two views in ONE document (see
+// lib/split-view.ts for why one document rather than two frames), which means a
+// pane cannot be a route and therefore cannot read `searchParams` - there is only
+// one URL and two panes would collide in it. So the body takes its context as a
+// plain argument, and the two callers differ only in where they read that context
+// from: this wrapper reads the URL, a pane reads its own `l.`/`r.` namespace.
+export default async function BuildReadinessPage() {
+  return <BuildReadinessView />;
 }

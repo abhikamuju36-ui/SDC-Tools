@@ -12,8 +12,14 @@ import type { PartsDrillMode } from "@/components/PartsCostDrill";
 // yellow = still a forecast), same idea the blue ramp encoded, new colours.
 const BAR_BUDGET = "#5489EF";
 const BAR_INVOICED = "#061D39"; // Invoiced — GL-posted, most certain
-const BAR_SPENT = "#AACEE8"; // Left to be invoiced — committed, not yet on the ledger. Informational-only chip swatch since 2026-08-17; no longer a bar fill.
-const BAR_PROJECTED = "#FFDE51"; // ETC — forecast
+// BAR_SPENT (#AACEE8) removed 2026-09-03: it was the swatch for the informational
+// "Left to be invoiced" chip, and the breakdown table marks reference rows with a
+// hollow ring instead — a filled colour there implied a fourth band in the bar.
+const BAR_PROJECTED = "#FFDE51"; // remaining exposure the ETC covers
+// Remaining exposure the ETC does NOT cover (2026-09-03). The app's own --sdc-red,
+// not a new tone: this is the same "needs attention" signal the rest of the card
+// uses, and a second red would imply a second kind of problem.
+const BAR_UNCOVERED = "#C0392B";
 
 // Height taller than before (2026-08-10, by request) so the second bar's
 // three segments have room to read as distinct shapes rather than thin stripes.
@@ -90,9 +96,7 @@ const BAR_H = 540; // px — see above; keep in step with SectionHierarchyChart'
 // CAPTION_H itself stays, since the two caption boxes still need it.
 const CAPTION_H = "2rem";
 
-// One segment's colour swatch + label + dollar value, as one row in a
-// compact vertical list.
-//
+
 // ── History: pinned → horizontal group → vertical list (2026-08-12c/d) ─────
 //
 // The original design pinned each marker to its own segment's exact pixel
@@ -121,29 +125,30 @@ const CAPTION_H = "2rem";
 // narrower than the card already needs for its OWN captions ("Actual /
 // Projection"), so this block was never actually the thing forcing the card
 // wide; it only looked that way while wrapping was in the mix.
-function SegmentMarker({ color, label, value, note, informational }: { color: string; label: string; value: number; note?: string; informational?: boolean }) {
-  return (
-    <div className="flex items-center gap-1 whitespace-nowrap">
-      {/* `informational` (2026-08-17): an OUTLINE swatch, not a filled one — this
-          chip names a figure that is NOT one of the bar's own stacked segments
-          (see the double-count fix below), so it deliberately doesn't look like
-          one. A filled dot here would read as "this color is somewhere in that
-          bar", which is exactly the misreading this fix removes. */}
-      <span
-        className={`inline-block h-1.5 w-1.5 shrink-0 rounded-full ${informational ? "border border-current bg-transparent" : ""}`}
-        style={informational ? { borderColor: color } : { background: color }}
-      />
-      <span className="font-sans text-micro text-sdc-gray-600">{label}</span>
-      {/* text-xs/font-bold/sdc-navy (2026-08-12b) — the same value-label
-          treatment as the bars above; unchanged by this pass. The category
-          name just before it stays smaller and un-bolded, on purpose — the
-          same "modest label beside a bold figure" pairing the "Budget" /
-          "Actual / Projection" captions under the bars already use. */}
-      <span className="font-mono text-xs font-bold tabular-nums text-sdc-navy">{usd(value)}</span>
-      {note && <span className="font-sans text-micro italic text-sdc-muted">{note}</span>}
-    </div>
-  );
+/**
+ * Which drill view a bar segment opens.
+ *
+ * `uncovered` maps to the open-exposure rows rather than to a view of its own: it is
+ * an arithmetic slice of that exposure (To complete − Current ETC), not a label any
+ * PO line carries, so there is no set of rows that IS the uncovered amount. Sending
+ * it to the exposure it belongs to — with the panel stating the split — is the
+ * honest answer; inventing a filter would imply a line-level attribution that does
+ * not exist.
+ */
+/** "2026-08" -> "August 2026". Null-safe: a mixed selection has no single month. */
+function etcMonthLabel(month: string): string {
+  const [y, m] = month.split("-").map(Number);
+  if (!y || !m) return month;
+  // UTC throughout, so a machine west of Greenwich cannot render the month before.
+  return `${new Date(Date.UTC(y, m - 1, 1)).toLocaleString("en-US", { month: "long", timeZone: "UTC" })} ${y}`;
 }
+
+function segmentDrillMode(key: string): PartsDrillMode {
+  if (key === "etc") return "etc";
+  if (key === "uncovered") return "left";
+  return "invoiced";
+}
+
 
 // Parts Cost money block for the Job Hour Details page — the app's version of
 // the Power BI report's Parts Cost visual.
@@ -231,7 +236,6 @@ export function PartsCostSummary({
   // estimate must not read as $0 estimated. (getPartsCostFinancials already
   // applies this: budget is null unless quoted > 0.)
   const estimate = financials.budget;
-  const hasProjection = financials.etc != null;
 
   // ── The Actual/Projection bar's TWO segments (2026-08-17 fix) ─────────────
   //
@@ -273,7 +277,29 @@ export function PartsCostSummary({
   // no matter which of the two terms actually won; reading `financials.etc`
   // directly would draw a shorter segment than the bar's own total implies
   // in exactly that case.
-  const projIncrement = hasProjection ? Math.max(0, projTotal - invoiced) : 0;
+  // ── Dan's projection model (2026-09-03) ───────────────────────────────────
+  //
+  //         RED      additionalExposure = max(0, yetToInvoice - adjustedEtc)
+  //     ---------    coverageLine       = invoiced + adjustedEtc
+  //        YELLOW    adjustedEtc        = max(0, priorEtc - partsSpentThisMonth)
+  //         BLUE     invoiced
+  //
+  // Every figure comes from getPartsCostFinancials — lib/parts-projection.ts holds
+  // the arithmetic and its tests (both worked examples from the spec, plus job
+  // 1101's real numbers), and lib/parts-prior-etc.ts resolves the two ETC inputs off
+  // the selected month's own Monthly ETC row. The card re-derives nothing, so it
+  // cannot disagree with the drill-through or the grid.
+  //
+  // Note the yellow segment is NOT the current month's New ETC. It is the PRIOR
+  // month's forecast drawn down by this month's spend — §20 is explicit that
+  // confusing the two is the mistake to avoid, and an earlier version of this card
+  // made exactly it.
+  const yetToInvoiceAmount = financials.yetToInvoice;
+  const adjustedEtcAmount = financials.adjustedEtc;
+  const additionalAmount = financials.additionalExposure;
+  const coverageLineAmount = financials.coverageLine;
+  const hasAdditional = additionalAmount > 0.5 && coverageLineAmount != null;
+  const etcUnknown = financials.etcUnknown;
 
   // ── Rounding that can't visibly contradict itself (audit finding) ─────────
   //
@@ -290,10 +316,21 @@ export function PartsCostSummary({
   // round for DISPLAY only, letting the LAST term in each sum absorb whatever
   // rounding residue is left, so both displayed subtotals always equal the
   // sum of the figures shown beside them.
-  const [invoicedDisplay, leftToInvoiceDisplay] = reconcilePartsCostRounding([invoiced, leftToInvoiceAmount]);
-  const totalSpentDisplay = invoicedDisplay + leftToInvoiceDisplay;
+  // Only Invoiced needs the reconciled rounding now: the open balance is no longer
+  // printed as a segment beside it (the table states it as a derived reference row),
+  // so there is no second figure that has to sum with it to a displayed total.
+  const [invoicedDisplay] = reconcilePartsCostRounding([invoiced, leftToInvoiceAmount]);
   const projTotalDisplay = Math.round(projTotal);
-  const etcDisplay = hasProjection ? Math.max(0, projTotalDisplay - invoicedDisplay) : 0;
+  // The three printed segments must sum to the printed total. Invoiced and uncovered
+  // round on their own; the COVERED figure absorbs whatever residue is left, so
+  // Invoiced + ETC-covered + Uncovered always equals the total above the bar even
+  // though each was rounded independently. Same mechanism as before, one more term.
+  // The three printed segments must sum to the printed total. Invoiced and the red
+  // band round on their own; the YELLOW figure absorbs whatever residue is left, so
+  // Invoiced + Adjusted ETC + Uncovered always equals the figure above the bar even
+  // though each was rounded independently.
+  const additionalDisplay = Math.round(additionalAmount);
+  const adjustedEtcDisplay = Math.max(0, projTotalDisplay - invoicedDisplay - additionalDisplay);
 
   // ── ONE shared scale for both bars (2026-08-10c, by request) ──────────────
   //
@@ -345,56 +382,207 @@ export function PartsCostSummary({
   // displayed beside the bar — while `heightPct` still scales off the raw,
   // full-precision figure, since the bar's geometry has no rounding-sum
   // problem to begin with (only the printed dollar labels do).
-  // Which of the two competing estimates of the same future money is the larger,
-  // and therefore the one the bar's top segment is actually drawn from.
-  const etcIsDriving = (financials.etc ?? 0) >= leftToInvoiceAmount;
 
+  // ── The stack, bottom to top (spec §1 and §12) ────────────────────────────
+  //
+  // The red section "may or may not be anything" (§11): it is pushed only when the
+  // remaining exposure actually exceeds the adjusted forecast, so an on-plan job
+  // carries no red at all.
   const segments: { key: string; label: string; note?: string; value: number; color: string; heightPct: number }[] = [
-    { key: "invoiced", label: "Invoiced", value: invoicedDisplay, color: BAR_INVOICED, heightPct: pct(invoiced) },
+    { key: "invoiced", label: "Invoiced actual", value: invoicedDisplay, color: BAR_INVOICED, heightPct: pct(invoiced) },
   ];
-  if (hasProjection) {
-    // ── "To complete", not "ETC" (2026-09-02) ────────────────────────────────
-    //
-    // This segment was labelled "ETC" while drawing `projIncrement` — the RESIDUAL,
-    // which is the larger of ETC and Left to be invoiced (never both; adding them
-    // double-counts, the 2026-08-17 fix). Those are not the same number and can
-    // differ by an order of magnitude: measured on job 1131, ETC $2,000 against a
-    // segment drawn at $13,018. So the legend named one figure and showed another.
-    //
-    // The label is not wrong in plain English — the residual genuinely is an
-    // estimate to complete. It is wrong in THIS app's vocabulary, where "ETC" is a
-    // proper noun: a whole tab, a specific grid figure, `financials.etc`. The bare
-    // word cannot mean something that is not that number.
-    //
-    // "To complete" keeps the connection for anyone who knew it as ETC, without
-    // claiming the word. It is also deliberately not "Remaining": that would sit
-    // directly above a chip called "Left to be invoiced", two labels both meaning
-    // "what's left", a dollar apart on this job — a clearer name traded for an
-    // ambiguous pair.
-    //
-    // The label is FIXED across jobs and months; the `note` carries which of the two
-    // terms is driving it. Stability in the label, accuracy in the note — the
-    // alternative (a label that switches to "Left to be invoiced" when that term
-    // wins) would render two near-identical legend rows with different values.
+  if (adjustedEtcAmount > 0.5) {
     segments.push({
       key: "etc",
-      label: "To complete",
-      note: etcIsDriving ? "from ETC" : "from open POs",
-      value: etcDisplay,
+      label: "Adjusted ETC remaining",
+      note: etcUnknown ? undefined : "prior-month ETC less this month's spend",
+      value: adjustedEtcDisplay,
       color: BAR_PROJECTED,
-      heightPct: pct(projIncrement),
+      heightPct: pct(adjustedEtcAmount),
     });
   }
-  // Chips read in the same top-to-bottom order the segments stack visually —
-  // the topmost segment ("ETC", when present) listed first — even though
-  // nothing about the compact layout below is positioned per-segment any
-  // more (2026-08-12c). Keeping this order is still worth doing: it's the
-  // one remaining thread connecting "which chip is this" back to "where in
-  // the bar does that dollar figure live". "Left to be invoiced" is added
-  // separately, after the two real segments — see the render below — since
-  // it names money already inside ETC rather than a segment of its own
-  // (2026-08-17 fix).
-  const labelOrder = [...segments].reverse();
+  if (hasAdditional) {
+    segments.push({
+      key: "uncovered",
+      label: "Uncovered invoice exposure",
+      note: "beyond the adjusted ETC",
+      value: additionalDisplay,
+      color: BAR_UNCOVERED,
+      heightPct: pct(additionalAmount),
+    });
+  }
+
+  // ── The breakdown table (2026-09-03, by request) ──────────────────────────
+  //
+  // Reported: "instead of raw text at the bottom, could I have a table showing what
+  // each colour denotes, and also how that number was arrived at — sort of showing
+  // the clear calculation, making it more reliable."
+  //
+  // So each row carries three things rather than two: the SWATCH that ties it to a
+  // band in the bar, the figure, and the ARITHMETIC that produced the figure written
+  // out with its own inputs substituted in. A reader can check every number on the
+  // card against the row above it without opening the drill-through.
+  //
+  // Built from the same `financials` the bar is drawn from — not recomputed — so a
+  // row can never state a derivation the bar did not use. The three coloured rows
+  // sum to the `total` row by construction: that is the same
+  // `invoiced + adjustedEtc + additionalExposure` the projection is defined as, and
+  // the printed figures are the rounding-reconciled ones, so the column adds up on
+  // screen as well as in the arithmetic.
+  //
+  // `reference` rows are the inputs the coloured rows are derived FROM. They are
+  // separated because they are not parts of the bar — listing them with a filled
+  // swatch would imply a fourth and fifth band.
+  type BreakdownRow = {
+    key: string;
+    swatch: string | null;
+    label: string;
+    /** How this figure was arrived at, with the actual inputs in it. */
+    derivation: string;
+    value: number;
+    kind: "segment" | "total" | "reference";
+  };
+
+  const spentThisMonth = financials.partsSpentThisMonth;
+  const priorEtcAmount = financials.priorEtc;
+
+  const breakdown: BreakdownRow[] = [
+    {
+      key: "invoiced",
+      swatch: BAR_INVOICED,
+      label: "Invoiced actual",
+      derivation: "GL-posted parts spend, all POs, lifetime",
+      value: invoicedDisplay,
+      kind: "segment",
+    },
+  ];
+  if (adjustedEtcAmount > 0.5) {
+    breakdown.push({
+      key: "etc",
+      swatch: BAR_PROJECTED,
+      label: "Adjusted ETC remaining",
+      derivation:
+        priorEtcAmount == null
+          ? "prior-month ETC less this month's parts spend"
+          : `${usd(Math.round(priorEtcAmount))} prior ETC − ${usd(Math.round(spentThisMonth))} spent this month`,
+      value: adjustedEtcDisplay,
+      kind: "segment",
+    });
+  }
+  if (hasAdditional) {
+    breakdown.push({
+      key: "uncovered",
+      swatch: BAR_UNCOVERED,
+      label: "Uncovered invoice exposure",
+      derivation: `${usd(Math.round(yetToInvoiceAmount))} yet to invoice − ${usd(adjustedEtcDisplay)} adjusted ETC`,
+      value: additionalDisplay,
+      kind: "segment",
+    });
+  }
+  breakdown.push({
+    key: "total",
+    swatch: null,
+    label: "Projected total",
+    derivation:
+      breakdown.length === 1
+        ? "nothing forecast or outstanding — the invoiced actual"
+        : `sum of the ${breakdown.length} above`,
+    value: projTotalDisplay,
+    kind: "total",
+  });
+
+  // The inputs, so the derivations above are checkable too.
+  breakdown.push({
+    key: "yet",
+    swatch: null,
+    label: "Yet to invoice",
+    derivation:
+      financials.inHouseRows > 0
+        ? `${usd(Math.round(financials.yetToInvoiceAllRows))} open balance − ${usd(Math.round(financials.inHouseExcluded))} in-house SDC (${financials.inHouseRows} rows)`
+        : "purchased less GL-posted, on rows that bill externally",
+    value: Math.round(yetToInvoiceAmount),
+    kind: "reference",
+  });
+  if (priorEtcAmount != null) {
+    breakdown.push({
+      key: "prior",
+      swatch: null,
+      label: "Prior-month ETC",
+      derivation:
+        financials.priorEtcSource === "quoted-parts"
+          ? "first ETC month — opens at the quoted parts value"
+          : financials.etcMonth
+            ? `last month's confirmed New ETC, carried into ${etcMonthLabel(financials.etcMonth)}`
+            : "last month's confirmed New ETC, carried forward",
+      value: Math.round(priorEtcAmount),
+      kind: "reference",
+    });
+  }
+  breakdown.push({
+    key: "purchased",
+    swatch: null,
+    label: "Purchased / committed",
+    derivation: `${usd(invoicedDisplay)} invoiced + ${usd(Math.round(financials.yetToInvoiceAllRows))} open balance`,
+    value: Math.round(financials.purchased),
+    kind: "reference",
+  });
+
+  // ── A thin segment still has to be seeable (2026-09-03, by request) ───────
+  //
+  // Reported: when the ETC is small against Invoiced, the yellow cap is too thin to
+  // notice, so a reader cannot tell ETC coverage exists at all. On the reported job
+  // it is $5,622 of a $791,609 bar — 0.7%, about 3.6px of the 540px frame.
+  //
+  // So a segment with a non-zero value is given a floor of MIN_SEG_PX, and the
+  // pixels are BORROWED FROM THE TALLEST segment rather than added to the stack.
+  // That is what keeps the promise this card is built on: the bar's total height
+  // stays exactly `invoiced + toComplete`, so it still compares correctly against
+  // the Budget bar beside it on the shared scale. Adding the pixels instead would
+  // make an under-planned job draw taller than a fully-planned one with the same
+  // total, which is a worse lie than the one being fixed.
+  //
+  // The borrow is imperceptible in practice — 6px off a ~470px Invoiced segment on
+  // the reported job — and it is bounded: the donor can never fall below
+  // MIN_SEG_PX itself, so this cannot invert the visual order of two segments.
+  //
+  // NOTHING numeric changes. The values, the totals, the label above the bar, the
+  // legend and the drill-through all still read the true figures; only the rendered
+  // pixel heights move. `heightPct` (the true share) is kept alongside so the two
+  // can never be confused at the call site.
+  const MIN_SEG_PX = 10;
+  const renderPx: number[] = segments.map((seg) => barPx(seg.heightPct));
+  {
+    let borrowed = 0;
+    for (let i = 0; i < renderPx.length; i++) {
+      // A zero segment is not drawn at all — a floor there would invent a band for
+      // money that does not exist.
+      if (segments[i].heightPct <= 0) continue;
+      if (renderPx[i] < MIN_SEG_PX) {
+        borrowed += MIN_SEG_PX - renderPx[i];
+        renderPx[i] = MIN_SEG_PX;
+      }
+    }
+    if (borrowed > 0) {
+      let tallest = 0;
+      for (let i = 1; i < renderPx.length; i++) if (renderPx[i] > renderPx[tallest]) tallest = i;
+      renderPx[tallest] = Math.max(MIN_SEG_PX, renderPx[tallest] - borrowed);
+    }
+  }
+
+  // Where the dotted line sits, in RENDERED pixels rather than true share: it marks
+  // the top of the yellow cap, so it has to move with the cap when the cap is
+  // floored — otherwise the line would cut through the middle of the segment it is
+  // supposed to bound. The figure it REPORTS is still the true `coverageLine`.
+  const coverageLinePx = (() => {
+    let px = 0;
+    for (let i = 0; i < segments.length; i++) {
+      px += renderPx[i];
+      if (segments[i].key === "etc") return px;
+    }
+    // No covered segment (an ETC of 0): the boundary is the top of Invoiced.
+    return renderPx[0] ?? 0;
+  })();
+
 
   // ONE meter: where the job is HEADING against what it was sold for.
   //
@@ -516,7 +704,21 @@ export function PartsCostSummary({
           align against each other — the bar pair's OWN internal alignment
           (Budget vs Actual/Projection, `items-end` on the nested row below)
           is untouched. */}
-      <div className="flex items-center justify-center gap-1 py-1">
+      {/* ── The legend moved BELOW this row (2026-09-03, by request) ─────────
+          This row held two children — the bar pair and the segment legend — side by
+          side, and the legend's own width (its longest row) is several times the
+          pair's. In a ~15%-of-row card that pushed the bars hard against the card's
+          left edge, and each bar's value label is WIDER than its 1.25rem bar (see
+          BAR_W), so the leftmost label overhung the card border and clipped.
+
+          With the legend gone from this row, `justify-center` centres a genuinely
+          compact pair in the card's full inner width. `px-3` is the guard that makes
+          the clearance a guarantee rather than a consequence of centring: at any zoom
+          or responsive width the value labels keep that much space from the border,
+          so neither can reach the edge even on a job whose figures are unusually
+          wide. The columns stay content-sized (never `min-w-0`), so each label still
+          sets its own column's minimum and cannot overlap its neighbour. */}
+      <div className="flex items-center justify-center gap-1 px-3 py-1">
         {/* Bar pair: compact and content-sized, NOT `flex-1` — an intervening
             pass (§81) made this row and both columns `flex-1` so the pair
             would "grow to use whatever width the card has left", which
@@ -588,9 +790,52 @@ export function PartsCostSummary({
           </div>
 
           <div className="flex flex-col items-center gap-1.5">
-            {/* Same fix as Budget's frame just above — see its comment. */}
-            <div className="flex flex-col items-center justify-end" style={{ width: BAR_W, height: BAR_H }}>
-              <span className="mb-0.5 whitespace-nowrap font-mono text-xs font-bold leading-none tabular-nums text-sdc-navy">{usd(projTotalDisplay)}</span>
+            {/* Same fix as Budget's frame just above — see its comment.
+                `relative` so the coverage line can sit at its own height inside the
+                same frame the fills are measured in. */}
+            <div className="relative flex flex-col items-center justify-end" style={{ width: BAR_W, height: BAR_H }}>
+              {/* ── The ETC coverage boundary (2026-09-03, spec §4) ──────────
+                  A red dotted line at `invoiced + etcCovered` — the top of the
+                  portion the current ETC covers, and therefore the bottom of the
+                  red. Drawn ONLY when something is uncovered: §5 says no line when
+                  the ETC covers the whole exposure, because there is then no
+                  boundary to mark.
+
+                  Positioned from the BOTTOM in the same barPx units the segments
+                  use, so it lands exactly on the seam between yellow and red rather
+                  than being placed by eye.
+
+                  Extended past the bar on both sides (-left-5/-right-5): the bar is
+                  1.25rem wide and a dotted rule that narrow does not read as a
+                  reference line. `pointer-events-none` so it cannot steal a click
+                  from the drill-through segments underneath. */}
+              {hasAdditional && (
+                <div
+                  className="pointer-events-none absolute -left-5 -right-5 z-10 border-t border-dashed"
+                  style={{ bottom: coverageLinePx, borderColor: BAR_UNCOVERED }}
+                  title={
+                    "ETC coverage ends here. The red section above this line is remaining invoice exposure not " +
+                    `covered by the adjusted ETC. Adjusted ETC ${usd(Math.round(adjustedEtcAmount))} against ` +
+                    `${usd(Math.round(yetToInvoiceAmount))} still to invoice; ${usd(additionalDisplay)} uncovered.`
+                  }
+                />
+              )}
+              {/* §10: the figure above the bar is `invoiced + toComplete`, whatever
+                  the ETC says. It stays navy even when part of the exposure is
+                  uncovered: the total is not itself an overspend, and colouring it
+                  red would say the whole projection was the problem rather than the
+                  gap in coverage. The tooltip carries the split. */}
+              <span
+                className="mb-0.5 whitespace-nowrap font-mono text-xs font-bold leading-none tabular-nums text-sdc-navy"
+                title={
+                  `Total projection ${usd(projTotalDisplay)} = invoiced ${usd(invoicedDisplay)} + adjusted ETC ` +
+                  `${usd(adjustedEtcDisplay)}` +
+                  (hasAdditional ? ` + uncovered exposure ${usd(additionalDisplay)}` : "") +
+                  "."
+                }
+              >
+                {usd(projTotalDisplay)}
+              </span>
               {/* The two segments stack bottom-to-top inside their own
                   sub-column (flex-col-reverse: first array item —
                   "Invoiced" — ends up at the bottom, matching before).
@@ -614,16 +859,31 @@ export function PartsCostSummary({
                     <button
                       key={s.key}
                       type="button"
-                      onClick={() => onDrill(s.key === "etc" ? "etc" : "invoiced")}
+                      // ── Where each segment drills (2026-09-03) ─────────────
+                      //
+                      //   invoiced   the GL-posted lines. A real row-level set.
+                      //   etc        the ETC drawdown by month, which is what that
+                      //              figure is actually made of.
+                      //   uncovered  the open-exposure rows. Deliberately NOT a
+                      //              filter of its own: "uncovered" is a job-level
+                      //              subtraction (To complete − ETC), not a property
+                      //              any individual PO line carries, so there is no
+                      //              honest way to list "the uncovered lines". It
+                      //              opens the exposure it is part of, and the
+                      //              panel's own breakdown states the split.
+                      onClick={() => onDrill(segmentDrillMode(s.key))}
                       aria-label={`${s.label} ${usd(s.value)} — show the detail behind this`}
                       title={`${s.label} — click for detail`}
                       className={`motion-interactive w-full flex-shrink-0 cursor-pointer ${i === segments.length - 1 ? "rounded-t-sm" : ""} ${
-                        drillMode === (s.key === "etc" ? "etc" : "invoiced") ? "ring-2 ring-sdc-blue" : "hover:opacity-80"
+                        drillMode === segmentDrillMode(s.key) ? "ring-2 ring-sdc-blue" : "hover:opacity-80"
                       }`}
-                      style={{ height: barPx(s.heightPct), background: s.color }}
+                      // renderPx, not barPx(heightPct): a non-zero segment is floored
+                      // to a visible height with the pixels borrowed from the tallest,
+                      // so the stack's total is unchanged. See MIN_SEG_PX.
+                      style={{ height: renderPx[i], background: s.color }}
                     />
                   ) : (
-                    <div key={s.key} className={`w-full flex-shrink-0 ${i === segments.length - 1 ? "rounded-t-sm" : ""}`} style={{ height: barPx(s.heightPct), background: s.color }} />
+                    <div key={s.key} className={`w-full flex-shrink-0 ${i === segments.length - 1 ? "rounded-t-sm" : ""}`} style={{ height: renderPx[i], background: s.color }} />
                   ),
                 )}
               </div>
@@ -634,65 +894,111 @@ export function PartsCostSummary({
               <button
                 type="button"
                 onClick={() => onDrill("projection")}
-                aria-label="Actual / Projection — show every row behind this bar"
-                title="Click for the full parts-cost detail behind this bar"
-                className={`motion-interactive flex h-8 items-start justify-center rounded text-center text-note font-medium leading-tight underline decoration-dotted underline-offset-2 ${
+                aria-label="Projected total — show every row behind this bar"
+                title="Projected total = Invoiced + total remaining exposure. Click for the full parts-cost detail behind this bar"
+                className={`motion-interactive flex h-8 flex-col items-center justify-start rounded text-center leading-tight ${
                   drillMode === "projection" ? "text-sdc-blue-dark" : "text-sdc-gray-600 hover:text-sdc-navy"
                 }`}
               >
-                Actual /
-                <br />
-                Projection
+                {/* ── "Projected total", with the old name kept as helper text ──
+                    (2026-09-03, by request: the captions should read "Budget" and
+                    "Projected total".) "Actual / Projection" survives one size down
+                    and muted rather than being deleted: it is the name on the Power
+                    BI visual this card recreates and the phrase people have been
+                    using for it, so dropping it outright would break the tie-back
+                    for anyone reading the two side by side. */}
+                <span className="text-note font-medium underline decoration-dotted underline-offset-2">
+                  Projected total
+                </span>
+                <span className="text-micro text-sdc-gray-400">Actual / Projection</span>
               </button>
             ) : (
-              <div className="flex h-8 items-start justify-center text-center text-note font-medium leading-tight text-sdc-gray-600">
-                Actual /
-                <br />
-                Projection
+              <div className="flex h-8 flex-col items-center justify-start text-center leading-tight text-sdc-gray-600">
+                <span className="text-note font-medium">Projected total</span>
+                <span className="text-micro text-sdc-gray-400">Actual / Projection</span>
               </div>
             )}
           </div>
         </div>
+      </div>
 
-        {/* The segment rows, as one compact vertical list (2026-08-12d, by
-            request — the horizontal flex-wrap version just before this
-            "caused the layout to become unbalanced and stretched"). No
-            absolute positioning, no `placeMarkers` collision math (both
-            removed with the pinned-to-segment version this replaced), and —
-            this time — no wrap cap either: `flex-col` never asks its parent
-            for more than its own widest ROW, so it can't drag the card wider
-            the way the flex-wrap attempt did (see SegmentMarker's own header
-            for exactly how that happened). `shrink-0` still matters here for
-            the same reason it does everywhere else in this card: a block
-            that gets squeezed below its own content's width can only end in
-            overlap, and this one's content is unbreakable dollar figures.
+      {/* ── The breakdown table (2026-09-03, by request) ─────────────────────
+          Replaces the vertical chip list that used to sit here. Two problems with
+          that list, both visible in the report: it stated figures without stating
+          where they came from, and once it grew past four rows it ran into the
+          "Total Parts Cost Spent" line below it.
 
-            "Left to be invoiced" (2026-08-17) is listed LAST and rendered
-            with `informational` — it is not one of the two rows above it,
-            which are the bar's own real segments; it is money already
-            counted inside "ETC", shown here because "how much of ETC is
-            already on an open PO" is a real, useful question even though the
-            bar no longer draws it as its own stack. */}
-        <div className="flex shrink-0 flex-col gap-1">
-          {labelOrder.map((s) => (
-            <SegmentMarker key={s.key} color={s.color} label={s.label} value={s.value} note={s.note} />
-          ))}
-          {onDrill ? (
-            // The legend names it, so the legend is where it gets inspected — it is
-            // not a segment of the bar any more (2026-08-17), so there is nothing in
-            // the bar itself to click for it.
-            <button
-              type="button"
-              onClick={() => onDrill("left")}
-              aria-label={`Left to be invoiced ${usd(leftToInvoiceDisplay)} — show the rows behind this`}
-              className={`motion-interactive rounded text-left ${drillMode === "left" ? "ring-1 ring-sdc-blue" : "hover:bg-sdc-blue-light/50"}`}
-            >
-              <SegmentMarker color={BAR_SPENT} label="Left to be invoiced" value={leftToInvoiceDisplay} note="Included in To complete" informational />
-            </button>
-          ) : (
-            <SegmentMarker color={BAR_SPENT} label="Left to be invoiced" value={leftToInvoiceDisplay} note="Included in To complete" informational />
-          )}
-        </div>
+          A real <table> rather than flex rows, because the alignment IS the point:
+          the value column has to line up so the three coloured rows can be read as a
+          column that sums to the total beneath them. `tabular-nums` on that column
+          makes the digits align too.
+
+          The swatch column is what ties a row to a band in the bar — the thing the
+          request asked for first. Reference rows carry a hollow ring instead, since
+          they are inputs to the calculation rather than parts of the bar. */}
+      <div className="mt-3 overflow-x-auto px-2">
+        <table className="w-full border-collapse text-micro">
+          <caption className="sr-only">
+            How the projected total is calculated, and what each colour in the bar denotes
+          </caption>
+          <thead>
+            <tr className="border-b border-sdc-border text-sdc-gray-400">
+              <th scope="col" className="w-3 pb-1" />
+              <th scope="col" className="pb-1 text-left font-medium">
+                Component
+              </th>
+              <th scope="col" className="pb-1 pl-2 text-right font-medium">
+                Amount
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {breakdown.map((r, i) => {
+              const isTotal = r.kind === "total";
+              const firstReference = r.kind === "reference" && breakdown[i - 1]?.kind !== "reference";
+              return (
+                <tr
+                  key={r.key}
+                  className={`align-top ${isTotal ? "border-t border-sdc-border font-semibold" : ""} ${
+                    // A rule above the first reference row separates the bar's own
+                    // composition from the inputs it was derived from.
+                    firstReference ? "border-t border-sdc-border" : ""
+                  }`}
+                >
+                  <td className="py-1 pr-1">
+                    {r.swatch ? (
+                      <span
+                        aria-hidden
+                        className="mt-[3px] inline-block h-2 w-2 shrink-0 rounded-full"
+                        style={{ background: r.swatch }}
+                      />
+                    ) : (
+                      r.kind === "reference" && (
+                        <span
+                          aria-hidden
+                          className="mt-[3px] inline-block h-2 w-2 shrink-0 rounded-full border border-sdc-gray-300"
+                        />
+                      )
+                    )}
+                  </td>
+                  <td className="py-1">
+                    <span className={isTotal ? "text-sdc-navy" : "text-sdc-gray-600"}>{r.label}</span>
+                    {/* The arithmetic, one size down and muted: it is there to be
+                        checked, not to compete with the figure it explains. */}
+                    <span className="block text-[0.62rem] leading-snug text-sdc-gray-400">{r.derivation}</span>
+                  </td>
+                  <td
+                    className={`py-1 pl-2 text-right font-mono tabular-nums ${
+                      isTotal ? "text-sdc-navy" : "font-semibold text-sdc-navy"
+                    }`}
+                  >
+                    {usd(r.value)}
+                  </td>
+                </tr>
+              );
+            })}
+          </tbody>
+        </table>
       </div>
 
       {/* The spacer now comes BEFORE "Total Parts Cost Spent" (2026-08-11c,
@@ -703,40 +1009,19 @@ export function PartsCostSummary({
           above Projection vs Budget instead of immediately below the bars. */}
       <div className="flex-1" />
 
-      {/* "Total Parts Cost Spent" is a named figure people look for.
-          2026-08-11 (by request): Invoiced + Left to be invoiced, `spent` —
-          NOT the GL-posted-only figure this caption showed 2026-08-10 through
-          2026-08-11a. That earlier choice existed because a cumulative
-          committed total once read $399,177 on job 1116 against a $349,732
-          ledger; the two figures summed here are the exact same two dollar
-          values the legend prints (Invoiced + Left to be invoiced), so this
-          reconciles with what's on screen rather than with the ledger. ETC
-          is deliberately excluded — it's a forecast, not spend.
-          As of 2026-08-17 (the double-count fix) this is NOT "the bar's own
-          two segments" any more — the bar stacks Invoiced + ETC (=
-          Projection); this caption sums Invoiced + Left to be invoiced (=
-          Total Parts Cost Spent), a genuinely different pair that happens to
-          share the same "Invoiced" figure. Both are still correct; they now
-          answer two different questions ("spent or committed so far" vs.
-          "where the job lands"), which is why the card shows both. */}
-      {/* The AMOUNT carries the emphasis, not the whole line (2026-08-11f, by
-          request): navy + bold + `text-sm` against the label's muted `text-note`
-          makes the figure the thing the eye lands on, without turning a quiet
-          caption into a second heading competing with "Projection vs Budget"
-          right beneath it. The expression is untouched — still exactly
-          Invoiced + Left to be invoiced. */}
-      {/* `mt-1`, not `mt-2` (2026-08-11f): the taller bars consumed the whole
-          72.8px `flex-1` spacer that used to sit here, which left this card's
-          natural height 3.5px ABOVE the ETC card's — and since the two stretch
-          to whichever is taller, that made BOTH cards grow. Reclaiming 3.75px
-          here puts the ETC card back in charge of the row height (so the card
-          height is preserved exactly, as asked) and tightens the gap between
-          the bars and this summary at the same time. */}
-      <p className="mt-1 text-note text-sdc-gray-400">
-        Total Parts Cost Spent:{" "}
-        <span className="font-mono text-sm font-bold tabular-nums text-sdc-navy">{usd(totalSpentDisplay)}</span>
-      </p>
+      {/* ── "Total Parts Cost Spent" folded into the table (2026-09-03) ──────
+          It stood here as its own line — Invoiced + Left to be invoiced — and it was
+          the line the breakdown table collided with in the report. Removing it is
+          not a loss of information: the same figure is the table's
+          "Purchased / committed" row, with its derivation stated, which is more than
+          this line ever said.
 
+          It also no longer belongs beside the projection. Under Dan's model the bar's
+          total is Invoiced + Adjusted ETC + uncovered exposure, which EXCLUDES
+          in-house SDC; this figure includes it. On job 1104 that is $780,324 against
+          $821,469 — two totals a foot apart on the same card, differing by a rule
+          neither of them stated. In the table they sit in one column with their
+          arithmetic beside them, which is the whole point of the table. */}
       {/* Projection vs Budget — the one figure that says whether this job
           lands over what it was sold for, while there's still time to act.
           Its own border-t + pt-3 below separates it from the caption now

@@ -106,14 +106,47 @@ test("each mode scopes to the rows that actually contribute to its figure", () =
   assert.match(DRILL_CODE, /if \(mode === "left"\) return rows\.filter\(\(r\) => r\.leftToInvoice !== 0\)/);
 });
 
-test("the bar's second segment is reported as the residual, not just as ETC", () => {
-  // Measured on 1131: the card labels that segment "ETC" but DRAWS projection −
-  // invoiced, which is the larger of ETC and Left to be invoiced. Those differ by an
-  // order of magnitude there ($2,000 vs $13,017), so a panel showing only the raw ETC
-  // would print $2,000 beside a bar visibly drawn at $13,017 and read as a mismatch.
-  assert.match(DRILL_CODE, /label: "Residual on the bar"/);
-  assert.match(DRILL_CODE, /usd\(financials\.projection - financials\.invoiced\)/);
-  assert.match(DRILL_CODE, /label: "ETC"/, "the raw ETC is still stated alongside it");
+test("the panel proves the bar with every figure the model uses", () => {
+  // Rewritten 2026-09-03 for Dan's model. This assertion has now pinned three
+  // different vocabularies — a "Residual on the bar" row, then an "ETC-covered
+  // remaining" one — because the model beneath it changed twice. What has to stay
+  // true is the reason the row existed at all: the panel must state the figures the
+  // bar actually DRAWS, plus their inputs, so a reader can tie each segment back.
+  //
+  // §14's list, and the three subtractions that make it checkable:
+  //     Prior-month ETC − Parts spent this month  = Adjusted ETC
+  //     Yet to invoice  − Adjusted ETC            = Additional exposure
+  //     Invoiced + Adjusted ETC + Additional      = Total projection
+  for (const label of [
+    "Purchased / committed",
+    "Invoiced actual (lifetime)",
+    "Yet to invoice",
+    "Prior-month ETC",
+    "Parts spent this month",
+    "Adjusted ETC",
+    "Additional exposure",
+    "Total projection",
+  ]) {
+    assert.match(DRILL_CODE, new RegExp(`label: "${label.replace(/[/()]/g, (c) => "\\" + c)}"`), `the panel must show a "${label}" row`);
+  }
+
+  // Read from the shared figures, never recomputed here — a panel that re-derives is
+  // a panel that can disagree with the bar it explains.
+  for (const field of [
+    "financials.purchased",
+    "financials.yetToInvoice",
+    "financials.priorEtc",
+    "financials.partsSpentThisMonth",
+    "financials.adjustedEtc",
+    "financials.additionalExposure",
+  ]) {
+    assert.ok(DRILL_CODE.includes(field), `${field} must be read from the shared financials`);
+  }
+
+  // The in-house exclusion has to be auditable, or "Yet to invoice" is a figure that
+  // silently disagrees with the open balance the Parts List shows (§6).
+  assert.match(DRILL_CODE, /label: "In-house \(SDC\) excluded"/);
+  assert.match(DRILL_CODE, /financials\.yetToInvoiceAllRows/);
 });
 
 test("the job-wide zero floor on Left to be invoiced is surfaced, not reconciled away", () => {
@@ -143,9 +176,23 @@ test("ETC claims no part-level breakdown, because none exists", () => {
 test("every segment and the whole bar are real buttons with their own names", () => {
   // Per-element buttons rather than one handler hit-testing by offsetY: the browser's
   // hit-testing is exact, and each target gets a name, focus and Enter/Space free.
-  assert.match(CARD, /onClick=\{\(\) => onDrill\(s\.key === "etc" \? "etc" : "invoiced"\)\}/);
+  // The per-segment target moved into `segmentDrillMode` when the bar gained a third
+  // segment (2026-09-03): a nested ternary across three keys inline was the less
+  // readable half of the same rule, and the mapping now carries the reason "uncovered"
+  // opens the exposure rather than a filter of its own.
+  assert.match(CARD, /onClick=\{\(\) => onDrill\(segmentDrillMode\(s\.key\)\)\}/);
+  assert.match(CARD, /function segmentDrillMode\(key: string\): PartsDrillMode/);
   assert.match(CARD, /onClick=\{\(\) => onDrill\("projection"\)\}/, "the caption opens the whole-bar view");
-  assert.match(CARD, /onClick=\{\(\) => onDrill\("left"\)\}/, "the legend chip opens its own rows");
+  // The legend chip that carried this click became a table row (2026-09-03), and a
+  // table of derivations is a reference rather than a set of controls — the bar's own
+  // segments and its caption remain the drill targets, which is where a reader
+  // reaches for detail anyway. Asserted here so the loss is deliberate and recorded
+  // rather than looking like a dropped handler.
+  assert.ok(
+    !/onDrill\("left"\)/.test(CARD),
+    "the breakdown table is not clickable; the bar's segments and caption are the drill targets",
+  );
+  assert.match(CARD, /onModeChange\("left"\)/.test(CARD) ? /.?/ : /onDrill\(segmentDrillMode/, "segments still drill");
   assert.match(CARD, /aria-label=\{`\$\{s\.label\} \$\{usd\(s\.value\)\}/);
 });
 

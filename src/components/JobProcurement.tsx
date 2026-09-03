@@ -385,12 +385,34 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
     const estimated = parts
       .filter((p) => p.matchReason === "no-purchase")
       .reduce((sum, p) => sum + p.totalPrice, 0);
+    const nonBomTotal = nonBom.reduce((sum, p) => sum + p.totalPrice, 0);
     return {
       jobTotal,
       jobInvoiced,
       estimated,
+      // ── The BOM side, stated rather than left to be subtracted (2026-09-03) ──
+      //
+      // The footer used to name only the non-BOM half and the job total, leaving
+      // "so how much IS the BOM, then" as arithmetic for the reader. Both halves
+      // are now stated, so the equation on the strip is one the eye can check.
+      //
+      // `allRows` and `bomRows` count the job's OWN rows — every row the table
+      // would draw with no filter and no scope chip — because the footer's second
+      // line is a job-level reconciliation and must not move when a supplier
+      // filter changes what is on screen. The visible-row counts are computed
+      // separately, in the table view, from the rows it actually renders.
+      allRows: parts.length,
+      bomRows: parts.length - nonBom.length,
+      // Purchase money on BOM rows: their total MINUS the estimate-priced ones.
+      // This is the term that actually adds up — a BOM part with nothing bought
+      // against it is priced unit x qty from the BOM, so leaving it in would make
+      // "BOM + non-BOM = job total" overshoot by exactly `estimated` (job 1101:
+      // $3,630) and print an equation that visibly does not balance. Same
+      // subtraction `unexplained` below already makes; named here so the strip can
+      // show the two addends and their sum without doing it a second way.
+      bomPurchased: parts.reduce((sum, p) => sum + p.totalPrice, 0) - nonBomTotal - estimated,
       nonBomRows: nonBom.length,
-      nonBomTotal: nonBom.reduce((sum, p) => sum + p.totalPrice, 0),
+      nonBomTotal,
       nonBomInvoiced: nonBom.reduce((sum, p) => sum + p.invoicedAmount, 0),
       // What the rows on screen do NOT account for. Should be zero now that every
       // purchase line becomes a row — surfaced rather than assumed, because "the
@@ -1113,6 +1135,11 @@ const DEFAULT_HIDDEN_COLS: ColKey[] = ["parent", "category", "invoiceddate", "le
 type JobReconcile = {
   jobTotal: number;
   jobInvoiced: number;
+  /** Every row the table draws for this job, before any filter or scope chip. */
+  allRows: number;
+  bomRows: number;
+  /** Purchase money on BOM rows — their total less the estimate-priced ones (see `estimated`). */
+  bomPurchased: number;
   nonBomRows: number;
   nonBomTotal: number;
   nonBomInvoiced: number;
@@ -1586,6 +1613,33 @@ function PartsTableView({
     document.addEventListener("mouseup", onUp);
   };
 
+  // ── What the footer's first line counts (2026-09-03) ──────────────────────
+  //
+  // Off `parts` — the rows this view renders, after PartsListTab's filters AND the
+  // scope chip — so the count can never disagree with what actually scrolls. This
+  // is deliberately a DIFFERENT scope from `reconcile` below it, which describes the
+  // whole job; the footer labels each line with the scope it covers rather than
+  // letting the reader assume they are the same set (see the footer's own comment).
+  //
+  // `narrowed` is the one thing that decides whether the footer says "all 56 rows"
+  // or "56 of 334 rows" plus a "Whole job" label on the money line. Comparing
+  // against reconcile.allRows catches every way the view can be narrowed — status,
+  // category, manufacturer, supplier, date window, search, and the scope chip — with
+  // no list of filter states to keep in sync as filters are added.
+  const visible = useMemo(() => {
+    let bomRows = 0;
+    for (const p of parts) if (!p.nonBom) bomRows++;
+    return { bomRows, nonBomRows: parts.length - bomRows, narrowed: parts.length < reconcile.allRows };
+  }, [parts, reconcile.allRows]);
+
+  // Half a dollar of tolerance, not zero — see the footer's status comment.
+  const reconcileStatus: "reconciled" | "partial" | "mismatch" =
+    Math.abs(reconcile.unexplained) > 0.5
+      ? "mismatch"
+      : windowStatus.active && windowStatus.unattachedAmount !== 0
+        ? "partial"
+        : "reconciled";
+
   // Column totals for the sticky footer (over the currently-filtered rows),
   // mirroring the Power BI Parts Cost total row. leftToSpend/pctInvoiced are
   // `number | null` now (null uniformly, component-wide, exactly when
@@ -1727,43 +1781,143 @@ function PartsTableView({
                 nobody can reach. What is left here is the arithmetic, with the
                 non-BOM half clickable: press it and the table switches to exactly
                 the rows the figure is made of. */}
+            {/* ── Rewritten as two labelled lines (2026-09-03, by request) ─────
+                Reported directly: the wording is awkward and people are not
+                understanding it. The old strip was one run-on sentence that mixed
+                two different scopes without saying so — "56 rows shown ... every PO
+                line each part has" counts the rows left after every filter, while
+                "13 are not BOM parts" and "Job lifetime $36,931" describe the whole
+                job regardless of what is on screen. A reader with a supplier filter
+                on was being shown a row count and a job total that did not belong to
+                each other, with nothing marking the seam.
+
+                So the two scopes are now two lines, each labelled with the scope it
+                covers, and neither borrows a figure from the other:
+
+                  Rows        what the table is showing right now, split BOM/non-BOM,
+                              and — when a filter is on — out of how many the job has.
+                  Whole job   the reconciliation: BOM + non-BOM = job total, with a
+                              status word for whether it balances.
+
+                "Whole job" is the literal label on the second line whenever a filter
+                is narrowing the first, which is what keeps the two from reading as
+                one number (the request's own rule). With nothing filtered both lines
+                describe the same rows, so the first says "all 56 rows" and the second
+                needs no qualifier.
+
+                Gone, as asked: "every PO line each part has", "sits on", "fully
+                accounted for by the rows above". The first was trying to state the
+                grain of a row (one part, all of its POs) — a real fact, but not one a
+                footer needs to re-teach on every render; the drill panel and the
+                Total $ column both carry it. Kept: the non-BOM figure is still a
+                button that switches the scope chip, since "show me those 13 rows" is
+                the first thing anyone asks of that number. */}
             <tr className="bg-sdc-navy text-label text-white/70">
               <td colSpan={cols.length} className="border-t border-white/10 px-2 py-1 align-middle">
-                <span className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
-                  <span>
-                    {num(parts.length)} row{parts.length === 1 ? "" : "s"} shown
-                    {scope === "all" ? "" : scope === "bom" ? " · BOM parts only" : " · non-BOM charges only"}, every PO
-                    line each part has.
+                <span className="flex flex-col gap-y-0.5">
+                  {/* Line 1 — WHAT IS ON SCREEN. Counted off `parts`, the rows this
+                      view actually renders after PartsListTab's filters and the
+                      scope chip, so it can never disagree with what scrolls. */}
+                  <span className="flex flex-wrap items-center gap-x-2">
+                    <span className="text-white/45">Rows</span>
+                    <span>
+                      {visible.narrowed ? (
+                        <>
+                          Showing <span className="font-semibold text-white">{num(parts.length)}</span> of{" "}
+                          {num(reconcile.allRows)} rows
+                        </>
+                      ) : (
+                        <>
+                          Showing all <span className="font-semibold text-white">{num(parts.length)}</span> row
+                          {parts.length === 1 ? "" : "s"} for this job
+                        </>
+                      )}
+                      {parts.length > 0 && (
+                        <>
+                          {" — "}
+                          {num(visible.bomRows)} BOM, {num(visible.nonBomRows)} non-BOM
+                        </>
+                      )}
+                    </span>
+                    {/* The scope chip's own state in words, rather than left to be
+                        inferred from a count that is merely smaller than expected. */}
+                    {scope !== "all" && (
+                      <button
+                        type="button"
+                        onClick={() => setScope("all")}
+                        className="motion-interactive rounded px-1 underline decoration-dotted underline-offset-2 hover:bg-white/10 hover:text-white"
+                        title="Clear the BOM / non-BOM filter"
+                      >
+                        {scope === "bom" ? "BOM rows only" : "Non-BOM rows only"} — show all
+                      </button>
+                    )}
                   </span>
-                  {scope !== "nonbom" && reconcile.nonBomRows > 0 && (
-                    <button
-                      type="button"
-                      onClick={() => setScope("nonbom")}
-                      className="motion-interactive rounded px-1 underline decoration-dotted underline-offset-2 hover:bg-white/10 hover:text-white"
-                      title="Show only the charges that are not BOM parts"
-                    >
-                      {num(reconcile.nonBomRows)} are not BOM parts ·{" "}
-                      <span className="font-mono font-semibold tabular-nums text-white">{usd(reconcile.nonBomTotal)}</span>
-                    </button>
-                  )}
-                  {scope === "nonbom" && (
-                    <button
-                      type="button"
-                      onClick={() => setScope("all")}
-                      className="motion-interactive rounded px-1 underline decoration-dotted underline-offset-2 hover:bg-white/10 hover:text-white"
-                    >
-                      Show all rows
-                    </button>
-                  )}
-                  <span className="text-white/55">
-                    Job lifetime{" "}
-                    <span className="font-mono font-semibold tabular-nums text-white/80">{usd(reconcile.jobTotal)}</span>
-                    {Math.abs(reconcile.unexplained) > 0.5 ? (
-                      // Never silently absorbed: if the rows do not add up to the
-                      // job's own total, that is the one thing worth shouting.
-                      <span className="text-sdc-yellow"> · {usd(reconcile.unexplained)} unaccounted — report this</span>
+
+                  {/* Line 2 — THE WHOLE JOB, always, whatever line 1 is showing. The
+                      addends are printed in the order they sum, so the equation is
+                      checkable on sight instead of asserted. */}
+                  <span className="flex flex-wrap items-center gap-x-2">
+                    <span className="text-white/45">{visible.narrowed ? "Whole job" : "Totals"}</span>
+                    <span>
+                      BOM{" "}
+                      <span className="font-mono font-semibold tabular-nums text-white">{usd(reconcile.bomPurchased)}</span>
+                      {" + "}
+                      {reconcile.nonBomRows > 0 && scope !== "nonbom" ? (
+                        <button
+                          type="button"
+                          onClick={() => setScope("nonbom")}
+                          className="motion-interactive rounded px-1 underline decoration-dotted underline-offset-2 hover:bg-white/10 hover:text-white"
+                          title={`Show only the ${num(reconcile.nonBomRows)} rows that are not BOM parts`}
+                        >
+                          non-BOM{" "}
+                          <span className="font-mono font-semibold tabular-nums text-white">
+                            {usd(reconcile.nonBomTotal)}
+                          </span>
+                        </button>
+                      ) : (
+                        <>
+                          non-BOM{" "}
+                          <span className="font-mono font-semibold tabular-nums text-white">
+                            {usd(reconcile.nonBomTotal)}
+                          </span>
+                        </>
+                      )}
+                      {" = "}
+                      <span className="font-mono font-semibold tabular-nums text-white">{usd(reconcile.jobTotal)}</span>{" "}
+                      job total
+                    </span>
+                    {/* ── The status word ──────────────────────────────────────────
+                        Three states, each a real condition rather than a threshold
+                        invented to fill a third slot:
+                          reconciled  the rows account for the job's own total.
+                          partial     they do, but an Invoiced window has money on
+                                      lines no part row carries — that detail is the
+                                      row directly below this one.
+                          mismatch    they do not add up, the one thing here worth
+                                      shouting. Never silently absorbed.
+                        Half a dollar of tolerance, not zero: these are floats summed
+                        over hundreds of lines, so an exact equality would report
+                        rounding dust as a data problem. */}
+                    {reconcileStatus === "mismatch" ? (
+                      <span className="rounded bg-sdc-yellow px-1.5 font-semibold text-sdc-navy">
+                        Mismatch — {usd(Math.abs(reconcile.unexplained))} unaccounted, report this
+                      </span>
+                    ) : reconcileStatus === "partial" ? (
+                      <span className="rounded bg-white/15 px-1.5 font-semibold text-white">
+                        Partially reconciled — see below
+                      </span>
                     ) : (
-                      " · fully accounted for by the rows above"
+                      <span className="rounded bg-white/10 px-1.5 font-semibold text-white/90">Fully reconciled</span>
+                    )}
+                    {/* Estimate money, when there is any: deliberately NOT inside the
+                        BOM addend above (it would unbalance the equation by its own
+                        amount — see `bomPurchased`), so it is named here rather than
+                        disappearing between the two. */}
+                    {reconcile.estimated > 0.5 && (
+                      <span className="text-white/45">
+                        plus <span className="font-mono tabular-nums text-white/70">{usd(reconcile.estimated)}</span> of BOM
+                        parts not bought yet (priced from the BOM, not spend)
+                      </span>
                     )}
                   </span>
                 </span>

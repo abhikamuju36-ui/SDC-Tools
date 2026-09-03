@@ -259,10 +259,7 @@ const BILLABLE_OPTIONS = ["Billable", "Non-Billable"];
 // view produces and stop a saved View comparing equal. See lib/projects-view.ts.
 const TOGGLE_COLUMNS = PROJECTS_INFO_COLUMNS;
 
-export default async function QuotedPage({
-  searchParams,
-}: {
-  searchParams: Promise<{
+export async function ProjectsView({ params }: { params: {
     cols?: string;
     sort?: string;
     dir?: string;
@@ -277,10 +274,9 @@ export default async function QuotedPage({
     dateField?: string;
     from?: string;
     to?: string;
-  }>;
-}) {
+  } }) {
   const pageSession = await requirePagePermission("projects:view");
-  const sp = await searchParams;
+  const sp = params;
   const { cols, sort, dir, customers, types, statuses, billables, hide } = sp;
   // Actual hours in the cells. A view param rather than a client-side flag, so
   // the markup below is already right on arrival — see quoted-display-prefs.ts.
@@ -1253,4 +1249,37 @@ export default async function QuotedPage({
     </QuotedSaveForm>
     </ProjectsGridView>
   );
+}
+
+
+// -- Route entry point --
+//
+// The page's body lives in `ProjectsView` above so that BOTH this route and the split
+// view can render it. Split view renders two views in ONE document (see
+// lib/split-view.ts for why one document rather than two frames), which means a
+// pane cannot be a route and therefore cannot read `searchParams` - there is only
+// one URL, and two panes reading it would collide. So the body takes its context as
+// a plain argument, and the two callers differ only in where they read that context
+// from: this wrapper reads the URL, a pane reads its own `l.`/`r.` namespace.
+//
+// Nothing about this route's behaviour changes: same URL, same params, same server
+// render. `searchParams` is still awaited HERE, which is what keeps this route
+// dynamic exactly as before.
+export default async function QuotedPage({ searchParams }: { searchParams: Promise<{
+    cols?: string;
+    sort?: string;
+    dir?: string;
+    customers?: string;
+    types?: string;
+    statuses?: string;
+    billables?: string;
+    hide?: string;
+    view?: string;
+    actuals?: string;
+    // "Dates ▾" — which date column to filter on, and the range.
+    dateField?: string;
+    from?: string;
+    to?: string;
+  }> }) {
+  return <ProjectsView params={await searchParams} />;
 }

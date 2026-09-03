@@ -1,12 +1,13 @@
 "use client";
 
 import { useEffect } from "react";
-import { readEtcLiveTotals, readEtcLiveFooterTotals, subscribeEtcLiveTotals } from "@/lib/etc-live-totals";
+import { readEtcLiveTotals, readEtcLiveFooterTotals, subscribeEtcLiveTotals, type JobTotals } from "@/lib/etc-live-totals";
 // `usd` is byte-identical to etc/page.tsx's local currency() — same options, same
 // output — so the Parts Cost footer keeps formatting exactly as the server
 // rendered it rather than through a fourth private copy of the formatter.
 import { hours as formatHours, usd as formatUsd, usdExact } from "@/components/ui/format";
-import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
+import { diffCellStyle, diffTotalStyle, DIFF_CEILING, paintPartsRisk } from "@/components/ui/etc-diff-colors";
+import { partsCostRisk, partsCostRiskTitle } from "@/lib/etc";
 import { changedForFlash, FLASH_MS, prefersReducedMotion } from "@/lib/motion";
 
 // Repaints the Monthly ETC grid's rollup cells from the live store as New ETC
@@ -116,6 +117,13 @@ export function EtcLiveTotals() {
         // that cell's input lives in a client component while its Diff <td> is rendered by
         // the page — so unlike the hours columns, local state cannot reach it.
         if (t.parts) writePartsRowDiff(String(jobId), t.parts.diff, t.parts.decided);
+        // The under-planning warning on the row's three READ-ONLY Parts Cost cells
+        // (2026-09-03). The New ETC box paints itself from its own state — it is a
+        // client component and does not need a round trip — so this covers Prior
+        // ETC, Money Spent Month and Money Left, which the page renders as plain
+        // <td>s and local state cannot reach. Same reason writePartsRowDiff above
+        // exists, and the same querySelector route to the cells.
+        if (t.parts) writePartsRisk(String(jobId), t.parts);
         for (const group of ["Engineering", "Shop"] as const) {
           const g = group === "Engineering" ? t.engineering : t.shop;
           // ── The block is all-or-nothing (§51) ──────────────────────────
@@ -261,6 +269,44 @@ export function EtcLiveTotals() {
         usdExact(value),
       );
       paintDiffColor(cell, value, false, DIFF_CEILING.moneyCell);
+    };
+
+    // ── The Parts Cost under-planning warning (2026-09-03, by request) ───────
+    //
+    // Reads the SAME rule the server's first paint used (lib/etc.ts's partsCostRisk)
+    // off the SAME published figures, so typing cannot produce a state the server
+    // would not have rendered. `newEtc` is clamped the way the row's Diff clamps it,
+    // which is what keeps the red state and the printed Diff from ever disagreeing.
+    const writePartsRisk = (job: string, parts: NonNullable<JobTotals["parts"]>) => {
+      const { atRisk, shortfall } = partsCostRisk({
+        moneyLeft: parts.left,
+        newEtc: Math.max(parts.newEtc, 0),
+        decided: parts.decided,
+      });
+      const cells = document.querySelectorAll<HTMLElement>(`[data-parts-risk][data-job="${job}"]`);
+      // No cells: the Parts Cost columns are hidden, or this row is filtered out.
+      for (const cell of cells) {
+        paintPartsRisk(cell, atRisk);
+        if (atRisk) {
+          cell.setAttribute(
+            "title",
+            partsCostRiskTitle(parts.left, Math.max(parts.newEtc, 0), shortfall, usdExact),
+          );
+        } else {
+          // Restore the cell's OWN tooltip rather than stripping it: Money Left's
+          // explains its arithmetic and Prior ETC's carries the exact figure, and
+          // leaving a row that recovered with no tooltip would be a small regression
+          // every time someone corrected a value. The server put the original in
+          // `data-title-was` for exactly this.
+          const original = cell.getAttribute("data-title-was");
+          if (original) cell.setAttribute("title", original);
+          else cell.removeAttribute("title");
+        }
+        // A nested <span> carries its own text colour on the Money Spent cell, which
+        // would otherwise stay grey on a red ground.
+        const inner = cell.querySelector<HTMLElement>("span");
+        if (inner) inner.style.color = atRisk ? "var(--sdc-red-text)" : "";
+      }
     };
 
     // Parts Cost footer — dollars, not hours, and one cell each.

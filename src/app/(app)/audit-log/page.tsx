@@ -18,7 +18,7 @@ const LOAD_LIMIT = 1000;
 // 2026-08-18 role system (lib/permissions.ts) is actually maintained and
 // tested, unlike the ad hoc `role !== "ADMIN"` this replaces — the password
 // gate is retired, not layered on top.
-export default async function AuditLogPage() {
+export async function AuditLogView() {
   await requirePagePermission("audit-log:view");
   const [logs, total] = await Promise.all([
     prisma.auditLog.findMany({ orderBy: { createdAt: "desc" }, take: LOAD_LIMIT }),
@@ -45,4 +45,18 @@ export default async function AuditLogPage() {
       <AuditLogGrid rows={rows} />
     </div>
   );
+}
+
+
+// -- Route entry point --
+//
+// The page's body lives in `AuditLogView` above so that BOTH this route and the split
+// view can render it. Split view renders two views in ONE document (see
+// lib/split-view.ts for why one document rather than two frames), which means a
+// pane cannot be a route and therefore cannot read `searchParams` - there is only
+// one URL and two panes would collide in it. So the body takes its context as a
+// plain argument, and the two callers differ only in where they read that context
+// from: this wrapper reads the URL, a pane reads its own `l.`/`r.` namespace.
+export default async function AuditLogPage() {
+  return <AuditLogView />;
 }

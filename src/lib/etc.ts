@@ -720,3 +720,70 @@ export function groupStandardFeesRows<Row>(
   }
   return { rowsByMonth, ownedWithHistoryNow, ownedRowsByMonth };
 }
+
+// ── Parts Cost risk: a New ETC that does not cover what is left to invoice ───
+//
+// Asked for 2026-09-03: flag the Parts Cost cells red when a manager enters a New
+// ETC below the money still left on that job, so an under-planned row cannot be
+// missed. The whole rule is here rather than in the grid, so it holds identically
+// for the SERVER's first paint and the CLIENT's live repaint — those are two
+// separate code paths (see etc/page.tsx and EtcLiveTotals.tsx), and a warning that
+// appeared on one and not the other would be worse than no warning.
+//
+// ── The three gates, and why each one is a gate ─────────────────────────────
+//
+//   moneyLeft > 0   The warning exists to catch REMAINING LIABILITY that the
+//                   entered figure does not cover. A job at or under zero has no
+//                   remaining liability to be short of: on an overspent row
+//                   (Money Left -$1,704, the reported example) every New ETC
+//                   including 0 is "greater than" it, and on a fully-invoiced row
+//                   (Money Left $0) a New ETC of $0 is exactly right. Firing on
+//                   either would paint a correct row red — which is how a warning
+//                   colour stops being read at all.
+//
+//   decided         A blank box is an unanswered question, not a wrong answer; it
+//                   already has its own yellow "needs attention" state. Turning it
+//                   red as well would flag every unplanned row on the grid the
+//                   moment the page loaded, and the manager would have no way to
+//                   tell "you got this wrong" from "you haven't done this yet".
+//
+//   newEtc < left   The comparison itself, strict: entering exactly Money Left is
+//                   covering it precisely, which is right, not marginal.
+//
+// Note there is deliberately no tolerance band. These are dollars-and-cents money
+// figures (precision "exact" on the Parts Cost cell, unlike the hours columns), so
+// a $1 shortfall is a real $1 shortfall and rounding it away would make the cell
+// disagree with the Diff column printed beside it.
+export type PartsCostRisk = {
+  atRisk: boolean;
+  /** How far short the entered figure falls. 0 when not at risk, so callers can print it unconditionally. */
+  shortfall: number;
+};
+
+export function partsCostRisk(input: {
+  /** Prior ETC − Money Spent. */
+  moneyLeft: number;
+  /** The figure in the cell — the manager's entered value, or the carry-forward on a month with no spend. */
+  newEtc: number;
+  /** Whether this cell counts as answered at all (isNewEtcCellDecided). */
+  decided: boolean;
+}): PartsCostRisk {
+  const { moneyLeft, newEtc, decided } = input;
+  // Guard the arithmetic as well as the rule: these arrive from Number() over a
+  // form value and a Prisma Decimal, either of which can be NaN on bad data, and
+  // NaN comparisons are false — so a NaN would silently read as "not at risk"
+  // rather than as the data problem it is. Explicit, so it cannot be mistaken for
+  // a decision.
+  if (!decided || !Number.isFinite(moneyLeft) || !Number.isFinite(newEtc)) return { atRisk: false, shortfall: 0 };
+  if (moneyLeft <= 0) return { atRisk: false, shortfall: 0 };
+  if (newEtc >= moneyLeft) return { atRisk: false, shortfall: 0 };
+  return { atRisk: true, shortfall: round2(moneyLeft - newEtc) };
+}
+
+/** The hover explanation for a flagged cell. One sentence, then the arithmetic behind it. */
+export function partsCostRiskTitle(moneyLeft: number, newEtc: number, shortfall: number, fmt: (n: number) => string): string {
+  return (
+    `New ETC is lower than the remaining parts cost to be invoiced. ` +
+    `Money Left: ${fmt(moneyLeft)} · New ETC: ${fmt(newEtc)} · Shortfall: ${fmt(shortfall)}`
+  );
+}

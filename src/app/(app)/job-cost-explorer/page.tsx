@@ -18,9 +18,9 @@ import { requirePagePermission } from "@/lib/require-permission";
 // param existed) — anything else re-resolves the whole table (hours, ETC,
 // inventory) as of that month-end. See lib/job-cost-source.ts's
 // loadJobCostRows for the resolution rules.
-export default async function JobCostExplorerPage({ searchParams }: { searchParams: Promise<{ asOf?: string }> }) {
+export async function ProfitabilityView({ params }: { params: { asOf?: string } }) {
   await requirePagePermission("profitability:view");
-  const { asOf: asOfParam } = await searchParams;
+  const { asOf: asOfParam } = params;
   const asOf = asOfParam && asOfParam !== "current" ? asOfParam : null;
 
   const [
@@ -75,4 +75,22 @@ export default async function JobCostExplorerPage({ searchParams }: { searchPara
       </SuppressToasts>
     </div>
   );
+}
+
+
+// -- Route entry point --
+//
+// The page's body lives in `ProfitabilityView` above so that BOTH this route and the split
+// view can render it. Split view renders two views in ONE document (see
+// lib/split-view.ts for why one document rather than two frames), which means a
+// pane cannot be a route and therefore cannot read `searchParams` - there is only
+// one URL, and two panes reading it would collide. So the body takes its context as
+// a plain argument, and the two callers differ only in where they read that context
+// from: this wrapper reads the URL, a pane reads its own `l.`/`r.` namespace.
+//
+// Nothing about this route's behaviour changes: same URL, same params, same server
+// render. `searchParams` is still awaited HERE, which is what keeps this route
+// dynamic exactly as before.
+export default async function JobCostExplorerPage({ searchParams }: { searchParams: Promise<{ asOf?: string }> }) {
+  return <ProfitabilityView params={await searchParams} />;
 }

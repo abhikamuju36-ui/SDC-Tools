@@ -42,7 +42,7 @@ import { savePools } from "@/lib/standard-sheet-actions";
 // ONE submission and ONE reopen for the whole month — see lib/monthly-report.ts.
 import { reopenMonthlyReport, checkMonthlyReport } from "@/lib/monthly-report-actions";
 import { ETC_SECTIONS, PARTS_COST_SECTION } from "@/lib/sections";
-import { calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, currentMonth, round2, workingDaysInMonth, effectiveNewEtc, newEtcDiff, newEtcSeedText, isNewEtcCellDecided, rollupNewEtc, type NewEtcCellState, type NewEtcRollupCell } from "@/lib/etc";
+import { partsCostRisk, partsCostRiskTitle, calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, currentMonth, round2, workingDaysInMonth, effectiveNewEtc, newEtcDiff, newEtcSeedText, isNewEtcCellDecided, rollupNewEtc, type NewEtcCellState, type NewEtcRollupCell } from "@/lib/etc";
 import { ReopenMonthButton } from "@/components/ReopenMonthButton";
 import { EtcAutosave } from "@/components/EtcAutosave";
 import { EtcLiveTotals } from "@/components/EtcLiveTotals";
@@ -56,7 +56,7 @@ import { JobCellMenuHost } from "@/components/JobCellMenuHost";
 import { jobCellMenuProps } from "@/lib/job-cell-menu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
 import { BUTTON_SECONDARY, ETC_COL_W, GRID_SCROLLER, PAGE_SHELL, PARTS_COL_W, TABLE_GRID, TABLE_HEADER_ROW, TOOLBAR_MIN_W } from "@/components/ui/classnames";
-import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
+import { diffCellStyle, diffTotalStyle, DIFF_CEILING, partsRiskStyle } from "@/components/ui/etc-diff-colors";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
 
@@ -391,17 +391,13 @@ const CELL_PADDING =
   "[&_tbody_td]:py-[0.2667rem] [&_tbody_td]:leading-none [&_td_input]:py-[0.2667rem] [&_td_input]:leading-none [&_td:not([class*='sticky'])]:px-[0.2667rem] [&_th:not([class*='sticky'])]:px-[0.2667rem] [&_td_input:not([class*='sticky'])]:px-[0.2667rem]";
 
 
-export default async function MonthlyEtcPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ month?: string; dept?: string; jobname?: string; billables?: string }>;
-}) {
+export async function MonthlyEtcView({ params }: { params: { month?: string; dept?: string; jobname?: string; billables?: string } }) {
   const etcSession = await requirePagePermission("monthly-etc:view");
   // Read-only is now a real state: monthly-etc:view without monthly-etc:edit.
   // The server action re-checks this independently (saveAllNewEtcDrafts), so
   // this flag only decides what is RENDERED — it is not the enforcement.
   const canEditEtc = hasPermission(etcSession.user.role, "monthly-etc:edit");
-  const { month: monthParam, dept: deptParam, jobname: jobnameParam, billables: billablesParam } = await searchParams;
+  const { month: monthParam, dept: deptParam, jobname: jobnameParam, billables: billablesParam } = params;
 
   // Billable / Non-Billable row filter (same pattern as the Projects tab).
   // Absent => both shown. SDC's own projects read as Non-Billable regardless of
@@ -1866,6 +1862,28 @@ export default async function MonthlyEtcPage({
                         // Diff beside it. See the note on the cell below and the matching
                         // change in PartsCostNewEtcCell (the client half of this cell).
                         const diffCost = decidedCost ? moneyLeft - Math.max(effectiveNewEtcCost, 0) : 0;
+                        // ── Under-planned Parts Cost, flagged red (2026-09-03, by request) ──
+                        //
+                        // "If there is still positive parts cost left to invoice and the
+                        // manager enters a New ETC below that amount, flag it." The rule
+                        // itself is lib/etc.ts's partsCostRisk (with its own tests) so that
+                        // THIS first paint and the client's live repaint cannot disagree —
+                        // they are separate code paths, and a warning that showed on one
+                        // and not the other would be worse than none.
+                        //
+                        // The compared figure is Math.max(effective, 0), the SAME expression
+                        // diffCost uses one line above, so the red state and the Diff printed
+                        // beside it always tell the same story: at-risk is exactly
+                        // "Diff > 0 with money still left", never a second opinion about it.
+                        const partsRisk = partsCostRisk({
+                          moneyLeft,
+                          newEtc: Math.max(effectiveNewEtcCost, 0),
+                          decided: decidedCost,
+                        });
+                        const partsRiskCss = partsRisk.atRisk ? partsRiskStyle() : undefined;
+                        const partsRiskTip = partsRisk.atRisk
+                          ? partsCostRiskTitle(moneyLeft, Math.max(effectiveNewEtcCost, 0), partsRisk.shortfall, currencyExact)
+                          : null;
 
                         partsCostGrandTotal.prior += prior;
                         partsCostGrandTotal.worked += spent;
@@ -1876,23 +1894,58 @@ export default async function MonthlyEtcPage({
                             {/* PARTS_COL_W on every cell in this block: these are seven-figure
                                 money columns and the hours width clipped them ("$1,065,7…").
                                 See components/ui/classnames.ts. */}
-                            <td className={`${PHASE_EDGE} ${PARTS_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`} title={currencyExact(prior)}>
+                            {/* `data-parts-risk` + `data-job` on all three read-only cells:
+                                that is how EtcLiveTotals finds them to repaint when the New
+                                ETC box changes, the same querySelector approach the row's
+                                own Diff cell already uses. The style is applied here too so
+                                the FIRST paint is already correct — a warning that only
+                                appeared after hydration would miss exactly the case it is
+                                for, a manager scanning a freshly loaded grid. */}
+                            <td
+                              data-parts-risk
+                              data-job={job.id}
+                              className={`${PHASE_EDGE} ${PARTS_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`}
+                              style={partsRiskCss}
+                              // The cell's OWN tooltip, kept so the live repaint can put it
+                              // back when a row stops being at risk (see writePartsRisk).
+                              data-title-was={currencyExact(prior)}
+                              title={partsRiskTip ?? currencyExact(prior)}
+                            >
                               {currency(prior)}
                             </td>
-                            <td className={`border-l border-sdc-border ${HOURS_WORKED_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle whitespace-nowrap`}>
+                            <td
+                              data-parts-risk
+                              data-job={job.id}
+                              className={`border-l border-sdc-border ${HOURS_WORKED_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle whitespace-nowrap`}
+                              style={partsRiskCss}
+                              data-title-was={currencyExact(spent)}
+                              title={partsRiskTip ?? undefined}
+                            >
                               {/* Not manager-editable — always Power BI's actual, passed through as a
                                   hidden field so submitMonth's generic per-entry loop still works. */}
                               <input type="hidden" name={`hoursWorked__${partsCostEntry.id}`} value={spent} />
                               {/* w-full, not a fixed w-16 with `truncate`: the cell now sizes the
                                   column, so the figure should use all of it rather than being cut
                                   to 64px inside a wider box. */}
-                              <span className="block w-full text-center text-label text-sdc-gray-600" title={currencyExact(spent)}>
+                              <span
+                                className={`block w-full text-center text-label ${partsRisk.atRisk ? "" : "text-sdc-gray-600"}`}
+                                title={partsRiskTip ?? currencyExact(spent)}
+                              >
                                 {currency(spent)}
                               </span>
                             </td>
                             <td
-                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-muted`}
-                              title={`${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(prior)}) − Money Spent (${currencyExact(spent)})`}
+                              data-parts-risk
+                              data-job={job.id}
+                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap ${
+                                partsRisk.atRisk ? "" : "text-sdc-muted"
+                              }`}
+                              style={partsRiskCss}
+                              data-title-was={`${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(prior)}) − Money Spent (${currencyExact(spent)})`}
+                              title={
+                                partsRiskTip ??
+                                `${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(prior)}) − Money Spent (${currencyExact(spent)})`
+                              }
                             >
                               {currency(moneyLeft)}
                             </td>
@@ -2232,4 +2285,22 @@ export default async function MonthlyEtcPage({
     </div>
     </EtcGridView>
   );
+}
+
+
+// -- Route entry point --
+//
+// The page's body lives in `MonthlyEtcView` above so that BOTH this route and the split
+// view can render it. Split view renders two views in ONE document (see
+// lib/split-view.ts for why one document rather than two frames), which means a
+// pane cannot be a route and therefore cannot read `searchParams` - there is only
+// one URL, and two panes reading it would collide. So the body takes its context as
+// a plain argument, and the two callers differ only in where they read that context
+// from: this wrapper reads the URL, a pane reads its own `l.`/`r.` namespace.
+//
+// Nothing about this route's behaviour changes: same URL, same params, same server
+// render. `searchParams` is still awaited HERE, which is what keeps this route
+// dynamic exactly as before.
+export default async function MonthlyEtcPage({ searchParams }: { searchParams: Promise<{ month?: string; dept?: string; jobname?: string; billables?: string }> }) {
+  return <MonthlyEtcView params={await searchParams} />;
 }

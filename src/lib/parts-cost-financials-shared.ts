@@ -43,6 +43,40 @@ export type PartsCostFinancials = {
    * (a stale/small etc can't drag this below totalSpent — the 2026-08-19 fix).
    */
   projection: number;
+  // ── Dan's projection model (2026-09-03) ───────────────────────────────────
+  //
+  // `projection` = invoiced + adjustedEtc + additionalExposure, which is also
+  // invoiced + max(adjustedEtc, yetToInvoice). See lib/parts-projection.ts for the
+  // derivation and lib/parts-prior-etc.ts for where the two ETC inputs come from.
+  // Every figure below is stated separately because the drill-through has to prove
+  // the bar (spec §14).
+  /** Purchased / committed — every line's total cost. Shown in the drill-through. */
+  purchased: number;
+  /** The previous month's confirmed New ETC: the forecast this month starts from. */
+  priorEtc: number | null;
+  /** Whether `priorEtc` was carried forward or, on a first ETC month, taken from the quote. */
+  priorEtcSource: "carry-forward" | "quoted-parts" | "none";
+  /** The selected month's canonical booked parts cost ("Money Spent Month" on the grid). */
+  partsSpentThisMonth: number;
+  /** `priorEtc − partsSpentThisMonth`, which CAN be negative. Kept for diagnostics. */
+  adjustedEtcRaw: number | null;
+  /** Yellow: the same figure floored at 0. */
+  adjustedEtc: number;
+  /** Eligible external remaining exposure — EXCLUDES in-house SDC (spec §6). */
+  yetToInvoice: number;
+  /** The same figure including in-house rows, for the reconciliation. */
+  yetToInvoiceAllRows: number;
+  /** Remaining exposure on in-house SDC rows, excluded from `yetToInvoice`. */
+  inHouseExcluded: number;
+  inHouseRows: number;
+  /** Red: `max(0, yetToInvoice − adjustedEtc)`. */
+  additionalExposure: number;
+  /** Where the dotted line goes: `invoiced + adjustedEtc`. Null when there is no red. */
+  coverageLine: number | null;
+  /** True when no prior ETC could be resolved for the month at all. */
+  etcUnknown: boolean;
+  /** The ETC month these figures describe. */
+  etcMonth: string | null;
   /** projection − budget. Null when budget is null. */
   variance: number | null;
   /** variance / budget × 100. Null when budget is null or zero. */

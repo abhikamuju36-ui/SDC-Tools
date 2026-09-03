@@ -234,20 +234,46 @@ export function stripEtcFieldPrefix(name: string): string {
 // A module-scope hook rather than a prop, for the same reason as everything else in
 // this file: the button and the autosave component are siblings in a toolbar with no
 // shared ancestor short of the page.
-let autosaveFlush: (() => Promise<unknown>) | null = null;
+// ── A SET of subscribers, not one slot (2026-09-03) ─────────────────────────
+//
+// This was `let autosaveFlush: (() => Promise<unknown>) | null`, which silently
+// assumed exactly one EtcAutosave is ever mounted. Split view breaks that
+// assumption (two panes can both be Monthly ETC), and a single slot fails two ways
+// once it is broken — both of them silent, both of them data loss:
+//
+//   1. The second mount OVERWRITES the first. `flushEtcAutosave()` then flushes one
+//      grid, and Submit / Refresh Data / Export proceed believing everything is
+//      saved. The other pane's pending 800ms debounce is simply discarded — the
+//      exact failure the pool registry directly below was added to fix, reappearing
+//      one level up.
+//   2. The cleanup nulls the slot on the WRONG unmount. `if (autosaveFlush === fn)`
+//      correctly no-ops when the first pane unmounts after being overwritten — but
+//      when the SECOND unmounts it nulls the slot while the first is still mounted
+//      and still has a live debounce. Every flush after that is a no-op against a
+//      grid with unsaved edits.
+//
+// A Set makes both impossible: every mounted autosave is registered, each removes
+// only itself, and a flush waits for all of them. With one pane mounted the
+// behaviour is identical to before.
+const autosaveFlushes = new Set<() => Promise<unknown>>();
 
 export function registerEtcAutosaveFlush(fn: () => Promise<unknown>): () => void {
-  autosaveFlush = fn;
+  autosaveFlushes.add(fn);
   return () => {
-    if (autosaveFlush === fn) autosaveFlush = null;
+    autosaveFlushes.delete(fn);
   };
 }
 
-// Resolves once any in-flight or pending save has finished. A no-op when nothing is
-// mounted (a locked month renders no autosave) or when there is nothing dirty.
+// Resolves once every in-flight or pending save has finished. A no-op when nothing
+// is mounted (a locked month renders no autosave) or when there is nothing dirty.
+//
+// allSettled, not all: these are independent grids, and one pane's save failing
+// must not leave the other pane's flush unawaited — the caller's next step
+// (freezing the month, refreshing the data) would then race a save it never waited
+// for. Each autosave already surfaces its own failure to its own pane.
 export async function flushEtcAutosave(): Promise<void> {
-  if (!autosaveFlush) return;
-  await autosaveFlush();
+  if (autosaveFlushes.size === 0) return;
+  await Promise.allSettled([...autosaveFlushes].map((fn) => fn()));
 }
 
 // ── The Standard Fees pool cells flush the same way, through a SEPARATE registry ──
@@ -260,12 +286,15 @@ export async function flushEtcAutosave(): Promise<void> {
 // loadStandardSheetRows read (and froze) whatever was already in CategoryPool —
 // silently discarding the value on screen, despite the panel's own text promising
 // "the submission waits for them."
-let poolAutosaveFlush: (() => Promise<unknown>) | null = null;
+// A Set for the same reason as the ETC registry above, and it is the same bug —
+// two panes on Monthly ETC mount two pool panels, and a single slot would flush one
+// of them while Submit froze the month around the other's pending edit.
+const poolAutosaveFlushes = new Set<() => Promise<unknown>>();
 
 export function registerPoolAutosaveFlush(fn: () => Promise<unknown>): () => void {
-  poolAutosaveFlush = fn;
+  poolAutosaveFlushes.add(fn);
   return () => {
-    if (poolAutosaveFlush === fn) poolAutosaveFlush = null;
+    poolAutosaveFlushes.delete(fn);
   };
 }
 
@@ -273,6 +302,6 @@ export function registerPoolAutosaveFlush(fn: () => Promise<unknown>): () => voi
 // unlocked the Standard view) or when nothing on it is dirty — same contract as
 // flushEtcAutosave.
 export async function flushPoolAutosave(): Promise<void> {
-  if (!poolAutosaveFlush) return;
-  await poolAutosaveFlush();
+  if (poolAutosaveFlushes.size === 0) return;
+  await Promise.allSettled([...poolAutosaveFlushes].map((fn) => fn()));
 }

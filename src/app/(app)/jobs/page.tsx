@@ -13,12 +13,8 @@ const STATUS_FILTERS = [
   { key: "completed", label: "Completed", status: "Complete" },
 ];
 
-export default async function JobsPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ q?: string; status?: string; type?: string; customer?: string }>;
-}) {
-  const { q, status, type, customer } = await searchParams;
+export async function JobsView({ params }: { params: { q?: string; status?: string; type?: string; customer?: string } }) {
+  const { q, status, type, customer } = params;
 
   const where: Prisma.JobWhereInput = { ...validJobTypeFilter };
   if (q) {
@@ -191,4 +187,22 @@ export default async function JobsPage({
       </div>
     </div>
   );
+}
+
+
+// -- Route entry point --
+//
+// The page's body lives in `JobsView` above so that BOTH this route and the split
+// view can render it. Split view renders two views in ONE document (see
+// lib/split-view.ts for why one document rather than two frames), which means a
+// pane cannot be a route and therefore cannot read `searchParams` - there is only
+// one URL, and two panes reading it would collide. So the body takes its context as
+// a plain argument, and the two callers differ only in where they read that context
+// from: this wrapper reads the URL, a pane reads its own `l.`/`r.` namespace.
+//
+// Nothing about this route's behaviour changes: same URL, same params, same server
+// render. `searchParams` is still awaited HERE, which is what keeps this route
+// dynamic exactly as before.
+export default async function JobsPage({ searchParams }: { searchParams: Promise<{ q?: string; status?: string; type?: string; customer?: string }> }) {
+  return <JobsView params={await searchParams} />;
 }

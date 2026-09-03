@@ -24,7 +24,7 @@ const DASH = "—";
 // owners (Scheduler for discipline, Paylocity for name/department/supervisor),
 // so it is maintained through the toolbar's sync and import buttons rather than
 // by typing into cells.
-export default async function EmployeesPage() {
+export async function EmployeesView() {
   const session = await requirePagePermission("employees:view");
   const employees = await prisma.employee.findMany({
     orderBy: [{ discipline: "asc" }, { name: "asc" }],
@@ -107,4 +107,18 @@ export default async function EmployeesPage() {
       </div>
     </div>
   );
+}
+
+
+// -- Route entry point --
+//
+// The page's body lives in `EmployeesView` above so that BOTH this route and the split
+// view can render it. Split view renders two views in ONE document (see
+// lib/split-view.ts for why one document rather than two frames), which means a
+// pane cannot be a route and therefore cannot read `searchParams` - there is only
+// one URL and two panes would collide in it. So the body takes its context as a
+// plain argument, and the two callers differ only in where they read that context
+// from: this wrapper reads the URL, a pane reads its own `l.`/`r.` namespace.
+export default async function EmployeesPage() {
+  return <EmployeesView />;
 }

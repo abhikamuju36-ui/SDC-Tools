@@ -139,58 +139,102 @@ test("the audit script flags a projection that reads below total spent", () => {
   assert.match(audit, /PROJECTION BELOW SPENT/, "the check must be a named, reportable flag, not a silent condition");
 });
 
-test("the Parts Cost card's bar stacks exactly two segments — Invoiced and ETC — never Left to be invoiced", () => {
+test("the Parts Cost bar stacks Invoiced, Adjusted ETC and only the uncovered excess", () => {
   const src = code("src", "components", "PartsCostSummary.tsx");
-  assert.match(
-    src,
-    /const segments: \{[\s\S]{0,120}\}\[\] = \[\s*\{ key: "invoiced"/,
-    "the segments array must start with Invoiced",
-  );
+  // ── Rebuilt 2026-09-03 to Dan's model ────────────────────────────────────
+  //
+  // The invariant these guards have always protected is unchanged: Invoiced is the
+  // base segment, and the open PO balance is never stacked on top of the forecast as
+  // a third addend — that double-counts the part the forecast already covers.
+  //
+  // What changed is the middle segment. It has been, in order: the residual (the
+  // larger of ETC and the open balance), then a coverage split of the open balance by
+  // the CURRENT month's submitted ETC, and now the PRIOR month's ETC drawn down by
+  // this month's spend. Only the last is Dan's model, and §20 is explicit that the
+  // current month's New ETC must not be substituted for it.
+  assert.match(src, /key: "invoiced", label: "Invoiced actual"/, "Invoiced is still the base segment");
+  assert.match(src, /key: "etc",[\s\S]{0,300}label: "Adjusted ETC remaining"/);
+  assert.match(src, /key: "uncovered",[\s\S]{0,300}label: "Uncovered invoice exposure"/);
   assert.doesNotMatch(
     src,
     /key: "left-to-invoice"/,
-    "Left to be invoiced must never be a bar segment again — it is money already inside ETC, not an increment on top of it",
+    "the open balance must never be its own bar segment on top of the forecast",
   );
-  // The bar's own two-segment sum must be reconciled against Projection using
-  // Invoiced (not Invoiced+LeftToInvoice) — see the rounding-residue fix.
+
+  // ── §16: only the UNCOVERED difference is added ──────────────────────────
+  //
+  // The red band is `additionalExposure`, which the shared library floors at
+  // `yetToInvoice - adjustedEtc`. The card must draw THAT, not the whole exposure —
+  // stacking the full `yetToInvoice` on top of `adjustedEtc` is the double-count the
+  // spec forbids by name.
+  assert.match(src, /heightPct: pct\(additionalAmount\)/);
+  assert.doesNotMatch(
+    src,
+    /heightPct: pct\(yetToInvoiceAmount\)/,
+    "the whole exposure must never be a segment height — only the uncovered excess",
+  );
+  // And the three printed figures must reconcile against the printed total.
   assert.match(
     src,
-    /const etcDisplay = hasProjection \? Math\.max\(0, projTotalDisplay - invoicedDisplay\) : 0/,
-    "the ETC segment must absorb rounding residue against Invoiced alone, not against totalSpentDisplay (which still includes Left to be invoiced)",
+    /const adjustedEtcDisplay = Math\.max\(0, projTotalDisplay - invoicedDisplay - additionalDisplay\)/,
+    "the yellow figure must absorb rounding residue so the three segments sum to the total",
   );
 });
 
-test("Left to be invoiced is still shown, as an informational chip naming the segment it sits inside", () => {
+test("the open balance is a derived reference row, not an additive figure", () => {
   const src = code("src", "components", "PartsCostSummary.tsx");
-  // The note said "Included in ETC" until 2026-09-02, when the segment it referred
-  // to was renamed "To complete" (that segment draws the RESIDUAL — the larger of
-  // ETC and Left to be invoiced — not `financials.etc`, and the two differ by an
-  // order of magnitude on job 1131). A note pointing at a segment name that no
-  // longer exists is worse than no note, so the two move together — which is what
-  // this asserts.
-  assert.match(
-    src,
-    /label="Left to be invoiced" value=\{leftToInvoiceDisplay\} note="Included in To complete" informational/,
-    "Left to be invoiced must remain visible, marked informational (not a bar segment), and name the segment it is inside",
-  );
-  assert.ok(!/note="Included in ETC"/.test(src), "the note must not name a segment that no longer exists");
+  // The vertical chip list became a breakdown table (2026-09-03, by request: "show
+  // what each colour denotes, and how that number was arrived at"). So these figures
+  // are now table ROWS with their arithmetic beside them, rather than `label=` props
+  // on a chip component.
+  //
+  // The invariant is unchanged and is what the `kind` field encodes: the open balance
+  // is a `reference` row — an input the coloured rows were derived from — never a
+  // `segment`, because stacking it on the forecast double-counts the part the
+  // forecast already covers (§16).
+  assert.match(src, /label: "Yet to invoice",[\s\S]{0,400}kind: "reference"/);
+  assert.match(src, /label: "Purchased \/ committed",[\s\S]{0,400}kind: "reference"/);
+  assert.ok(!/label="Left to be invoiced"/.test(src), "unexplained duplicate wording");
+  assert.ok(!/label: "To complete"/.test(src), "the bare phrase the spec rules out");
+  // A reference row must not carry a filled swatch — that would imply a band in the
+  // bar that is not there.
+  assert.match(src, /key: "yet",\s*\n\s*swatch: null/);
+  assert.match(src, /key: "purchased",\s*\n\s*swatch: null/);
 });
 
-test("the bar's second segment is named for what it draws, with the basis in its note", () => {
+test("the table states the PRIOR-month ETC and how it was arrived at", () => {
   const src = code("src", "components", "PartsCostSummary.tsx");
-  // Fixed label, per-job note. The alternative — switching the label to "Left to be
-  // invoiced" whenever that term wins — would render two near-identical legend rows
-  // a dollar apart (the segment and the informational chip), which reads as broken.
-  assert.match(src, /label: "To complete"/);
-  assert.match(src, /note: etcIsDriving \? "from ETC" : "from open POs"/);
-  assert.match(src, /const etcIsDriving = \(financials\.etc \?\? 0\) >= leftToInvoiceAmount/);
-  assert.ok(!/label: "ETC",/.test(src), "the bare proper noun must not label the residual");
+  // §20, as a guard: substituting the current month's New ETC is the specific mistake
+  // the spec calls out, and an earlier version of this card made it.
+  assert.match(src, /label: "Prior-month ETC"/);
+  assert.match(src, /value: Math\.round\(priorEtcAmount\)/);
+  assert.ok(!/label="Current Parts ETC"/.test(src), "the current month's entry is not the forecast the bar draws");
+  assert.ok(!/etcIsDriving/.test(src), "nothing competes with the forecast for the segment any more");
+
+  // ── The point of the table: every coloured row shows its own arithmetic ──
+  //
+  // Not a static caption — the derivation has the actual inputs substituted in, so a
+  // reader can check the figure beside it. If these ever became fixed strings the
+  // table would look reliable while proving nothing.
+  assert.match(src, /prior ETC − \$\{usd\(Math\.round\(spentThisMonth\)\)\} spent this month/);
+  assert.match(src, /yet to invoice − \$\{usd\(adjustedEtcDisplay\)\} adjusted ETC/);
+  assert.match(src, /open balance − \$\{usd\(Math\.round\(financials\.inHouseExcluded\)\)\} in-house SDC/);
 });
 
-test("Total Parts Cost Spent is untouched by the fix — still Invoiced + Left to be invoiced", () => {
-  // This sum was never the bug; only Projection (which also added ETC) was.
+test("Invoiced + the open balance is still stated, now as the table's Purchased row", () => {
+  // This sum was never the bug; only Projection (which also added ETC) was. It stood
+  // as its own "Total Parts Cost Spent" line until 2026-09-03, when the breakdown
+  // table replaced the legend and that line was what the table collided with.
+  //
+  // Folding it in was not a loss: the row states the same figure WITH its arithmetic,
+  // which the line never did. And it no longer sits a foot below a different total —
+  // under Dan's model the projection excludes in-house SDC while this figure includes
+  // it ($780,324 against $821,469 on job 1104), so leaving the two as unexplained
+  // neighbours was itself the confusion.
   const src = code("src", "components", "PartsCostSummary.tsx");
-  assert.match(src, /const totalSpentDisplay = invoicedDisplay \+ leftToInvoiceDisplay/);
+  assert.match(src, /label: "Purchased \/ committed"/);
+  assert.match(src, /value: Math\.round\(financials\.purchased\)/);
+  assert.ok(!/Total Parts Cost Spent:/.test(src), "the standalone line is gone, not duplicated");
 });
 
 // ── Root cause 2: the GL-posted rule ────────────────────────────────────────
@@ -318,15 +362,15 @@ test("the Parts Cost card's base bar segment comes from `financials.invoiced`, n
   // `invoicedDisplay + leftToInvoiceDisplay`, so this still guards the same
   // invariant: the caption is the bar's own two segments, not the GL-posted
   // figure alone.
+  // `totalSpentDisplay` is gone (2026-09-03): the "Total Parts Cost Spent" line it
+  // fed is folded into the breakdown table's "Purchased / committed" row, which
+  // states the same figure WITH its derivation. The guard's intent — that the figure
+  // is the sum of what is displayed rather than re-derived from another source —
+  // moves to that row's own arithmetic, asserted above.
   assert.match(
     src,
-    /const totalSpentDisplay = invoicedDisplay \+ leftToInvoiceDisplay/,
-    "totalSpentDisplay must be defined as the sum of the two displayed segments, not re-derived from a different source",
-  );
-  assert.match(
-    src,
-    /Total Parts Cost Spent:[\s\S]{0,240}usd\(totalSpentDisplay\)/,
-    "this caption must render the reconciled sum of the bar's own two segments (Invoiced + Left to be invoiced), not the GL-posted figure alone",
+    /label: "Purchased \/ committed",[\s\S]{0,200}invoiced \+ \$\{usd\(Math\.round\(financials\.yetToInvoiceAllRows\)\)\} open balance/,
+    "the purchased row must show how it was arrived at",
   );
 });
 

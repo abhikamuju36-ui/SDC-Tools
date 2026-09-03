@@ -149,3 +149,51 @@ export function diffTotalStyle(diff: number | null, ceiling: number): { color?: 
   const [faint, vivid] = diff < 0 ? TOTAL_RED : TOTAL_GREEN;
   return { color: mix(faint, vivid, t), fontWeight: 700 };
 }
+
+// ── The Parts Cost under-planning warning (2026-09-03) ──────────────────────
+//
+// One definition of the colour, used by BOTH the server's first paint
+// (etc/page.tsx applies it as a `style`) and the client's live repaint
+// (EtcLiveTotals sets `cell.style.backgroundColor`, PartsCostNewEtcCell styles
+// itself). Three call sites, one colour — the alternative is a warning that is a
+// slightly different red depending on whether you loaded the page or typed.
+//
+// ── Why an inline style rather than a class ─────────────────────────────────
+//
+// The requirement is that the red "overrides the existing yellow input styling
+// while the condition is active". Those yellows are Tailwind utility classes on
+// the cells, so a competing class of equal specificity would be decided by
+// stylesheet order — which is not something a component should be betting on. An
+// inline style always wins, needs no `!important`, and clears to "" exactly like
+// paintDiffColor's own tints, which is the pattern this grid already uses for
+// every live-recoloured cell.
+//
+// #f6d7d7 rather than the lighter --sdc-red-bg (#fbeded): this has to read as a
+// warning across four cells that already carry their own strong column tints
+// (Prior ETC is on #5E91D3 blue, Money Spent and Money Left on their own washes),
+// and the lighter token disappeared against them. It is still light enough to keep
+// --sdc-red-text legible on top, which is the stated constraint — the numbers must
+// stay readable.
+const PARTS_RISK_BG = "#f6d7d7";
+
+export function partsRiskStyle(): { backgroundColor: string; color: string; fontWeight: number } {
+  return { backgroundColor: PARTS_RISK_BG, color: "var(--sdc-red-text)", fontWeight: 700 };
+}
+
+/**
+ * Paint or clear the warning on one cell. `on: false` restores whatever the cell's
+ * own classes say, so a row that stops being at risk goes back to its normal column
+ * tint rather than to white.
+ */
+export function paintPartsRisk(cell: HTMLElement, on: boolean): void {
+  if (!on) {
+    cell.style.backgroundColor = "";
+    cell.style.color = "";
+    cell.style.fontWeight = "";
+    return;
+  }
+  const s = partsRiskStyle();
+  cell.style.backgroundColor = s.backgroundColor;
+  cell.style.color = s.color;
+  cell.style.fontWeight = String(s.fontWeight);
+}

@@ -14,13 +14,9 @@ import { TmReportClient } from "@/components/TmReportClient";
 // directly — parts from Total ETO, hours from the Paylocity ingest — with no
 // Power BI left on this page (2026-09-02: the model was retired and had been
 // stale since 2026-07-31).
-export default async function TmPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ jobs?: string; start?: string; end?: string }>;
-}) {
+export async function TmView({ params }: { params: { jobs?: string; start?: string; end?: string } }) {
   await requirePagePermission("tm:view");
-  const { jobs: jobsParam, start, end } = await searchParams;
+  const { jobs: jobsParam, start, end } = params;
 
   const [jobs, dateDefaults] = await Promise.all([listDashboardJobs(), loadTmDateDefaults()]);
   const idByJobId = new Set(jobs.map((j) => j.jobId));
@@ -112,4 +108,22 @@ export default async function TmPage({
       />
     </div>
   );
+}
+
+
+// -- Route entry point --
+//
+// The page's body lives in `TmView` above so that BOTH this route and the split
+// view can render it. Split view renders two views in ONE document (see
+// lib/split-view.ts for why one document rather than two frames), which means a
+// pane cannot be a route and therefore cannot read `searchParams` - there is only
+// one URL, and two panes reading it would collide. So the body takes its context as
+// a plain argument, and the two callers differ only in where they read that context
+// from: this wrapper reads the URL, a pane reads its own `l.`/`r.` namespace.
+//
+// Nothing about this route's behaviour changes: same URL, same params, same server
+// render. `searchParams` is still awaited HERE, which is what keeps this route
+// dynamic exactly as before.
+export default async function TmPage({ searchParams }: { searchParams: Promise<{ jobs?: string; start?: string; end?: string }> }) {
+  return <TmView params={await searchParams} />;
 }

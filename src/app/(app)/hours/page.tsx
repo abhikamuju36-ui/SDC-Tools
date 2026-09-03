@@ -52,9 +52,9 @@ type HoursPageSearchParams = {
   view?: string;
 };
 
-export default async function HoursPage({ searchParams }: { searchParams: Promise<HoursPageSearchParams> }) {
+export async function HoursView({ params }: { params: HoursPageSearchParams }) {
   await requirePagePermission("hours:view");
-  const sp = await searchParams;
+  const sp = params;
   const filters = parseHoursFilters(sp);
   const groupByLevels = parseHoursGroupByList(sp.groupBy);
   const sort = parseHoursSort(sp.sort, sp.dir);
@@ -351,4 +351,22 @@ function PagerLink({ href, disabled, children }: { href: string; disabled: boole
       {children}
     </Link>
   );
+}
+
+
+// -- Route entry point --
+//
+// The page's body lives in `HoursView` above so that BOTH this route and the split
+// view can render it. Split view renders two views in ONE document (see
+// lib/split-view.ts for why one document rather than two frames), which means a
+// pane cannot be a route and therefore cannot read `searchParams` - there is only
+// one URL, and two panes reading it would collide. So the body takes its context as
+// a plain argument, and the two callers differ only in where they read that context
+// from: this wrapper reads the URL, a pane reads its own `l.`/`r.` namespace.
+//
+// Nothing about this route's behaviour changes: same URL, same params, same server
+// render. `searchParams` is still awaited HERE, which is what keeps this route
+// dynamic exactly as before.
+export default async function HoursPage({ searchParams }: { searchParams: Promise<HoursPageSearchParams> }) {
+  return <HoursView params={await searchParams} />;
 }

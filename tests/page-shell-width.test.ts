@@ -27,8 +27,17 @@ const APP = join(process.cwd(), "src", "app", "(app)");
  * That is a typographic measure, not the layout ceiling this file exists to
  * prevent. Compared with forward slashes so the check behaves the same on
  * Windows.
+ *
+ * split/page.tsx renders no page content of its own (2026-09-03): it decodes the
+ * URL and hands two PANES to SplitViewShell, and each pane renders one of the
+ * twelve real views — every one of which applies PAGE_SHELL itself, inside its own
+ * pane. So the rule this file enforces is satisfied twice over per render, just one
+ * level down from where the scan looks. Applying PAGE_SHELL here as well would add
+ * a second set of page padding around a pair of already-padded pages, and its width
+ * cap would be measured against the whole workspace rather than against the pane
+ * the content actually lives in.
  */
-const EXEMPT_PAGES = ["jobs/[id]/page.tsx", "jobs/new/page.tsx"];
+const EXEMPT_PAGES = ["jobs/[id]/page.tsx", "jobs/new/page.tsx", "split/page.tsx"];
 
 const isExempt = (file: string) => EXEMPT_PAGES.some((e) => file.split("\\").join("/").endsWith(e));
 

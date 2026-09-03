@@ -3,9 +3,10 @@
 import { useEffect, useState } from "react";
 import { registerEtcField, forgetEtcField, updateEtcField, adoptEtcFieldBaseline } from "@/lib/etc-dirty-tracker";
 import { PARTS_COL_W } from "@/components/ui/classnames";
-import { usd } from "@/components/ui/format";
+import { usd, usdExact } from "@/components/ui/format";
 import { publishPartsCell, forgetPartsCell } from "@/lib/etc-live-totals";
-import { isNewEtcCellDecided, formatNewEtcText, type NewEtcCellState } from "@/lib/etc";
+import { isNewEtcCellDecided, formatNewEtcText, partsCostRisk, partsCostRiskTitle, type NewEtcCellState } from "@/lib/etc";
+import { partsRiskStyle } from "@/components/ui/etc-diff-colors";
 import { useRemoteEtcValue, forgetRemoteEtcValue } from "@/lib/etc-remote-values";
 import { useCellSaveState, cellSaveStateStyle } from "@/lib/etc-save-state";
 import { CellPresence } from "@/components/CellPresence";
@@ -206,14 +207,47 @@ export function PartsCostNewEtcCell({
   const decided = isNewEtcCellDecided(cellState, value);
   const displayValue = focused ? value : value.trim() === "" ? "" : currency(Number(value));
 
+  // ── The under-planning warning, live on the keystroke (2026-09-03) ─────────
+  //
+  // Computed from THIS cell's own state rather than from the published totals, so
+  // it flips on the same render as the character being typed — no round trip
+  // through the store and back. The three read-only cells beside it are repainted
+  // by EtcLiveTotals from the value this cell publishes, one tick later; both call
+  // the same lib/etc.ts rule with the same clamped figure, so the four cells cannot
+  // disagree about whether the row is at risk.
+  //
+  // `effectiveForRisk` mirrors the row's Diff exactly: a blank box is not "0 planned"
+  // for this purpose, it is undecided, which `decided` below already excludes — and a
+  // negative entry clamps to 0 the way the Diff clamps it.
+  const typedForRisk = Number(value);
+  const effectiveForRisk = Math.max(
+    value.trim() === "" || !Number.isFinite(typedForRisk) ? suggested : typedForRisk,
+    0,
+  );
+  const moneyLeftForRisk = priorEtc - spent;
+  const risk = partsCostRisk({ moneyLeft: moneyLeftForRisk, newEtc: effectiveForRisk, decided });
+  const riskTip = risk.atRisk
+    ? partsCostRiskTitle(moneyLeftForRisk, effectiveForRisk, risk.shortfall, usdExact)
+    : null;
+
   return (
     // `relative` so the presence marker sits in the corner without resizing the cell.
     <td
       // motion-cell: same yellow ⇄ neutral crossfade as the hours cells (§36.7). One
       // class, one duration, so the two kinds of New ETC cell cannot end up behaving
       // differently — see EtcSectionCells and globals.css.
+      // While flagged, the red REPLACES the decided/attention wash rather than
+      // layering over it — an inline style, so it beats the utility class without
+      // an !important and clears to nothing when the row recovers (the same
+      // mechanism paintDiffColor uses on every other live-recoloured cell here).
+      // The cell can only be flagged when `decided` is true, so the red never
+      // competes with the yellow "needs an answer" state: they are mutually
+      // exclusive by construction, which is what the requirement asks for.
       className={`motion-cell relative border-l border-sdc-border ${decided ? NEUTRAL_BG : ATTENTION_BG} ${saveState?.ring ?? ""} ${PARTS_COL_W} px-1 py-1 text-center`}
-      title={saveState?.title}
+      style={risk.atRisk ? partsRiskStyle() : undefined}
+      // The save state's own message still wins when there is one: "couldn't save"
+      // is more urgent than "this figure looks low", and it is transient.
+      title={saveState?.title ?? riskTip ?? undefined}
     >
       <CellPresence cellKey={name} />
       <input type="hidden" name={name} value={value} disabled={locked} />
@@ -252,10 +286,18 @@ export function PartsCostNewEtcCell({
           setFocused(false);
           endEditingCell(name);
         }}
-        title={hint}
+        // The risk explanation beats the "nothing decided yet" hint, which cannot
+        // apply anyway: `hint` is for an untouched cell and the flag needs a value.
+        title={riskTip ?? hint}
         disabled={locked}
         aria-label={`New ETC cost override, ${jobName}, Parts Cost`}
-        className="w-full [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-label font-bold leading-none text-sdc-gray-600 outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm"
+        // text-sdc-gray-600 has to yield, or the number stays grey on red. The
+        // focus:bg-white stays in BOTH states on purpose — it is what makes the box
+        // still read as editable when you click into it, which the requirement calls
+        // out specifically ("editable New ETC cell stays obviously editable").
+        className={`w-full [appearance:textfield] rounded-md border-none bg-transparent px-1.5 py-0 text-center text-label font-bold leading-none outline-none placeholder:font-bold placeholder:text-sdc-gray-600 [&::-webkit-inner-spin-button]:appearance-none [&::-webkit-outer-spin-button]:appearance-none focus:bg-white focus:shadow-sm ${
+          risk.atRisk ? "text-sdc-red-text" : "text-sdc-gray-600"
+        }`}
       />
     </td>
   );

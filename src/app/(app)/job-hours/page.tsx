@@ -26,17 +26,9 @@ const EMPTY_HOURS_DETAIL: JobHoursDetail = { rows: [], total: 0, sections: [], t
 // "Job Hour Details" — web recreation of the Power BI "Job Hours Report —
 // Management Level" drillthrough. Supports one OR many jobs (aggregated), like
 // the report's job slicer. Selected jobs travel in ?jobs=<jobId,jobId,…>.
-export default async function JobHoursPage({
-  searchParams,
-}: {
-  // `section` is a deep-link-only param (currently just SDC_Scheduler's
-  // Procurement drawer launcher, see ScrollIntoView below) — it doesn't
-  // change what data loads, only whether the page scrolls itself to the
-  // Procurement block once that data is on screen.
-  searchParams: Promise<{ jobs?: string; job?: string; section?: string }>;
-}) {
+export async function JobHoursView({ params }: { params: { jobs?: string; job?: string; section?: string } }) {
   const pageSession = await requirePagePermission("job-hour-details:view");
-  const { jobs: jobsParam, job: legacyJobParam, section } = await searchParams;
+  const { jobs: jobsParam, job: legacyJobParam, section } = params;
   const jobs = await listDashboardJobs();
   const idByJobId = new Map(jobs.map((j) => [j.jobId, j.id]));
 
@@ -155,7 +147,15 @@ export default async function JobHoursPage({
       ? getPartsCostFinancials(data.jobRefs.map((r) => r.id))
       : Promise.resolve({
           budget: null, invoiced: 0, leftToInvoice: 0, etc: null, totalSpent: 0,
-          projection: 0, variance: null, variancePct: null, failedJobs: 0, lineCount: 0, lines: [],
+          projection: 0,
+          // Nothing selected, so there is nothing to project. `etcUnknown: true`
+          // rather than false: there is no prior ETC to report here, and claiming one
+          // of 0 would be a forecast nobody made.
+          purchased: 0, priorEtc: null, priorEtcSource: "none", partsSpentThisMonth: 0,
+          adjustedEtcRaw: null, adjustedEtc: 0, yetToInvoice: 0, yetToInvoiceAllRows: 0,
+          inHouseExcluded: 0, inHouseRows: 0, additionalExposure: 0, coverageLine: null,
+          etcUnknown: true, etcMonth: null,
+          variance: null, variancePct: null, failedJobs: 0, lineCount: 0, lines: [],
         });
 
   // Job Cost — the BOM cost hierarchy (formerly its own page) now lives below
@@ -348,4 +348,22 @@ export default async function JobHoursPage({
       )}
     </div>
   );
+}
+
+
+// -- Route entry point --
+//
+// The page's body lives in `JobHoursView` above so that BOTH this route and the split
+// view can render it. Split view renders two views in ONE document (see
+// lib/split-view.ts for why one document rather than two frames), which means a
+// pane cannot be a route and therefore cannot read `searchParams` - there is only
+// one URL, and two panes reading it would collide. So the body takes its context as
+// a plain argument, and the two callers differ only in where they read that context
+// from: this wrapper reads the URL, a pane reads its own `l.`/`r.` namespace.
+//
+// Nothing about this route's behaviour changes: same URL, same params, same server
+// render. `searchParams` is still awaited HERE, which is what keeps this route
+// dynamic exactly as before.
+export default async function JobHoursPage({ searchParams }: { searchParams: Promise<{ jobs?: string; job?: string; section?: string }> }) {
+  return <JobHoursView params={await searchParams} />;
 }

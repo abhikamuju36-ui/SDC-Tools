@@ -9,13 +9,9 @@ import { CashFlowClient } from "@/components/CashFlowClient";
 // why this is a hard role check, not a togglable Permission). "Current" is
 // always live against Total ETO; any other `as`/`compare` param reads an
 // immutable stored snapshot — see lib/cash-flow.ts.
-export default async function CashFlowPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ as?: string; compare?: string }>;
-}) {
+export async function CashFlowView({ params }: { params: { as?: string; compare?: string } }) {
   await requireEltOnly();
-  const { as, compare } = await searchParams;
+  const { as, compare } = params;
 
   // Started HERE, before the asOf/compareAsOf resolution below, because neither
   // of these depends on either of them — and both used to sit inside the
@@ -76,4 +72,22 @@ export default async function CashFlowPage({
       </div>
     </div>
   );
+}
+
+
+// -- Route entry point --
+//
+// The page's body lives in `CashFlowView` above so that BOTH this route and the split
+// view can render it. Split view renders two views in ONE document (see
+// lib/split-view.ts for why one document rather than two frames), which means a
+// pane cannot be a route and therefore cannot read `searchParams` - there is only
+// one URL, and two panes reading it would collide. So the body takes its context as
+// a plain argument, and the two callers differ only in where they read that context
+// from: this wrapper reads the URL, a pane reads its own `l.`/`r.` namespace.
+//
+// Nothing about this route's behaviour changes: same URL, same params, same server
+// render. `searchParams` is still awaited HERE, which is what keeps this route
+// dynamic exactly as before.
+export default async function CashFlowPage({ searchParams }: { searchParams: Promise<{ as?: string; compare?: string }> }) {
+  return <CashFlowView params={await searchParams} />;
 }
