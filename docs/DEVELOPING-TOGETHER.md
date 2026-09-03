@@ -4,7 +4,8 @@ A working plan for two developers (Abhi and Dan) building all seven apps out of 
 repo — **`abhikamuju36-ui/SDC-Tools`** — on a box that is also production.
 
 - **Written:** 2026-09-03
-- **Status:** proposal. Nothing in Phase 1 onward has been done yet.
+- **Status:** **Phases 0-3 are DONE** (2026-09-03). Phase 2's GitHub-side settings and
+  Phase 4 are outstanding — see §10.
 - **Scope:** repo layout, branch workflow, and the deploy plumbing that has to change
   with them.
 
@@ -93,7 +94,17 @@ New-Item -ItemType Junction -Path "D:/AI Projects/sdc-abhi/node_modules" `
          -Target "D:/AI Projects/Centrailized library/node_modules"
 ```
 
-`apps/assemblies` also needs its own local `node_modules` junctioned.
+`apps/assemblies` and `sdc-etc-planner` also need their own local `node_modules`
+junctioned.
+
+**One gotcha, found setting this up:** a fresh worktree fails `tsc` in the Reports app
+with `Cannot find name 'RouteContext'`. Those are Next.js *generated* types under
+`.next/types`, which `tsconfig.json` includes and which do not exist until something
+has built. Run a build once in the worktree before trusting a typecheck:
+
+```bash
+cd "D:/AI Projects/sdc-abhi/sdc-etc-planner" && npx next build
+```
 
 **Why worktrees rather than a second clone:** they share one object store, so branches are
 visible from both, and the prod tree can never be left on a feature branch by accident —
@@ -303,3 +314,51 @@ friction.
 See also [APPLICATIONS.md](./APPLICATIONS.md), [DEPLOYMENT.md](./DEPLOYMENT.md) and
 [DEVELOPMENT.md](./DEVELOPMENT.md), all of which currently describe Reports, PowerBI and the
 Scheduler as separate repos with their own pipelines. They need updating as part of Phase 3.
+
+---
+
+## 10. What was actually done, and what is left
+
+**Done on 2026-09-03**, commits `5bb1c4d` → `cfe9285` on `master`:
+
+| Phase | Commit | What |
+|---|---|---|
+| 0 | `5bb1c4d` | CI triggers on `master`. It had never run. |
+| 3a | `ee74a32` | Updater step 7b: stop → migrate → generate → build → start for Reports |
+| 3 | `1c137a4` | `SDC-PowerBI-DEV` subtree-merged in, 320 files, history linked |
+| 3 | `4e4b5ff` | `sdc-etc-planner` subtree-merged in, 792 files, history linked |
+| 3 | `cfe9285` | Old nested `.git` dirs archived and ignored |
+| 1 | — | Worktree at `D:/AI Projects/sdc-abhi`, `node_modules` junctioned |
+
+Verified during the move: the Reports app stayed `200` on 4006 throughout, all seven PM2
+apps still respond, `git diff --raw` found zero content differences against `90757fc`, and
+`git rev-parse --show-toplevel` from inside `sdc-etc-planner` now returns the monorepo
+root.
+
+**Left to do, and it needs the GitHub UI or the `gh` CLI — neither is available on this
+box:**
+
+1. **Branch protection on `master`** (Phase 2): require a PR, require the CI check, block
+   force-push. Until this is set, the "nobody pushes to `master`" rule is a convention
+   rather than a guard — and these five commits went straight to `master` themselves,
+   because the plumbing PRs depend on did not exist yet.
+2. **Confirm CI ran.** Check the Actions tab for a run against `cfe9285`. If nothing
+   appears, the workflow file has a second problem beyond the branch list.
+3. **Set up Dan's worktree** on his own path, same two steps as §3.
+4. **Archive `sdc-sheets` and `SDC-PowerBI`** on GitHub — do not delete. They are the
+   fallback if the subtree merge needs undoing.
+5. **Review what came in unreviewed.** `sdc-etc-planner` arrived at the tip of
+   `feat/split-view-and-parts-projection`: split view, the Parts Cost projection rebuild,
+   the Monthly ETC red highlight. Tests pass, nothing browser-verified.
+6. **Phase 4 (the Scheduler)** — still recommended as *not yet*, for the three reasons
+   in §6.
+
+**Two things worth deciding while this is fresh:**
+
+- `SDC-PowerBI-DEV/DEV-LOG.md`, `REDESIGN-PROMPT.md`, `ROADMAP.md`, `power bi new
+  design/` and `revamp dashboard/` were untracked in the old repo and are still untracked
+  here. They look like real documentation. Commit them, or add them to `.gitignore` — right
+  now they are permanent `git status` noise.
+- The monorepo still carries `dan` and `upstream` remotes pointing at
+  `danbelliveau2/SDC_Scheduler`, plus the new `reports` and `powerbi` remotes. The latter
+  two can be dropped once the move has settled (`git remote remove reports powerbi`).
