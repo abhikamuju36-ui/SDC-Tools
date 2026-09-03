@@ -3,11 +3,19 @@
 # directly at danbelliveau2/SDC_Scheduler for clean bi-directional sync.
 SDC_Scheduler/
 
-# ── SDC-PowerBI-DEV — managed as its own standalone git repo ────────────────
-# Own .git pointing at abhikamuju36-ui/SDC-PowerBI. Previously committed here
-# as an unregistered gitlink (no .gitmodules) — a fresh clone got an empty
-# folder. Ignored instead, same pattern as SDC_Scheduler above.
-SDC-PowerBI-DEV/
+# ── SDC-PowerBI-DEV — TRACKED here since 2026-09-03 ─────────────────────────
+# It used to be ignored, as its own repo pointing at abhikamuju36-ui/SDC-PowerBI
+# (and before that, a broken unregistered gitlink — a fresh clone got an empty
+# folder). See docs/DEVELOPING-TOGETHER.md §5 for why it moved in. Only its
+# local-only artefacts stay ignored: the .pbix working files are large binaries, and
+# BACKUP/ and source-data/ are working data rather than source. The app's own
+# SDC-PowerBI-DEV/.gitignore came across with it and still covers .pbi cache files.
+SDC-PowerBI-DEV/BACKUP/
+SDC-PowerBI-DEV/source-data/
+SDC-PowerBI-DEV/**/*.pbix
+SDC-PowerBI-DEV/mcp-server/bin/
+SDC-PowerBI-DEV/mcp-server/obj/
+SDC-PowerBI-DEV/mcp-server/publish/
 
 # ── sdc-etc-planner — managed as its own standalone git repo ────────────────
 # Own .git pointing at abhikamuju36-ui/sdc-sheets. Ignored proactively so an

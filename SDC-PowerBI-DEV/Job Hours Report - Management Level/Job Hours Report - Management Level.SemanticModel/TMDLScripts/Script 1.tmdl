@@ -1,0 +1,18 @@
+createOrReplace
+
+	ref table 'Cost Estimated'
+
+		column 'Cost Quoted'
+			dataType: double
+			isHidden
+			formatString: 0
+			lineageTag: 02dda4fa-9648-4b59-9491-635c3212f884
+			summarizeBy: none
+			sourceColumn: Cost Quoted
+
+			changedProperty = IsHidden
+
+			changedProperty = DataType
+
+			annotation SummarizationSetBy = User
+

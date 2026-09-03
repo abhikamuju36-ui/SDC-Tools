@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "powerbi": {
+      "type": "stdio",
+      "command": "mcp-server/publish/win-x64/sdc-powerbi-mcp.exe"
+    }
+  }
+}
