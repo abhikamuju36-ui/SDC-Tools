@@ -3,11 +3,22 @@ name: CI — All Apps
 # Runs on every push and pull request.
 # Path filters ensure only the relevant job runs when a specific app changes.
 
+# ── `master` added 2026-09-03: until now CI had never run ────────────────────
+#
+# The trigger listed `main` and `develop`. This repo's branch is `master`, and there
+# is no `main` and no `develop` — so no push matched, and no pull request could
+# target `main` to match either. Every job below has been dormant since the file was
+# written: the shell build, the app test suites, all of it.
+#
+# release.yml already had this right (`branches: [main, master]`), which is what
+# makes the omission here a slip rather than a decision — so the same belt-and-braces
+# pair is used, and `feat/**` is added alongside `feature/**` because that is the
+# prefix actually in use.
 on:
   push:
-    branches: [main, develop, 'feature/**', 'fix/**']
+    branches: [master, main, develop, 'feat/**', 'feature/**', 'fix/**']
   pull_request:
-    branches: [main]
+    branches: [master, main]
 
 concurrency:
   group: ci-${{ github.ref }}
