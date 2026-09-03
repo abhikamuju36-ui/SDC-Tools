@@ -1,0 +1,1418 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+// A user's role GROUP — not an access level. There is deliberately no ordering
+// among these: what each one can do is the RolePermission table alone, one
+// independent row per (role, permission). See src/lib/permissions.ts, which
+// dropped ROLE_RANK / inheritance / cascade on 2026-09-01.
+//
+// ADMIN was retired 2026-08-18: every ADMIN row became ELT in the same
+// migration that added SALES/ELT (20260818150000_add_sales_elt_roles). ELT is
+// the all-access role (a wildcard in hasPermission, not a top rank).
+//
+// PM added 2026-09-01 (20260901120000_add_pm_role_and_split_etc_permissions)
+// for project execution — seeded explicitly, NOT copied from MANAGER or SALES.
+enum Role {
+  ALL
+  MANAGER
+  PM
+  SALES
+  ELT
+}
+
+// Auth: credentials (email/password) for now — swap for Microsoft/Azure AD SSO
+// later without changing downstream models (User.id is what everything else keys off).
+model User {
+  id           Int      @id @default(autoincrement())
+  email        String   @unique
+  name         String
+  passwordHash String
+  role         Role     @default(ALL)
+  createdAt    DateTime @default(now())
+  // Bumped to invalidate every previously-issued session for this user —
+  // the server-side half of "sign out", and what a Scheduler-side logout
+  // calls out to over /api/integration/revoke-session. See
+  // lib/token-revocation.ts; never read or written anywhere else.
+  tokenVersion Int      @default(0)
+  // A disable flag, added for the shared-account project with Scheduler —
+  // this app had none before (Scheduler's users.active is the older one).
+  // Checked alongside tokenVersion in auth.ts's jwt callback; each app's
+  // active flag is its own — deactivating someone here does not touch
+  // their Scheduler account, and vice versa.
+  active       Boolean  @default(true)
+
+  etcEntries             EtcEntry[]
+  executionRateEdits     ExecutionRate[]
+  standardSheetSnapshots StandardSheetSnapshot[]
+  auditLogs              AuditLog[]
+}
+
+// Append-only record of who changed what, everywhere in the app — ETC edits,
+// employee/job-task changes, Standard Sheet edits, month
+// submit/reopen/refresh, and sign-ins. `userEmail` is a snapshot so a log
+// entry stays readable even if the account's email later changes.
+model AuditLog {
+  id         Int      @id @default(autoincrement())
+  userId     Int?
+  user       User?    @relation(fields: [userId], references: [id])
+  userEmail  String?
+  action     String // e.g. "etc.submitMonth", "employee.create"
+  entityType String? // e.g. "EtcEntry", "Employee"
+  entityId   String? // stringified id/key, e.g. "42" or "1079-10-111-2026-07"
+  summary    String // human-readable one-liner shown in the log viewer
+  metadata   Json? // structured before/after values or extra detail
+  createdAt  DateTime @default(now())
+
+  // ── Per-CELL change history (added 2026-08-04) ─────────────────────────────
+  //
+  // These used to live inside `metadata` as JSON. That was fine for reading a log
+  // line and useless for the thing actually asked for — "review the history of a
+  // specific cell or project" — because you cannot index or filter a JSON blob by
+  // column name in MySQL without a generated column per field. They are real
+  // columns now, and the composite index below is what makes a cell's history a
+  // single indexed lookup.
+  //
+  // All nullable: most audit rows are not cell edits (a sync ran, a month was
+  // reopened, somebody signed in) and must not be forced to invent values. A row
+  // with `columnName` set is a cell change; one without is an event.
+  userName      String? // display name at the time of the change — users get renamed
+  tab           String? // "Monthly ETC", "Projects", "Standard Sheet", …
+  rowRef        String? // the project/row a human would name: job number, employee name
+  columnName    String? // "New ETC", "Parts Cost Quoted", "Hours Pulled", …
+  previousValue String? // stringified, so one column holds hours, money and text
+  newValue      String?
+  changeType    String? // "added" | "edited" | "removed" | "recalculated" | "rejected"
+  appVersion    String? // which build produced the change
+  // Groups every row written by one user action — a batch save of 40 cells shares
+  // one id, so "what did that save actually do" is one query. Also what makes a
+  // duplicate submission detectable after the fact.
+  changeId      String?
+
+  @@index([entityType, entityId])
+  @@index([userId])
+  @@index([createdAt])
+  // The per-cell history lookup: "show me every change to this column on this row".
+  @@index([tab, rowRef, columnName, createdAt])
+  @@index([changeId])
+}
+
+// Synced from Paylocity (Phase 2). Manually maintained for now.
+// Soft-deleted (active=false) instead of removed, so historical hours stay valid.
+model Employee {
+  id            Int        @id @default(autoincrement())
+  paylocityId   String?    @unique
+  name          String
+  department    String?
+  // Job title, sourced from Employee_Department_Map.xlsx's "Position Title"
+  // column (see scripts/import-employee-departments.ts) — the same sheet that
+  // supplies department/supervisor. No other upstream (Paylocity/Scheduler)
+  // carries a title today, so this is that sheet's own field alone.
+  positionTitle String?
+  billingGroup  String? // e.g. Engineering / Shop
+  // Team grouping, matching the SDC Scheduler app's team_members.discipline
+  // categories: "Project Management" | "Mechanical Engineers" | "Controls
+  // Engineers" | "Builders" | "Electricians". Historical/free-text — kept for
+  // the Paylocity-facing label, but no longer the authoritative grouping;
+  // see `team` below. Editable here as a manual override / for people not on
+  // the Scheduler roster.
+  discipline    String?
+  // The ONE authoritative grouping for the 7 delivery teams, shared with SDC
+  // Scheduler (2026-08-13). One of Scheduler's own discipline codes — pm,
+  // mech, controls, build, wire, mfgops, service — never a new vocabulary;
+  // see lib/employee-teams.ts's schedulerCode field and lib/disciplines.ts's
+  // DISCIPLINE_LABEL for the code<->label mapping both apps already shared.
+  // Written directly by Scheduler (its board is now the shared table's other
+  // writer, via a dedicated MySQL user — see SDC_Scheduler/routes/team.js) or
+  // manually here as an override. Null only for people not yet linked to a
+  // Scheduler row and not one of the 7 teams (back-office departments).
+  team          String?
+  active        Boolean    @default(true)
+  // Reporting line, sourced from the Paylocity employee export (Supervisor [Id]),
+  // matched by Emp Id == paylocityId — a stable key, so no name matching. A
+  // self-relation: the supervisor is just another Employee. Nullable because
+  // top-of-chain people (and outsourced placeholders) have none. Editable on
+  // the Employees page as a manual override. See import-employee-supervisors.ts.
+  supervisorId  Int?
+  supervisor    Employee?  @relation("EmployeeSupervisor", fields: [supervisorId], references: [id], onDelete: SetNull)
+  reports       Employee[] @relation("EmployeeSupervisor")
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+}
+
+// Source of jobs: manual entry for now (Phase 1).
+// `source` flag lets us add automated sync later without a schema change.
+model Job {
+  id                       Int       @id @default(autoincrement())
+  jobId                    String    @unique // matches existing Job Id, e.g. "1079"
+  jobName                  String
+  status                   String    @default("Active")
+  customer                 String? // confirmed from Project Planner Data Control.xlsx archive tabs
+  type                     String? // e.g. "Custom" | "Duplicate" | "Hybrid" | "Service" — same source
+  poStartDate              DateTime?
+  startDate                DateTime? // confirmed from "Estimated Hours" tab — distinct from poStartDate
+  completeDate             DateTime?
+  includeInTypeCalc        Boolean   @default(false)
+  billable                 Boolean   @default(true) // Billable vs. Non-Billable — manager-set, no upstream sync touches this
+  // Drops the job from the Standard Fees allocation (Total ETC pool share)
+  // without hiding it from the ETC grid — the sheet's job list was manually
+  // curated and sometimes excluded an active billable job (e.g. 1115 in the
+  // June 2026 sheet). Non-billable jobs are always excluded regardless.
+  excludedFromStandardFees Boolean   @default(false)
+  costQuoted               Decimal?  @db.Decimal(12, 2)
+  costActualHistorical     Decimal?  @db.Decimal(12, 2)
+  // Same manual-override protection as EstimatedHours.quotedHoursManuallyEdited
+  // — a manager's edit on the Projects tab must survive the next sync instead
+  // of being silently overwritten. customer is touched by syncFromTotalEto,
+  // costQuoted by syncQuotedFromPowerBi; nothing else on this model syncs.
+  customerManuallyEdited   Boolean   @default(false)
+  costQuotedManuallyEdited Boolean   @default(false)
+  // Live from TotalETO (vwProjectActualsVSEstimates) via manual sync button.
+  totEtoEstEngHours        Decimal?  @db.Decimal(10, 2)
+  totEtoActEngHours        Decimal?  @db.Decimal(10, 2)
+  totEtoEstMfgHours        Decimal?  @db.Decimal(10, 2)
+  totEtoActMfgHours        Decimal?  @db.Decimal(10, 2)
+  totEtoSyncedAt           DateTime?
+  // ── Customer identity, from TotalETO (2026-08-31) ──────────────────────────
+  //
+  // Captured by syncFromTotalEto so the app can group customers by a STABLE
+  // SOURCE IDENTIFIER instead of by the spelling somebody typed. Read only
+  // through lib/customer-canonical.ts, which is the one definition of "who the
+  // customer is" — see that file's header for why the accounting account and
+  // not the company id is the useful one (TotalETO holds five duplicate First
+  // Solar company records; they share one account).
+  //
+  // Both NULL-able with no default and no backfill from a default: a job that
+  // TotalETO has no project for (the internal 4000/7000/10000-series) has no
+  // company and no account, and that is a real "not applicable", not a zero.
+  // Unlike `customer`, these are NOT protected by customerManuallyEdited — they
+  // describe the TotalETO project, so the sync always rewrites them; the manual
+  // override is honoured in the resolver instead.
+  totEtoCompanyId          Int?
+  totEtoAccountId          String? // tblCompany.CAccCustomerID — the accounting customer ACCOUNT
+  source                   String    @default("manual") // 'manual' | 'scheduler_sync' | 'totaleto_sync'
+  createdAt                DateTime  @default(now())
+  updatedAt                DateTime  @updatedAt
+
+  etcEntries             EtcEntry[]
+  estimatedHours         EstimatedHours[]
+  tasks                  JobTask[]
+  monthlyActualHours     JobMonthlyActualHours[]
+  hoursDetail            JobHoursDetail[]
+  hoursBuckets           JobHoursBucket[]
+  executionRate          ExecutionRate?
+  standardSheetSnapshots StandardSheetSnapshot[]
+  projectRelease         ProjectRelease?
+
+  @@index([totEtoAccountId])
+}
+
+// Parsed SDC "Project Release" Word doc, one per Job (replaced on re-upload).
+// The order date, delivery, financial milestones, penalty clause, and the
+// Project Budget image are extracted from the .docx (see lib/project-release.ts)
+// and kept here — separate from Job so the heavy budgetImage isn't loaded on
+// every Job query. receiptOfPo/deliveryDate also feed Job.poStartDate etc. on
+// upload (respecting the manual-edit guards).
+model ProjectRelease {
+  id            Int       @id @default(autoincrement())
+  jobId         Int       @unique
+  job           Job       @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  fileName      String
+  uploadedAt    DateTime  @default(now())
+  uploadedBy    String?
+  receiptOfPo   DateTime?
+  deliveryWeeks Int?
+  deliveryDate  String? // human string as written in the doc, e.g. "January 15 2027"
+  penalty       Boolean   @default(false)
+  penaltyWeeks  Int?
+  milestones    Json? // [{ pct, label }]
+  budgetImage   String?   @db.LongText // data: URL of the Project Budget picture (.docx only)
+  // Extra parsed fields (PDF releases): jobNumber, jobTitle, buyer, quote,
+  // poNumber, customerContact, warrantyMonths, commercialCost, budget[].
+  details       Json?
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+}
+
+// Job-level actual hours worked per month, live from Power BI's "Hours
+// Actual, Est to Date" measure — the same one the legacy "Monthly ETC
+// Process" sheet's PivotTable used, scoped by the model's own
+// Date[Is ETC to Date] cutoff (see sync-actuals.ts).
+// Punch-level actual hours — one row per employee per day per job per section.
+// The detail behind JobMonthlyActualHours' rollups, recreating the Power BI
+// report's "Hours Detail" drillthrough page inside the app.
+//
+// Deliberately fed from the SAME source as the rollups (the Paylocity export in
+// sharepoint-hours.ts), not from Power BI's 'Hours Actual'. The two feeds
+// disagree on which section a punch belongs to — measured 2026-07-30, job 1067
+// June 2026 was 249.7 hrs here against 37.3 in the model, because the model's
+// Function Hierarchy assigns sections the app's MachineSec-Function transform
+// maps elsewhere. Sourcing the detail from the model would mean a drill-down
+// whose total didn't match the number you clicked to open it.
+//
+// `employeeId` is Paylocity's Employee Id as a STRING, not a FK to Employee:
+// the export contains ids for people who aren't on the roster (2 of 69 on
+// 2026-07-30 — leavers), and dropping their hours to satisfy a foreign key would
+// silently lose time that the rollups DO count. Resolved to a name at read time
+// via Employee.paylocityId, falling back to showing the raw id.
+// ── What a (job, month) bucket of punch rows currently CONTAINS (2026-08-25) ──
+//
+// A content digest per (job, month), written by syncJobHoursDetail alongside the rows
+// themselves, so the next refresh can tell an unchanged bucket from a changed one and
+// rewrite only what actually moved.
+//
+// Why this exists, measured: the punch write was 1,146 sequential
+// delete-then-insert transactions rewriting all 28,972 rows on EVERY pass — 10.5s of
+// a 17.4s refresh, the single largest cost in the app. Twelve of the twenty months it
+// rewrote are closed 2025 history whose source workbook has not been saved since
+// 2026-06-03, so almost all of that work reproduced byte-identical rows.
+//
+// The digest covers the FULL row payload as it would be written — including the
+// classifyPunch outputs (standardDepartment, standardTaskDescription, mappingStatus)
+// and the `source` label. That is deliberate and is what makes this safe without a
+// version constant anybody has to remember to bump: change the rule book and the
+// classification of a punch changes, so the digest changes, so the bucket is
+// rewritten. There is no way to alter what would be stored without altering the
+// digest of what would be stored.
+//
+// Cascades with the job, so a deleted job cannot leave a digest behind that would let
+// a later job reusing the primary key skip a write it needs.
+model JobHoursBucket {
+  jobId    Int
+  job      Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  month    String // "2026-07", matching JobHoursDetail.month
+  // sha256 over the bucket's rows, sorted by the punch-grain key. Hex, so 64 chars.
+  digest   String   @db.Char(64)
+  // Rows the digest was computed over. Not used for the skip decision — the digest
+  // alone decides that — but it makes a stale digest obvious when reading the table
+  // by hand, which is the first thing anybody debugging a missing punch will do.
+  rows     Int
+  syncedAt DateTime @default(now())
+
+  @@id([jobId, month])
+}
+
+model JobHoursDetail {
+  id                      Int      @id @default(autoincrement())
+  jobId                   Int
+  job                     Job      @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  // `section` IS the raw Paylocity pair "${rawSection}-${rawFunction}" (2026-08-21) —
+  // no alias, fold, or split. Storage never rewrites a punch to fit a rule book; the
+  // ETC grid's fixed-column fold (10-311 -> 312/313, 12/13/14-211 -> 10-211, etc.) is
+  // computed on the fly by the handful of consumers that need it (syncActualHours,
+  // syncHoursWorked, the ETC-month drill, T&M) — never stored here.
+  section                 String
+  month                   String // "2026-07" — denormalised from workDate so a month can be replaced wholesale
+  workDate                DateTime @db.Date
+  employeeId              String // Paylocity Employee Id
+  hours                   Decimal  @db.Decimal(10, 2)
+  // Split out of `section` at write time, for plain-column filtering/grouping with no
+  // string parsing. rawSection + "-" + rawFunction === section, always.
+  rawSection              String   @default("")
+  rawFunction             String   @default("")
+  // The approved Section+Function rule book, applied once at write time and stored so
+  // every page's Group By is a plain SQL GROUP BY on these columns — no per-page
+  // recomputation, no drift between pages. Pure functions of rawSection/rawFunction
+  // (paylocity-standard-rules.ts's classifyPunch), so recomputing them for every row
+  // needs no re-read of Paylocity — see scripts/recompute-standard-columns.ts.
+  standardDepartment      String   @default("") // "PM" | "Engineering" | "Shop" | "Undefined"
+  standardTaskDescription String   @default("") // e.g. "Manufacturing"; "Undefined" when unmapped
+  mappingStatus           String   @default("") // "Mapped" | "Undefined"
+  // The travel PORTION of this row's hours, from the Paylocity export's own "Travel"
+  // column (2026-08-28). Hours, not a label, because Travel sits inside the Job Hours
+  // Report's group-by grain but not this table's — see the long note in
+  // sync-actuals.ts. SUM(travelHours) reproduces that report's `Hours Actual Travel`.
+  // NULL means "not known" (an export saved without the column, or a Power BI-sourced
+  // backfill), which the UI renders as a dash; 0 means a real, measured zero.
+  travelHours             Decimal? @db.Decimal(10, 2)
+  source                  String   @default("sharepoint")
+  syncedAt                DateTime @default(now())
+
+  // One row per employee/day/job/RAW punch. `section` already IS the raw pair, so this
+  // is the true punch grain with no possibility of two different raw punches summing
+  // into one row.
+  @@unique([jobId, section, workDate, employeeId], map: "JobHoursDetail_punch_grain_key")
+  @@index([rawSection, rawFunction], map: "JobHoursDetail_raw_pair_idx")
+  @@index([standardDepartment])
+  @@index([mappingStatus])
+  // The drill queries by job (all sections, like the report's page).
+  @@index([jobId, month])
+}
+
+model JobMonthlyActualHours {
+  id             Int       @id @default(autoincrement())
+  jobId          Int
+  job            Job       @relation(fields: [jobId], references: [id])
+  month          String // "2025-01"
+  actualHours    Decimal   @db.Decimal(10, 2)
+  // No default, deliberately. This was @default("power_bi"), which outlived the
+  // Power BI era and silently mislabelled every row it touched: syncActualHours
+  // set source only when creating, so rows created before the Paylocity migration
+  // kept "power_bi" while their actualHours were overwritten from Paylocity on
+  // every sync. Requiring the value makes a writer state its provenance and turns
+  // a future omission into a compile error rather than a wrong label. The only
+  // writer is syncActualHours (sync-actuals.ts), which sets it on both branches.
+  source         String
+  syncedAt       DateTime  @default(now())
+  // Manual correction, mirroring the legacy spreadsheet's "Actual Hours
+  // Override" tab (e.g. Paylocity coded hours to "Not Defined" instead of
+  // the real job). While true, syncActualHoursFromPowerBi() skips this row
+  // instead of overwriting the correction on the next sync.
+  overridden     Boolean   @default(false)
+  overriddenNote String?
+  overriddenAt   DateTime?
+
+  @@unique([jobId, month])
+}
+
+// How current the underlying Power BI feed itself is, distinct from
+// syncedAt (which only says when the app last asked). Populated from the
+// model's own [Hours Refreshed Thru] measure whenever an actual-hours sync
+// runs — not queried on every page load, since it only changes when
+// Paylocity's export into the model advances.
+model PowerBiFreshness {
+  id               Int      @id @default(autoincrement())
+  source           String   @unique // e.g. "hours_actual", "dataset_refresh"
+  refreshedThrough DateTime
+  checkedAt        DateTime @default(now())
+  // For source "dataset_refresh": the Power BI dataset's own last refresh
+  // outcome ("Completed" / "Failed: <errorCode>") — surfaced in the ETC
+  // header so a silently failing upstream refresh (found live 2026-07-18:
+  // CredentialsNotSpecified, two days of stale hours) is visible instead
+  // of quietly aging the data.
+  // @db.Text, not the default varchar(191). Real failure messages are long —
+  // the DPAPI one that broke the sync for weeks is ~440 chars — and
+  // recordHoursSyncFailure writes up to 308. Against varchar(191) that write
+  // threw "value too long for the column's type" on EVERY failure, and the
+  // catch there swallowed it, so the one mechanism meant to make stale data
+  // visible was itself silently broken. A diagnostic field must never be the
+  // thing that fails to record a diagnosis.
+  status           String?  @db.Text
+}
+
+// Hours the importer had to REJECT, kept so they are visible instead of merely
+// absent. Rows whose "Jobs" cell is not a job number ("Not Defined",
+// "2025 SERVICE") cannot be attributed to anything, so they never reach
+// EtcEntry — and before this existed they vanished with no trace at any layer
+// (~2,251h across the export when first measured, 2026-07-31).
+//
+// Only rows that WOULD otherwise have counted are stored: time on an untracked
+// section is missing from the grid regardless of its job, so recording it here
+// would overstate what a valid job number could have recovered.
+//
+// Replaced wholesale per sync — the export is the authority on what is wrong
+// with it, and a label that has since been corrected upstream must disappear
+// here too.
+model HoursImportIssue {
+  id       Int      @id @default(autoincrement())
+  month    String // "2026-07"
+  label    String // the raw cell value, e.g. "Not Defined"
+  rows     Int
+  hours    Decimal  @db.Decimal(10, 2)
+  syncedAt DateTime @default(now())
+
+  @@unique([month, label])
+  @@index([month])
+}
+
+// ── The punch-level rows BEHIND HoursImportIssue (§42.11, §42.12) ───────────
+//
+// HoursImportIssue above holds per-month/label TOTALS. This holds the individual
+// punches those totals are made of, and it exists because a total is not actionable:
+// fixing undefined hours means opening Paylocity and correcting specific entries,
+// which needs a person, a date and a section.
+//
+// ── Why this is persisted rather than recomputed on demand ──────────────────
+//
+// It used to be recomputed. getUnattributedDetail() ran a live query every time
+// somebody clicked Detail, while the KPI card read the stored totals — two sources
+// for one number, and the module said so in its own header ("this can disagree with
+// the card if the file has changed since the last sync"). That is the §42.11 defect.
+//
+// Both are now written from ONE pass over the import, in one transaction, so
+// "KPI = sum of the drill's rows" is true by construction rather than by luck. It is
+// also ~750ms faster per click, since the drill no longer re-reads and re-parses the
+// whole source to answer a question the import already answered.
+//
+// Replaced wholesale per import, for the same reason HoursImportIssue is: the source
+// file is the authority on its own faults, and a punch corrected upstream must
+// disappear here too.
+model UndefinedHoursRow {
+  id              Int       @id @default(autoincrement())
+  month           String // "2026-07", from the WORK DATE (§42.6)
+  // One of the UndefinedReason codes — MISSING_JOB_ID, JOB_NOT_FOUND, ... See
+  // lib/paylocity-workbook.ts, which owns the vocabulary and the labels.
+  reason          String
+  // The raw cell value that could not be used: "Not Defined", "2026 SERVICE", "0964".
+  label           String
+  workDate        DateTime? @db.Date
+  // Paylocity Employee Id. The NAME and department are deliberately NOT copied here
+  // — they are resolved at read time through Employee.paylocityId, so correcting an
+  // employee record fixes every drill row at once instead of leaving stale copies.
+  employeeId      String
+  // Raw MachineSec-Function, e.g. "80-311".
+  section         String
+  hours           Decimal   @db.Decimal(10, 2)
+  // 1-based row in the source sheet, so a manager can go and look at it (§42.11).
+  sourceRow       Int
+  // Which exact file version produced this row (§42.11, §42.20). Both are carried so
+  // a drill row can name its source without joining, and so a stale row is obvious.
+  sourceFile      String
+  importId        String
+  // Whether this row is inside the KPI's definition. FALSE rows are correct
+  // exclusions (phase 80/90, the four pool sections) kept so §42.7's "do not silently
+  // drop unmatched rows" holds — the drill shows them separately and says they are
+  // not counted. See KPI_COUNTED_REASONS.
+  countsTowardKpi Boolean   @default(true)
+  syncedAt        DateTime  @default(now())
+
+  @@index([month])
+  @@index([month, countsTowardKpi])
+  @@index([importId])
+}
+
+// ── One Paylocity file import, recorded in full (§42.20) ────────────────────
+//
+// PowerBiFreshness says how current a SOURCE is and RefreshRun says what a PASS did;
+// neither can answer "which exact file version produced the numbers on screen". That
+// question is the whole point of §42.2-42.3: Lisa replaces the workbook keeping the
+// same name, so a filename and a timestamp do not identify a version — only the
+// content hash does.
+//
+// `sha256` is therefore load-bearing rather than diagnostic. It is what makes a
+// repeated refresh of an unchanged file a no-op (§42.5) instead of a re-import, and
+// what lets the refresh message be honest about whether new data actually arrived.
+model PaylocityImport {
+  id             Int       @id @default(autoincrement())
+  importId       String    @unique
+  // The RefreshRun this import belonged to, when it ran inside one.
+  refreshId      String?
+  fileName       String
+  filePath       String    @db.Text
+  fileSize       Int
+  fileModifiedAt DateTime
+  // sha256 of the exact bytes parsed. The version identity (§42.2).
+  sha256         String
+  sheet          String
+  // The work-date range the file actually carried, and the months it covered.
+  reportFrom     DateTime? @db.Date
+  reportTo       DateTime? @db.Date
+  monthsCovered  String    @db.Text // JSON array of "YYYY-MM"
+
+  rowsRead       Int     @default(0)
+  rowsInserted   Int     @default(0)
+  rowsUpdated    Int     @default(0)
+  rowsRemoved    Int     @default(0)
+  // Rows that collapsed into the storage grain — punch SEGMENTS, not duplicates.
+  // See the long note in lib/paylocity-workbook.ts about why those are different.
+  segmentsMerged Int     @default(0)
+  rowsInvalid    Int     @default(0)
+  rowsUndefined  Int     @default(0)
+  undefinedHours Decimal @default(0) @db.Decimal(10, 2)
+
+  startedAt     DateTime
+  completedAt   DateTime?
+  durationMs    Int?
+  // "manual" | "interval" | "startup", matching SyncTrigger.
+  trigger       String
+  userName      String?
+  // "ok" | "unchanged" | "failed". "unchanged" is a SUCCESS: the file was checked,
+  // its hash matched the last import, and nothing needed doing.
+  status        String
+  // Which stage failed, from WorkbookFailureStage — so a failure names the thing to
+  // go and fix rather than reporting the pass as generically broken (§42.15).
+  failureStage  String?
+  failureDetail String?   @db.Text
+  appVersion    String
+
+  @@index([sha256])
+  @@index([startedAt])
+  @@index([status])
+}
+
+// Per-job, per-section-code hours across three snapshots, confirmed from the
+// "Estimated Hours" tab: Quoted (original bid), Actual Hours Historical
+// (cumulative actuals as of a cutoff date), and Estimate to Complete.
+model EstimatedHours {
+  id                        Int      @id @default(autoincrement())
+  jobId                     Int
+  job                       Job      @relation(fields: [jobId], references: [id])
+  section                   String // e.g. "10-111"
+  quotedHours               Decimal  @default(0) @db.Decimal(10, 2)
+  actualHistoricalHours     Decimal  @default(0) @db.Decimal(10, 2)
+  estimateToCompleteHours   Decimal  @default(0) @db.Decimal(10, 2)
+  // Set when a manager edits quotedHours by hand on the Projects tab — the
+  // Power BI sync (syncQuotedFromPowerBi) checks this and skips overwriting
+  // quotedHours on this row so a manual correction can't be silently wiped
+  // out by the next sync run. estimateToCompleteHours keeps syncing either way.
+  quotedHoursManuallyEdited Boolean  @default(false)
+  createdAt                 DateTime @default(now())
+  updatedAt                 DateTime @updatedAt
+
+  @@unique([jobId, section])
+}
+
+// Per-employee task assignment within a job, confirmed from the "ME Name" /
+// "ME Estimate to Complete" columns — free-text task names (e.g. "Frame Assy",
+// "Main Robot"), not fixed section codes, so modeled as job + slot (1-11) + task.
+model JobTask {
+  id                      Int      @id @default(autoincrement())
+  jobId                   Int
+  job                     Job      @relation(fields: [jobId], references: [id])
+  slot                    Int // 1-11, matches column position in the sheet
+  taskName                String
+  estimateToCompleteHours Decimal  @db.Decimal(10, 2)
+  createdAt               DateTime @default(now())
+
+  @@unique([jobId, slot])
+}
+
+// Monthly manager-submitted ETC entries. Append-only + audited.
+// Replaces "Managers Fill Out" tab.
+model EtcEntry {
+  id              Int       @id @default(autoincrement())
+  jobId           Int
+  job             Job       @relation(fields: [jobId], references: [id])
+  section         String
+  month           String // "2026-07"
+  priorEtc        Decimal   @db.Decimal(10, 2)
+  hoursWorked     Decimal   @default(0) @db.Decimal(10, 2)
+  hoursLeftCalc   Decimal   @db.Decimal(10, 2) // system-suggested (priorEtc - hoursWorked)
+  newEtc          Decimal   @db.Decimal(10, 2) // manager-confirmed value
+  newEtcDraft     Decimal?  @db.Decimal(10, 2) // typed-but-unsubmitted override, autosaved so a Refresh can't wipe it (the sheet preserved typed New ETC cells)
+  // Set by Clear ETC. Distinguishes "no draft" from "deliberately blanked": on a
+  // REOPENED month the cell seeds from `newEtc` when newEtcDraft is null, so
+  // nulling the draft alone would re-show last submission's figure and the clear
+  // would look like it did nothing. Reset to null the moment a value is saved or
+  // the month is submitted. See clearYellowNewEtc in lib/etc-actions.ts.
+  newEtcClearedAt DateTime?
+  needsReview     Boolean   @default(true) // replaces cell highlighting
+  enteredById     Int?
+  enteredBy       User?     @relation(fields: [enteredById], references: [id])
+  submittedAt     DateTime?
+  createdAt       DateTime  @default(now())
+
+  // ── The Parts Cost projection envelope, snapshotted at submission ──────────
+  //
+  // Only ever written for the Parts Cost section (see PARTS_COST_SECTION); null on
+  // every hours row, and null on any Parts row submitted before 2026-09-03.
+  //
+  // WHY STORED rather than recomputed: the projection baseline is "what the manager
+  // last said this job would come to", and it has to stay that figure while the
+  // world moves underneath it. Every input to a recomputation is live — the purchase
+  // lines are re-synced continuously — so a reconstructed baseline would drift for
+  // the same reason the projection itself used to (see lib/parts-projection-baseline
+  // .ts's header). A snapshot cannot drift, and it makes the drill-through an audit
+  // of real recorded numbers rather than of a formula's opinion.
+  //
+  // `invoicedAtSubmit` is kept alongside the baseline even though the baseline is
+  // derivable from it plus `newEtc`: the drill-through is required to show both, and
+  // "invoiced since the ETC was submitted" is only answerable with the first.
+  //
+  // Nullable, with a derived fallback on the read path, so the app is correct both
+  // before and after this migration is applied and needs no backfill to be safe.
+  /** GL-posted parts spend for this job at the moment this month's ETC was submitted. */
+  invoicedAtSubmit   Decimal? @db.Decimal(12, 2)
+  /** invoicedAtSubmit + newEtc — where the dotted reference line sits until the next submission. */
+  projectionBaseline Decimal? @db.Decimal(12, 2)
+
+  @@unique([jobId, section, month])
+}
+
+// --- Standard Sheet (ported from the sdc-standard-fees app into a
+// password-gated tab here) ---------------------------------------------
+// Reuses this app's existing Job model instead of a second copy, since the
+// jobId here already matches the shared Job Id used everywhere else.
+
+// Per-job execution rates (confirmed from the "Execution Rates" table in
+// Standard Fees.xlsx — NOT a single global constant; each job can override).
+model ExecutionRate {
+  id                Int      @id @default(autoincrement())
+  jobId             Int      @unique
+  job               Job      @relation(fields: [jobId], references: [id])
+  engrRate          Decimal  @default(170) @db.Decimal(10, 2)
+  shopRate          Decimal  @default(140) @db.Decimal(10, 2)
+  partsMarkup       Decimal  @default(1.2) @db.Decimal(10, 4)
+  // Per-job "Contingency" dollar amount — manually entered, matches the
+  // sheet's mostly-blank R column. Multiplied by the global contingency
+  // rate (StandardSheetSetting.contingencyRate) when rolling up Total Standard Fees.
+  contingencyAmount Decimal  @default(0) @db.Decimal(12, 2)
+  notes             String?
+  updatedById       Int?
+  updatedBy         User?    @relation(fields: [updatedById], references: [id])
+  updatedAt         DateTime @updatedAt
+}
+
+// Singleton row for the sheet's single global "Contingency" multiplier
+// (cell R8, applied to every job's contingency amount) — not per-job.
+model StandardSheetSetting {
+  id              Int     @id @default(1)
+  contingencyRate Decimal @default(1.2) @db.Decimal(6, 2)
+  // Global execution rates for the Monthly ETC grid's inline Standard Sheet
+  // view — entered once via the "ETC Rates" button and applied to every job on
+  // that page (the per-job override columns were removed). The /standard-sheet
+  // tab keeps its own per-job ExecutionRate rows.
+  engrRate        Decimal @default(170) @db.Decimal(10, 2)
+  shopRate        Decimal @default(140) @db.Decimal(10, 2)
+  partsMarkup     Decimal @default(1.2) @db.Decimal(10, 4)
+}
+
+// Frozen per-job, per-month record of the Standard Sheet — the app's version
+// of the workbook's archive tabs. Live months compute on the fly; submitting
+// a month writes these rows atomically, and that month is then always
+// rendered from here (immune to later rate/ETC edits).
+model StandardSheetSnapshot {
+  id                     Int      @id @default(autoincrement())
+  jobId                  Int
+  job                    Job      @relation(fields: [jobId], references: [id])
+  month                  String // "2026-06"
+  engrRate               Decimal  @db.Decimal(10, 2)
+  shopRate               Decimal  @db.Decimal(10, 2)
+  partsMarkup            Decimal  @db.Decimal(10, 4)
+  etcEngineering         Decimal  @db.Decimal(12, 2)
+  etcShop                Decimal  @db.Decimal(12, 2)
+  etcParts               Decimal  @db.Decimal(12, 2)
+  totalEtcDollars        Decimal  @db.Decimal(14, 2)
+  percentOfTotal         Decimal  @db.Decimal(9, 6)
+  standardFeeEngineering Decimal  @db.Decimal(14, 2)
+  standardFeeShop        Decimal  @db.Decimal(14, 2)
+  contingencyAmount      Decimal  @db.Decimal(12, 2)
+  contingencyRate        Decimal  @db.Decimal(6, 2)
+  totalStandardFees      Decimal  @db.Decimal(14, 2)
+  notes                  String?
+  submittedById          Int?
+  submittedBy            User?    @relation(fields: [submittedById], references: [id])
+  submittedAt            DateTime @default(now())
+
+  @@unique([jobId, month])
+  @@index([month])
+}
+
+enum FeeCategory {
+  ENGINEERING_PM
+  ENGINEERING_WARRANTY
+  SHOP_MANUFACTURING
+  SHOP_WARRANTY
+}
+
+// Company-wide monthly hour pool per category, confirmed from the "Standard Fees By
+// Department" section of Standard Fees.xlsx — not per-job, a single rolling pool per category.
+model CategoryPool {
+  id                       Int         @id @default(autoincrement())
+  category                 FeeCategory
+  month                    String
+  previousMonthPulledHours Decimal     @db.Decimal(10, 2)
+  newHoursAddedThisMonth   Decimal     @db.Decimal(10, 2)
+  hoursAvailable           Decimal     @db.Decimal(10, 2)
+  hoursWorkedThisMonth     Decimal     @db.Decimal(10, 2)
+  hoursPulledThisMonth     Decimal     @db.Decimal(10, 2)
+  newEtcHours              Decimal     @db.Decimal(10, 2)
+  rate                     Decimal     @db.Decimal(10, 2)
+  standardFee              Decimal     @db.Decimal(12, 2)
+  source                   String      @default("manual") // 'manual' | 'migration'
+  createdAt                DateTime    @default(now())
+
+  @@unique([category, month])
+}
+
+// Saved Projects-grid views ("Views ▾"), ported from the Scheduler's shared
+// column-views feature. A view is a snapshot of the grid's URL state (which
+// section columns show, hidden info columns, sort, and the Customer/Type/
+// Status/Billable filters) plus the client-side Grid Size and Actuals toggle —
+// stored as JSON in `config`. Only SHARED (published, team-wide) and the single
+// team DEFAULT live in the DB; each user's private "My views" stay in their
+// browser's localStorage. `scope`+`name` is unique so a publish upserts by name.
+//
+// Left untouched by Build Readiness (2026-08-16) on purpose: widening this
+// model's unique constraint to add a page discriminator would require
+// regenerating the Prisma client for every EXISTING typed call site
+// (saved-views-actions.ts's `where: { scope_name: {...} } }`) to keep
+// compiling against the new compound key — and `prisma generate` cannot be
+// safely run here right now (see BuildReadinessSavedView below). Build
+// Readiness gets its own dedicated saved-views table instead, so Projects'
+// mechanism is never put at risk.
+model SavedView {
+  id        Int      @id @default(autoincrement())
+  name      String // "__default__" for the single team default row
+  scope     String // "shared" | "default"
+  owner     String? // display name / email of who published it
+  config    String   @db.Text // JSON: { params, grid, actuals }
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, name])
+  @@map("saved_views")
+}
+
+// ── One record per monthly-report submission ATTEMPT ────────────────────────
+//
+// Written by lib/monthly-report.ts for every `Submit {Month} Report` click, successful
+// or refused. It is the answer to "who signed this month off, when, on what version,
+// and what was wrong with it the time it was refused" — a question the two old
+// buttons ("Submit ETC" / "Submit Standard Sheet") could not answer at all.
+//
+// `submissionId` is a client-generated UUID and is UNIQUE: that is the idempotency
+// key. A double-click or a retried request carries the same id, and the action returns
+// the first outcome instead of finalising the month twice.
+//
+// Accessed by RAW SQL, not the generated client — `prisma generate` cannot run while a
+// server process holds node_modules/.prisma open (EPERM), and blocking a fix on a
+// deploy window is worse. Same treatment as the AuditLog cell-change columns.
+model MonthlyReportSubmission {
+  id            Int       @id @default(autoincrement())
+  submissionId  String    @unique @db.VarChar(64)
+  month         String    @db.VarChar(7) // "2026-07"
+  year          Int
+  monthNumber   Int
+  userId        Int?
+  userName      String
+  status        String    @db.VarChar(16) // "submitted" | "failed"
+  appVersion    String    @db.VarChar(32)
+  sections      String    @db.Text // JSON array of the sections included
+  validation    String    @db.Text // JSON: { ok, totalIssues, counts, issues[] }
+  failureReason String?   @db.Text
+  // The flow, timed (§26.15). confirmedAt is the browser's clock — when "Yes, Submit
+  // Report" was pressed in the confirmation dialog; the other two are the server's.
+  confirmedAt   DateTime?
+  startedAt     DateTime?
+  completedAt   DateTime?
+  createdAt     DateTime  @default(now())
+
+  @@index([month])
+}
+
+// ── Department ETC sign-off, one row per department per month (§50) ──────────
+//
+// Six departments (see lib/etc-departments.ts for the list and why it is not derived
+// from EMPLOYEE_TEAMS) tick a box to say they have finished entering their ETC for a
+// month. The submission gate reads it: `Submit {Month} Report` will not open while any
+// of them is outstanding.
+//
+// ── Month AND year, as separate columns ──────────────────────────────────────
+//
+// `month` ("2026-07") is the key every other monthly table in this app uses and is what
+// the unique index is on, so a lookup is one indexed hit and July can never be confused
+// with August. `year` and `monthNumber` are redundant with it and are stored anyway, the
+// same way MonthlyReportSubmission does: §50 asks for the status to be stored separately
+// by report month and report year, and a report that has to parse a string to group by
+// year is one substring bug away from filing December under the wrong one.
+//
+// ── The completer is a SNAPSHOT, not a foreign key ───────────────────────────
+//
+// `completedByName` is copied at the time of the tick, like AuditLog.userEmail: the line
+// under the checkbox has to keep reading "Completed by Lisa" even if that account is
+// later renamed or removed. `completedById` is kept for joining when the account still
+// exists, but deliberately carries NO relation — a FK here would make deleting a user
+// either fail or cascade away a month's sign-off, and neither is what anyone wants from
+// a checkbox.
+//
+// Accessed by raw SQL for the same reason as MonthlyReportSubmission and RefreshRun:
+// `prisma generate` cannot run while a server process holds node_modules/.prisma open,
+// so a new table must not need a deploy window to become usable.
+model DepartmentEtcCompletion {
+  id              Int       @id @default(autoincrement())
+  month           String    @db.VarChar(7) // "2026-07"
+  year            Int
+  monthNumber     Int
+  department      String    @db.VarChar(32) // the stable CODE, e.g. "mech-build"
+  completed       Boolean   @default(false)
+  completedById   Int?
+  completedByName String?   @db.VarChar(191)
+  completedAt     DateTime?
+  // Bumped on every write, ticked or unticked. What a late-arriving duplicate request
+  // is compared against, so a stale session cannot overwrite a newer status (§50).
+  updatedAt       DateTime  @updatedAt
+  createdAt       DateTime  @default(now())
+
+  @@unique([month, department])
+  @@index([year, monthNumber])
+}
+
+// ── The live-editable role/permission matrix (2026-08-18) ───────────────────
+//
+// One row per (role, permission) pair — the ELT-editable source of truth
+// lib/permissions.ts's in-memory cache is loaded from at boot and refreshed
+// from on every save (see lib/role-permissions-store.ts). Seeded to match
+// permissions.ts's own DEFAULT_OWN_PERMISSIONS exactly, so turning this
+// feature on changes nobody's access on day one.
+//
+// `permission` is a plain string, not an enum: it mirrors the `Permission`
+// TS union in lib/permissions.ts, which is expected to grow over time, and a
+// MySQL enum column would need the same widen-then-narrow migration dance as
+// `Role` every time it does.
+//
+// Accessed by raw SQL for the same reason as DepartmentEtcCompletion and
+// MonthlyReportSubmission above: `prisma generate` cannot run while a server
+// process holds node_modules/.prisma open, so a new table must not need a
+// deploy window to become usable.
+// ── Manual contractor punches — TEMPORARY (2026-09-01) ──────────────────────
+//
+// Paylocity's Job Hours report is not carrying temp/contractor punches for
+// July-August 2026. Until Paylocity fixes the source report, the missing
+// timecards are transcribed here, punch-segment by punch-segment, and merged
+// into the hours feed (lib/manual-contractor-hours.ts) so EVERY page that
+// consumes normalized hours sees them — Monthly ETC, Job Hour Details, Projects,
+// T&M, the Dashboard. Nothing is hard-coded into any of those pages.
+//
+// This is SOURCE DATA, not business logic: one row per punch segment, holding
+// exactly what the timecard shows, with `hours` derived from in/out rather than
+// typed. Seeded by scripts/seed-manual-contractor-punches.ts.
+//
+// Deleting this table (and its merge) is the whole rollback once Paylocity is
+// fixed — but nobody has to remember to: `supersededAt` and the (employee, date)
+// dedup in the merge mean an official punch for the same person and day wins
+// automatically. See §8 of the request.
+model ManualContractorPunch {
+  id Int @id @default(autoincrement())
+
+  /** As printed on the timecard, e.g. "Vijayan, Vipin". Used to resolve the CURRENT Employee row. */
+  employeeName String @db.VarChar(191)
+  /** The temp designation on the card: "Temp1", "Temp2", "Temp3". */
+  employeeRef String @db.VarChar(32)
+  /**
+   * The employee id emitted on the produced hours row, so the punch drill can
+   * name who booked the time. A STRING, deliberately: these contractors have no
+   * integer Paylocity id yet, and the whole pipeline already types employeeId as
+   * a string.
+   */
+  paylocityId String @db.VarChar(32)
+
+  workDate DateTime @db.Date
+
+  /** The transfer value verbatim, e.g. "211/1158/10/Concord" — the audit trail for the parse below. */
+  transferRaw String @db.VarChar(64)
+  /** Parsed from transferRaw by the SAME rules a workbook punch uses. */
+  jobNumber   String @db.VarChar(32)
+  machineSec  String @db.VarChar(16)
+  functionId  String @db.VarChar(16)
+  /** "Concord" etc. from the 4th transfer segment; blank when absent. */
+  location String @db.VarChar(64) @default("")
+
+  /** "HH:MM" 24h, as printed. */
+  startTime String @db.VarChar(5)
+  endTime   String @db.VarChar(5)
+  /** DERIVED from startTime/endTime at seed time, never estimated. */
+  hours Decimal @db.Decimal(6, 4)
+
+  /** Where this came from, for the audit trail. */
+  source String @db.VarChar(64) @default("manual_contractor_timecard")
+  /** The pay period the screenshot belongs to, e.g. "2026-08-16..2026-08-29". Reporting uses workDate, never this. */
+  payPeriod String @db.VarChar(32)
+  note      String? @db.VarChar(255)
+
+  /** Set false to withdraw a row without deleting it. */
+  active Boolean @default(true)
+  /**
+   * Stamped when the official Paylocity feed was observed to carry this
+   * employee/date, i.e. the manual row is no longer needed. Informational — the
+   * merge suppresses on live feed content, not on this column, so a stale value
+   * here can never cause a double count.
+   */
+  supersededAt DateTime?
+
+  createdAt      DateTime @default(now())
+  createdByEmail String?  @db.VarChar(191)
+
+  // One row per punch segment. Re-running the seed updates in place instead of
+  // inserting a duplicate.
+  @@unique([paylocityId, workDate, startTime, endTime, jobNumber, machineSec, functionId], name: "manual_punch_segment")
+  @@index([workDate])
+}
+
+model RolePermission {
+  id             Int      @id @default(autoincrement())
+  role           Role
+  permission     String   @db.VarChar(64)
+  enabled        Boolean  @default(false)
+  updatedAt      DateTime @updatedAt
+  updatedByEmail String?  @db.VarChar(191)
+
+  @@unique([role, permission])
+}
+
+// ── One row per application-wide refresh, manual or scheduled (§25.11) ───────
+//
+// Written by lib/refresh-service.ts around every call to runAllSyncs, so "when was
+// the app last refreshed, by whom, how long did it take, and what failed" has one
+// answer instead of seven freshness rows and a log line. PowerBiFreshness still
+// tracks each SOURCE's own currency; this tracks the PASS.
+//
+// Accessed by raw SQL for the same reason as MonthlyReportSubmission: `prisma
+// generate` cannot run while a server process holds node_modules/.prisma open.
+model RefreshRun {
+  id             Int       @id @default(autoincrement())
+  refreshId      String    @unique @db.VarChar(64)
+  trigger        String    @db.VarChar(16) // "manual" | "interval" | "startup"
+  userId         Int?
+  userName       String? // null for a scheduled pass
+  startedAt      DateTime
+  completedAt    DateTime?
+  durationMs     Int?
+  appVersion     String    @db.VarChar(32)
+  status         String    @db.VarChar(16) // "running" | "ok" | "partial" | "failed"
+  sourcesOk      Int       @default(0)
+  sourcesFailed  Int       @default(0)
+  sourcesSkipped Int       @default(0)
+  // Per-source outcome + the counts each sync reports, as JSON: the underlying syncs
+  // report different things (rows upserted, jobs updated, pools computed), so this
+  // keeps what each one actually said rather than flattening them into one number
+  // that would be wrong for most of them.
+  steps          String    @db.Text
+  // The stage now in flight, e.g. "Actual hours (Power BI)". Written by
+  // recordProgress() as each source starts, so a tab watching a refresh can name the
+  // step instead of showing an indefinite spinner (§30, §42.15).
+  //
+  // ── Declared here 2026-08-05, having existed in the database since §30 ─────
+  // It was added by raw SQL and never added to this model, so the two had drifted:
+  // `prisma migrate diff` wanted to DROP it, which would have silently broken refresh
+  // progress — the feature §42.15 exists to extend. Found by reading the generated
+  // migration before applying it. Nothing about the column changes; the schema simply
+  // now admits it exists. VarChar(64) matches the live column exactly, so declaring
+  // it generates no ALTER — the longest label in SYNC_SOURCES is 29 characters.
+  currentStage   String?   @db.VarChar(64)
+  failureDetail  String?   @db.Text
+
+  @@index([startedAt])
+}
+
+// ── The refresh lock (§25.10) ───────────────────────────────────────────────
+//
+// ONE row, id = 1. A refresh is allowed to start only if it can claim it with a
+// single conditional UPDATE, which MySQL makes atomic — so two app servers (or two
+// users clicking together) cannot both start a pass. `startedAt` doubles as the
+// stale-lock timeout: a process killed mid-refresh must not lock the app forever.
+model RefreshLock {
+  id        Int       @id
+  holder    String?   @db.VarChar(128) // the refreshId currently holding it
+  startedAt DateTime?
+}
+
+// ── Job Cost Explorer: shared rate/allocation state ─────────────────────────
+//
+// Ported from the standalone "Job Cost Explorer" app (D:\AI Projects\new app),
+// where the equivalent of these three tables lived in each browser's own
+// localStorage — meaning two managers could silently see different profit
+// numbers for the same job with no way to tell why. These three models make
+// that state shared and server-side instead, matching how every other piece
+// of editable state in this app already works.
+//
+// Accessed by raw SQL for the same reason as MonthlyReportSubmission/RefreshRun/
+// DepartmentEtcCompletion above: `prisma generate` cannot run while a server
+// process holds node_modules/.prisma open, and this box runs this app's own
+// production instance — see lib/job-cost-actions.ts.
+
+// ONE row, id = 1 — the fallback Eng/Shop $/hr and PM/Mfg % applied to any
+// year with no JobCostYearRate override, and to ETC (future) hours, which
+// have no year yet. Mirrors the original app's "top-bar inputs".
+model JobCostDefaultRate {
+  id          Int      @id @default(1)
+  engRate     Decimal  @default(200) @db.Decimal(8, 2)
+  shopRate    Decimal  @default(150) @db.Decimal(8, 2)
+  pmPct       Decimal  @default(10) @db.Decimal(5, 2)
+  mfgPct      Decimal  @default(10) @db.Decimal(5, 2)
+  updatedAt   DateTime @updatedAt
+  updatedById Int?
+}
+
+// Per-year override of the default rates above. A null field on a stored row
+// means "blank cell" in the original Rate Matrix UI — falls back to
+// JobCostDefaultRate for that one field, not to zero.
+model JobCostYearRate {
+  year        String   @id @db.VarChar(4)
+  engRate     Decimal? @db.Decimal(8, 2)
+  shopRate    Decimal? @db.Decimal(8, 2)
+  pmPct       Decimal? @db.Decimal(5, 2)
+  mfgPct      Decimal? @db.Decimal(5, 2)
+  updatedAt   DateTime @updatedAt
+  updatedById Int?
+}
+
+// Per-job manual hour allocation — one row per {hours, year} entry a manager
+// enters to split a job's Eng/Shop hours across years by hand, instead of
+// relying on the automatic year breakdown. Presence of ANY row for a job
+// overrides the automatic breakdown for that job's engineering or shop side
+// (matching the original app's all-or-nothing-per-type override rule).
+model JobCostHourAllocation {
+  id          Int      @id @default(autoincrement())
+  jobId       String   @db.VarChar(32) // Job.jobId, not the numeric PK — matches how the source app keyed it
+  type        String   @db.VarChar(8) // "eng" | "shop"
+  year        String   @db.VarChar(4)
+  hours       Decimal  @db.Decimal(8, 2)
+  updatedAt   DateTime @updatedAt
+  updatedById Int?
+
+  @@index([jobId])
+}
+
+// ── Job Cost Explorer: monthly inventory snapshots (2026-08-11) ─────────────
+//
+// One row per (job, month-end date), read from Lisa's monthly inventory workbook
+// (Finance - General\*.xlsx — the file itself gets renamed each month, but is
+// really one growing workbook: she adds a new dated sheet, e.g. "SDC inventory
+// 6.30.26", rather than starting a new file). See lib/job-cost-inventory-sync.ts.
+//
+// Replaces the hand-maintained src/data/job-cost/inventory-data.json this app
+// shipped with, which was a single always-latest snapshot someone had to
+// manually regenerate and drop in — and had gone stale (stuck on May 2026) by
+// the time this table was added. Keyed per month rather than overwritten in
+// place so that adding a NEW month's sheet can never touch an already-stored
+// OLDER one — the property that makes "reproduce the July view while working in
+// August" possible at all.
+//
+// jobId is NOT an FK to Job: the source sheet can carry a row for an id the Job
+// table doesn't have (a utility/spare-parts bucket, same as the JSON file it
+// replaces), and an FK would silently drop that row instead of just leaving it
+// unmatched. Accessed by raw SQL, same reason and same constraint as
+// JobCostDefaultRate/JobCostYearRate/JobCostHourAllocation above.
+model JobCostInventorySnapshot {
+  id              Int      @id @default(autoincrement())
+  jobId           String   @db.VarChar(32)
+  asOfDate        DateTime
+  salesPrice      Decimal? @db.Decimal(14, 2)
+  percentComplete Decimal? @db.Decimal(6, 2) // 0-100, matches the app-wide fmtPct convention
+  sourceFile      String   @db.VarChar(255)
+  sourceSheet     String   @db.VarChar(128)
+  syncedAt        DateTime @default(now())
+
+  @@unique([jobId, asOfDate])
+  @@index([asOfDate])
+}
+
+// ── Build Readiness dashboard (2026-08-16) ───────────────────────────────────
+//
+// One row per active billable job, upserted the instant lib/build-readiness-sync.ts's
+// live pass over that job's getJobBom() (job-bom.ts) finishes classifying it. This is
+// NOT a second readiness formula — every scalar here and every entry in `detailJson`
+// comes straight out of job-bom-rules.ts's existing exports (isUncoveredPart, statusFor,
+// sourceFor, unitPriceFor, releaseOf, statsForRoots) plus the one new function that file
+// gained for this feature (buildableQtyFor). A job whose readiness % disagrees with what
+// Job Hour Details -> Procurement shows for the same job is a bug in the sync, never a
+// second definition to reconcile.
+//
+// All three Build Readiness tables below are accessed by RAW SQL, not the generated
+// client (`prisma.$queryRaw`/`$executeRaw`), same as JobCostInventorySnapshot/
+// MonthlyReportSubmission above — `prisma generate` cannot safely run while a server
+// process holds node_modules/.prisma open, which this box cannot rule out right now (a
+// PM2 daemon is running here). Raw SQL means these tables work the moment their
+// migration is applied, with no deploy-window `generate` step required.
+model BuildReadinessJobSnapshot {
+  id                  Int       @id @default(autoincrement())
+  jobId               String    @unique @db.VarChar(32)
+  jobName             String    @db.VarChar(255)
+  customer            String?   @db.VarChar(255)
+  status              String    @default("ok") @db.VarChar(16) // "ok" | "failed" | "empty" (no BOM at all) | "notReleased" (BOM exists, zero required parts released)
+  overallReadinessPct Int       @default(0) // quantity-weighted coverage over every unique required part job-wide — see job-bom-rules.ts's quantityReadiness()
+  requiredQtyTotal    Int       @default(0) // denominator behind overallReadinessPct — also the "notReleased"/limited-scope signal
+  coveredQtyTotal     Int       @default(0) // numerator behind overallReadinessPct
+  assembliesTotal     Int       @default(0)
+  assembliesReady     Int       @default(0) // buildableQty >= required, right now
+  assembliesPartial   Int       @default(0) // some coverage, not fully buildable
+  assembliesBlocked   Int       @default(0) // zero buildable
+  partsUncovered      Int       @default(0) // isUncoveredPart
+  partsOnOrder        Int       @default(0)
+  partsPastDue        Int       @default(0)
+  partsDueSoon7d      Int       @default(0)
+  materialValueTotal  Decimal   @default(0) @db.Decimal(14, 2)
+  materialValueAtRisk Decimal   @default(0) @db.Decimal(14, 2) // uncovered + past-due parts' unitPrice*qty
+  nextUnlockDate      DateTime? // earliest expected delivery that raises some assembly's buildable qty
+  // Full per-assembly + per-vendor breakdown for the drill-down and the
+  // cross-job aggregations (blockers/supplier risk/upcoming unlocks/forecast) —
+  // see BuildReadinessJobDetail in build-readiness-sync.ts for the JSON shape.
+  // LongText, not Text: a large job's assemblies+blockers+vendors+upcoming
+  // JSON can exceed TEXT's 64KB limit outright (found live — 20 of 50 active
+  // jobs failed to upsert with MySQL error 1406 "Data too long for column"
+  // before this fix), silently dropping that job's snapshot every refresh.
+  detailJson          String    @db.LongText
+  computedAt          DateTime  @default(now())
+
+  @@index([overallReadinessPct])
+  @@index([customer])
+}
+
+// Singleton (id=1) tracking the in-flight/last cross-job Build Readiness pass —
+// what the dashboard polls for live progress. Same raw-SQL-access constraint
+// as BuildReadinessJobSnapshot above.
+model BuildReadinessRefreshMeta {
+  id              Int       @id @default(1)
+  status          String    @default("idle") @db.VarChar(16) // "idle" | "running" | "ok" | "partial"
+  startedAt       DateTime?
+  completedAt     DateTime?
+  jobsTotal       Int       @default(0)
+  jobsDone        Int       @default(0)
+  jobsFailed      Int       @default(0)
+  triggeredByName String?   @db.VarChar(191)
+  durationMs      Int?
+  updatedAt       DateTime  @updatedAt
+}
+
+// Build Readiness's own saved-views table — deliberately separate from
+// SavedView (see that model's own comment for why). Same three-tier shape
+// (shared/default server rows; "My views" stay in localStorage), same
+// `scope`+`name` uniqueness, just scoped to this one page so it can never
+// collide with Projects' views. Raw-SQL accessed, same reason as the two
+// models above.
+model BuildReadinessSavedView {
+  id        Int      @id @default(autoincrement())
+  name      String   @db.VarChar(191) // "__default__" for the single team default row
+  scope     String   @db.VarChar(16) // "shared" | "default"
+  owner     String?  @db.VarChar(191)
+  config    String   @db.Text // JSON: BuildReadinessViewConfig
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([scope, name])
+}
+
+// ── Employees tab: Hiring Positions (2026-08-19) ────────────────────────────
+//
+// The open-positions WORKBOOK (Job.xlsx, a Paylocity Recruiting export read
+// straight off disk — see lib/hiring-workbook.ts) stays the source for the
+// position itself: title, status, dates, whoever posted it. It is never
+// copied into this table. What lives here is the one thing the workbook has
+// no concept of — which of THIS app's workforce group/department a position
+// has been assigned to — keyed on the workbook's own "Job ID" (stable across
+// refreshes) so a manual assignment survives the file being replaced, and a
+// position that disappears from the file (filled/withdrawn) leaves its
+// history here rather than being deleted, per the task's own "preserve
+// historical hiring assignment/audit information" requirement.
+//
+// A row existing at all (however NULL its two fields) means a person made a
+// choice: `workforceGroup`/`department` both NULL is a deliberate "moved back
+// to Unassigned", not "never touched" — a position with NO row here has
+// genuinely never been assigned, and falls back to
+// hiring-position-classify.ts's best-effort guess instead. That distinction
+// is why this is a real table rather than two columns on nothing — "assign"
+// and "clear" are both writes, "never assigned" is the absence of one.
+//
+// Raw-SQL accessed (`$queryRaw`/`$executeRaw`), same reason as
+// RolePermission/BuildReadinessSavedView above: `prisma generate` is blocked
+// on this box while a server process holds node_modules/.prisma open.
+model HiringPositionAssignment {
+  id                Int       @id @default(autoincrement())
+  // The workbook's own "Job ID" column — stable across every refresh/replace
+  // of Job.xlsx, unlike a row number or a title (titles repeat and get
+  // re-worded on the same requisition).
+  positionSourceId  String    @unique @db.VarChar(64)
+  workforceGroup    String?   @db.VarChar(32) // "engineering" | "shop" | "pm" | "other" | NULL (unassigned)
+  department        String?   @db.VarChar(64) // a DepartmentCard key (e.g. "mech", "controls", "build") | NULL
+  // Prorates this position's Hiring Capacity hours (workforce-capacity.ts) --
+  // NULL means "unknown", which counts as full-year, not zero (see that
+  // file's isStartedByMonth). Written independently of workforceGroup/
+  // department -- see setHiringExpectedStartDate's own comment on why its
+  // upsert must not touch those two columns.
+  expectedStartDate DateTime? @db.Date
+  // Display-only — never affects Open Positions/Planned Headcount/Hiring
+  // Capacity Hours, which stay driven entirely by Job Status (isOpen). See
+  // redactHiddenPositions in hiring-positions.ts for how a hidden position's
+  // identity (not its contribution to those totals) is kept from non-editors.
+  isVisible         Boolean   @default(true)
+  // ── Quantity: one requisition, several openings (2026-08-24) ──────────────
+  //
+  // "If we need 2 Mechanical Engineers, create ONE position with Quantity = 2
+  // rather than the same position twice." So a row is no longer necessarily
+  // one head: `quantity` is how many were asked for, `filledCount` how many
+  // have been hired against it so far, and quantity - filledCount is what
+  // still counts toward Open Positions, Planned Headcount and Hiring Capacity
+  // hours. See lib/hiring-positions.ts's remainingQuantity, which is the only
+  // value anything downstream should read.
+  //
+  // Defaults of 1 and 0 are what make this safe to add to a live table: every
+  // existing row keeps meaning exactly "one unfilled opening", so no total
+  // moves the moment the column appears.
+  quantity          Int       @default(1)
+  // Never greater than `quantity` — enforced in the write path
+  // (hiring-actions.ts), not by a CHECK constraint, so the clamp can report a
+  // useful error instead of a driver-level failure. A position with
+  // filledCount == quantity has nothing left open and stops counting, which is
+  // the "only close it when ALL openings are filled" rule.
+  filledCount       Int       @default(0)
+  updatedByEmail    String?   @db.VarChar(191)
+  updatedAt         DateTime  @updatedAt
+  createdAt         DateTime  @default(now())
+}
+
+// ── Employees tab: positions created directly in SDC Reports (2026-08-19) ───
+//
+// Job.xlsx (above) is a Paylocity-generated recruiting export — confirmed
+// live (2026-08-19) to carry the automation's own bookkeeping columns ("Job
+// Created by Username", "Job Modified by..."), so it is refreshed by that
+// external process, not something this app can safely open and add a row
+// to: a manually-inserted row would either be silently dropped on the next
+// refresh or collide with a real Paylocity Job ID. So a position created
+// from the "+ Create Position" drawer lives HERE instead — its own
+// authoritative row, never copied into or reconciled against the workbook —
+// while still being merged into the exact same `HiringPosition` list the
+// workbook's rows populate (hiring-positions.ts) so the two sources are
+// indistinguishable in the UI. Its id is exposed as the position's sourceId
+// in the form `manual-<id>`, parallel to the workbook's own "Job ID".
+//
+// Unlike HiringPositionAssignment (an overlay that never touches the
+// workbook's own title/status), this table owns ALL of a manual position's
+// fields outright — there is no external system of record for it to defer
+// to — so editing title/status/group/department all write directly to this
+// same row, with the previous/next values audited via the existing AuditLog
+// (see hiring-actions.ts).
+//
+// Raw-SQL accessed (`$queryRaw`/`$executeRaw`), same reason as
+// HiringPositionAssignment above.
+model HiringPositionCreated {
+  id                 Int       @id @default(autoincrement())
+  title              String    @db.VarChar(191)
+  // One of hiring-position-status.ts's MANUAL_JOB_STATUSES — free enough to
+  // read/filter alongside the workbook's own Job Status text, but validated
+  // against a fixed vocabulary at write time since (unlike the workbook)
+  // nothing external is dictating these values.
+  jobStatus          String    @db.VarChar(32)
+  workforceGroup     String    @db.VarChar(32) // "engineering" | "shop" | "pm" — required at creation, never "other"
+  department         String    @db.VarChar(64) // a DepartmentCard key (e.g. "mech", "controls", "build")
+  workLocDescription String?   @db.VarChar(191)
+  remote             Boolean   @default(false)
+  internal           Boolean   @default(false)
+  // Prorates this position's Hiring Capacity hours (workforce-capacity.ts) --
+  // NULL means "unknown", which counts as full-year, not zero.
+  expectedStartDate  DateTime? @db.Date
+  // Display-only — see HiringPositionAssignment.isVisible's comment above.
+  // Toggled only via setCreatedHiringPositionVisibility, never bundled into
+  // the general edit-position write path (updateCreatedHiringPosition).
+  isVisible          Boolean   @default(true)
+  // ── Quantity: one requisition, several openings (2026-08-24) ──────────────
+  //
+  // "If we need 2 Mechanical Engineers, create ONE position with Quantity = 2
+  // rather than the same position twice." So a row is no longer necessarily
+  // one head: `quantity` is how many were asked for, `filledCount` how many
+  // have been hired against it so far, and quantity - filledCount is what
+  // still counts toward Open Positions, Planned Headcount and Hiring Capacity
+  // hours. See lib/hiring-positions.ts's remainingQuantity, which is the only
+  // value anything downstream should read.
+  //
+  // Defaults of 1 and 0 are what make this safe to add to a live table: every
+  // existing row keeps meaning exactly "one unfilled opening", so no total
+  // moves the moment the column appears.
+  quantity           Int       @default(1)
+  // Never greater than `quantity` — enforced in the write path
+  // (hiring-actions.ts), not by a CHECK constraint, so the clamp can report a
+  // useful error instead of a driver-level failure. A position with
+  // filledCount == quantity has nothing left open and stops counting, which is
+  // the "only close it when ALL openings are filled" rule.
+  filledCount        Int       @default(0)
+  createdByEmail     String?   @db.VarChar(191)
+  updatedByEmail     String?   @db.VarChar(191)
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
+}
+
+// ── Cash Flow Forecast — immutable historical snapshots (2026-08-19) ────────
+//
+// Total ETO's own "Project Cash Flow Forecast" report has NO underlying table
+// of its own (confirmed live: no table/view anywhere in the TotalETO database
+// named anything like CashFlow or Forecast) — it is built, the same way this
+// feature is, from `tblARSalesTerms` (the full AR milestone schedule, both
+// already-invoiced and still-pending), `tblAPBatchDocument.APDocDueDate`, PO
+// commitments, and `vwProjectEstimate`. Total ETO only ever shows what those
+// tables say RIGHT NOW — there is no "what did this look like last month" in
+// TotalETO at all, which is the whole reason this table exists: every
+// refresh/scheduled capture normalizes that live query into rows here, and
+// those rows are never touched again. "Current" in the UI is always a LIVE
+// TotalETO query (so it can never disagree with Total ETO's own report at the
+// moment someone looks); only a past "As Of" date reads from here.
+//
+// Raw-SQL accessed (`$queryRaw`/`$executeRaw`), same reason as
+// RolePermission/HiringPositionAssignment above.
+model CashFlowSnapshot {
+  id                     Int      @id @default(autoincrement())
+  // When this row was written.
+  snapshotTimestamp      DateTime @default(now())
+  // The calendar date this snapshot REPRESENTS — usually the same day as
+  // snapshotTimestamp, but kept as its own column (not just a DATE() on the
+  // timestamp) so "prior month-end snapshot" can be a plain indexed lookup
+  // rather than a derived expression on every query.
+  snapshotDate           DateTime @db.Date
+  // When the TotalETO extraction this snapshot is built from was actually
+  // read — distinct from snapshotTimestamp because dedup (below) can mean a
+  // scheduled refresh writes NO new row; recording the source read time here
+  // even on a would-be-duplicate matters for "how stale is 'Current'".
+  sourceRefreshTimestamp DateTime
+  createdBy              String?  @db.VarChar(191) // an email, or "system@auto-sync"
+  // sha256 of the normalized line set (sorted, so row order can't change it)
+  // — the dedup key. A scheduled refresh whose forecast hasn't moved at all
+  // since the last snapshot writes NO new row, matching the task's own "do
+  // not create duplicate snapshots if nothing has changed" — checked against
+  // the single most recent row's hash, never against the whole history.
+  contentHash            String   @db.VarChar(64)
+  lineCount              Int
+
+  @@index([snapshotDate])
+  @@index([snapshotTimestamp])
+}
+
+model CashFlowSnapshotLine {
+  id            Int     @id @default(autoincrement())
+  snapshotId    Int
+  // This app's own Job.jobId string (e.g. "1081") — the same key every other
+  // TotalETO-sourced feature in this app already uses, not TotalETO's own
+  // internal integer ProjectID, so a snapshot line joins straight onto Job
+  // without a second id to carry.
+  projectId     String  @db.VarChar(20)
+  customer      String? @db.VarChar(191)
+  // "2026-08", or the literal string "UNKNOWN" for a line with no due/
+  // scheduled date at all — the task's own explicit "preserve that
+  // distinction instead of silently assigning it to a month". Text, not a
+  // DATE column and not one column per month — this is the whole point:
+  // unlimited history and future months without a schema change.
+  forecastMonth String  @db.VarChar(7)
+  flowType      String  @db.VarChar(8) // "incoming" | "outgoing"
+  category      String  @db.VarChar(8) // "AR" | "AP" | "PO" | "ETC"
+  amount        Decimal @db.Decimal(14, 2)
+
+  @@index([snapshotId, projectId])
+  @@index([snapshotId, forecastMonth])
+}
+
+// PM-entered distribution of a project's remaining TotalETO cost estimate
+// (vwProjectActualsVSEstimates_LaborAndMaterials: TotalBudget - ActTotalCost)
+// across future months — Total ETO has no monthly ETC concept at all, so
+// this is a pure SDC Reports extension, never a TotalETO mirror. Unique on
+// (projectId, forecastMonth): setting the same month again REPLACES the
+// figure (audited via AuditLog — see cash-flow-actions.ts), it does not add
+// a second row. The one column no snapshot line carries a value for equal to
+// "ETC" without a matching row here: getOpenHiringPositions-style, an
+// allocation with no row for a project simply hasn't been distributed yet.
+model CashFlowEtcAllocation {
+  id             Int      @id @default(autoincrement())
+  projectId      String   @db.VarChar(20)
+  forecastMonth  String   @db.VarChar(7) // never "UNKNOWN" — a PM chose a month by entering this row at all
+  amount         Decimal  @db.Decimal(14, 2)
+  note           String?  @db.VarChar(500)
+  updatedByEmail String?  @db.VarChar(191)
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+
+  @@unique([projectId, forecastMonth])
+}
+
+// A PM's manual correction to the AR forecast — "System Actual / Committed"
+// (tblARSalesTerms, read-only) vs "PM Forecast" (this table) stay two
+// different concepts on purpose, per the task's own explicit rule: this NEVER
+// writes back to TotalETO, and reading the current forecast means "an
+// override row wins over the live TotalETO figure for this exact project +
+// month, nothing more" — it replaces one cell, not the whole AR picture.
+// Every write is audited via the existing AuditLog (logAudit), not a second
+// audit table — see cash-flow-actions.ts.
+model CashFlowForecastOverride {
+  id             Int      @id @default(autoincrement())
+  projectId      String   @db.VarChar(20)
+  category       String   @db.VarChar(8) // "AR" today — the one category a PM can move without touching ERP data
+  forecastMonth  String   @db.VarChar(7)
+  amount         Decimal  @db.Decimal(14, 2)
+  note           String?  @db.VarChar(500)
+  updatedByEmail String?  @db.VarChar(191)
+  updatedAt      DateTime @updatedAt
+  createdAt      DateTime @default(now())
+
+  @@unique([projectId, category, forecastMonth])
+}

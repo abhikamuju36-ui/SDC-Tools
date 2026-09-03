@@ -1,0 +1,82 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/.next-preview*/
+/.next-verify*/
+/.next-perf*/
+/.next-buildcheck/
+/out/
+
+# production
+/build
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+*.tsbuildinfo
+next-env.d.ts
+
+/src/generated/prisma
+
+# Local source workbooks and design references — company financial data,
+# never committed. Migration/verification scripts read them from disk.
+# Both spreadsheet extensions: the Paylocity punch exports come out as
+# legacy .xls, which slipped past an .xlsx-only rule (2026-08-24).
+*.xlsx
+*.xls
+/Old ETC Sheets/
+/old standard sheets/
+/new design/
+/reference/
+
+# Throwaway verification scripts
+/scratch*/
+
+# Power BI project local artifacts (per Microsoft's pbip guidance):
+# cache.abf is a multi-MB binary data cache, localSettings.json is per-machine.
+**/.pbi/cache.abf
+**/.pbi/localSettings.json
+
+# Local Power BI gateway installer (not app code)
+on prem gateway/
+
+# Python (scripts/etl_job_hours.py)
+__pycache__/
+
+# Rollback dumps written by the repair scripts — data, not code.
+scripts/_backup_*.json
+
+# Generated audit reports (scripts/audit-*.ts --csv). They contain named
+# employees against hours worked, so they stay local: forward the file, don't
+# commit it. Regenerate any time — the scripts are read-only.
+/unmatched-job-hours.csv
+/job-cost-margin-impact.csv

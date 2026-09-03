@@ -1,0 +1,1237 @@
+@import "tailwindcss";
+
+/*
+ * SDC 2026 Brand Guide palette (verified page-by-page against
+ * SDC_Brand_Guide_2026.pdf, section 04 "Color Palette"):
+ *   Primary Blue #1574C4 — CTAs, headlines, links, logo
+ *   Dark Navy   #061D39 — headers, dark backgrounds, anchor color
+ *   Light Blue  #AACEE8 — supporting tints, backgrounds, icons
+ *   Yellow      #FFDE51 — accent, callouts, highlight bars
+ *   Green       #74C415 — success stats, secondary CTAs
+ *   Lime Green  #BEFA4F — vibrant accent, use sparingly
+ *   Gray        #D9D9D9 — dividers, backgrounds, rules
+ *   Black       #231F20 — body text, knockout type
+ * Neutrals below are literal tints/shades of that Gray/Black pair (no
+ * invented hue) — token names kept stable so existing class references
+ * repoint automatically.
+ */
+:root {
+  --background: #f7f7f7;
+  --foreground: #231f20;
+  --sdc-blue: #1574c4;
+  --sdc-blue-dark: #0f5a95;
+  --sdc-blue-light: #e6f0fa;
+  --sdc-blue-100: #aacee8;
+  --sdc-navy: #061d39;
+  /* PM's workforce-group card color (2026-08-19) — the dark half of the
+   * EXISTING Project Management purple already defined in
+   * employee-card-theme.ts's CARD_COLORS.pm ({ bg: "#e9d5ff", text: "#581c87" }),
+   * itself matched to the SDC Scheduler's own Departments board colors (see
+   * that file's header comment). That pair is a light-bg/dark-text pastel
+   * card style, not a solid band -- this token reuses its dark #581c87
+   * (Tailwind's own purple-900) as a solid band with white text instead, to
+   * match this level's existing bold-band cards (navy, yellow, ...) in
+   * WEIGHT while staying the same purple FAMILY, per the request. Not a new,
+   * unrelated purple -- this exact hex already means "Project Management"
+   * elsewhere in this codebase.
+   */
+  --sdc-purple: #581c87;
+  --sdc-lime: #befa4f;
+  --sdc-border: #d9d9d9;
+  --sdc-border-soft: #ececec;
+  --sdc-yellow: #ffde51;
+  --sdc-yellow-bg: #fff6d6;
+  --sdc-yellow-text: #7a5c00;
+  --sdc-green: #74c415;
+  --sdc-green-bg: #eef7de;
+  --sdc-green-text: #4a7d0d;
+  --sdc-gray-50: #fafafa;
+  --sdc-gray-100: #f2f2f2;
+  --sdc-gray-400: #3d3d3d;
+  --sdc-gray-600: #2b2b2b;
+  --sdc-gray-700: #231f20;
+  /* ── Muted secondary text (§47) ─────────────────────────────────────────────
+   * The tone this palette was missing, and had been missing loudly: `sdc-gray-500`
+   * was written 107 times across 39 files and was never declared, so it emitted no
+   * CSS at all and every "secondary" line in the app — panel subtitles, group
+   * counts, helper text, the drill-throughs' whole second tier — rendered at full
+   * body ink (#231f20, verified in the running app: the class matched no rule and
+   * the text inherited its parent's colour). The hierarchy those call sites were
+   * asking for simply was not there.
+   *
+   * It is NOT called gray-500, deliberately. The neutral ramp runs 50 → 100 → 400
+   * → 600 → 700 light-to-dark, and a muted text tone belongs BETWEEN 100 and 400 —
+   * a "500" would have to be darker than #3d3d3d to keep the ramp monotonic, which
+   * is not muted at all. So it gets a semantic name, like --sdc-red-text and
+   * --sdc-yellow-text already do, and the 107 call sites were renamed to match.
+   *
+   * #6e6a6b is a literal tint of the brand Black (#231f20) toward the brand Gray
+   * (#D9D9D9) — no invented hue — chosen for contrast rather than by eye:
+   *
+   *     on white     5.33:1     on --sdc-gray-50   5.11:1     on --sdc-gray-100  4.76:1
+   *
+   * so it passes WCAG AA for normal text on every surface the app puts it on. The
+   * KPI Card Redesign reference uses #8b8b82 (3.44:1), #9a998f (2.87:1) and
+   * #a9a89f (2.39:1) for these tiers; all three fail AA, and this app renders
+   * financial figures at 10–11px, so the reference's *hierarchy* is adopted and its
+   * exact values are not. */
+  --sdc-muted: #6e6a6b;
+  /* Danger / error — the one semantic color the palette lacked, so errors,
+     destructive actions and negative deltas used ad-hoc Tailwind reds. These
+     match the deactivate-button treatment already in use (#B03A3A / #FBEDED). */
+  --sdc-red: #c0392b;
+  --sdc-red-bg: #fbeded;
+  --sdc-red-text: #b03a3a;
+  --sdc-red-border: #f0d6d6;
+
+  /* ── Motion (§36.17) ──────────────────────────────────────────────────────
+   * One duration per §36.2 band, and the SAME numbers as lib/motion.ts — which
+   * needs them as JavaScript for the timers that have to outlast an exit
+   * animation. tests/motion.test.ts reads this file and asserts the two agree, so
+   * changing one without the other fails the suite rather than producing an
+   * element dropped mid-fade.
+   *
+   * Every class that consumes these is at the bottom of this file under
+   * "Motion system". Nothing should hand-roll a duration: the drift §36.17
+   * forbids is what happens when a component reaches for `duration-300` because
+   * it felt better on that one control. */
+  --motion-press: 80ms;   /* button press feedback           (§36.2: 50–100ms) */
+  --motion-hover: 120ms;  /* hover / focus                  (§36.2: 100–150ms) */
+  --motion-menu: 150ms;   /* dropdowns, filter panels       (§36.2: 120–180ms) */
+  --motion-panel: 200ms;  /* tabs, cards, modals, banners   (§36.2: 150–250ms) */
+  --motion-flash: 600ms;  /* "this value changed" highlight (§36.6, §36.8) */
+  /* How long a loading state waits before it is allowed to paint (§36.9). Applied
+   * as an animation-delay on an element that starts invisible, so a fast
+   * navigation never flashes a skeleton and no JS timer is involved. */
+  --motion-loading-delay: 120ms;
+
+  /* The one size every data table renders at (§39.4). A grid overrides it by
+   * setting this variable on its own table; see the rule near the bottom of this
+   * file for why it is a variable rather than a constant. */
+  --table-font-size: 0.68rem;
+
+  /* Decelerating, for anything ENTERING or responding to a click — it leaves at
+   * once and settles, which is what makes a control feel connected to the press. */
+  --ease-out: cubic-bezier(0.2, 0, 0.2, 1);
+  /* Symmetric, for a property that moves both ways (the sidebar's width). */
+  --ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
+
+  /* ── The universal zoom (§45) ─────────────────────────────────────────────
+   * The app's ONE size control. See lib/app-zoom.ts for why this is CSS `zoom`
+   * rather than a root font-size or a transform, and what it replaced.
+   *
+   * The sidebar control rewrites this one property on <html>; the pre-paint script
+   * in layout.tsx restores it before first paint. Nothing else in the app sets any
+   * size-related custom property. */
+  /* The no-preference default, and it must match DEFAULT_ZOOM in lib/app-zoom.ts:
+   * applyZoom only ever writes the custom property, so a browser that has never
+   * set a level — and the server-rendered first paint — takes the level from here.
+   * tests/app-zoom.test.ts asserts the two agree. */
+  --app-zoom: 0.8;
+
+  /* Viewport lengths, corrected for the zoom.
+   *
+   * `zoom` scales the used value of `vh`/`vw` along with everything else, but the
+   * viewport itself does not scale — so at 125% a `100vh` sidebar renders 900px
+   * against a 720px viewport (measured, not assumed). Dividing the unit back out
+   * makes these mean what `100vh`/`100vw` always meant: exactly one viewport.
+   *
+   * Every viewport-relative length in the app reads one of these two.
+   * tests/app-zoom.test.ts fails if a component reaches for a raw vh/vw again. */
+  --app-vh: calc(100vh / var(--app-zoom));
+  --app-vw: calc(100vw / var(--app-zoom));
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-sdc-blue: var(--sdc-blue);
+  --color-sdc-blue-dark: var(--sdc-blue-dark);
+  --color-sdc-blue-light: var(--sdc-blue-light);
+  --color-sdc-blue-100: var(--sdc-blue-100);
+  --color-sdc-navy: var(--sdc-navy);
+  --color-sdc-purple: var(--sdc-purple);
+  --color-sdc-lime: var(--sdc-lime);
+  --color-sdc-border: var(--sdc-border);
+  --color-sdc-border-soft: var(--sdc-border-soft);
+  --color-sdc-yellow: var(--sdc-yellow);
+  --color-sdc-yellow-bg: var(--sdc-yellow-bg);
+  --color-sdc-yellow-text: var(--sdc-yellow-text);
+  --color-sdc-green: var(--sdc-green);
+  --color-sdc-green-bg: var(--sdc-green-bg);
+  --color-sdc-green-text: var(--sdc-green-text);
+  --color-sdc-gray-50: var(--sdc-gray-50);
+  --color-sdc-gray-100: var(--sdc-gray-100);
+  --color-sdc-gray-400: var(--sdc-gray-400);
+  --color-sdc-gray-600: var(--sdc-gray-600);
+  --color-sdc-gray-700: var(--sdc-gray-700);
+  --color-sdc-muted: var(--sdc-muted);
+  --color-sdc-red: var(--sdc-red);
+  --color-sdc-red-bg: var(--sdc-red-bg);
+  --color-sdc-red-text: var(--sdc-red-text);
+  --color-sdc-red-border: var(--sdc-red-border);
+
+  /* Montserrat app-wide (body + headings) per the SDC Brand Guide — its
+     designated web-safe stand-in for the brand print font (Core Sans NR). The
+     system stack stays as the fallback until the webfont loads. Mono is left
+     as the OS monospace stack. */
+  --font-sans: var(--font-montserrat), -apple-system, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-mono: "SF Mono", "Cascadia Code", "Segoe UI Mono", Consolas, monospace;
+  --font-heading: var(--font-montserrat);
+
+  /* ── The type scale (§39.2, §39.17) ──────────────────────────────────────
+   *
+   * Three steps Tailwind does not have, because this app is a dense grid tool and
+   * its column headers, KPI labels and helper text all live below text-xs. Before
+   * these existed, every one of those was written as an arbitrary pixel value, and
+   * the app had accumulated TWENTY-TWO distinct font sizes — including 9.5px,
+   * 10.5px, 11.5px, 12.5px and 13.5px, each indistinguishable from its neighbour
+   * and each one more thing to keep in step. Counted 2026-08-04: 216 × text-[10px],
+   * 140 × text-[11px], 16 × text-[9px], plus a dozen one-offs.
+   *
+   * ── Why rem, and why that is the real fix (§39.14, §39.15) ───────────────
+   *
+   * The app's size control was the sidebar's text-size stepper, which set the ROOT
+   * font size. Tailwind's own steps are rem, so they scaled with it; the hundreds of
+   * arbitrary pixel sizes did NOT. Turning the control up grew the body text and left
+   * every grid label, column header and KPI caption exactly where it was, which is
+   * not a text-size control, it is half of one.
+   *
+   * Sized as exact fractions of the 15px root, so at that root these are
+   * pixel-identical to the values they replace — the migration changed no rendered
+   * size — and the interface scales as one.
+   *
+   * §45 has since replaced that stepper with a universal `zoom`, which scales px and
+   * rem alike, so the scale no longer CARRIES the size control. It stays in rem
+   * anyway: one closed vocabulary measured against one root is what keeps ten sizes
+   * from becoming twenty-two again, and rem is what makes the browser's own
+   * text-size setting reach the app.
+   *
+   * ── No line-height is attached, on purpose ──────────────────────────────
+   *
+   * Tailwind v4 lets a --text-* token carry a default line-height. These
+   * deliberately do not. An arbitrary pixel size inherits its line-height, and
+   * the grids depend on that: they set leading-none / leading-tight per row to hit
+   * a density the user also controls (--etc-row-py). Attaching a default here would
+   * have silently changed the height of every row in the app. §39.11 is served by
+   * those explicit leading utilities; the rule is that a component states its
+   * line-height when it cares and inherits when it does not. */
+  --text-micro: 0.6rem; /* 9px @15 — densest grid metadata: presence initials, chart captions */
+  --text-label: 0.6667rem; /* 10px — uppercase column headers, KPI labels, dense controls */
+  --text-note: 0.7333rem; /* 11px — helper text, status lines, drill-through tables */
+
+  /* Softer elevation instead of Tailwind's default flat black shadows,
+     tinted with the brand's own Dark Navy (#061D39 = rgb(6 29 57)) rather
+     than an arbitrary hue. Same shadow-sm/md/lg/xl scale used throughout
+     the app, so redefining it here reaches every card/button/input without
+     touching each file individually. */
+  --shadow-sm: 0 1px 2px 0 rgb(6 29 57 / 0.06), 0 1px 1px -1px rgb(6 29 57 / 0.05);
+  --shadow-md: 0 4px 10px -2px rgb(6 29 57 / 0.1), 0 2px 4px -2px rgb(6 29 57 / 0.06);
+  --shadow-lg: 0 12px 24px -6px rgb(6 29 57 / 0.14), 0 4px 8px -4px rgb(6 29 57 / 0.08);
+  --shadow-xl: 0 24px 48px -12px rgb(6 29 57 / 0.22), 0 8px 16px -8px rgb(6 29 57 / 0.1);
+}
+
+/* ── The root size, and the universal zoom (§39.18, §45) ───────────────────
+ *
+ * The root font-size is a CONSTANT now. It used to be the app's text-size control
+ * (AppTextSize, 12–20px), which reached everything written in rem and nothing
+ * written in px — see lib/app-zoom.ts for why that was half a control. §45 replaced
+ * it with `zoom`, which scales every length there is, so the root size goes back to
+ * being one fixed number that the type scale above is measured against.
+ *
+ * Declaring it in CSS rather than in JavaScript is §39.18: it used to be applied
+ * only by a mount effect and a pre-paint script that ran only when a preference
+ * existed, so a first visit rendered at the browser's 16px and snapped to 15px on
+ * hydration — a 6.7% reflow of every page.
+ *
+ * `zoom` reads a custom property so that changing the level is one property write on
+ * this element (see applyZoom) — no stylesheet swap, no class toggle, no re-render.
+ * At the 1 default this rule is a no-op, so a browser without `zoom` support simply
+ * renders the app at 100% forever rather than breaking. */
+html {
+  font-size: 15px;
+  zoom: var(--app-zoom);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+/* Visible keyboard focus — the app was missing this app-wide (many controls use
+ * Tailwind's outline-none). :focus-visible targets keyboard/AT focus only, so
+ * it never shows on a mouse click. This rule is un-layered, so it wins over the
+ * outline-none utility (which lives in Tailwind's utilities layer). Uses outline
+ * (not box-shadow) so it layers cleanly over a control's own shadows. */
+:focus-visible {
+  outline: 2px solid var(--sdc-blue);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+/* On the dark navy sidebar, a blue outline is low-contrast — use white there. */
+.bg-sdc-navy :focus-visible,
+.bg-sdc-navy:focus-visible {
+  outline-color: #ffffff;
+}
+
+/* ── Uniform table text (§39.4) ──────────────────────────────────────────────
+ *
+ * One size for every data table, overriding whatever size utility an individual
+ * cell, header or input carries, so a grid reads at one consistent size. ~10px at
+ * the 15px root, and it scales with the rest of the app through `zoom` (§45).
+ *
+ * ── Why it is still a variable, and why there is no longer a second rule ─────
+ *
+ * The variable is how a grid asks for a different size — by setting
+ * --table-font-size on its own table — instead of escalating over this `!important`.
+ * That mattered because the `!important` here had silently disabled a shipped
+ * control: the Monthly ETC View menu's Text size stepper wrote --etc-font-size and
+ * applied it with `[&_td]:text-[length:var(--etc-font-size)]` utilities, and an
+ * important declaration outside any layer beats a normal one inside
+ * `@layer utilities` whatever the specificity. Measured live 2026-08-04: setting
+ * --etc-font-size to 22px moved a cell from 10.2px to 10.2px.
+ *
+ * §39.14 fixed that with a second, higher-specificity rule for
+ * `table[data-grid="etc"]`. §45 removed the stepper itself — one universal zoom now
+ * scales the grids with everything else — so that rule went with it, and every table
+ * in the app is back to one size with nothing overriding it. No grid currently sets
+ * --table-font-size; it stays as the supported way to, should one need to. */
+table, table * {
+  font-size: var(--table-font-size) !important;
+}
+
+/* AG Grid tables (Employees, Audit Log) render <div>s, not <table>, so the rule
+ * above can't reach them. Their body/header size is set to 13px in each grid's
+ * theme (fontSize/headerFontSize) to match; this matches the HTML tables'
+ * header TREATMENT too — uppercase + wide tracking (see TABLE_HEADER_ROW) — so
+ * every table's header reads the same across the app. */
+.ag-header-cell .ag-header-cell-text {
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+/* Number cells should read like Excel cells — plain values you click and
+ * type into, no spinner arrows appearing on hover/focus. Applies to every
+ * numeric input app-wide (grid cells and forms alike). */
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-inner-spin-button,
+input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Excel-style cell editing for grid inputs: the input IS the cell — it
+ * fills the td completely, and focus draws a crisp inset cell border (like
+ * Excel's active-cell outline) instead of a floating rounded box. The
+ * attribute selectors give these rules enough specificity to override the
+ * inputs' own Tailwind sizing/rounding utilities without !important. */
+/* A plain <input> with no `type` attribute renders as text but doesn't match
+ * `[type="text"]` — cover both forms so every grid text field is caught. */
+/* height: 1px is a deliberate table-layout hack, not a real constraint — a
+ * td's height is normally "auto" (sized to content), and percentage heights
+ * on children don't resolve against an auto height, so the input's
+ * height:100% below was silently falling back to its own content height and
+ * leaving a gap above/below. Giving the td a nominal 1px height doesn't
+ * shrink the row (it still grows to fit content) but makes it a definite
+ * height, so height:100% on the input now actually fills the cell. */
+td:has(> input:not([type]):not([disabled]), > input[type="text"]:not([disabled]), > input[type="number"]:not([disabled]), > select:not([disabled])) {
+  padding: 0;
+  height: 1px;
+}
+/* !important here is deliberate: grid cells often reuse the shared INPUT
+ * classname (rounded border + focus ring, meant for standalone form fields),
+ * whose Tailwind utility classes would otherwise outrank these plain-element
+ * selectors and leave a floating boxed/ring look inside the cell. */
+td > input:not([type]),
+td > input[type="text"],
+td > input[type="number"],
+td > select {
+  width: 100% !important;
+  height: 100%;
+  min-width: 3.5rem;
+  border-radius: 0 !important;
+  border: none !important;
+  box-shadow: none !important;
+  padding: 0.25rem 0.5rem;
+  background: transparent;
+}
+/* Selects need extra right padding to clear the browser's own dropdown
+ * arrow — without it, wider text (e.g. at the app's 13px table font size)
+ * runs directly under the arrow and reads as overlapping/cut off. The
+ * shared min-width above (3.5rem) is sized for plain inputs; a forced
+ * width:100% opts a select out of the table's normal auto-layout sizing
+ * (percentages don't contribute to intrinsic column width), so without a
+ * wider floor here the narrowest select column (Type: "Duplicate") gets
+ * sized too tight for its own text once the reserved arrow padding is added. */
+/* Replace the browser's native (unsizable) dropdown arrow with a tiny custom
+ * chevron so the value has the most room possible and never reads as cut off.
+ * The arrow is drawn as a small background SVG pinned to the right edge; the
+ * right padding only has to clear that ~7px glyph, not the browser's chunky
+ * native arrow — so columns like Type/Billable/Status show their full value. */
+td > select {
+  appearance: none;
+  -webkit-appearance: none;
+  -moz-appearance: none;
+  /* Held in a custom property so the .quiet-controls reveal rules below can
+   * re-apply the identical glyph without duplicating the data URI. */
+  --grid-select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%2394a3b8' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpath d='M4 6l4 4 4-4'/%3E%3C/svg%3E");
+  background-image: var(--grid-select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 0.15rem center;
+  background-size: 7px 7px;
+  /* Let the select hug its own content instead of filling the cell at a fixed
+   * 5.5rem floor — that floor was the white space. width:auto sizes it to the
+   * widest option (so no value ever clips), min-width:0 removes the floor, and
+   * the padding only reserves room for the ~7px arrow on the right. */
+  width: auto !important;
+  min-width: 0;
+  padding: 0.2rem 0.65rem 0.2rem 0.3rem;
+}
+td > input:not([type]):focus,
+td > input[type="text"]:focus,
+td > input[type="number"]:focus,
+td > select:focus {
+  outline: 2px solid var(--sdc-blue);
+  outline-offset: -2px;
+  /* background-COLOR, not the `background` shorthand: the shorthand also resets
+   * background-image/position/repeat/size, and at this rule's higher
+   * specificity it silently clobbered the chevron geometry set on `td > select`
+   * above — a focused select re-drew its arrow tiled from the left edge, over
+   * its own text (seen live on the Projects Status/Billable columns). Only the
+   * fill color should change on focus. */
+  background-color: #fff;
+  box-shadow: none !important;
+}
+
+/* Quoted/Actual split cells (Projects tab): the quoted-hours <input> shares
+ * its td with a static "/ actual" suffix, so it can't claim the full-width
+ * fill the plain grid-input rule above assumes (width: 100% !important) —
+ * narrow it to its own text instead. Deliberately NOT display:flex on the
+ * <td> itself — that pulls a table cell out of table layout entirely and
+ * corrupts the whole row (verified live: every column after it in the row
+ * goes blank and text overlaps). Plain inline-block + vertical-align keeps
+ * it a normal table-cell while still laying the two parts out side by side. */
+/* Center the quoted/actual pair as a unit inside the cell (text-align: center
+ * on the td), and center the number WITHIN the quoted input too, so it reads
+ * consistently center-aligned like every other cell in the table. */
+td.quoted-actual-cell {
+  white-space: nowrap;
+  text-align: center;
+}
+/* 1.9rem, not the old 2.5rem: the section columns are now pinned to one
+ * uniform width (DATA_COL in the Projects page), and with Actuals on this
+ * input has to share that width with the "/actual" suffix. 1.9rem still
+ * clears the widest real quoted figure (4 digits ≈ 1.5rem) with room to
+ * spare, while leaving the pair comfortably inside the column instead of
+ * overflowing it. */
+td.quoted-actual-cell > input[type="number"] {
+  width: 1.9rem !important;
+  min-width: 0;
+  display: inline-block;
+  vertical-align: middle;
+  text-align: center;
+  padding: 0.25rem 0.125rem;
+}
+td.quoted-actual-cell > .actual-suffix {
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 0.15rem;
+}
+/* The gutter AFTER the slash (§50). The margin above put one before it and nothing
+ * after, so a section cell read "1800 /1913" while the ENG/SHOP total beside it — whose
+ * markup carries literal spaces — read "1800 / 1913". One asymmetric separator in the
+ * grid's densest cell, and the request is specifically about that "/".
+ *
+ * Scoped to the section cells so it does not double up on the total cells' own spaces.
+ * Measured before adding: the tightest real pair (1800 / 1913, four digits each side)
+ * used 59px of 79px, so 2.25px of gutter costs nothing — 0 of 663 cells clip. */
+td.quoted-actual-cell > .actual-suffix > .actual-sep {
+  margin-right: 0.15rem;
+}
+/* Actuals off. The class sits on the <table>, set server-side from the
+ * `actuals` view param (quoted/page.tsx), so the grid arrives in the right
+ * state — it used to be a <body> class applied by an effect after hydration,
+ * which painted the "/ actual" halves on every load and hid them a frame later,
+ * and could disagree with a navigation the Show-all switch had just made.
+ *
+ * Hiding the suffix isn't enough on its own: the quoted <input> is pinned to
+ * 1.9rem so it can SHARE the cell with that suffix, and leaving it there left a
+ * cramped little box adrift in a 4.7rem column. With the suffix gone the input
+ * takes the cell back. */
+.hide-actuals .actual-suffix {
+  display: none;
+}
+/* ── The rule above never reached the SECTION cells (§47) ────────────────────
+ *
+ * Found while verifying Show Actuals, and it predates it: `td.quoted-actual-cell >
+ * .actual-suffix` (two classes + an element) outranks `.hide-actuals .actual-suffix`
+ * (two classes) on specificity, whatever the order — so `display: none` lost, and the
+ * "/ actual" half of every section cell was visible whether or not actuals were on.
+ * Measured on the running grid: with `hide-actuals` on the table, a cell still read
+ * "20 /0". The old "Actual hours in cells" checkbox had therefore never hidden anything
+ * in those cells; it only ever worked on the ENG/SHOP total cells, whose suffix is not
+ * inside a `.quoted-actual-cell` and so had no competing rule.
+ *
+ * Same scoping and specificity as the ON rule below, so the two states are symmetric and
+ * neither can quietly outrank the other again. */
+table[data-grid="projects"].hide-actuals td.quoted-actual-cell > .actual-suffix {
+  display: none;
+}
+.hide-actuals td.quoted-actual-cell > input[type="number"] {
+  width: 100% !important;
+}
+/* ── Parts Cost Quoted/Actual — merged into ONE column (2026-08-11) ──────────
+ *
+ * Used to be two separate `<th>`/`<td>` columns, hidden as a pair via
+ * `[data-col="partsCostActual"]` when Actuals was off. Now it is one column
+ * with the pair riding inside it, same as a section-hours cell — so the
+ * generic `.hide-actuals .actual-suffix { display: none; }` rule above
+ * already hides Parts Cost Actual's half too; nothing Parts-Cost-specific was
+ * needed for that part of the switch.
+ *
+ * What a section cell's plain `<input type="number">` never needed: Parts
+ * Cost Actual is an independently-editable MoneyCell, not a read-only actual
+ * span, so BOTH halves are inputs and both need an explicit width once two of
+ * them share a cell (see MONEY_INPUT_PAIRED in quoted/page.tsx). `.hide-actuals`
+ * widens the quoted half back out to the cell's full width, same idea as the
+ * section cells' own `input[type="number"] { width: 100% }` rule above —
+ * `.parts-cost-quoted` is the wrapper span quoted/page.tsx and
+ * NewProjectRows.tsx put around the quoted MoneyCell for exactly this hook. */
+.hide-actuals .parts-cost-quoted input[type="text"] {
+  width: 100% !important;
+}
+
+/* ── Parts Cost column WIDTH, also keyed off the switch (2026-08-14) ─────────
+ *
+ * `.pc-col` marks the Parts Cost <th>/<td> in quoted/page.tsx. This has to be a
+ * CSS rule, not a server-computed inline `style`, because Show Actuals is
+ * DELIBERATELY a render-free switch — see ProjectsShowActualsSwitch's flip(): it
+ * only ever toggles this same `hide-actuals` class client-side and never asks the
+ * server to re-render. An inline width picked from `showActuals` at render time
+ * would match whichever state the page happened to LOAD in and then sit stale the
+ * moment someone actually clicked the switch (measured: toggle off, and a
+ * server-computed width stayed at the ON figure since nothing re-ran to shrink
+ * it). Reacting to the class the switch already flips is the only way the width
+ * tracks it live.
+ *
+ * WIDE is the base rule — comfortably fits the paired quoted/actual MoneyCells
+ * (4.5rem each, MONEY_INPUT_PAIRED in quoted/page.tsx) plus their "$"/"/" glyphs.
+ * NARROW overrides it under `.hide-actuals`, at the same specificity trick as the
+ * `.actual-suffix` rule above (`table[data-grid="projects"]` + the state class
+ * outranks a bare `.pc-col` class, so source order can't flip which one wins) —
+ * fits a lone 7-figure quote ("$3,992,738") with its cell padding, nothing more,
+ * since there's no sibling figure to share the cell with in this state. */
+table[data-grid="projects"] .pc-col {
+  width: 196px;
+  min-width: 196px;
+  max-width: 196px;
+}
+table[data-grid="projects"].hide-actuals .pc-col {
+  width: 96px;
+  min-width: 96px;
+  max-width: 96px;
+}
+
+/* ── Show Actuals ON: quoted / actual, BOTH (§50, by request) ────────────────
+ *
+ * ON shows the pair — "1800 / 2352", quoted then actual — which is what the base rules
+ * above already lay out, and why the quoted input is pinned to 1.9rem: it shares the
+ * cell with the suffix. So ON needs NO rules of its own. The whole of Show Actuals is
+ * `.hide-actuals` hiding one span, which is why the switch can flip it on the click
+ * without a render.
+ *
+ * ── This reverses §47.2, which had ON REPLACE the quoted value ───────────────
+ *
+ * §47's wording asked for one figure at a time ("replace the quoted-hours values in the
+ * section columns with actual-hours values"), so ON hid the quoted input, the separator
+ * and the totals' quoted span, and the actual took the cell. That reading is the one
+ * being reversed: over/under is a COMPARISON, and a cell showing 2,352 alone does not
+ * make it — you have to remember the quoted figure you were looking at a click ago. The
+ * cell's tone already encodes over/under, and the pair is what explains the tone.
+ *
+ * §47's other constraint still holds, and is the one that mattered: "do not add
+ * duplicate actual-hours columns". The pair lives in the ONE section column, so the
+ * grid's column count is identical in both states.
+ *
+ * Three deleted rules, not three inverted ones — hence no `:not(.hide-actuals)` block
+ * here at all. Worth stating because the missing selector looks like an omission:
+ *
+ *   input[type=number]   was display:none      -> the quoted half is the point
+ *   [data-total-quoted]  was display:none      -> same, for the ENG/SHOP totals
+ *   .actual-sep          was display:none      -> the "/" the request names
+ *
+ * `.actual-sep` stays an element rather than a bare text node even though nothing hides
+ * it now: it is inside `.actual-suffix`, which `.hide-actuals` still hides wholesale, and
+ * a separator that only exists in one of two states is one that eventually gets stranded
+ * beside a missing figure. */
+
+/* Date grid cells (DateCell.tsx): when empty, hide the native "mm/dd/yyyy"
+ * segment text so the column reads as clean icon-only cells instead of a
+ * wall of placeholder digits — but restore it on focus so there's still
+ * visible feedback while picking/typing a date. Once a real date is set,
+ * DateCell removes this class and the value displays normally. WebKit/
+ * Chromium-only pseudo-elements — Firefox falls back to the native look. */
+/* Date cells hug their content too — drop the native min-width and trim the
+ * internal padding so the date column isn't padded out with dead space.
+ * `width: auto` alone isn't enough here: Chrome's native date-input box
+ * resolves "auto" to a generously wide built-in size (room for every
+ * mm/dd/yyyy segment at its own reserved width, plus space before the
+ * calendar icon) regardless of the actual digits shown — that reserved gap
+ * is exactly the dead space users saw between a filled-in date and the
+ * icon, and it also set a floor under the column-resize drag no width var
+ * could shrink past. Pinning an explicit, snug width overrides that native
+ * floor so both the value-to-icon gap and the resize floor shrink together. */
+/* width:100% (was a pinned 5.75rem) because the whole cell is now the click
+ * target that opens the calendar — see DateCell.tsx. A narrower-than-cell input
+ * left a dead strip on the right where a click did nothing. min-width:0 still
+ * defeats the native floor described above, so the column resizes freely. */
+td > input[type="date"] {
+  min-width: 0;
+  width: 100%;
+  padding: 0.2rem 0.15rem;
+  cursor: pointer;
+}
+/* No calendar icon at all. It repeated on every row, the grid had to hide it
+ * until hover to keep the column readable, and hidden-until-hover made it the
+ * hardest part of the cell to find — users were dragging the column wider
+ * looking for it. DateCell opens the picker on click instead, so the icon has
+ * no job left, and dropping it (rather than hiding it) reclaims its reserved
+ * width too. WebKit/Chromium pseudo-element; Firefox has no icon here anyway. */
+td > input[type="date"]::-webkit-calendar-picker-indicator {
+  display: none;
+}
+input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
+  opacity: 0;
+}
+/* An empty cell with no icon has nothing to look at, so hover/focus brings the
+ * faint "mm/dd/yyyy" segments up as the affordance the icon used to be. */
+input[type="date"].date-empty:focus::-webkit-datetime-edit-fields-wrapper {
+  opacity: 1;
+}
+td:hover > input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
+  opacity: 0.4;
+}
+
+/* --- "Quiet controls" (.quiet-controls on a table) -----------------------
+ * Opted into by the Projects grid only. The Type/Billable/Status dropdown
+ * chevrons repeat on every single row, so at 40+ rows the column reads as a
+ * wall of widget chrome instead of data. Here they're hidden until the user
+ * actually interacts with the cell — hover it or focus the control — at which
+ * point the affordance comes back. (Date cells were part of this too until the
+ * calendar icon was removed outright; see the indicator rule above.)
+ *
+ * Nothing is ever disabled or removed from the layout, which is the whole
+ * point: `background-image: none` on a select doesn't affect its behavior —
+ * clicking anywhere on an appearance:none select still opens the dropdown.
+ * Reserved padding/width are left untouched too, so revealing a chevron never
+ * shifts the row. */
+.quiet-controls td > select {
+  background-image: none;
+}
+/* Geometry is re-declared here, not inherited from `td > select` — any rule
+ * that uses the `background` shorthand at a competing specificity (e.g. the
+ * :focus rule above) resets position/repeat/size, and re-adding only the image
+ * then paints it tiled from the left over the value. Self-contained = one
+ * chevron, pinned right, in every state. */
+.quiet-controls td:hover > select,
+.quiet-controls td > select:focus {
+  background-image: var(--grid-select-chevron);
+  background-repeat: no-repeat;
+  background-position: right 0.15rem center;
+  background-size: 7px 7px;
+}
+/* The date rules that used to live here (hide the calendar icon until hover)
+ * are gone with the icon itself — see the `display: none` on the indicator
+ * above. Dates need no quiet-controls treatment now: an empty cell shows
+ * nothing and a filled one shows only its value, in every state. */
+/* An empty date cell would otherwise be completely blank (the .date-empty rule
+ * hides the mm/dd/yyyy segments, and now the icon is hidden too) — with no hint
+ * it's editable at all. Hovering the cell brings the segments back alongside
+ * the icon, matching the focus behavior that already existed. */
+.quiet-controls td:hover > input[type="date"].date-empty::-webkit-datetime-edit-fields-wrapper {
+  opacity: 1;
+}
+
+/* Row-follow highlight: the line under the pointer tints as you move, with no
+ * click needed. This is now the ONLY row highlight — the click-to-pin selection
+ * it used to coexist with was removed on 2026-08-03 (see the note below), so
+ * reading across a wide grid costs nothing and leaves nothing to undo.
+ *
+ * An inset box-shadow rather than background-color, so it composes over a cell's
+ * own background instead of replacing it — the ETC grid's cells nearly all carry
+ * an opaque fill of their own.
+ *
+ * Strengthened 2026-08-02 (0.05 -> 0.12): at 5% the wash was invisible on the
+ * ETC grid, which is the grid that needs it most — nearly every cell there
+ * carries its own opaque fill (Prior ETC's dark blue, the red/green Diff
+ * cells, the yellow New ETC cells), and a 5% tint over a saturated fill is no
+ * tint at all. The pinned strength went up with it, below, so the two stay
+ * clearly ranked.
+ *
+ * The two hairline edges are box-shadows, not borders, on purpose: a border
+ * appearing on hover would add 2px to the row's height and make the whole
+ * table jump as the pointer moves down it. Listed BEFORE the wash because the
+ * first shadow in the list paints on top. */
+tbody tr:hover > td {
+  box-shadow:
+    inset 0 1px 0 rgba(21, 116, 196, 0.45),
+    inset 0 -1px 0 rgba(21, 116, 196, 0.45),
+    inset 0 0 0 9999px rgba(21, 116, 196, 0.12);
+}
+
+/* The Excel-style CLICK-to-select row highlight was removed app-wide on
+ * 2026-08-03, by request: `tr.row-selected` (a blue wash, 2px dark rules top and
+ * bottom, and a green "#" gutter cell) plus the RowSelect.tsx listener that
+ * applied it. On a grid where clicking is how you edit a cell, a persistent
+ * whole-row highlight followed every edit around and competed with the colours
+ * that carry meaning here — the yellow "needs attention" New ETC cells and the
+ * red/green Diff cells.
+ *
+ * The HOVER highlight above is deliberately kept: it tracks the pointer, so it
+ * costs nothing to dismiss and is what makes a 40-column row readable across.
+ * Its `:not(.row-selected)` guard went with the selection rule. */
+
+/* The Monthly ETC grid's Total row.
+ *
+ * It used to wear the SAME per-cell fills as the body — the mid-blue Prior ETC,
+ * the pale Hours Worked, the red/green Diff — so the one row that sums the
+ * whole grid looked like just another row, and at the bottom of a 58-row table
+ * that is where the eye lands last.
+ *
+ * Done here rather than by editing the cells: the footer renders roughly
+ * fifteen different cell variants (per section, per group, Parts Cost, the
+ * Standard columns), each with its own bg-* utility, and changing them one at a
+ * time is how one gets missed. `tfoot tr.etc-total-row > td` is a compound
+ * selector, so it outranks any single utility class without !important — the
+ * same mechanism the hover rule above relies on.
+ *
+ * Deliberately NOT --sdc-navy: that is the phase banner's colour at the top of
+ * the same table, and reusing it would make the footer read as another header.
+ * This is a dark steel blue — clearly darker than the body, clearly its own
+ * thing. */
+tfoot tr.etc-total-row > td {
+  background-color: #1e3a5f;
+  color: #eaf1f8;
+  border-color: rgba(255, 255, 255, 0.16);
+}
+/* Sticky footer cells sit above the scrolling body, so they need the fill to be
+ * fully opaque — a translucent one would show rows sliding underneath. */
+tfoot tr.etc-total-row > td.sticky {
+  background-color: #1e3a5f;
+}
+/* The footer Diff cells keep their meaning as TEXT, since the fill is now the
+ * row's — but the two flat classes that used to do it (.etc-total-diff-under /
+ * -over, #b6e08a and #ffb0ac) were removed on 2026-08-03. The colour is a
+ * magnitude GRADIENT now, so it has to be a computed value, and Tailwind cannot
+ * generate one: see diffTotalStyle in components/ui/etc-diff-colors.ts.
+ *
+ * The gradient is applied as an inline style, which incidentally removes the
+ * specificity trap those rules existed to dodge — they had to be written as the
+ * full descendant chain because the row rule above (0-2-2) out-specifies a lone
+ * class (0-1-0), and a bare class would have been painted over in the same pale
+ * blue as every other footer cell. An inline style beats every selector. */
+
+/* Bounded table wrappers (data grids with sticky headers/columns) get their
+ * own scrollbars now instead of the whole page scrolling. Unstyled, these
+ * default to the OS's raw scrollbar — on Windows/Chromium that's a chunky
+ * gray track with a hard-edged corner square where the horizontal and
+ * vertical tracks meet, which reads as a stray box floating over the table.
+ * Themeing it to match the app's flat design removes that. */
+/* Never split a word across lines. A column label rendered as "HOUR S WOR KED
+   MONT H" is not a narrow column, it is an unreadable one — the fix is always a
+   wider column, a shorter label or a smaller font, never a broken word.
+
+   Scoped to the elements that hold LABELS (headers, buttons, form labels, option
+   text) rather than everything: free-text content still needs to be able to break
+   an unbroken 400-character string, which is why the toast and sync-failure
+   messages keep their explicit break-words. Those are messages, not labels.
+
+   This is a backstop, not the fix: a label that no longer fits will now overflow
+   or clip, which is visible and gets reported, where a silently mangled word
+   survives for months. */
+th,
+button,
+label,
+option,
+legend,
+summary {
+  overflow-wrap: normal;
+  word-break: normal;
+  hyphens: none;
+}
+
+.styled-scrollbar {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sdc-border) var(--sdc-gray-50);
+}
+.styled-scrollbar::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+.styled-scrollbar::-webkit-scrollbar-track {
+  background: var(--sdc-gray-50);
+}
+.styled-scrollbar::-webkit-scrollbar-thumb {
+  background-color: var(--sdc-border);
+  border-radius: 6px;
+  border: 2px solid var(--sdc-gray-50);
+}
+.styled-scrollbar::-webkit-scrollbar-thumb:hover {
+  background-color: var(--sdc-gray-400);
+}
+.styled-scrollbar::-webkit-scrollbar-corner {
+  background: var(--sdc-gray-50);
+}
+
+/* ── The drill-through card's height ceiling (§49) ───────────────────────────
+ *
+ * A drill card opens BESIDE the KPI summary card, and the two are now sized
+ * independently (§49): the summary keeps its natural height and the drill takes what
+ * its own content needs. Unbounded, that is a lot — the hours drill grouped by
+ * employee is fifty rows, the parts drill is forty-five jobs — so looking at one
+ * figure pushed the grid people came for a whole screen down the page. Which is the
+ * complaint the four banners caused (§44) arriving by a third route.
+ *
+ * All three bounds are measured, not chosen:
+ *
+ * - **34rem, the ceiling.** "As much of the window as is left below the toolbar" was
+ *   the first answer and it is too greedy: measured live on a 950px viewport it gave
+ *   the parts drill 770px, which pushed the grid down 516px and clean off the screen.
+ *   That is the §26 complaint — the drill displacing the thing people came for —
+ *   reappearing inside the fix for it. 34rem is about twice the summary card beside it,
+ *   holds a dozen-odd rows, and leaves the first grid rows visible on a laptop.
+ * - **`100vh - 12rem`, the window bound.** On a short window 34rem would overflow the
+ *   viewport, so whichever is smaller wins.
+ * - **18rem, the floor.** Browser zoom shrinks the viewport in CSS pixels while leaving
+ *   `rem` where it is, so at 400% zoom `100vh` is ~225px against 12rem = 180px, and a
+ *   little further out the window bound goes NEGATIVE and `max-height` clamps to zero —
+ *   the drill would vanish at high zoom and nowhere else. Verified: on a 380px-tall
+ *   viewport the floor holds the panel at 270px and its body still scrolls.
+ *
+ * `clamp(floor, window, ceiling)` states all three in one declaration, which is why it
+ * is that rather than a nest of min() and max().
+ *
+ * A CSS class rather than a `max-h-[clamp(...)]` arbitrary value because a value
+ * carrying commas inside a nested function is the one Tailwind construct this app has
+ * already been bitten by (§39: a nested `var()` with a comma emitted no CSS at all,
+ * silently). One declaration here, read by every drill through DRILL_CAP in
+ * components/ui/Drill.tsx.
+ *
+ * Pairs with DRILL_BODY, which is the single scrolling region inside the card. The
+ * card is a flex column: everything else keeps its content height (a flex item's
+ * automatic minimum size means the header and controls cannot be squeezed), so the
+ * body is the only child that can absorb the difference. */
+.drill-cap {
+  max-height: clamp(18rem, calc(100vh - 12rem), 34rem);
+}
+
+/* ── The customer chart's ceiling (2026-08-31) ──────────────────────────────
+ *
+ * "Active Jobs by Customer" lists every canonical customer, so it needs a
+ * height it cannot exceed or the dashboard grows with the customer count
+ * (measured before this existed: 565px at 21 customers, 1058px at 41, and the
+ * list never scrolled). This is that ceiling; the card's own flex column turns
+ * it into an internal scroll.
+ *
+ * A MAX-height and nothing else. It was briefly a fixed `height` too, applied
+ * to both cards in the row so their edges lined up — that is what left "Active
+ * Jobs by Project Type" with a third of a card of blank space under Head Start,
+ * because six rows do not fill 510px. The two cards size independently now:
+ * this one caps and scrolls, the type card hugs its rows, and they align at the
+ * top instead of at both edges.
+ *
+ * With few enough customers to fit, the max-height never binds and this card
+ * hugs its content too.
+ *
+ * clamp() matches .drill-cap above: 22rem so the list is always a usable
+ * window, 34rem so it never dominates a tall screen. None of the three terms
+ * depends on the data.
+ */
+.customer-chart-cap {
+  max-height: clamp(22rem, calc(100vh - 26rem), 34rem);
+}
+
+/* ── The collapsed sidebar's scroll area (§46.5, §46.6) ─────────────────────
+ *
+ * The rail's nav is `overflow-y: auto`, which is what §46.5 asks for ("if vertical
+ * space is limited, use a controlled internal sidebar scroll area") — at 150% app
+ * zoom, or on a short laptop screen, seven 51px icons do not fit and it scrolls.
+ *
+ * A classic scrollbar there takes its width out of the CONTENT box, and that broke
+ * the centring §46.6 requires: measured at 150% on an 820px viewport, the nav's
+ * scrollbar took 10px (offsetWidth 59, clientWidth 49), so every nav icon sat 5px
+ * left of the rail's centre while the footer icons — in a container that does not
+ * scroll — stayed centred. Two columns of icons, visibly misaligned, and only when
+ * the rail happened to overflow.
+ *
+ * So the rail scrolls without a visible scrollbar: the content box is the full rail
+ * at all times and the icons cannot drift. Nothing becomes unreachable — the wheel
+ * still scrolls it, and Tab moves focus through the links, which scrolls the focused
+ * one into view.
+ *
+ * `scrollbar-gutter: stable both-edges` was the first thing tried, and it centres
+ * correctly but reserves the gutter on BOTH sides permanently: 2 x 10px out of a
+ * 60px rail, leaving less room than the 32px-wide targets this pass just fixed.
+ * Wrong trade for a scrollbar that is usually not needed at all. */
+.rail-scroll {
+  scrollbar-width: none;
+}
+.rail-scroll::-webkit-scrollbar {
+  width: 0;
+  height: 0;
+}
+
+/* Frozen (sticky) grid columns — the #/Job Id/Job pane on the Projects grid
+ * and similar pinned columns.
+ *
+ * The bleed-through fix is NOT here — it's that every frozen cell now has an
+ * opaque background AND the pinned columns' left-offsets are expressed in the
+ * same rem unit as their widths. They used to mix rem widths (w-8 = 2rem, w-20
+ * = 5rem) with a px offset (left-[112px]); since the app's text-size control
+ * sets the root font-size to 15px (not 16px), 2rem+5rem = 105px ≠ 112px, so a
+ * ~7px gap opened between two frozen columns and the scrolling columns showed
+ * through it during horizontal scroll. Offsets are now left-28 / left-30 (rem),
+ * so the pane stays seamless at every text size.
+ *
+ * background-clip keeps each cell's fill inside its own border box so the
+ * opaque background can't smear over the gridlines. Deliberately NO
+ * transform/translateZ here: per-cell layer promotion on a few-hundred-row
+ * grid would spawn hundreds of compositing layers (GPU-memory hazard) and
+ * isn't needed once the gap is closed. */
+.frozen-col {
+  background-clip: padding-box;
+}
+/* The rightmost frozen column gets a soft right-edge shadow so the freeze
+ * boundary reads as a crisp Excel-style pane divider while scrolling. */
+.frozen-col-last {
+  box-shadow: 6px 0 6px -4px rgb(6 29 57 / 0.18);
+}
+
+/* Column-resize drag handle (ColumnResize.tsx): a thin invisible strip on a
+ * header cell's right edge that highlights on hover/drag so it reads as
+ * grabbable without adding visual noise the rest of the time. */
+.col-resize-handle {
+  cursor: col-resize;
+  touch-action: none;
+}
+.col-resize-handle:hover,
+.col-resize-handle:active {
+  background-color: rgba(21, 116, 196, 0.35);
+}
+
+/* Projects read-only mode. The grid sits inside a <fieldset disabled> (see
+ * ProjectsEditMode.tsx), which is what stops ~1,100 cells accepting input with
+ * one attribute and no re-render.
+ *
+ * The whole point of this page is READING those figures, so undo the browser's
+ * disabled treatment entirely: Chrome/Safari fade disabled control text with
+ * -webkit-text-fill-color regardless of any author `color`, which would grey out
+ * every number in the grid. currentColor hands it back to the Tailwind classes
+ * on each cell, so the over/under and status coloring survives read-only intact.
+ * Sort headers are links, not buttons, precisely so they stay live in here. */
+.quiet-controls input:disabled,
+.quiet-controls select:disabled,
+.quiet-controls textarea:disabled {
+  opacity: 1;
+  -webkit-text-fill-color: currentColor;
+}
+
+/* ── Why a grid could only be dragged by its header (fixed 2026-09-01) ───────
+ *
+ * A DISABLED form control dispatches NO mouse events at all — not on itself,
+ * and not retargeted to an ancestor; the browser suppresses them outright. Both
+ * data grids disable their cells when they are not editable: Projects wraps
+ * ~1,100 of them in a <fieldset disabled> (read-only mode, the DEFAULT for that
+ * page), and Monthly ETC passes `disabled` per cell for a submitted month or a
+ * role with view-but-not-edit. Those inputs fill their cells, so a mousedown
+ * over the grid BODY never fired at all. DragScroll's handler sits on the scroll
+ * container and never saw a press — which is exactly why click-and-drag panning
+ * worked on the header (plain <th> text and links, no disabled controls) and
+ * nowhere else.
+ *
+ * Taking the disabled control out of hit-testing lets the press land on the <td>
+ * and bubble to the scroll container the way it always should have. Nothing is
+ * lost: a disabled control cannot be focused, typed into or opened either way.
+ *
+ * Two side effects, both improvements: each <td>'s `title` tooltip (Quoted /
+ * Actual, status and tone hints) now shows on hover instead of being swallowed
+ * by the input sitting on top of it, and the container's `grab` cursor finally
+ * reaches the pointer — a disabled input forces `cursor: default`, which
+ * contradicted the affordance on every cell.
+ *
+ * Keyed on [data-grid] so both grids get it from ONE rule; scoped to :disabled
+ * so an editable grid is untouched and every cell is a live input again. */
+table[data-grid] input:disabled,
+table[data-grid] select:disabled,
+table[data-grid] textarea:disabled {
+  pointer-events: none;
+}
+
+/* ═══ Motion system (§36) ═══════════════════════════════════════════════════
+ *
+ * The classes below are the ONLY place a duration or an easing curve is written
+ * in this app's markup (§36.17). They read the --motion-* tokens declared at the
+ * top of this file; lib/motion.ts holds the identical numbers for the two timers
+ * that must outlast an animation, and tests/motion.test.ts asserts the two files
+ * agree.
+ *
+ * Everything here animates `opacity`, `transform` or `outline-color` (§36.15).
+ * Three things are deliberately NOT animated anywhere:
+ *
+ *   • width/height — the one exception is the sidebar's width, which is a
+ *     drag-resizable panel whose width IS the thing changing; there is no
+ *     transform that expresses it. Every other size change is instant.
+ *   • the row-hover highlight — `tbody tr:hover > td` paints an inset box-shadow
+ *     with a 9999px spread, and transitioning that would repaint every cell in a
+ *     row on every pointer move. It appears instantly, which is also what §36.1
+ *     asks for from a pointer-tracking affordance.
+ *   • numbers themselves — no count-up tweening. §36.8 forbids delaying the
+ *     latest value, and on a grid where a total is what gets submitted, a figure
+ *     that is briefly wrong on purpose is a worse idea than a static one.
+ */
+
+/* ── Interactive controls (§36.3) ─────────────────────────────────────────── */
+/* Replaces the `transition-all` that was on the shared button classes. `all` also
+ * animated width, height and the two-layer brand shadow, so a button that changed
+ * label mid-load animated its own geometry — the jump §36.3 forbids. This lists
+ * the properties that carry state and nothing that carries size. */
+/* `translate`, `rotate` and `scale` are listed SEPARATELY from `transform`, and that
+ * is load-bearing on Tailwind v4 rather than belt-and-braces: v4 compiles
+ * `translate-x-[10px]` to `translate: …` and `rotate-180` to `rotate: 180deg` — the
+ * standalone CSS properties, not the `transform` shorthand. Verified in the built
+ * stylesheet. With only `transform` in this list, every toggle knob and every
+ * dropdown chevron in the app would have snapped rather than moved, silently.
+ * `transform` stays because the inline scaleX/scaleY animations (the refresh progress
+ * bar, the dashboard's bars) do set the shorthand. */
+.motion-interactive {
+  transition-property: color, background-color, border-color, box-shadow, opacity, outline-color, transform, translate, rotate, scale;
+  transition-duration: var(--motion-hover);
+  transition-timing-function: var(--ease-out);
+}
+/* §36.3: "Pressed states appear immediately." The press is a shorter transition
+ * than the hover it interrupts, so the control answers the finger before it
+ * answers the pointer. */
+.motion-interactive:active {
+  transition-duration: var(--motion-press);
+}
+
+/* ── The two panels whose WIDTH is the thing changing (§36.12, §36.15) ────── */
+/* §36.15 says not to animate width, and it is right about the general case: width
+ * is a layout property, so every frame reflows whatever sits beside it. These two
+ * are the exception, and they are enumerated rather than left to judgement —
+ * the sidebar collapsing to its icon rail, and the Standard Fees pool panel. In
+ * both, the width IS the state change; there is no transform that expresses it
+ * without leaving the page content overlapped mid-animation.
+ *
+ * ease-in-out rather than ease-out: this is the one thing here that moves in both
+ * directions and back again, so a symmetric curve is what makes collapse and
+ * expand feel like one control rather than two. */
+.motion-panel-size {
+  transition-property: width;
+  transition-duration: var(--motion-panel);
+  transition-timing-function: var(--ease-in-out);
+}
+
+/* ── Per-link navigation hint (§36.4) ────────────────────────────────────── */
+/* A fixed-size dot on the sidebar link that was clicked, driven by next/link's
+ * useLinkStatus. It answers "did my click land" on the frame of the click, which
+ * is what §36.4 means by never letting a transition feel like a swallowed
+ * interaction — the page skeleton behind it needs a moment, and the sidebar has
+ * to say something in the meantime.
+ *
+ * Always rendered, opacity 0, so it never changes the link's layout — the
+ * useLinkStatus docs warn about exactly this, and a nav item that grew by 10px on
+ * click would be the layout shift §36.14 forbids. The same 120ms delay as the
+ * loading skeleton, so a prefetched route that resolves instantly never shows it.
+ *
+ * Two elements, one property each: the wrapper owns the fade (opacity) and the
+ * inner dot owns the pulse (transform). Putting both on one element would mean two
+ * animations competing for `opacity`, where whichever is declared last silently
+ * wins — the fragile pattern this avoids. */
+.motion-link-hint {
+  opacity: 0;
+}
+.motion-link-hint[data-pending="true"] {
+  animation: motion-reveal var(--motion-panel) var(--ease-out) var(--motion-loading-delay) forwards;
+}
+@keyframes motion-hint-pulse {
+  50% {
+    transform: scale(0.55);
+  }
+}
+.motion-link-hint[data-pending="true"] > span {
+  animation: motion-hint-pulse 1s var(--ease-in-out) infinite;
+}
+
+/* ── Grid cells (§36.7) ───────────────────────────────────────────────────── */
+/* Carries the New ETC cell between its yellow "needs a decision" fill and its
+ * neutral one as the box is filled and emptied — which happens on a keystroke, so
+ * it has to be smooth without being laggy.
+ *
+ * background-color ONLY, no box-shadow, and that is load-bearing rather than an
+ * omission: these cells also receive the save-state ring (a Tailwind `ring-*`,
+ * i.e. a box-shadow) and sit inside the row-hover rule described above. Including
+ * box-shadow here would animate a 9999px inset shadow on every cell of a row as
+ * the pointer crossed it. The ring appears instantly instead, which for a
+ * saving/saved/failed indicator is the correct behaviour anyway. */
+.motion-cell {
+  transition-property: background-color;
+  transition-duration: var(--motion-hover);
+  transition-timing-function: var(--ease-out);
+}
+
+/* ── Dropdowns and filter menus (§36.5) ──────────────────────────────────── */
+/* On the panel inside each <details>, so it plays when the menu opens and does NOT
+ * replay when a checkbox is ticked (the panel element is updated, never remounted
+ * — see useDraftParamMenu, which exists to guarantee exactly that). A 3px rise and
+ * an opacity ramp: no height animation, so a 200-row customer list opens as fast as
+ * a 4-row one. */
+@keyframes motion-pop {
+  from {
+    opacity: 0;
+    transform: translateY(-3px);
+  }
+}
+.motion-menu-panel {
+  animation: motion-pop var(--motion-menu) var(--ease-out);
+}
+
+/* ── Panels, cards, drill-throughs, tab bodies (§36.4, §36.8) ────────────── */
+@keyframes motion-rise {
+  from {
+    opacity: 0;
+    transform: translateY(4px);
+  }
+}
+.motion-panel {
+  animation: motion-rise var(--motion-panel) var(--ease-out);
+}
+@keyframes motion-fade {
+  from {
+    opacity: 0;
+  }
+}
+.motion-fade {
+  animation: motion-fade var(--motion-panel) var(--ease-out);
+}
+
+/* ── The confirmation modal (§36.11) ─────────────────────────────────────── */
+/* Overlay fades, panel rises 4px. No scale and no bounce — §36.11 names both. */
+.motion-overlay {
+  animation: motion-fade var(--motion-panel) var(--ease-out);
+}
+.motion-dialog {
+  animation: motion-rise var(--motion-panel) var(--ease-out);
+}
+
+/* ── Toasts and the change banner (§36.13) ───────────────────────────────── */
+/* Both stacks sit `fixed` at the bottom-right, so they enter from the right edge
+ * they are anchored to. The leaving card keeps its slot until the animation ends
+ * (see mergeExiting in lib/motion.ts) and stops taking clicks the moment it starts
+ * to go, so a card fading out can never swallow a click meant for the grid. */
+@keyframes motion-toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+}
+@keyframes motion-toast-out {
+  to {
+    opacity: 0;
+    transform: translateX(14px);
+  }
+}
+.motion-toast-in {
+  animation: motion-toast-in var(--motion-panel) var(--ease-out);
+}
+.motion-toast-out {
+  animation: motion-toast-out var(--motion-panel) var(--ease-out) forwards;
+  pointer-events: none;
+}
+
+/* ── "This value just changed" (§36.6, §36.8) ────────────────────────────── */
+/* An OUTLINE, not a background wash, for two reasons. The cells this lands on
+ * already carry meaning in their fill — the Diff gradient, the yellow
+ * needs-attention flag — and a flash that replaced it would be overwriting
+ * information with decoration. And an inset outline costs no layout at all
+ * (§36.14), where a border would move the row.
+ *
+ * One iteration, ending fully transparent, so nothing persists on an edited cell
+ * (§36.6). Which cells are allowed to flash — and the cap that stops a bulk
+ * refresh lighting up the whole grid — is decided by changedForFlash() in
+ * lib/motion.ts, not here. */
+@keyframes motion-flash {
+  from {
+    outline-color: rgb(21 116 196 / 0.9);
+  }
+  to {
+    outline-color: rgb(21 116 196 / 0);
+  }
+}
+.motion-flash {
+  outline: 2px solid rgb(21 116 196 / 0);
+  outline-offset: -2px;
+  animation: motion-flash var(--motion-flash) var(--ease-out) 1;
+}
+
+/* ── Loading states (§36.9) ──────────────────────────────────────────────── */
+/* Starts invisible and fades in only after --motion-loading-delay, so a
+ * navigation that resolves quickly never paints a loading state at all. Pure CSS:
+ * no timer, no state, nothing to leave behind if the route lands mid-delay,
+ * because the element unmounts with the fallback. */
+@keyframes motion-reveal {
+  to {
+    opacity: 1;
+  }
+}
+.motion-loading-reveal {
+  opacity: 0;
+  animation: motion-reveal var(--motion-panel) var(--ease-out) var(--motion-loading-delay) forwards;
+}
+/* Skeleton blocks. Opacity only — a shimmer built from a moving gradient repaints
+ * its whole box every frame, which is the CPU cost §36.9 warns about, on the one
+ * screen where the main thread is already busy rendering the incoming route. */
+@keyframes motion-skeleton {
+  50% {
+    opacity: 0.5;
+  }
+}
+.motion-skeleton {
+  animation: motion-skeleton 1.4s var(--ease-in-out) infinite;
+}
+
+/* ── Reduced motion (§36.16) ─────────────────────────────────────────────── */
+@media (prefers-reduced-motion: reduce) {
+  /* Collapse everything rather than removing it: an animation with a 0.01ms
+   * duration still ENDS, so an enter animation lands on its finished state
+   * immediately instead of leaving the element stuck at opacity 0 — which is what
+   * `animation: none` would do to every panel here. Delays go too, or a "delayed"
+   * loading reveal would simply never arrive. */
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-delay: 0s !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    transition-delay: 0s !important;
+    scroll-behavior: auto !important;
+  }
+  /* The two exceptions §36.16 explicitly protects: "keep focus, loading, and
+   * status indicators clear". A spinner IS the loading indicator — frozen on one
+   * frame it reads as a hung request, which is strictly worse information. Slowed
+   * and kept, rather than removed. The skeleton pulse is dropped instead: it says
+   * nothing the static block does not. */
+  .animate-spin {
+    animation-duration: 1.6s !important;
+    animation-iteration-count: infinite !important;
+  }
+  .motion-skeleton {
+    animation: none !important;
+    opacity: 1 !important;
+  }
+}

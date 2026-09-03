@@ -1,0 +1,62 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "sdc-etc-planner-dev",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 4006
+    },
+    {
+      "name": "sdc-etc-planner-dev-preview",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:preview"],
+      "port": 4006,
+      "autoPort": true
+    },
+    {
+      "name": "sdc-etc-planner-dev-preview2",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev:preview2"],
+      "port": 4006,
+      "autoPort": true
+    },
+    {
+      "name": "sdc-etc-planner-verify",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set AUTH_URL=http://localhost:3021&& set NEXT_DIST_DIR=.next-verify&& npx next dev -p 3021"
+      ],
+      "port": 3021
+    },
+    {
+      "name": "sdc-etc-planner-verify2",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set AUTH_URL=http://localhost:3022&& set NEXT_DIST_DIR=.next-verify2&& npx next dev -p 3022"
+      ],
+      "port": 3022
+    },
+    {
+      "//": "PRODUCTION build, for performance work (§38). A dev server's numbers are meaningless against §38.13's targets: React dev builds, no minification and HMR add hundreds of ms that production does not have. Build it first with: NEXT_DIST_DIR=.next-perf AUTH_URL=http://localhost:3024 npx next build",
+      "name": "sdc-etc-planner-perf",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set AUTH_URL=http://localhost:3024&& set NEXT_DIST_DIR=.next-perf&& npx next start -p 3024"
+      ],
+      "port": 3024
+    },
+    {
+      "name": "sdc-etc-planner-verify3",
+      "runtimeExecutable": "cmd",
+      "runtimeArgs": [
+        "/c",
+        "set AUTH_URL=http://localhost:3023&& set NEXT_DIST_DIR=.next-verify3&& npx next dev -p 3023"
+      ],
+      "port": 3023
+    }
+  ]
+}

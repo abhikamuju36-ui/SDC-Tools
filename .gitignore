@@ -17,10 +17,15 @@ SDC-PowerBI-DEV/mcp-server/bin/
 SDC-PowerBI-DEV/mcp-server/obj/
 SDC-PowerBI-DEV/mcp-server/publish/
 
-# ── sdc-etc-planner — managed as its own standalone git repo ────────────────
-# Own .git pointing at abhikamuju36-ui/sdc-sheets. Ignored proactively so an
-# accidental `git add -A` never repeats the SDC-PowerBI-DEV gitlink mistake.
-sdc-etc-planner/
+# ── sdc-etc-planner (Reports) — TRACKED here since 2026-09-03 ───────────────
+# It used to be ignored, as its own repo pointing at abhikamuju36-ui/sdc-sheets.
+# See docs/DEVELOPING-TOGETHER.md §5 for why it moved in, and scripts/
+# sdc-main-updater.js step 7b for how it now deploys.
+#
+# Nothing is listed here on purpose: the app's OWN sdc-etc-planner/.gitignore came
+# across with it and already covers everything local. Its root-anchored patterns
+# (/node_modules, /.next/, /.next-verify*/, .env*) anchor to that directory rather
+# than to the repo root, which is exactly right for a nested ignore file.
 
 # ── Dependencies ──────────────────────────────────────────────────────────────
 node_modules/
