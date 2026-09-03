@@ -237,8 +237,69 @@ async function checkAndUpdate() {
       }
     }
 
+    // 7b. The Reports app (sdc-etc-planner) — its own step, because it is not a
+    //     Vite bundle and cannot be deployed the same way (2026-09-03, added when
+    //     the app moved into this repo).
+    //
+    //     Three things make it different from the two above:
+    //
+    //       • It is a Next.js app. Its build output is `.next`, which is gitignored,
+    //         so checking source out in step 4 is again only half a deploy — and a
+    //         stale `.next` against fresh source is worse than a stale Vite bundle,
+    //         because the server reads that directory at request time.
+    //       • It owns a Prisma schema. `prisma migrate deploy` has to run BEFORE the
+    //         build, and `prisma generate` cannot run at all while the app is up:
+    //         PM2 holds query_engine-windows.dll.node and the rename fails EPERM,
+    //         leaving a ~21 MB orphaned .tmp file behind each time. So the app is
+    //         STOPPED for this sequence rather than restarted after it.
+    //       • Being stopped is acceptable here in a way it would not be for the
+    //         others: a Next.js deploy restarts the process anyway, so the outage is
+    //         the one the deploy already implies rather than a new one.
+    //
+    //     Ordering is load-bearing: stop → migrate → generate → build → start. A
+    //     generate before the stop fails; a build before the generate compiles
+    //     against the old client; a start before the build serves the old .next.
+    if (monorepoFiles.some(f => f.startsWith('sdc-etc-planner/'))) {
+      log('Reports app changed — stopping it for migrate + generate + build…');
+      // Run these FROM the app's own directory rather than with --schema/--prefix
+      // from the repo root: Prisma resolves DATABASE_URL from the .env beside the
+      // schema, and `next build` needs that same .env plus the app's own
+      // node_modules. This is exactly the cwd the app's own `npm run deploy` uses,
+      // so the updater and a manual deploy do the identical thing.
+      const reportsDir = path.join(REPO_DIR, 'sdc-etc-planner');
+      const inApp = { cwd: reportsDir };
+      try {
+        // Stop first, and tolerate it not being registered yet.
+        try {
+          run('pm2 stop sdc-etc-planner');
+        } catch (stopErr) {
+          log(`  pm2 stop warning: ${stopErr.message} — continuing.`);
+        }
+        // migrate deploy, not migrate dev: it applies pending migrations without
+        // prompting and never invents one from schema drift.
+        run('npx prisma migrate deploy', inApp);
+        run('npx prisma generate', inApp);
+        run('npm run build', inApp);
+      } catch (reportsErr) {
+        // Loud, and NOT fatal: step 8 must still run so the app comes back up on
+        // its previous build rather than being left stopped by a failed deploy.
+        log(`  Reports app deploy FAILED: ${reportsErr.message}`);
+        log('  It will be restarted on its previous build — fix and re-push.');
+      }
+      try {
+        run('pm2 start sdc-etc-planner');
+      } catch (startErr) {
+        log(`  pm2 start FAILED for sdc-etc-planner: ${startErr.message} — MANUAL START REQUIRED.`);
+      }
+    }
+
     // 8. Restart only the apps this updater owns.
     //    sdc-scheduler and sdc-statelogic have their own per-app updaters.
+    //
+    //    sdc-etc-planner is deliberately absent: step 7b already stopped and started
+    //    it around its own migrate/generate/build sequence. Restarting it again here
+    //    would be a second, pointless outage — and if 7b's start failed, this would
+    //    paper over that failure instead of leaving the loud log line visible.
     log('Restarting owned apps (assemblies, readiness, calendar)…');
     execSync(
       'pm2 restart sdc-assemblies sdc-readiness sdc-calendar --update-env',
