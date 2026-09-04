@@ -13,6 +13,15 @@ jobs 1130, 1142 and 1143.
 - **Verdict:** not a data error. **One accounting rule, one refund, and one timing lag.**
   Six of the eight are the rule; 1148 is the refund; 1158 is the lag.
 
+> ### ⚠️ Corrected 2026-09-04 — read §2.1 before acting on this document
+>
+> This report explained the variance as billings that **never reach the ledger**. That
+> premise is wrong, and §6's "policy question for Dan" has been answered by accounting.
+> Some flagged documents are already paid and already on the ledger; others are
+> corrections that must never count. The figures below are all still accurate — the
+> *interpretation* of what `APDocDoNotExport` means was not. §2.1 carries the correction
+> and what shipped because of it.
+
 | | Meaning | App field |
 |---|---|---|
 | **Posted** | The AP document exports to the general ledger | `actualAmount` |
@@ -74,6 +83,91 @@ Every one of these lines shows a billed amount against **$0.00 posted**.
 Job 1106 is the cleanest case — 10 lines, $253,667.23, matching the reported gap to the
 dollar.
 
+### 2.1 Correction — the flag does not mean "never reaches the ledger"
+
+**Added 2026-09-04.** The heading of this section is wrong, and so is the sentence
+"Documents flagged never-to-export are billed but not posted." Lisa in accounting:
+
+> Our norm is to enter all purchasing activity for jobs into ETO and then export it from
+> ETO and import into Sage for payments. However there are times when items are entered
+> into Sage first but need to be reflected in ETO — these are then reflected as do not
+> export and **have been paid**.
+
+`APDocDoNotExport` means *"do not export this to Sage **again**"*, not *"this never posts"*.
+
+**Verified, not taken on trust.** All six of job 1101's flagged SDC Credit Card charges
+appear in the August job ledger draft as `GENJ` journal rows (referenced `07.31 WESBANCO
+CC` and so on), reconciling **to the cent** — three matched directly, three are split on
+the ledger side into freight and food-expense components:
+
+| ETO line | Job ledger (GENJ) | |
+|---|---|---|
+| 12.25 CC $2,874.57 | $2,357.61 freight + $516.96 | ✓ |
+| 01.26 CC $2,660.35 | $2,492.67 freight + $167.68 food | ✓ |
+| 04.26 CC $1,244.51 | $1,077.34 freight + $167.17 food | ✓ |
+
+Counted from both ends across the whole ledger: **$75,068.36** of CC journal postings on 31
+jobs, against **$76,508.61** of flagged CC lines in ETO. Same money.
+
+#### But it is not "stop excluding flagged documents"
+
+That was the obvious next move and it would have been badly wrong. Checking all 33 jobs
+with flagged spend against the ledger: only **6 reconcile to the cent**, 3 more within $50,
+and **$296,091 has no ledger counterpart at all**.
+
+Job 1106 is why. Its $253,667 is not purchases — it is five accounting corrections:
+
+| Description | Supplier | Amount |
+|---|---|---:|
+| SOLAR SIMULATOR 6000B-100-002 | Innovations in Optics | −$675,000.00 |
+| DISCOUNT Correction | Innovations in Optics | $337,500.00 |
+| DISCOUNT Correction | Innovations in Optics | $252,800.00 |
+| **Adjustment to match Sage** | Steven Douglas Corp. | $209,625.00 |
+| EXCESS MATERIALS RELATED TO PO | Innovations in Optics | $128,090.00 |
+
+The PO number on the fourth is literally `1106 correction`, and elsewhere in the data there
+is a vendor named `Reconciling With Sage - SDC`. These exist **only to make ETO agree with
+Sage**, which is exactly why they have no ledger counterpart — the ledger already holds the
+figure they correct toward. Counting them as spend would double-count it.
+
+Note also: §1 reports job 1106's gap as $928,667 in some earlier summaries. That was the
+gross of the positive lines; the **net is $253,667**, after the −$675,000 reversal above.
+
+#### So the flag is overloaded, across at least three meanings
+
+| What it is | Amount | Counts as spent? |
+|---|---:|---|
+| Sage-first purchases — SDC Credit Card, 158 lines | $112,630 | **Yes**, as of 2026-09-04 |
+| ETO→Sage reconciling adjustments | ~$253,600 | **No** — would double-count |
+| Internal SDC billings / expense reports | $475,253 | **Not yet** — no ledger match found |
+
+#### What shipped
+
+`GL_POSTED_AP` in `src/lib/sync-totaleto.ts` now counts a flagged document as posted when
+its vendor is on an explicit allow-list (`SAGE_FIRST_VENDORS`), which holds `SDC Credit
+Card` alone — the only category verified against the ledger. August's Left to Invoice fell
+from $2,138,248 to **$2,048,239**.
+
+Three things worth knowing about that change:
+
+- **The first attempt changed nothing.** The monthly card charges are **Extra Costs, not PO
+  lines**, and that branch had the flag test spelled out by hand instead of calling the
+  shared predicate — so narrowing the predicate never reached the branch that decides them.
+  There is now one definition and four call sites, with a test asserting `APDocDoNotExport`
+  appears exactly once in the file.
+- **The vendor is matched exactly, never by pattern.** `CName LIKE '%credit card%'` would
+  also catch `onlinecomponents.com  CREDIT CARD` (CompanyID 1071), a real outside supplier —
+  invisible today because none of its 8 documents are flagged, and wrong the first time one
+  is.
+- **The allow-list is audited.** `scripts/audit-sage-first-vendors.ts` lists every vendor
+  billing on flagged documents with its counted/excluded status, so a new Sage-first
+  arrangement surfaces instead of quietly keeping today's behaviour.
+
+**Open with accounting:** how to tell a Sage-first purchase from a reconciling adjustment
+without matching on vendor names. Until that is answered, `Steven Douglas Corp.` internal
+billings, `Steven Douglas Corp. Expense Reports` and `Reconciling With Sage - SDC` stay
+excluded — the safe direction, since it understates rather than overstates.
+
 **Lines where billed exceeds posted, by job:**
 
 | Job | Lines | Net billed − posted |
@@ -93,6 +187,12 @@ credit-card-booked documents, not a long tail.
 ---
 
 ## 3. Cause 2 — a supplier refund, also unposted
+
+> **Not a separate cause (2026-09-04).** Mechanically this *is* §2 — a document flagged
+> `APDocDoNotExport` — that happens to be negative, which is the only reason 1148 breaks
+> the direction of every other row. Kept as its own section because the sign is worth
+> calling out, but there are **two** causes in this report, not three: the accounting rule
+> and the timing lag. Nobody should go looking for a third mechanism here.
 
 **Affects job 1148 only**, and it is the only large negative in the set.
 
@@ -160,16 +260,24 @@ to invoice per job with a total. Not built.
 
 ---
 
-## 6. The one decision this needs
+## 6. The decision — answered 2026-09-04
 
-**Should SDC's own expense billings and credit-card charges count as parts actual?**
+**Original question:** should SDC's own expense billings and credit-card charges count as
+parts actual? It was framed here as a policy question for Dan, on the premise that these
+documents "do not post to the job ledger that these figures get checked against."
 
-The app excludes them deliberately, because they do not post to the job ledger that these
-figures get checked against. That is a defensible rule — but it is **$253,668 on job 1106**
-and **$46,307 on 1104**, and that is real money spent on those jobs.
+**That premise was false**, and the question was really two questions:
 
-This is a policy question for Dan rather than a bug. Whichever way it is answered, both
-columns should then be defined the same way, or this variance reappears every month.
+| | Answer | Basis |
+|---|---|---|
+| **Credit-card charges** | **Yes — count them.** Shipped. | They post to the GL through Sage and appear on the job ledger as `GENJ` rows. Verified to the cent on job 1101 and corroborated in aggregate ($75,068 ledger vs $76,509 ETO). |
+| **Internal billings / expense reports** | **Still open** | No ledger counterpart found. Needs accounting to say how they are posted, if at all. |
+| **Reconciling adjustments** | **No — never count them.** | They exist to make ETO match Sage. Counting them double-counts the figure they correct toward. |
+
+The closing observation still stands and is now the load-bearing one: *whichever way it is
+answered, both columns should be defined the same way, or this variance reappears every
+month.* The allow-list plus `scripts/audit-sage-first-vendors.ts` is what keeps that from
+drifting silently — see §2.1.
 
 ---
 

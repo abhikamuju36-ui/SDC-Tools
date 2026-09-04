@@ -414,3 +414,111 @@ test("the aggregate Parts Actual sums the per-line field, via the one shared fun
     "actualTotal must be summed from the same per-line field every other view uses",
   );
 });
+
+// ── What APDocDoNotExport actually means (corrected 2026-09-04) ──────────────
+//
+// The rule above excluded every flagged AP document on the stated grounds that such a
+// document "is never posted to the general ledger, so it never appears on a job
+// ledger". Lisa in accounting corrected both halves:
+//
+//   "Our norm is to enter all purchasing activity for jobs into ETO and then export it
+//    from ETO and import into Sage for payments. However there are times when items are
+//    entered into Sage first but need to be reflected in ETO — these are then reflected
+//    as do not export and have been paid."
+//
+// So the flag means "do not export to Sage AGAIN". Verified rather than taken on
+// trust: all six of job 1101's flagged SDC Credit Card charges appear in the August
+// job ledger draft as GENJ rows, reconciling to the cent.
+//
+// But it is NOT simply "stop excluding". Of the 33 jobs with flagged spend only 6
+// reconcile to the ledger; $296,091 has no counterpart, because job 1106's $253,667 is
+// five accounting corrections whose entire purpose is to make ETO agree with Sage.
+// Counting those would double-count the figure they correct toward.
+
+const TOTALETO = readFileSync(join(process.cwd(), "src", "lib", "sync-totaleto.ts"), "utf8");
+/** Source with // and SQL -- comments removed: these assertions are about code. */
+const totalEtoCode = TOTALETO.replace(/^\s*\/\/.*$/gm, "").replace(/--.*$/gm, "");
+
+test("the flag is tested in exactly ONE place, and every site calls it", () => {
+  // This is the bug that made the fix miss on its first pass. The extra-costs branch —
+  // which is where the monthly credit-card charges actually live — had the flag test
+  // spelled out by hand instead of using the shared predicate, so narrowing the
+  // predicate changed nothing for them and the figures came back untouched.
+  //
+  // One definition, N call sites. A fifth site that writes the flag out again fails
+  // here rather than silently opting itself out of the rule.
+  assert.equal(
+    (totalEtoCode.match(/APDocDoNotExport/g) ?? []).length,
+    1,
+    "APDocDoNotExport may appear once, inside glPostedAp",
+  );
+  assert.match(totalEtoCode, /const glPostedAp = \(companyAlias: string\) =>/);
+  // Four call sites: getPartsActualByJob, the per-PO-line invoiced/posted split, the
+  // AP drill, and the extra-costs branch. The arrow definition does not self-match.
+  assert.equal(
+    (totalEtoCode.match(/glPostedAp\(/g) ?? []).length,
+    4,
+    "every site that decides posted-vs-billed must call the shared predicate",
+  );
+  // The extra-costs branch specifically, because it is the one that decides the
+  // credit-card charges and the one that was missed.
+  assert.match(
+    TOTALETO,
+    /CASE WHEN \$\{glPostedAp\("SFC"\)\} THEN EC\.decExtraCostingValue ELSE 0 END AS ActualAmount/,
+    "the extra-costs branch must use the shared predicate",
+  );
+});
+
+test("a Sage-first vendor is matched EXACTLY, never by pattern", () => {
+  // `CName LIKE '%credit card%'` would also match `onlinecomponents.com  CREDIT CARD`
+  // (CompanyID 1071) — a genuine outside supplier. It has 8 AP documents and zero of
+  // them flagged, so the mistake would be invisible today and would appear the first
+  // time someone ticked the box on one of its invoices. Same hazard, same treatment as
+  // the "SDC" acronym in lib/vendor-normalize.ts: match narrowly.
+  assert.match(totalEtoCode, /const SAGE_FIRST_VENDORS = "'SDC Credit Card'";/);
+  const predicate = /glPostedAp = \(companyAlias: string\) =>[\s\S]{0,240}?;/.exec(totalEtoCode)?.[0] ?? "";
+  assert.ok(predicate.includes("IN (${SAGE_FIRST_VENDORS})"), "an IN list");
+  assert.ok(!/LIKE/i.test(predicate), "never a LIKE — it would catch unrelated vendors");
+});
+
+test("the predicate takes a joined alias, because a subquery is illegal in an aggregate", () => {
+  // The first attempt used a correlated EXISTS. SQL Server refuses it inside
+  // SUM(CASE WHEN ...) outright: "Cannot perform an aggregate function on an
+  // expression containing an aggregate or a subquery" (error 130), which is a runtime
+  // failure of the whole parts pipeline, not a wrong number.
+  const predicate = /glPostedAp = \(companyAlias: string\) =>[\s\S]{0,240}?;/.exec(totalEtoCode)?.[0] ?? "";
+  assert.ok(!/SELECT/i.test(predicate), "no subquery in the predicate");
+  assert.match(totalEtoCode, /const sageFirstJoin = \(alias: string\) =>/);
+  // Every site that passes an alias must have joined a company table under that alias.
+  for (const alias of totalEtoCode.match(/glPostedAp\("(\w+)"\)/g) ?? []) {
+    const name = /glPostedAp\("(\w+)"\)/.exec(alias)![1];
+    const joined =
+      totalEtoCode.includes(`sageFirstJoin("${name}")`) ||
+      new RegExp(`JOIN tblCompany ${name}\\b`).test(totalEtoCode);
+    assert.ok(joined, `${name} is used by glPostedAp but no tblCompany is joined as ${name}`);
+  }
+});
+
+test("the audit script's allow-list is the same one the query uses", () => {
+  // Two lists that can disagree is how the audit ends up reporting a vendor as counted
+  // when the query excludes it, which is worse than not auditing at all.
+  const audit = readFileSync(join(process.cwd(), "scripts", "audit-sage-first-vendors.ts"), "utf8");
+  const inQuery = /const SAGE_FIRST_VENDORS = "([^"]+)";/.exec(totalEtoCode)?.[1] ?? "";
+  const inAudit = /const ALLOWED = new Set\(\[([^\]]*)\]\)/.exec(audit)?.[1] ?? "";
+  const names = (s: string) => (s.match(/'[^']+'|"[^"]+"/g) ?? []).map((x) => x.slice(1, -1)).sort();
+  assert.deepEqual(names(inQuery), names(inAudit), "SAGE_FIRST_VENDORS and the audit's ALLOWED must match");
+  assert.deepEqual(names(inQuery), ["SDC Credit Card"]);
+});
+
+test("only the verified category counts — corrections stay excluded", () => {
+  // The allow-list is one vendor on purpose. Job 1106's $253,667 is five correction
+  // entries ("Adjustment to match Sage", PO `1106 correction`, two "DISCOUNT
+  // Correction" lines against a -$675,000 reversal); Steven Douglas Corp. internal
+  // billings and Expense Reports have no ledger counterpart either. Widening this list
+  // without checking the ledger the way 1101's charges were checked is how a quarter of
+  // a million dollars of corrections becomes reported job cost.
+  const inQuery = /const SAGE_FIRST_VENDORS = "([^"]+)";/.exec(totalEtoCode)?.[1] ?? "";
+  for (const notYet of ["Steven Douglas Corp.", "Expense Reports", "Reconciling With Sage", "Innovations"]) {
+    assert.ok(!inQuery.includes(notYet), `${notYet} must not be allow-listed without ledger evidence`);
+  }
+});

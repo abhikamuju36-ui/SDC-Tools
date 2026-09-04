@@ -207,12 +207,7 @@ const AP_LINE_AMOUNT_RAW =
 // not a regression.
 const AP_LINE_AMOUNT = sqlRefundSigned(AP_LINE_AMOUNT_RAW, "APDD.APDocItemDesc");
 
-// ── The GL-posted rule (2026-08-10) ─────────────────────────────────────────
-//
-// An AP document flagged APDocDoNotExport is never posted to the general ledger,
-// so it never appears on a job ledger — the report the business reconciles a job's
-// actual parts spend against. Counting those lines as spend is root cause #2 of the
-// job-1116 overstatement; see getPartsActualByJob below for the full derivation.
+// ── The GL-posted rule (2026-08-10, corrected 2026-09-04) ───────────────────
 //
 // Deliberately the FLAG and not the export DATE. `APDocExportDate IS NULL` looks
 // like the same test and is not: measured 2026-08-10 across every job-attributed AP
@@ -220,8 +215,87 @@ const AP_LINE_AMOUNT = sqlRefundSigned(AP_LINE_AMOUNT_RAW, "APDD.APDocItemDesc")
 // them were dated within the previous week — genuinely-real invoices merely queued
 // for the next export run. Filtering on the date would silently delete real, current
 // cost every time someone looked before an export ran. The flag, by contrast, spans
-// 2024-11 to 2026-08 (338 documents, 1,614 lines, $621,483.80) and means what it says.
-const GL_POSTED_AP = "ISNULL(APBD.APDocDoNotExport, 0) = 0";
+// 2024-11 to 2026-08 (338 documents, 1,614 lines, $621,483.80).
+//
+// ── What the flag actually means (corrected 2026-09-04) ─────────────────────
+//
+// This block used to open by asserting that a flagged document "is never posted to
+// the general ledger, so it never appears on a job ledger." Both halves are wrong,
+// and the correction comes from Lisa in accounting:
+//
+//   "Our norm is to enter all purchasing activity for jobs into ETO and then export
+//    it from ETO and import into Sage for payments. However there are times when
+//    items are entered into Sage first but need to be reflected in ETO — these are
+//    then reflected as do not export and have been paid."
+//
+// So the flag means "do not export this to Sage AGAIN", not "this never reaches the
+// ledger". A Sage-first document is already paid and already posted.
+//
+// Verified against the August 2026 job ledger draft rather than taken on trust: all
+// six of job 1101's flagged SDC Credit Card charges appear in it as GENJ journal
+// rows (referenced `07.31 WESBANCO CC` and so on), reconciling to the cent — three
+// matched directly and three are split there into freight and food-expense
+// components. Across the whole ledger, CC journal postings total $75,068.36 on 31
+// jobs against $76,508.61 of flagged CC lines in ETO: the same money counted from
+// both ends.
+//
+// ── Why this is NOT simply "stop excluding flagged documents" ───────────────
+//
+// Because the flag is overloaded. Measured across the 33 jobs with any flagged
+// spend, only 6 reconcile to the ledger to the cent; $296,091 has no ledger
+// counterpart at all. Job 1106 is why — its $253,667 is five accounting corrections,
+// not purchases:
+//
+//     -$675,000  SOLAR SIMULATOR 6000B-100-002   Innovations in Optics
+//     +$337,500  DISCOUNT Correction             Innovations in Optics
+//     +$252,800  DISCOUNT Correction             Innovations in Optics
+//     +$209,625  Adjustment to match Sage        PO number `1106 correction`
+//     +$128,090  EXCESS MATERIALS RELATED TO PO  Innovations in Optics
+//
+// Those exist ONLY to make ETO agree with Sage. Counting them as spend would
+// double-count the very figure they correct toward, which is why they have no ledger
+// counterpart. Flipping the flag wholesale would have added a quarter of a million
+// dollars of correction entries to one job.
+//
+// So the rule is narrower than the flag: a flagged document counts as posted when it
+// came from a SAGE-FIRST vendor. Only the credit card qualifies today, because it is
+// the only category verified line-for-line against the ledger.
+//
+// ── Why an exact vendor name, and not a LIKE ────────────────────────────────
+//
+// `CName LIKE '%credit card%'` would also match `onlinecomponents.com  CREDIT CARD`
+// (CompanyID 1071) — a real outside supplier that merely has the words in its name.
+// It has 8 AP documents and ZERO of them flagged, so the mistake would be invisible
+// today and would surface the first time somebody ticked the box on one. This is the
+// same hazard lib/vendor-normalize.ts documents for the "SDC" acronym, and it gets
+// the same treatment: match narrowly, and prefer a false negative.
+//
+// A vendor that SHOULD be here and is not simply keeps today's behaviour — it stays
+// excluded, understating cost, which is the safe direction. scripts/audit-sage-first-
+// vendors.ts lists every flagged vendor with its ledger status so a new one surfaces
+// rather than waiting to be noticed.
+//
+// STILL EXCLUDED, pending an answer from accounting on how to tell them apart from
+// the above: `Steven Douglas Corp.` internal billings (280 lines, $58,281),
+// `Steven Douglas Corp. Expense Reports` (21 lines, $15,324) and
+// `Reconciling With Sage - SDC` (2 lines, $610).
+const SAGE_FIRST_VENDORS = "'SDC Credit Card'";
+
+/**
+ * The GL-posted test, against an ALREADY-JOINED tblCompany alias.
+ *
+ * Takes the alias rather than correlating a subquery because one of the three call
+ * sites evaluates this inside `SUM(CASE WHEN ... )`, and SQL Server refuses a
+ * subquery there outright ("Cannot perform an aggregate function on an expression
+ * containing an aggregate or a subquery", error 130). A joined column is a plain
+ * comparison and is legal everywhere, so all three sites can share one predicate.
+ */
+const glPostedAp = (companyAlias: string) =>
+  `(ISNULL(APBD.APDocDoNotExport, 0) = 0 OR ${companyAlias}.CName IN (${SAGE_FIRST_VENDORS}))`;
+
+/** The join `glPostedAp` needs, for the sites that do not already have the vendor. */
+const sageFirstJoin = (alias: string) =>
+  `LEFT JOIN tblCompany ${alias} WITH(NOLOCK) ON ${alias}.CompanyID = APBD.CompanyID`;
 
 export async function getPartsCostBookedByJob(
   monthStart: Date,
@@ -386,6 +460,14 @@ export async function getPartsInvoicedByJob(monthStart: Date, monthEndExclusive:
 //      lines ($10,161.10) and extra costs ($9,789.30). Across the database:
 //      $621,483.80.
 //
+//      NARROWED 2026-09-04. "Never post" was the wrong reading of the flag — see
+//      GL_POSTED_AP. Sage-first vendors (the credit card) DO post and now count.
+//      This job's own $19,950.40 is unaffected: none of it is credit card, so the
+//      1116 figures below still stand as derived. The residual noted at the end of
+//      this block — "$1,928.73 of the ledger's own CDJ/GENJ/CRJ journal rows" —
+//      should be revisited though, because some GENJ rows are now known to be the
+//      ledger side of flagged ETO documents rather than postings ETO cannot reach.
+//
 // Removing both lands 1116 at $346,101.12 as of 7/31/26 against the ledger's
 // $349,732.10 — a $3,630.98 (1.0%) residual, of which $1,928.73 is the ledger's
 // own CDJ/GENJ/CRJ journal rows: cash-disbursement, general-journal and
@@ -451,7 +533,8 @@ export async function getPartsActualByJob(): Promise<Map<string, number>> {
          SELECT APDD.ProjectID AS JobId, SUM(${AP_LINE_AMOUNT}) AS Actual
            FROM tblAPDocumentDetails APDD WITH(NOLOCK)
                 INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID
-          WHERE APDD.ProjectID IS NOT NULL AND ${GL_POSTED_AP}
+                ${sageFirstJoin("SFC")}
+          WHERE APDD.ProjectID IS NOT NULL AND ${glPostedAp("SFC")}
           GROUP BY APDD.ProjectID
          UNION ALL
          SELECT P.ProjectID AS JobId, 0 AS Actual
@@ -647,11 +730,12 @@ FROM tblPurchaseOrderHeader POH WITH(NOLOCK)
   -- overstating. Only the MONEY splits.
   LEFT JOIN ( SELECT APDD.PurchaseDetailID, max(APDocDate) AS APDocDate, SUM(APDocQty) AS InvoicedQty,
                 SUM(APDocQty * APDocUnitPrice * (1 - APDocItemPctDisc) * APDocCurrRate) AS TotalInvoicedAmount,
-                SUM(CASE WHEN ${GL_POSTED_AP}
+                SUM(CASE WHEN ${glPostedAp("SFC")}
                          THEN APDocQty * APDocUnitPrice * (1 - APDocItemPctDisc) * APDocCurrRate
                          ELSE 0 END) AS GlPostedAmount
               FROM tblAPDocumentDetails APDD WITH(NOLOCK)
                 INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID
+                ${sageFirstJoin("SFC")}
               WHERE BatchEntryTypeID NOT IN (2, 3) AND APDD.PurchaseDetailID IS NOT NULL
               GROUP BY APDD.PurchaseDetailID ) INV ON POD.PurchaseDetailID = INV.PurchaseDetailID
   LEFT JOIN vwReceiverLogSummed RLS WITH(NOLOCK) ON RLS.PurchaseDetailID = POD.PurchaseDetailID
@@ -678,9 +762,16 @@ SELECT
   -- it. On job 1116 this branch alone held $9,789.30 of never-posted cost, so
   -- applying the rule to the PO branch only would have left a third of the
   -- problem in place.
-  ,CASE WHEN ISNULL(APBD.APDocDoNotExport, 0) = 0 THEN EC.decExtraCostingValue ELSE 0 END AS ActualAmount
+  --
+  -- This spelled the flag test out by hand until 2026-09-04 rather than using the
+  -- shared predicate, and that is exactly why the Sage-first correction missed it on
+  -- the first pass: the monthly credit-card charges are EXTRA COSTS, not PO lines, so
+  -- this branch is the one that decides them. It now calls glPostedAp like the other
+  -- three, and a test asserts no site spells the flag out again.
+  ,CASE WHEN ${glPostedAp("SFC")} THEN EC.decExtraCostingValue ELSE 0 END AS ActualAmount
 FROM vwCostingExtraCostsDetailed EC WITH(NOLOCK)
   LEFT JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = EC.APDocID
+  ${sageFirstJoin("SFC")}
 WHERE ${where.ec}`;
 
 /** The per-job form — unchanged behaviour, now one instantiation of the template. */
@@ -826,7 +917,7 @@ export async function getJobPartsInvoicedInMonth(jobId: string, monthStart: Date
           -- reconciled line-for-line against getPartsCostBookedByJob, which counts
           -- every AP line, so dropping rows would break that agreement. The row
           -- still reports what DID post, separately.
-          ,CASE WHEN ${GL_POSTED_AP}
+          ,CASE WHEN ${glPostedAp("SUP")}
                 THEN (${amt})
                 ELSE 0 END AS ActualAmount
         FROM tblAPDocumentDetails APDD WITH(NOLOCK)
