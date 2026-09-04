@@ -4,9 +4,10 @@ import Image from "next/image";
 import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSplitNav } from "@/components/useSplitNav";
-import { applyWorkspace } from "@/lib/workspace-store";
-import { openTab, tabById } from "@/lib/workspace";
-import { splitRoute, closePaneHref } from "@/lib/split-view";
+import { tabById } from "@/lib/workspace";
+import { closePaneHref } from "@/lib/split-view";
+import { useWorkspaceActions } from "@/components/useWorkspaceActions";
+import { NavItemMenu, NavItemMenuButton, type NavMenuAnchor } from "@/components/NavItemMenu";
 import {
   applyNavOrder,
   moveItem,
@@ -345,7 +346,12 @@ export default function Sidebar({
   const sidebarPath = splitNav.workspace
     ? tabById(splitNav.workspace, splitNav.workspace.active)?.path ?? pathname
     : pathname;
-  const [navMenu, setNavMenu] = useState<{ href: string; label: string; x: number; y: number } | null>(null);
+  // ONE menu for both entry points — the visible ⋮ button and right-click. See
+  // components/NavItemMenu.tsx for why right-click alone was not enough.
+  const [navMenu, setNavMenu] = useState<NavMenuAnchor | null>(null);
+  // Every tab action, centralized. Nothing in this file decides what opening a tab
+  // means any more — see components/useWorkspaceActions.ts.
+  const tabs = useWorkspaceActions();
   const router = useRouter();
   // Every item is filtered against visibleHrefs — computed server-side from
   // the SAME map proxy.ts uses to decide whether a direct URL visit is let
@@ -678,35 +684,44 @@ export default function Sidebar({
                 const active = item.isActive(sidebarPath);
                 const isDragging = drag?.group === group.label && drag.index === index;
                 const isOver = over?.group === group.label && over.index === index && !isDragging;
+                // Tabs are supported for exactly the routes the workspace can host.
+                // The ⋮ button appears for those and nowhere else, so its presence is
+                // itself the signal that a page has these options.
+                const hostable = tabs.canHost(item.href);
                 return (
-                  <Link
+                  // The row, not the link: the ⋮ has to be a SIBLING of the <Link>. A
+                  // button nested inside an anchor is invalid markup and its click
+                  // would activate the link on the way past.
+                  //
+                  // `group/nav` is a named group so the button can reveal itself on row
+                  // hover without also reacting to the sidebar's other groups.
+                  <div
                     key={item.href}
+                    className={`group/nav relative flex items-center ${collapsed ? "" : "gap-0.5"}`}
+                  >
+                  <Link
                     // Not `item.href`: while split, this resolves to the /split URL
                     // that swaps ONLY the active pane. `item.href` is still what the
                     // context menu and the drag payload use, since those are about
                     // the item itself rather than about where a click lands.
                     href={splitNav.hrefFor(item.href)}
                     onClick={(e) => {
-                      // ── The reported bug ──────────────────────────────────
+                      // ── One implementation, in useWorkspaceActions ────────
                       //
-                      // Inside the workspace this used to follow an href built from
-                      // useSearchParams(), which goes stale the moment a tab is
-                      // switched (replaceState does not notify the router). So the
-                      // click resolved "already open?" against an out-of-date tab
-                      // list and could open a duplicate, land on the wrong tab, or
-                      // revert tabs opened since.
+                      // This used to run openTab + applyWorkspace inline, which made it
+                      // the third place that knew what "open a tab" means — beside the
+                      // href builders the context menu used and the tab strip's own "+".
+                      // The ⋮ menu would have been a fourth. They are all one call now.
                       //
-                      // Now it drives the LIVE workspace directly: find the open
-                      // instances of this page, activate the most recently used one,
-                      // and only create a tab when there is none. No navigation, no
-                      // refetch, no remount - the pane is already mounted behind
-                      // <Activity>, so this is a visibility toggle.
-                      const live = splitNav.workspace;
-                      if (live && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) {
-                        const next = openTab(live, item.href);
-                        // A brand-new tab needs a pane rendered; resuming one does not.
-                        const isNew = next.tabs.length !== live.tabs.length;
-                        if (next !== live && applyWorkspace(next, isNew ? { navigate: true } : undefined)) {
+                      // Behaviour is unchanged and is what the request restated: resume
+                      // the most recently used open instance, or open a normal tab when
+                      // there is none. Inside the workspace that is a visibility toggle
+                      // — the pane is already mounted behind <Activity>.
+                      //
+                      // Modified clicks are left to the browser: ctrl/cmd/shift-click
+                      // means "open this href your way", and a real navigation is right.
+                      if (!e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) {
+                        if (tabs.openExistingTab(item.href)) {
                           e.preventDefault();
                           return;
                         }
@@ -714,29 +729,26 @@ export default function Sidebar({
                       handleNavClick(e);
                     }}
                     onAuxClick={(e) => {
-                      // Middle-click = another instance of this page, the same gesture
-                      // that opens a new tab in a browser. A plain click resumes the
-                      // one you already have (lib/workspace.ts), which is what keeps
-                      // duplicates from being accidental.
+                      // Middle-click = another instance, the same gesture that opens a
+                      // new tab in a browser. A plain click resumes the one you already
+                      // have, which is what keeps duplicates from being accidental.
                       if (e.button !== 1) return;
-                      const target = splitNav.newTabHrefFor(item.href);
-                      if (!target) return;
                       e.preventDefault();
-                      if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Leave this page anyway?")) return;
-                      router.push(target);
+                      tabs.openNewTab(item.href);
                     }}
                     onContextMenu={(e) => {
-                      // Only where a split is actually possible — an admin route has
-                      // no pane view, and a menu whose only entry is disabled is
-                      // worse than the browser's own menu.
-                      if (!splitRoute(item.href)) return;
+                      // Kept as an OPTIONAL shortcut, by request — the ⋮ button beside
+                      // this link is now the discoverable route to the same menu. Only
+                      // where tabs are possible: an admin route has no pane view, and a
+                      // menu of disabled entries is worse than the browser's own.
+                      if (!hostable) return;
                       e.preventDefault();
                       setNavMenu({ href: item.href, label: item.label, x: e.clientX, y: e.clientY });
                     }}
                     title={
                       collapsed
                         ? item.label
-                        : `${item.label} — middle-click for another tab; right-click for more; drag to reorder, or Alt+↑/↓`
+                        : `${item.label} — middle-click for another tab; drag to reorder, or Alt+↑/↓`
                     }
                     // Reorderable by drag, and by Alt+Arrow for anyone not using a
                     // mouse. Only within this group: the headings above say what
@@ -800,8 +812,10 @@ export default function Sidebar({
                     // in both states. That also fixes the 1.5px offset the old note
                     // measured and accepted, and makes the whole 54px row clickable
                     // instead of only the icon (§46.6).
+                    // min-w-0 with flex-1: the label truncates inside the row rather
+                    // than pushing the ⋮ out of it.
                     className={`relative text-sm motion-interactive ${
-                      collapsed ? RAIL_ITEM : "flex h-9 items-center gap-[11px] rounded-[7px] px-[10px]"
+                      collapsed ? RAIL_ITEM : "flex h-9 min-w-0 flex-1 items-center gap-[11px] rounded-[7px] px-[10px]"
                     } ${
                       active
                         ? "bg-[#0E3159] font-medium text-[#FFFFFF] shadow-[inset_0_0_0_1px_#1B4270,0_1px_2px_rgba(0,0,0,0.45)]"
@@ -833,6 +847,28 @@ export default function Sidebar({
                     <span className={collapsed ? "sr-only" : "truncate"}>{item.label}</span>
                     {!collapsed && <NavPendingHint />}
                   </Link>
+                  {/* ── The visible affordance ──────────────────────────────────
+                      Not drawn in the collapsed rail: the row is a 32px icon there with
+                      no room beside it, and right-click still reaches the same menu.
+                      Expanded, it is always present for a hostable page so that the
+                      options are discoverable without knowing about right-click. */}
+                  {hostable && !collapsed && (
+                    <NavItemMenuButton
+                      label={item.label}
+                      open={navMenu?.href === item.href}
+                      onOpen={(rect) =>
+                        setNavMenu(
+                          navMenu?.href === item.href
+                            ? null
+                            : // Anchored under the button's left edge rather than at a
+                              // pointer position, so a keyboard activation lands the
+                              // menu somewhere sensible too.
+                              { href: item.href, label: item.label, x: rect.left, y: rect.bottom + 4 },
+                        )
+                      }
+                    />
+                  )}
+                  </div>
                 );
               })}
             </div>
@@ -1143,178 +1179,24 @@ export default function Sidebar({
           icons; the sidebar already has a drag-reorder interaction on these same
           items and a heavier menu here would start competing with it. */}
       {navMenu && (
-        <NavContextMenu
-          menu={navMenu}
+        // Every entry goes through useWorkspaceActions, so this renders identically and
+        // behaves identically whether it was opened by the ⋮ button or by right-click.
+        <NavItemMenu
+          anchor={navMenu}
           onClose={() => setNavMenu(null)}
-          openHref={splitNav.hrefFor(navMenu.href)}
-          newTabTarget={splitNav.newTabHrefFor(navMenu.href)}
-          splitTarget={splitNav.splitHrefFor(navMenu.href)}
-          refusal={splitNav.refusalFor(navMenu.href)}
-          isSplit={splitNav.isSplit}
-          isWorkspace={splitNav.isWorkspace}
-          onNavigate={(href) => {
-            setNavMenu(null);
-            if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Leave this page anyway?")) return;
-            router.push(href);
-          }}
+          instances={tabs.instancesOf(navMenu.href)}
+          duplicable={tabs.duplicableInstance(navMenu.href)}
+          refusal={tabs.refusalFor(navMenu.href)}
+          refusesSecondInstance={tabs.refusesSecondInstance(navMenu.href)}
+          onOpenNewTab={() => tabs.openNewTab(navMenu.href)}
+          onOpenInSplitView={(opts) => tabs.openInSplitView(navMenu.href, opts)}
+          onDuplicate={(id) => tabs.duplicateTab(id)}
         />
       )}
     </aside>
   );
 }
 
-function NavContextMenu({
-  menu,
-  onClose,
-  openHref,
-  newTabTarget,
-  splitTarget,
-  refusal,
-  isSplit,
-  isWorkspace,
-  onNavigate,
-}: {
-  menu: { href: string; label: string; x: number; y: number };
-  onClose: () => void;
-  openHref: string;
-  /** null when this page cannot open as a tab — see useSplitNav.newTabHrefFor. */
-  newTabTarget: string | null;
-  /** null when this item cannot open in a split — see useSplitNav.splitHrefFor. */
-  splitTarget: string | null;
-  /** Why this page cannot open beside the other pane, when that is the reason it is refused. */
-  refusal: string | null;
-  isSplit: boolean;
-  /** True when the tabbed workspace is on screen, which changes what Open means. */
-  isWorkspace: boolean;
-  onNavigate: (href: string) => void;
-}) {
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  // Dismiss on anything that isn't a click inside the menu. `pointerdown` rather
-  // than `click` so the menu closes on the press, before the underlying element
-  // gets a chance to act on the same gesture; capture phase so a stopPropagation
-  // somewhere in the nav cannot strand an open menu on screen.
-  useEffect(() => {
-    const onDown = (e: PointerEvent) => {
-      if (!ref.current?.contains(e.target as Node)) onClose();
-    };
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("pointerdown", onDown, true);
-    window.addEventListener("keydown", onKey);
-    // A scroll or a resize moves the item this menu is anchored to, so the anchor
-    // stops meaning anything — close rather than float somewhere unrelated.
-    window.addEventListener("resize", onClose);
-    return () => {
-      window.removeEventListener("pointerdown", onDown, true);
-      window.removeEventListener("keydown", onKey);
-      window.removeEventListener("resize", onClose);
-    };
-  }, [onClose]);
-
-  // Keep the menu inside the viewport: near the bottom of a short window a
-  // fixed y would put the second entry off-screen, and this menu is anchored to
-  // items that run the full height of the sidebar.
-  const MENU_W = 208;
-  // Three entries plus the heading. Kept in step with the markup below by hand — it
-  // only decides where the menu is anchored near a window edge, so being a few pixels
-  // out is a cosmetic nudge rather than a clipped control.
-  const MENU_H = 108;
-  const x = Math.min(menu.x, (typeof window === "undefined" ? 1920 : window.innerWidth) - MENU_W - 8);
-  const y = Math.min(menu.y, (typeof window === "undefined" ? 1080 : window.innerHeight) - MENU_H - 8);
-
-  return (
-    <div
-      ref={ref}
-      role="menu"
-      aria-label={`${menu.label} options`}
-      className="fixed z-50 min-w-[13rem] overflow-hidden rounded-md border border-sdc-border bg-white py-1 shadow-lg"
-      style={{ left: x, top: y }}
-    >
-      <p className="truncate px-3 pb-1 pt-0.5 text-micro font-semibold uppercase tracking-wide text-sdc-gray-400">
-        {menu.label}
-      </p>
-      <button
-        type="button"
-        role="menuitem"
-        onClick={() => onNavigate(openHref)}
-        className="motion-interactive block w-full px-3 py-1.5 text-left text-label text-sdc-navy hover:bg-sdc-blue-light/60"
-      >
-        Open
-        {/* Where a plain Open actually lands depends on the layout, and this is the one
-            place it can be explained at the moment the choice is being made. In the
-            workspace with no split it reuses or adds a tab; with a split open — either
-            layout — it lands in the pane the sidebar is pointed at. */}
-        {isSplit ? (
-          <span className="text-sdc-gray-400"> in the active pane</span>
-        ) : isWorkspace ? (
-          <span className="text-sdc-gray-400"> in this tab set</span>
-        ) : null}
-      </button>
-      {/* ── Open in a new tab ────────────────────────────────────────────────
-          The only way INTO the tabbed workspace from an ordinary page: the tab strip
-          lives on /w, so without this entry a second tab could only be reached by
-          typing a URL. */}
-      {newTabTarget ? (
-        <button
-          type="button"
-          role="menuitem"
-          onClick={() => onNavigate(newTabTarget)}
-          className="motion-interactive block w-full px-3 py-1.5 text-left text-label text-sdc-navy hover:bg-sdc-blue-light/60"
-        >
-          Open in a new tab
-        </button>
-      ) : (
-        <span
-          role="menuitem"
-          aria-disabled
-          className="block cursor-not-allowed px-3 py-1.5 text-label text-sdc-gray-300"
-          title={
-            isSplit
-              ? "Expand one pane first — tabs and the two-pane split are separate layouts"
-              : "This page can't be opened as a tab"
-          }
-        >
-          Open in a new tab
-        </span>
-      )}
-      {splitTarget ? (
-        <button
-          type="button"
-          role="menuitem"
-          onClick={() => onNavigate(splitTarget)}
-          className="motion-interactive block w-full px-3 py-1.5 text-left text-label text-sdc-navy hover:bg-sdc-blue-light/60"
-        >
-          Open in Split View
-          {isSplit && <span className="text-sdc-gray-400"> (other pane)</span>}
-        </button>
-      ) : (
-        // Shown disabled rather than omitted, so the menu has the same shape
-        // everywhere and the reason is stated instead of the entry just missing.
-        <span
-          role="menuitem"
-          aria-disabled
-          className="block cursor-not-allowed px-3 py-1.5 text-label text-sdc-gray-300"
-          title={refusal ?? "This page can't be opened beside the one you're on"}
-        >
-          Open in Split View
-        </span>
-      )}
-      {refusal && (
-        // Stated in the menu rather than only in a tooltip: this is the one refusal
-        // in the feature that is a deliberate design limit rather than an oversight,
-        // so it is worth a sentence at the moment someone runs into it.
-        <p className="border-t border-sdc-border px-3 pb-0.5 pt-1 text-micro leading-snug text-sdc-gray-400">
-          {refusal}.
-        </p>
-      )}
-    </div>
-  );
-}
-
-// Two panes with a divider between them - the same shape browsers and editors use
-// for this, so it reads as "split" without a label in the collapsed rail.
 function SplitIcon() {
   return (
     <svg width="13" height="13" viewBox="0 0 16 16" fill="none" stroke="currentColor" strokeWidth="1.4" aria-hidden>

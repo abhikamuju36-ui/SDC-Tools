@@ -6,20 +6,14 @@ import { usePathname, useSearchParams } from "next/navigation";
 import {
   decodeSplit,
   isSplittable,
-  normalizePath,
   navigateActivePane,
-  openInSplit,
   splitHref,
   pairingRefusal,
-  splitRoute,
   type SplitState,
-  isExclusive,
 } from "@/lib/split-view";
 import {
-  EMPTY_WORKSPACE,
   MAX_TABS,
   decodeWorkspace,
-  enterSplit,
   navigateTab,
   openTab,
   sidebarTarget,
@@ -84,19 +78,6 @@ export function useSplitNav() {
   }, [pathname, searchKey]);
   const workspace: Workspace | null = live ?? fromUrl;
 
-  /** The current page's own params — what travels with it when it becomes a pane. */
-  const currentParams = useMemo(() => {
-    const route = splitRoute(pathname);
-    if (!route) return {};
-    const sp = new URLSearchParams(searchKey);
-    const out: Record<string, string> = {};
-    for (const key of route.params) {
-      const v = sp.get(key);
-      if (v !== null) out[key] = v;
-    }
-    return out;
-  }, [pathname, searchKey]);
-
   /** Where a normal sidebar click on `href` should actually go. */
   const hrefFor = useCallback(
     (href: string): string => {
@@ -160,82 +141,16 @@ export function useSplitNav() {
     [state, workspace],
   );
 
-  /**
-   * Where "Open in Split View" on `href` should go, or null when it cannot apply —
-   * a route that is not splittable, or one that is already the pane it would open
-   * into (opening Projects beside Projects-in-the-same-pane is a no-op the menu
-   * should not offer).
-   */
-  const splitHrefFor = useCallback(
-    (href: string): string | null => {
-      if (!isSplittable(href)) return null;
-
-      if (workspace) {
-        // Already in the workspace: split the tab you are on against `href`, opening it
-        // as a tab first if it is not open yet. enterSplit takes a tab ID because the
-        // split is a view onto tabs that already exist — see lib/workspace.ts.
-        const anchorTab = sidebarTarget(workspace);
-        if (pairingRefusal(href, tabById(workspace, anchorTab)?.path)) return null;
-        const opened = openTab(workspace, href);
-        // openTab refused (every tab is in use at the cap), or `href` IS the tab we
-        // would be splitting against. Neither is a split.
-        if (opened.active === anchorTab) return null;
-        return workspaceHref(enterSplit({ ...opened, active: anchorTab }, opened.active));
-      }
-
-      if (!state) {
-        // Not split yet: the page you are on stays put and becomes the left pane.
-        // Refuse when the current page cannot be a pane (an admin screen), since
-        // there would be nothing to keep on the left.
-        if (!isSplittable(pathname)) return null;
-        // Monthly ETC beside Monthly ETC, from the ETC page itself.
-        if (pairingRefusal(href, pathname)) return null;
-        return splitHref(openInSplit({ path: pathname, params: currentParams }, { path: href }));
-      }
-
-      // Already split: aim at the pane you are NOT working in.
-      const target = state.active === "l" ? "r" : "l";
-      // ...unless that would leave an exclusive route in both panes.
-      const staying = target === "l" ? state.r?.path : state.l.path;
-      if (pairingRefusal(href, staying)) return null;
-      const next: SplitState = { ...state, active: target };
-      return splitHref(navigateActivePane(next, href));
-    },
-    [state, workspace, pathname, currentParams],
-  );
-
-  /**
-   * Where "Open in a new tab" should go — the only way INTO the workspace from an
-   * ordinary page, since the tab strip only exists on /w.
-   *
-   * From a normal route it builds a two-tab workspace: the page you are on, carrying
-   * its own params, plus the target, which becomes active. From inside the workspace it
-   * asks openTab for a NEW INSTANCE — that is the whole difference between this and a
-   * plain click, which resumes the most recent one. It is what makes three Job Details
-   * tabs reachable, and it is deliberately behind middle-click and the context menu so
-   * that duplicates are never something an ordinary sidebar click produces.
-   *
-   * Null when it cannot apply — an unhostable current page (an admin screen) would
-   * leave nothing to keep as the first tab, and Monthly ETC refuses a second instance
-   * outright (see lib/workspace.ts), so there is no new tab to offer.
-   */
-  const newTabHrefFor = useCallback(
-    (href: string): string | null => {
-      if (!isSplittable(href)) return null;
-      if (workspace) {
-        if (isExclusive(href) && workspace.tabs.some((t) => t.path === normalizePath(href))) return null;
-        const opened = openTab(workspace, href, {}, { newInstance: true });
-        return opened === workspace ? null : workspaceHref(opened);
-      }
-      if (state) return null; // /split has its own two-pane model; use Expand first
-      if (!isSplittable(pathname)) return null;
-      const base = openTab(EMPTY_WORKSPACE, pathname, currentParams);
-      // newInstance so "open another one of the page I am already on" works from an
-      // ordinary route too — the case the old `already here` guard refused outright.
-      return workspaceHref(openTab(base, href, {}, { newInstance: true }));
-    },
-    [workspace, state, pathname, currentParams],
-  );
+  // ── newTabHrefFor / splitHrefFor removed (2026-09-04) ───────────────────
+  //
+  // Both built an href and navigated. They were replaced by real actions in
+  // components/useWorkspaceActions.ts, which drive the LIVE workspace and only
+  // navigate when a pane has to be rendered — and, more to the point, are the SAME
+  // functions the visible ⋮ menu, right-click and the tab strip all call. Keeping
+  // these as a second way to express "open a new tab" is how the two answers drift.
+  //
+  // What stays here is what a plain <Link> still needs: an href to put in the markup
+  // before hydration, and the refusal text.
 
   return {
     /** True when a two-pane split is on screen right now — either layout. */
@@ -243,12 +158,10 @@ export function useSplitNav() {
     /** True when the tabbed workspace is what is on screen. */
     isWorkspace: workspace != null,
     workspace,
-    newTabHrefFor,
     /** Which pane a plain sidebar click will land in, for the menu's own wording. */
     activePane: state?.active ?? null,
     state,
     hrefFor,
-    splitHrefFor,
     refusalFor,
   };
 }

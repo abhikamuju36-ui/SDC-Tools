@@ -635,13 +635,14 @@ test("the tab strip offers Duplicate, Close and Close Other Tabs", () => {
 });
 
 test("a duplicate is explicit — the sidebar's plain click still resumes", () => {
-  const nav = readFileSync(join(process.cwd(), "src", "components", "useSplitNav.ts"), "utf8");
   const sidebar = readFileSync(join(process.cwd(), "src", "components", "Sidebar.tsx"), "utf8");
-  // hrefFor (a plain click) must NOT ask for a new instance; newTabHrefFor must.
-  assert.match(nav, /const opened = openTab\(workspace, href, \{\}, \{ newInstance: true \}\);/);
-  assert.match(nav, /return workspaceHref\(openTab\(workspace, href\)\);/, "a plain click resumes");
+  // The two actions differ by exactly one flag, and that flag is the whole rule:
+  // openNewTab asks for a new instance, openExistingTab does not — so a plain click
+  // can never produce a duplicate. Asserted where they now live.
+  assert.match(ACTIONS, /const next = openTab\(workspace, path, \{\}, \{ newInstance: true \}\);/);
+  assert.match(ACTIONS, /const next = openTab\(workspace, path\);/, "a plain click resumes");
   const aux = sidebar.slice(sidebar.indexOf("onAuxClick="), sidebar.indexOf("onContextMenu="));
-  assert.ok(aux.includes("newTabHrefFor(item.href)"), "middle-click must ask for a new instance");
+  assert.ok(aux.includes("tabs.openNewTab(item.href)"), "middle-click must ask for a new instance");
   assert.ok(aux.includes("e.button !== 1"), "and only on the middle button");
 });
 
@@ -678,6 +679,11 @@ const STORE = readFileSync(join(process.cwd(), "src", "lib", "workspace-store.ts
 const SIDEBAR = readFileSync(join(process.cwd(), "src", "components", "Sidebar.tsx"), "utf8");
 const NAV = readFileSync(join(process.cwd(), "src", "components", "useSplitNav.ts"), "utf8");
 const sidebarClickHandler = SIDEBAR.slice(SIDEBAR.indexOf("onClick={(e) => {"), SIDEBAR.indexOf("onAuxClick="));
+// The tab decisions moved OUT of Sidebar on 2026-09-04, into the one place both the
+// visible ⋮ menu and right-click also call. The sidebar keeps only the gesture
+// handling; the rule itself is asserted against the actions hook. See
+// tests/nav-item-menu.test.ts for why that separation is guarded.
+const ACTIONS = readFileSync(join(process.cwd(), "src", "components", "useWorkspaceActions.ts"), "utf8");
 
 test("the sidebar reads the LIVE workspace, never only the URL", () => {
   // The fix. Both halves have to hold: the shell publishes, and the hook prefers it.
@@ -694,7 +700,11 @@ test("the sidebar reads the LIVE workspace, never only the URL", () => {
 test("a sidebar click activates the open instance without navigating", () => {
   // The performance half of the requirement: "simply activate the existing tab
   // instance and restore its preserved state" — no remount, no refetch, no recreate.
-  assert.ok(sidebarClickHandler.includes("const next = openTab(live, item.href);"), "resolves through the model");
+  assert.match(ACTIONS, /const next = openTab\(workspace, path\);/, "resolves through the model");
+  assert.ok(
+    sidebarClickHandler.includes("tabs.openExistingTab(item.href)"),
+    "the sidebar must reach that through the centralized action, not its own copy",
+  );
   assert.ok(sidebarClickHandler.includes("e.preventDefault()"), "and cancels the Link navigation");
   // Only a plain left click: modified clicks are the browser's own
   // open-in-new-window gestures and must keep working.
@@ -702,7 +712,7 @@ test("a sidebar click activates the open instance without navigating", () => {
     assert.ok(sidebarClickHandler.includes(guard), `plain-click guard missing: ${guard}`);
   }
   // Resuming an existing tab must NOT navigate; only a genuinely new tab needs a pane.
-  assert.ok(sidebarClickHandler.includes("isNew ? { navigate: true } : undefined"), "resuming must not navigate");
+  assert.match(ACTIONS, /isNew \? \{ navigate: true \} : undefined/, "resuming must not navigate");
 });
 
 test("the sidebar highlights the ACTIVE TAB's page, not the /w pathname", () => {
