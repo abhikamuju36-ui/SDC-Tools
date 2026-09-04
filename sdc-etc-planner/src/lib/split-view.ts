@@ -113,7 +113,7 @@ export const SPLIT_ROUTES: readonly {
   exclusive?: true;
 }[] = [
   { path: "/", label: "Dashboard", params: ["tab", "m", "dqFrom", "dqTo", "dqEmp", "dqFn", "dqMtd"] },
-  { path: "/job-hours", label: "Job Hour Details", params: ["jobs", "job"] },
+  { path: "/job-hours", label: "Job Details", params: ["jobs", "job"] },
   { path: "/etc", label: "Monthly ETC", params: ["month", "dept", "jobname", "billables"], exclusive: true },
   {
     path: "/quoted",

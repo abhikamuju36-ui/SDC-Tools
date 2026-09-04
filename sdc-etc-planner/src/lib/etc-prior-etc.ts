@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { calcHoursLeft, isMonthLocked, round2, nextMonth, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, startsInMonth } from "@/lib/etc";
 import { PARTS_COST_SECTION } from "@/lib/sections";
+import { isDerivedPartsDraft } from "@/lib/parts-breakout-scope";
 
 // Re-derives the Prior ETC (and the Hours Left it implies) of every UNSUBMITTED
 // row in one month from the months before it. The single writer behind both
@@ -59,13 +60,19 @@ export async function derivePriorEtcForMonth(month: string): Promise<{ entriesUp
     const oldPriorEtc = round2(Number(entry.priorEtc));
     const hoursWorked = Number(entry.hoursWorked);
     const hoursLeftCalc = round2(calcHoursLeft(priorEtc, hoursWorked));
-    const newEtcDraft = redrivenDraft({
-      draft: entry.newEtcDraft != null ? Number(entry.newEtcDraft) : null,
-      oldPriorEtc,
-      newPriorEtc: priorEtc,
-      hoursWorked,
-    });
     const currentDraft = entry.newEtcDraft != null ? round2(Number(entry.newEtcDraft)) : null;
+    // A breakout month's Parts Cost draft is DERIVED — leftToInvoice + leftToPurchase
+    // — and this function knows nothing about those two columns, so redriving it would
+    // leave the stored New ETC no longer equal to the halves stored beside it. See
+    // isDerivedPartsDraft.
+    const newEtcDraft = isDerivedPartsDraft(month, entry.section)
+      ? currentDraft
+      : redrivenDraft({
+          draft: entry.newEtcDraft != null ? Number(entry.newEtcDraft) : null,
+          oldPriorEtc,
+          newPriorEtc: priorEtc,
+          hoursWorked,
+        });
     if (oldPriorEtc === priorEtc && round2(Number(entry.hoursLeftCalc)) === hoursLeftCalc && currentDraft === newEtcDraft) {
       continue;
     }

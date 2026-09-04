@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
-import { readEtcLiveTotals, readEtcLiveFooterTotals, subscribeEtcLiveTotals, type JobTotals } from "@/lib/etc-live-totals";
+import { readEtcLiveTotals, readEtcLiveFooterTotals, readPartsBreakoutTotals, subscribeEtcLiveTotals, type JobTotals } from "@/lib/etc-live-totals";
 // `usd` is byte-identical to etc/page.tsx's local currency() — same options, same
 // output — so the Parts Cost footer keeps formatting exactly as the server
 // rendered it rather than through a fourth private copy of the formatter.
@@ -160,6 +160,13 @@ export function EtcLiveTotals() {
       }
       writeParts("partsNewEtc", footer.parts.newEtc);
       writeParts("partsDiff", footer.parts.diff);
+      // Left to Invoice / Left to Purchase are typed columns (2026-09-03), so their
+      // footers move with them. Read straight from the breakout store rather than
+      // through SectionTotals: these two are not ETC figures, they are the inputs New
+      // ETC is calculated from, and nothing else sums them.
+      const breakoutTotals = readPartsBreakoutTotals();
+      writeParts("partsLeftToInvoice", breakoutTotals.invoice);
+      writeParts("partsLeftToPurchase", breakoutTotals.purchase);
 
       // Last, once every writer has reported: only now is it possible to tell a
       // two-cell edit from a whole-grid refresh.
@@ -310,7 +317,10 @@ export function EtcLiveTotals() {
     };
 
     // Parts Cost footer — dollars, not hours, and one cell each.
-    const writeParts = (kind: "partsNewEtc" | "partsDiff", value: number) => {
+    const writeParts = (
+      kind: "partsNewEtc" | "partsDiff" | "partsLeftToInvoice" | "partsLeftToPurchase",
+      value: number,
+    ) => {
       const cell = document.querySelector<HTMLElement>(`[data-live="${kind}"]`);
       if (!cell) return;
       const text = formatUsd(value);

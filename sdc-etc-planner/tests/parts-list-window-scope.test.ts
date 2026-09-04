@@ -186,8 +186,20 @@ const PO_DETAIL_LIB = readFileSync(join(SRC, "lib", "po-detail.ts"), "utf8");
 test("Left to Invoice is the existing leftToSpend field, not a second calculation", () => {
   // One subtraction, in one place. A duplicate would have to re-derive the
   // windowed-invoiced null rule too, and would eventually stop matching.
+  //
+  // That "one place" moved on 2026-09-03 and got stricter. This used to pin the
+  // literal `totalPrice - invoicedAmount` written out here; the subtraction now lives
+  // in lib/left-to-invoice.ts and this column CALLS it, because Monthly ETC's own copy
+  // of the same expression had already drifted — it carried no month-end cutoff, so it
+  // read $2,238,624.84 against this table's $2,137,726.85 through 08/31. Pinning the
+  // shared call rather than the spelled-out arithmetic is the stronger version of the
+  // same guard: the two cannot disagree if there is only one of them.
   assert.match(PANEL, /key: "leftspend", label: "Left to Invoice"/);
-  assert.match(PO_DETAIL_LIB, /leftToSpend: activeAttribution \? null : totalPrice - invoicedAmount/);
+  assert.match(PO_DETAIL_LIB, /leftToSpend: activeAttribution \? null :[\s\S]{0,120}?lineLeftToInvoice\(l\)/);
+  assert.match(PO_DETAIL_LIB, /import \{ lineLeftToInvoice \} from "@\/lib\/left-to-invoice";/);
+  // The windowed-invoiced null rule still rides on the same expression, in both the
+  // BOM and non-BOM branches — that is what "not a second calculation" protects.
+  assert.equal((PO_DETAIL_LIB.match(/leftToSpend: activeAttribution \? null :/g) ?? []).length, 2);
   assert.ok(!/label: "Left to Spend"/.test(PANEL), "the old label must be gone");
 });
 

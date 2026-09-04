@@ -16,6 +16,7 @@ import { normPn, type WindowAttribution } from "@/lib/parts-cost-window-attribut
 import { alternateKeys, classifyUnmatched, type MatchReason } from "@/lib/parts-match-reason";
 import { normalizeVendor } from "@/lib/vendor-normalize";
 import { isUncoveredPart } from "@/lib/job-bom-rules";
+import { lineLeftToInvoice } from "@/lib/left-to-invoice";
 
 // A minimal shape shared by BOM leaf parts (Assemblies detail table) and the
 // flattened Parts List rows — enough to drill + copy.
@@ -487,7 +488,17 @@ export function flattenBomParts(bom: JobBom, partsLines: PartsCostLine[], active
       totalPrice,
       invoicedAmount,
       pctInvoiced,
-      leftToSpend: activeAttribution ? null : totalPrice - invoicedAmount,
+      // ── The ONE shared kernel (2026-09-03) ────────────────────────────────
+      //
+      // `lineLeftToInvoice` is `totalPrice − actualAmount` per line, and this used to
+      // spell that out here. Identical arithmetic — share division is linear, so
+      // splitSum of the difference is the difference of the splitSums — but no longer
+      // a SECOND copy of it. Monthly ETC calls the same function over the same lines,
+      // which is what stops the two drifting apart again (lib/left-to-invoice.ts).
+      //
+      // Signed on purpose: the aggregate floor belongs on a total, never on one row,
+      // and this column shows genuine over-invoicing as a negative.
+      leftToSpend: activeAttribution ? null : pnLines ? splitSum((l) => lineLeftToInvoice(l)) : totalPrice - invoicedAmount,
       matchReason,
       nonBom: false,
     };
@@ -571,7 +582,9 @@ export function flattenBomParts(bom: JobBom, partsLines: PartsCostLine[], active
       totalPrice,
       invoicedAmount,
       pctInvoiced: activeAttribution ? null : totalPrice > 0 ? Math.round((invoicedAmount / totalPrice) * 100) : invoicedAmount > 0 ? 100 : 0,
-      leftToSpend: activeAttribution ? null : totalPrice - invoicedAmount,
+      // Same shared kernel as the BOM branch above. These rows own their lines
+      // outright (no share split), so it is a plain sum.
+      leftToSpend: activeAttribution ? null : lines.reduce((s2, l) => s2 + lineLeftToInvoice(l), 0),
       matchReason: reason,
       nonBom: true,
     } as FlatPart);

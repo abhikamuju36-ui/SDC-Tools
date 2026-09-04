@@ -2,6 +2,7 @@ import "server-only";
 import { getExecutionEtcByJob } from "@/lib/execution-etc";
 import { projectionResidual } from "@/lib/parts-cost-financials-shared";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
+import { leftToInvoiceForLines } from "@/lib/left-to-invoice";
 
 // "Part Cost Budget Projection" — where a job lands by the time it's finished.
 //
@@ -241,7 +242,11 @@ export async function computePartsBudgetProjection(
   // until that PO is actually invoiced. Adding both to `actual` counts that
   // money twice.
   const actual = actualTotal(lines);
-  const committedNotPosted = Math.max(0, purchasedTotal(lines) - actual);
+  // THE shared definition (lib/left-to-invoice.ts), which is exactly what this
+  // expression already was: max(0, Sum(totalPrice) - Sum(actualAmount)). Lifetime
+  // here on purpose - the projection asks where the job LANDS, not where it stood at
+  // some month end.
+  const committedNotPosted = leftToInvoiceForLines(lines);
   return {
     actual,
     committedNotPosted,

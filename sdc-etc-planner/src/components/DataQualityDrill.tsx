@@ -147,7 +147,7 @@ export function DataQualityDrill({ rows, showCompleted }: { rows: PunchIssue[]; 
               {menu.row.jobId} · {menu.row.date}
             </div>
             <button type="button" role="menuitem" className={ITEM} onClick={() => openJob(menu.row)}>
-              Job Hour Details — {menu.row.jobId}
+              Job Details — {menu.row.jobId}
             </button>
             <button type="button" role="menuitem" className={ITEM} onClick={() => openEmployee(menu.row)}>
               All punches by {menu.row.employee}

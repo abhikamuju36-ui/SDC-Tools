@@ -15,6 +15,7 @@ import { seedMonthRows } from "@/lib/etc-seeding";
 import { etcActiveJobFilter } from "@/lib/job-filters";
 import { assertActionPermission } from "@/lib/require-permission";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION, SECTIONS } from "@/lib/sections";
+import { showsPartsBreakout } from "@/lib/parts-breakout-scope";
 import { revalidatePath } from "next/cache";
 import { logAudit } from "@/lib/audit";
 import { recordChanges, type CellChange } from "@/lib/change-log";
@@ -265,7 +266,19 @@ export async function saveAllNewEtcDrafts(
     // "never entered" and "deliberately emptied" — and this action both WRITES that
     // distinction (an explicit clear) and depends on it (the stale-write guard, so
     // an older page cannot restore a value somebody has just removed).
-    select: { id: true, section: true, needsReview: true, newEtcDraft: true, newEtcClearedAt: true },
+    // `leftToInvoice`/`leftToPurchase` are the two cells Parts Cost New ETC is
+    // CALCULATED from (see below). They are read because a save may carry only one of
+    // them, and the other half has to come from what is already stored or the derived
+    // New ETC would drop it.
+    select: {
+      id: true,
+      section: true,
+      needsReview: true,
+      newEtcDraft: true,
+      newEtcClearedAt: true,
+      leftToInvoice: true,
+      leftToPurchase: true,
+    },
   });
 
   // `field` is the form-field name the posting client used, kept for the audit
@@ -285,10 +298,160 @@ export async function saveAllNewEtcDrafts(
   // cells dirty instead of re-baselining a value that was never written.
   const conflicts: { field: string; entryId: number; believedStored: string; actuallyStored: string; wanted: string }[] = [];
   const writes = [];
+  // Does this month split Parts Cost New ETC into Left to Invoice + Left to Purchase?
+  // Same rule the grid renders by, so the server writes what the page shows.
+  const breakoutInScope = showsPartsBreakout(month);
+  // The half-cell edits themselves, for the audit metadata. Deliberately NOT pushed
+  // into `changes`: that list drives the notification banner and the incremental
+  // cell push, both of which name their column from the entry's SECTION — so a Left
+  // to Purchase edit would be announced as a New ETC one. What the banner should
+  // report for these rows is the figure that actually moved downstream, which is the
+  // derived New ETC, and that IS pushed into `changes` below.
+  const breakoutChanges: { entryId: number; field: string; from: number | null; to: number | null }[] = [];
+
+  // ── One Parts Cost row's two typed halves, and the New ETC they make ───────
+  //
+  // Returns nothing: like the loop it is lifted out of, it appends to `writes`,
+  // `changes`, `conflicts` and `invalidFields`.
+  const handlePartsBreakoutEntry = (entry: (typeof entries)[number]) => {
+    const storedInvoice = entry.leftToInvoice != null ? round2(Number(entry.leftToInvoice)) : null;
+    const storedPurchase = entry.leftToPurchase != null ? round2(Number(entry.leftToPurchase)) : null;
+    // ── A New ETC typed before these columns existed ─────────────────────────
+    //
+    // August 2026 was already being filled in when New ETC became calculated, so rows
+    // carry a hand-entered figure with both halves still empty. It carries into Left
+    // to Invoice, and only while BOTH halves are unanswered — the SAME rule, against
+    // the SAME stored fields, that etc/page.tsx renders the cell from. Both sides
+    // derive it rather than one telling the other, so a payload that omits the cell
+    // cannot silently drop the figure the manager was looking at.
+    const carriedInvoice =
+      storedInvoice === null && storedPurchase === null && entry.newEtcDraft != null
+        ? round2(Number(entry.newEtcDraft))
+        : null;
+    const halves = [
+      // `shown` is what the manager's cell was displaying, which is what an incoming
+      // value has to be compared against — otherwise clearing a carried figure looks
+      // like "null, unchanged" and the clear does nothing. `stored` stays separate for
+      // the stale-write guard, which asks about the DATABASE.
+      {
+        key: "invoice" as const,
+        field: `partsLeftToInvoice__${entry.id}`,
+        stored: storedInvoice,
+        shown: storedInvoice ?? carriedInvoice,
+      },
+      {
+        key: "purchase" as const,
+        field: `partsLeftToPurchase__${entry.id}`,
+        stored: storedPurchase,
+        shown: storedPurchase,
+      },
+    ];
+    // Seeded with what the CELLS HELD, so a save carrying only one half keeps the
+    // other exactly as the manager saw it. The client posts only the cells this user
+    // touched (changedEtcFormData), so a one-half payload is the normal case.
+    const next: { invoice: number | null; purchase: number | null } = {
+      invoice: storedInvoice ?? carriedInvoice,
+      purchase: storedPurchase,
+    };
+    let touched = false;
+
+    for (const half of halves) {
+      // Same four answers as a New ETC field, and they mean the same things here —
+      // absent is "no opinion", empty is a deliberate blank, 0 is a figure.
+      const intent = parseNewEtcField(formData.get(half.field));
+      if (intent.kind === "absent") continue;
+      if (intent.kind === "invalid") {
+        invalidFields.push({ field: half.field, entryId: entry.id, raw: intent.raw });
+        continue;
+      }
+      // The same optimistic-concurrency guard the New ETC cells get. The base field
+      // rides along under the FULL field name (changedEtcFormData only strips the two
+      // newEtc prefixes), which is what keeps it from colliding with the
+      // `newEtcBase__<id>` belonging to this same entry's New ETC.
+      //
+      // No `storedCleared` equivalent: these columns have no "deliberately blanked"
+      // marker, because they need none. A New ETC cell needs one because a null draft
+      // falls back through newEtcSeedText to a carried-forward figure, so "no value"
+      // and "blanked on purpose" render differently.
+      //
+      // Left to Purchase renders blank whenever it is null, so nothing can come back.
+      // Left to Invoice has ONE fallback — `carriedInvoice`, a pre-breakout hand-typed
+      // New ETC — and clearing it cannot resurrect that either, because the write below
+      // stores `sum` into `newEtcDraft` in the same statement: clearing the only
+      // answered half makes the sum null, which nulls the very field the carry reads.
+      // The blank sticks by construction rather than by a marker.
+      //
+      // (This paragraph used to argue from a Total ETO seed that opened IN the box.
+      // There is no such seed — the upstream figure is a tooltip on an empty cell, and
+      // a seed that re-appeared after a clear would have been a bug in its own right.)
+      const believed = formData.get(`newEtcBase__${half.field}`);
+      const believedStored = believed === null ? null : String(believed);
+      if (isStaleDraftWrite({ believedStored, storedDraft: half.stored, precision: "exact" })) {
+        conflicts.push({
+          field: half.field,
+          entryId: entry.id,
+          believedStored: believedStored ?? "",
+          actuallyStored: half.stored === null ? "" : String(half.stored),
+          wanted: intent.kind === "clear" ? "" : String(intent.value),
+        });
+        continue;
+      }
+      const value = intent.kind === "clear" ? null : intent.value;
+      if (value === half.shown) continue;
+      breakoutChanges.push({ entryId: entry.id, field: half.field, from: half.shown, to: value });
+      next[half.key] = value;
+      touched = true;
+    }
+
+    if (!touched) return;
+
+    // ── New ETC = Left to Invoice + Left to Purchase ─────────────────────────
+    //
+    // A blank half counts as 0 whenever the OTHER half has a figure: the manager has
+    // said something about the total and the cell must show it. Both blank is a cell
+    // nobody has answered — null, and marked as a deliberate blank so the carry-forward
+    // seed cannot put a number back into a New ETC whose inputs are empty.
+    const sum =
+      next.invoice === null && next.purchase === null ? null : round2((next.invoice ?? 0) + (next.purchase ?? 0));
+    const currentDraft = entry.newEtcDraft != null ? round2(Number(entry.newEtcDraft)) : null;
+    if (sum !== currentDraft) {
+      changes.push({ entryId: entry.id, field: `newEtcOverride__${entry.id}`, from: currentDraft, to: sum });
+    }
+    writes.push(
+      prisma.etcEntry.update({
+        where: { id: entry.id },
+        data: {
+          leftToInvoice: next.invoice,
+          leftToPurchase: next.purchase,
+          newEtcDraft: sum,
+          newEtcClearedAt: sum === null ? new Date() : null,
+        },
+      }),
+    );
+  };
   for (const entry of entries) {
     // Already submitted (a reopened month's untouched entries) — Save only
     // ever writes drafts, never confirmed history.
     if (!entry.needsReview) continue;
+
+    // ── Parts Cost New ETC is CALCULATED here, not accepted (2026-09-03) ──────
+    //
+    // On a month with the breakout columns the manager types Left to Invoice and Left
+    // to Purchase; New ETC is their sum. Deriving it in THIS action rather than
+    // trusting the figure the client posts is what makes it the one authoritative
+    // value: the browser's `newEtcOverride__<id>` for these rows is a rendering of the
+    // sum, and a rendering must never be what the database believes. If the two ever
+    // disagreed — a stale tab, a mid-edit save, a hand-posted request — the stored
+    // New ETC would stop being the sum of the two figures stored beside it, and every
+    // downstream number (next month's Prior ETC, the projection baseline, the export)
+    // would inherit that.
+    //
+    // So the posted newEtcOverride for these rows is ignored outright, and the write
+    // below is the only thing that sets newEtcDraft for them.
+    if (breakoutInScope && entry.section === PARTS_COST_SECTION) {
+      handlePartsBreakoutEntry(entry);
+      continue;
+    }
 
     const field = `newEtcOverride__${entry.id}`;
     // ── What did this request actually say about this cell? ───────────────────
@@ -675,7 +838,7 @@ export async function saveAllNewEtcDrafts(
         // were editing the same cell, and that is worth being able to look up.
         (conflicts.length > 0 ? ` — REFUSED ${conflicts.length} stale write(s) already changed by another user` : "") +
         (invalidFields.length > 0 ? ` — REJECTED ${invalidFields.length} invalid value(s)` : ""),
-      metadata: { changes, created: createdChanges, conflicts, invalid: invalidFields },
+      metadata: { changes, breakout: breakoutChanges, created: createdChanges, conflicts, invalid: invalidFields },
     });
   }
 

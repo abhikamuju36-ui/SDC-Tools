@@ -3,6 +3,7 @@ import { prisma } from "@/lib/prisma";
 import { calcHoursLeft, round2, isValidMonth, isMonthLocked, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, startsInMonth } from "@/lib/etc";
 import { etcActiveJobFilter } from "@/lib/job-filters";
 import { ETC_TRACKED_CODES } from "@/lib/sections";
+import { isDerivedPartsDraft } from "@/lib/parts-breakout-scope";
 
 // ── Seeding an ETC month's rows ─────────────────────────────────────────────
 //
@@ -183,12 +184,21 @@ export async function seedMonthRows(month: string): Promise<{ created: number; u
           // A draft that merely echoed the suggestion from the OLD Prior ETC moves
           // with it — see redrivenDraft. Without this, a Save taken before the
           // Prior settled froze that moment's figure into the cell for good.
-          const newEtcDraft = redrivenDraft({
-            draft: existing.newEtcDraft != null ? Number(existing.newEtcDraft) : null,
-            oldPriorEtc: Number(existing.priorEtc),
-            newPriorEtc: priorEtc,
-            hoursWorked,
-          });
+          //
+          // Unless the draft is DERIVED rather than typed: on a breakout month the
+          // Parts Cost draft is leftToInvoice + leftToPurchase, and this function knows
+          // nothing about those two columns, so redriving it would leave the stored New
+          // ETC unequal to the halves stored beside it. See isDerivedPartsDraft.
+          const newEtcDraft = isDerivedPartsDraft(month, section)
+            ? existing.newEtcDraft != null
+              ? round2(Number(existing.newEtcDraft))
+              : null
+            : redrivenDraft({
+                draft: existing.newEtcDraft != null ? Number(existing.newEtcDraft) : null,
+                oldPriorEtc: Number(existing.priorEtc),
+                newPriorEtc: priorEtc,
+                hoursWorked,
+              });
           toUpdate.push({ id: existing.id, priorEtc, hoursLeftCalc, newEtcDraft });
         }
       }

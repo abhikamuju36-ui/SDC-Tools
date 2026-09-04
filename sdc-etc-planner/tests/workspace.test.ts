@@ -306,7 +306,7 @@ test("workspaceHref and tab labels are what the tab bar renders", () => {
   assert.match(workspaceHref(ws(["/etc"])), /^\/w\?/);
   assert.equal(workspaceHref(EMPTY_WORKSPACE), "/w");
   assert.equal(tabLabel({ path: "/etc", params: {} }), "Monthly ETC");
-  assert.equal(tabLabel({ path: "/job-hours", params: {} }), "Job Hour Details");
+  assert.equal(tabLabel({ path: "/job-hours", params: {} }), "Job Details");
 });
 
 // ── The bug class that broke split view, guarded here too ──────────────────

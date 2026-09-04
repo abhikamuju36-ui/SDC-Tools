@@ -26,8 +26,11 @@ export type PermissionCatalogEntry = {
 export const PERMISSION_SECTIONS = ["General", "Projects", "Monthly ETC", "Hours", "Standards", "Financial", "Administration"] as const;
 
 export const PERMISSION_CATALOG: readonly PermissionCatalogEntry[] = [
-  { keys: ["job-hour-details:view"], label: "Job Hour Details", section: "General" },
-  { keys: ["job-hour-details:schedule"], label: "Schedule button in Job Hour Details", section: "General" },
+  // Display labels only. The permission KEYS stay `job-hour-details:*` — they are
+  // stored on roles in the database, so renaming them would revoke access, and the
+  // 2026-09-03 rename was a label change.
+  { keys: ["job-hour-details:view"], label: "Job Details", section: "General" },
+  { keys: ["job-hour-details:schedule"], label: "Schedule button in Job Details", section: "General" },
   { keys: ["build-readiness:view"], label: "Build Readiness", section: "General" },
   { keys: ["dashboard:view"], label: "Dashboard", section: "General" },
   { keys: ["tm:view"], label: "T&M", section: "General" },

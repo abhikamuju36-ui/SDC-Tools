@@ -216,7 +216,7 @@ export function JobCellMenuHost() {
           <rect x="6.75" y="4.5" width="2.5" height="8.5" rx="0.5" />
           <rect x="11" y="6.5" width="2.5" height="6.5" rx="0.5" />
         </svg>
-        Job Hour Details
+        Job Details
       </Link>
       {at.schedulerUrl && (
         <a

@@ -1,8 +1,10 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { partsCostRisk, partsCostRiskTitle, suggestNewEtc, calcHoursLeft } from "../src/lib/etc";
+import { partsCostRisk, partsCostRiskTitle, suggestNewEtc, calcHoursLeft, redrivenDraft } from "../src/lib/etc";
+import { isDerivedPartsDraft } from "../src/lib/parts-breakout-scope";
+import { PARTS_COST_SECTION } from "../src/lib/sections";
 
 // ── The Parts Cost under-planning warning (2026-09-03) ──────────────────────
 //
@@ -144,7 +146,13 @@ const fragmentCells = (key: string) => {
   const body = withoutComments(ETC_PAGE.slice(start, ETC_PAGE.indexOf("</Fragment>", start)));
   // Comments must be stripped first: this file discusses `<td>` in prose, and counting
   // those was how the first version of this check reported a false mismatch.
-  return (body.match(/<td\b/g)?.length ?? 0) + (body.match(/<PartsCostNewEtcCell\b/g)?.length ?? 0);
+  return (
+    (body.match(/<td\b/g)?.length ?? 0) +
+    (body.match(/<PartsCostNewEtcCell\b/g)?.length ?? 0) +
+    // The breakout columns are client components too, not <td>s — they are the two
+    // cells a manager types into (2026-09-03).
+    (body.match(/<PartsBreakoutCell\b/g)?.length ?? 0)
+  );
 };
 
 test("the Parts Cost columns include the New ETC breakout, in reading order", () => {
@@ -202,11 +210,66 @@ test("before August 2026 the Parts Cost rows shrink by exactly the two breakout 
   }
 });
 
-test("the breakout renders an em dash when unknown, never a zero", () => {
-  // null means "could not be read from Total ETO". A $0 would say "nothing
-  // outstanding" — the opposite — on the two figures that seed the forecast.
-  assert.match(ETC_PAGE, /breakout\?\.leftToInvoice == null \? "—" : currency\(breakout\.leftToInvoice\)/);
-  assert.match(ETC_PAGE, /breakout\?\.leftToPurchase == null \? "—" : currency\(breakout\.leftToPurchase\)/);
+test("both breakout columns are typed cells, and neither is ever seeded", () => {
+  // Requested 2026-09-03: both are editable and start blank, with nothing populating
+  // them automatically. The test names the SEED rather than the emptiness — a cell can
+  // look empty by accident, but a seed is always deliberate.
+  //
+  // Left to Purchase was the explicit request. Left to Invoice followed: a live,
+  // unstored seed cannot coexist with New ETC being the sum of these two, because a
+  // save carrying only the other half derives New ETC from 0 + that half. The upstream
+  // figure lives on the tooltip instead.
+  assert.match(ETC_PAGE, /<PartsBreakoutCell[\s\S]{0,400}?which="invoice"/);
+  assert.match(ETC_PAGE, /<PartsBreakoutCell[\s\S]{0,400}?which="purchase"/);
+  const fromStorageOrNothing = [
+    /const leftToInvoiceValue =\s*partsCostEntry\.leftToInvoice != null\s*[?] round2\(Number\(partsCostEntry\.leftToInvoice\)\)\s*: carriedLeftToInvoice;/,
+    /const leftToPurchaseValue =\s*partsCostEntry\.leftToPurchase != null \? round2\(Number\(partsCostEntry\.leftToPurchase\)\) : null;/,
+  ];
+  for (const re of fromStorageOrNothing) {
+    assert.match(ETC_PAGE, re, "a breakout cell may come from storage or from nothing — never from an upstream seed");
+  }
+  // The one thing Left to Invoice MAY fall back to is a New ETC somebody typed before
+  // these columns existed — a stored figure, and only while BOTH halves are empty. The
+  // save applies the same rule against the same fields, so the cell and the write
+  // cannot form different opinions about what that cell holds.
+  assert.match(
+    ETC_PAGE,
+    /partsCostEntry\.leftToInvoice == null &&\s*partsCostEntry\.leftToPurchase == null &&\s*partsCostEntry\.newEtcDraft != null/,
+    "the page must carry a pre-existing New ETC into Left to Invoice",
+  );
+  assert.match(
+    readFileSync(join(process.cwd(), "src", "lib", "etc-actions.ts"), "utf8"),
+    /storedInvoice === null && storedPurchase === null && entry\.newEtcDraft != null/,
+    "the save must apply the same carry rule as the page",
+  );
+  // And nothing upstream computes such a figure any more: the BOM half that used to
+  // fill this column was removed with this change.
+  const breakoutLib = readFileSync(join(process.cwd(), "src", "lib", "parts-etc-breakout.ts"), "utf8");
+  // The IMPORTS, not the prose: the file explains at length what it used to do, and
+  // matching on the names alone would fail on its own history.
+  assert.ok(
+    !/^import .*(job-bom|po-detail)/m.test(breakoutLib),
+    "nothing may compute a Left to Purchase figure",
+  );
+  assert.ok(!/leftToPurchase/.test(breakoutLib.replace(/\/\/.*$/gm, "")), "no upstream Left to Purchase value");
+});
+
+test("New ETC is the sum of the two typed cells, and is not itself typed", () => {
+  // One authoritative value, in both halves of the app: the cell renders as TEXT from
+  // the live breakout store, and the SERVER derives what it stores rather than
+  // trusting the figure the browser posts.
+  const cell = readFileSync(join(process.cwd(), "src", "components", "PartsCostNewEtcCell.tsx"), "utf8");
+  assert.match(cell, /readPartsBreakoutSum\(jobId\)/);
+  assert.match(cell, /\{derived \? \(/, "a derived cell must render text, not an input");
+  assert.match(ETC_PAGE, /derived=\{showBreakout\}/);
+
+  const actions = readFileSync(join(process.cwd(), "src", "lib", "etc-actions.ts"), "utf8");
+  assert.match(actions, /round2\(\(next\.invoice \?\? 0\) \+ \(next\.purchase \?\? 0\)\)/);
+  assert.match(
+    actions,
+    /if \(breakoutInScope && entry\.section === PARTS_COST_SECTION\) \{\s*handlePartsBreakoutEntry\(entry\);/,
+    "a breakout month's Parts Cost New ETC must never be taken from the posted field",
+  );
 });
 
 test("a Total ETO outage costs two columns, not the month-end page", () => {
@@ -214,4 +277,77 @@ test("a Total ETO outage costs two columns, not the month-end page", () => {
   // upstream call on it. The fetch is awaited with a catch that degrades to nulls.
   assert.match(ETC_PAGE, /readPartsEtcBreakout\(/);
   assert.match(ETC_PAGE, /\.catch\(\(e\) => \{[\s\S]{0,200}return null;/);
+});
+
+// ── The derived draft may not be redriven ────────────────────────────────────
+//
+// On a breakout month `newEtcDraft` is not a typed figure, it is
+// `leftToInvoice + leftToPurchase`. Everything downstream — the submission, the
+// export, next month's Prior ETC — reads that column, while the grid renders the sum
+// of the two halves. The moment a writer moves one without the other they disagree,
+// and nothing on screen says so.
+
+test("isDerivedPartsDraft names exactly the rows whose New ETC is a sum", () => {
+  // Parts Cost from August 2026 on, and nothing else. Hours sections type their New
+  // ETC on every month, so redriving theirs stays correct.
+  assert.equal(isDerivedPartsDraft("2026-08", PARTS_COST_SECTION), true);
+  assert.equal(isDerivedPartsDraft("2026-09", PARTS_COST_SECTION), true);
+  assert.equal(isDerivedPartsDraft("2026-07", PARTS_COST_SECTION), false);
+  assert.equal(isDerivedPartsDraft("2026-08", "ELECTRICAL_ENGINEERING"), false);
+  // Unparseable month answers false for the same reason showsPartsBreakout does: the
+  // safe direction is the behaviour every month had before the columns existed.
+  assert.equal(isDerivedPartsDraft(null, PARTS_COST_SECTION), false);
+  assert.equal(isDerivedPartsDraft("garbage", PARTS_COST_SECTION), false);
+});
+
+test("the guard blocks the redrive that would break the invariant", () => {
+  // The collision is not exotic — it fires precisely when the halves add up to the
+  // figure the grid suggested, which is what a manager who agreed with the suggestion
+  // typed. Here: Left to Invoice 2,500 + Left to Purchase 500 = 3,000, and 3,000 is
+  // also suggestNewEtc(oldPrior=10,000, worked=7,000).
+  const oldPriorEtc = 10_000;
+  const hoursWorked = 7_000;
+  const invoice = 2_500;
+  const purchase = 500;
+  const storedDraft = invoice + purchase;
+  assert.equal(storedDraft, suggestNewEtc(oldPriorEtc, hoursWorked), "the premise of this test");
+
+  // Prior ETC moves — a later parts sync, a cascade, a reopened upstream month.
+  const newPriorEtc = 12_000;
+  const unguarded = redrivenDraft({ draft: storedDraft, oldPriorEtc, newPriorEtc, hoursWorked });
+  assert.notEqual(unguarded, invoice + purchase, "without the guard the draft stops being the sum");
+
+  const guarded = isDerivedPartsDraft("2026-08", PARTS_COST_SECTION)
+    ? storedDraft
+    : redrivenDraft({ draft: storedDraft, oldPriorEtc, newPriorEtc, hoursWorked });
+  assert.equal(guarded, invoice + purchase, "New ETC must stay equal to the two halves beside it");
+
+  // And the same row one month earlier, where the draft IS typed, still moves.
+  const july = isDerivedPartsDraft("2026-07", PARTS_COST_SECTION)
+    ? storedDraft
+    : redrivenDraft({ draft: storedDraft, oldPriorEtc, newPriorEtc, hoursWorked });
+  assert.equal(july, unguarded, "a typed draft that echoed the old suggestion still follows Prior ETC");
+});
+
+test("every redrivenDraft caller is guarded — including ones not written yet", () => {
+  // The point of scanning rather than naming the two known files: this invariant broke
+  // because two writers existed that nobody checked against it, and a third would break
+  // it the same way. A new call site fails this test until it decides about derived
+  // rows.
+  const libDir = join(process.cwd(), "src", "lib");
+  const callers = readdirSync(libDir)
+    .filter((f) => f.endsWith(".ts"))
+    .map((f) => ({ file: f, src: readFileSync(join(libDir, f), "utf8") }))
+    // etc.ts DEFINES redrivenDraft; parts-breakout-scope.ts only discusses it in prose.
+    .filter(({ file, src }) => file !== "etc.ts" && file !== "parts-breakout-scope.ts" && /\bredrivenDraft\(/.test(src));
+
+  assert.ok(callers.length >= 2, `expected the known writers, found ${callers.map((c) => c.file).join(", ")}`);
+  for (const { file, src } of callers) {
+    assert.match(
+      src,
+      /isDerivedPartsDraft\(/,
+      `${file} rewrites newEtcDraft but never asks whether the row's draft is derived from ` +
+        `Left to Invoice + Left to Purchase — see lib/parts-breakout-scope.ts`,
+    );
+  }
 });

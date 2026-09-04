@@ -1071,7 +1071,7 @@ export function JobCostExplorer({
                     <td
                       className={`frozen-col frozen-col-last sticky ${JOB_NAME_LEFT} z-10 truncate border-b border-r border-b-sdc-border-soft border-r-sdc-border px-2 py-1.5 text-left align-middle ${JOB_NAME_COL_W} ${zebraFrozen} group-hover:bg-sdc-blue-light`}
                     >
-                      <Link href={`/job-hours?jobs=${r.jobId}`} className="hover:underline" title={r.jobName || "Open in Job Hour Details"}>
+                      <Link href={`/job-hours?jobs=${r.jobId}`} className="hover:underline" title={r.jobName || "Open in Job Details"}>
                         {r.jobName || "—"}
                       </Link>
                     </td>

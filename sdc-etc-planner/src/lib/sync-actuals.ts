@@ -15,6 +15,7 @@ import { VALID_JOB_TYPES, etcActiveJobFilter } from "@/lib/job-filters";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION, JOB_DASHBOARD_HOURS_CODES, mapPunchToColumns } from "@/lib/sections";
 import { calcHoursLeft, round2, isMonthLocked, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, monthWindowUtc, startsInMonth } from "@/lib/etc";
 import { getPartsCostBookedByJob } from "@/lib/sync-totaleto";
+import { isDerivedPartsDraft } from "@/lib/parts-breakout-scope";
 import {
   hoursByJobSection,
   latestWorkDate,
@@ -917,7 +918,13 @@ export async function syncPartsCost(month: string): Promise<{ rowsUpserted: numb
         // the update branch can still fire — a concurrent writer created the row
         // between the read and here — and touching a draft this run never saw
         // would be guessing.
-        ...(existing
+        //
+        // And never on a breakout month, where the draft is DERIVED from Left to
+        // Invoice + Left to Purchase rather than typed: redriving it would leave the
+        // stored New ETC unequal to the two halves stored beside it, which the grid
+        // would go on rendering correctly while the export and next month's Prior ETC
+        // read the redriven figure. See isDerivedPartsDraft.
+        ...(existing && !isDerivedPartsDraft(month, PARTS_COST_SECTION)
           ? {
               newEtcDraft: redrivenDraft({
                 draft: existing.newEtcDraft != null ? Number(existing.newEtcDraft) : null,

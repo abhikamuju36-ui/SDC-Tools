@@ -13,6 +13,7 @@ import { withTimeoutOrNull } from "@/lib/with-timeout";
 // THIS module keep working unchanged.
 export type { PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
 import type { PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
+import { leftToInvoiceForLines } from "@/lib/left-to-invoice";
 
 // ── THE one Parts Cost reconciliation, for any job or set of jobs ───────────
 //
@@ -147,7 +148,10 @@ export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate
   // `toComplete` in the spec's vocabulary: the remaining open parts exposure, which
   // is the same figure the card has always shown as "Left to be invoiced". One
   // quantity, two names — never two addends (spec §8).
-  const leftToInvoice = projection ? projection.committedNotPosted : Math.max(0, purchasedTotal(lines) - invoiced);
+  // Both branches are now literally the same function: committedNotPosted IS
+  // leftToInvoiceForLines (see parts-budget-projection.ts). Kept as two branches only
+  // because the projection may fail to resolve, and the figure must still appear.
+  const leftToInvoice = projection ? projection.committedNotPosted : leftToInvoiceForLines(lines);
   const totalSpent = invoiced + leftToInvoice;
 
   // ── Dan's projection model (2026-09-03) ───────────────────────────────────

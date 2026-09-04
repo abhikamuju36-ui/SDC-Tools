@@ -36,6 +36,7 @@ import {
 } from "@/lib/po-detail";
 import { PoPanel, ReleaseBadge, SupplierAvatar, Stat, ALL_COLS, partsListSortColumns, PartRowCells, type ColKey } from "@/components/procurement/PoDetailPanel";
 import { computeRiskCards, dueMs, earliestRequired, groupPartsByPo } from "@/lib/procurement-risk";
+import { FILTER_ALL, resolveFilterChoice, filterOptionValues, sanitizeStatusSelection } from "@/lib/filter-choice";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Procurement drawer — the Build Readiness "Procurement" view, ported to the
@@ -147,10 +148,22 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   // is persisted to localStorage (see the effect below).
   const [view, setView] = useState<"list" | "card">(() => saved.view ?? "list");
   const [query, setQuery] = useState(() => saved.query ?? "");
-  const [status, setStatus] = useState<Set<StatusKey>>(() => new Set(Array.isArray(saved.status) ? saved.status : DEFAULT_STATUS_KEYS));
-  const [category, setCategory] = useState(() => saved.category ?? "all");
-  const [manufacturer, setManufacturer] = useState(() => saved.manufacturer ?? "all");
-  const [supplier, setSupplier] = useState(() => saved.supplier ?? "all");
+  // Restored through sanitizeStatusSelection, not straight from storage: a stored key
+  // that no longer exists matches no row, and a stored selection that has emptied out
+  // means "hide every BOM part" — both of which arrive looking like a normal default.
+  // An empty selection a user builds in front of themselves is still honoured; this is
+  // the restore path only.
+  const [status, setStatus] = useState<Set<StatusKey>>(
+    () => new Set(sanitizeStatusSelection(saved.status, ALL_STATUS_KEYS, DEFAULT_STATUS_KEYS)),
+  );
+  // These three are persisted for the whole app rather than per job (one STORAGE_KEY),
+  // so what is restored here may name a category/vendor the job in front of us has
+  // never had. That is NOT resolved here — it is resolved against the live option list
+  // in PartsList, where both the predicate and the <select> read the same answer. See
+  // lib/filter-choice.ts for what went wrong when only one of them did.
+  const [category, setCategory] = useState(() => saved.category ?? FILTER_ALL);
+  const [manufacturer, setManufacturer] = useState(() => saved.manufacturer ?? FILTER_ALL);
+  const [supplier, setSupplier] = useState(() => saved.supplier ?? FILTER_ALL);
   const [dateType, setDateType] = useState<"purchase" | "invoice" | "req" | "exp">(() => saved.dateType ?? "purchase");
   const [from, setFrom] = useState(() => saved.from ?? "");
   const [to, setTo] = useState(() => saved.to ?? "");
@@ -209,9 +222,9 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
   const drillToPart = useCallback(
     (p: DrillablePart) => {
       setStatus(() => new Set(ALL_STATUS_KEYS));
-      setCategory("all");
-      setManufacturer("all");
-      setSupplier("all");
+      setCategory(FILTER_ALL);
+      setManufacturer(FILTER_ALL);
+      setSupplier(FILTER_ALL);
       setQuery("");
       setFrom("");
       setTo("");
@@ -255,9 +268,9 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
 
   const clearFilters = useCallback(() => {
     setStatus(() => new Set(DEFAULT_STATUS_KEYS));
-    setCategory("all");
-    setManufacturer("all");
-    setSupplier("all");
+    setCategory(FILTER_ALL);
+    setManufacturer(FILTER_ALL);
+    setSupplier(FILTER_ALL);
     setQuery("");
     setDateType("purchase");
     setFrom("");
@@ -1265,9 +1278,10 @@ function PartsListTab({
   // "Active" for status means the selection differs from the default (every
   // status except On Hold) — the same "not the neutral view" test every other
   // filter here already applies against its own "all" baseline.
+  // (filtersActive itself is computed below, once the three dropdown choices have been
+  // resolved against the options that actually exist — an orphaned choice is not an
+  // active filter, and showing Clear for one was this bug's only visible symptom.)
   const statusIsDefault = status.size === DEFAULT_STATUS_KEYS.length && DEFAULT_STATUS_KEYS.every((k) => status.has(k));
-  const filtersActive =
-    !statusIsDefault || category !== "all" || manufacturer !== "all" || supplier !== "all" || query !== "" || dateType !== "purchase" || from !== "" || to !== "";
 
   // Drill effect — after a short delay, scroll the matching row into center and
   // flash it. Keyed on `nonce` so re-drilling the same part re-fires. Uses the
@@ -1323,24 +1337,62 @@ function PartsListTab({
     return () => document.removeEventListener("mousedown", onDown);
   }, []);
 
+  // ── The options, built from EVERY row rather than the scoped subset ─────────
+  //
+  // `allParts`, not `parts`. The same rule the chip counts already follow: switching
+  // BOM/Non-BOM must not change what the filters claim is available. It also matters
+  // for correctness now that an off-list choice is discarded (below) — sourcing the
+  // options from the scoped rows would make a legitimate manufacturer look orphaned
+  // the moment you switched scope, and silently drop it.
   const distinct = useMemo(() => {
-    const cats = new Set<string>();
-    const mfrs = new Set<string>();
-    const sups = new Set<string>();
-    for (const p of parts) {
-      if (p.category) cats.add(p.category);
-      // Normalized before they reach the Set, so SDC can only ever produce ONE
+    const cats: (string | null)[] = [];
+    const mfrs: (string | null)[] = [];
+    const sups: (string | null)[] = [];
+    for (const p of allParts) {
+      cats.push(p.category);
+      // Normalized before they reach the option list, so SDC can only ever produce ONE
       // option — the reported bug was two, each matching a subset of the job's SDC
       // parts. `p.manufacturer`/`p.supplier` are already canonical (po-detail.ts);
       // normalizing again is idempotent and makes this line independent of that.
-      const mfrOpt = normalizeVendor(p.manufacturer);
-      const supOpt = normalizeVendor(p.supplier);
-      if (mfrOpt) mfrs.add(mfrOpt);
-      if (supOpt) sups.add(supOpt);
+      mfrs.push(normalizeVendor(p.manufacturer));
+      sups.push(normalizeVendor(p.supplier));
     }
-    const sort = (s: Set<string>) => [...s].sort((a, b) => a.localeCompare(b));
-    return { cats: sort(cats), mfrs: sort(mfrs), sups: sort(sups) };
-  }, [parts]);
+    // filterOptionValues dedupes, sorts, drops blanks, and refuses to emit a literal
+    // "all" — which would be indistinguishable from the no-restriction sentinel.
+    return { cats: filterOptionValues(cats), mfrs: filterOptionValues(mfrs), sups: filterOptionValues(sups) };
+  }, [allParts]);
+
+  // ── What is ACTUALLY filtered on ────────────────────────────────────────────
+  //
+  // These three, never the raw state, and everything downstream uses them: the
+  // predicate, the <select> value, and the filtersActive test behind the Clear button.
+  // A stored choice this job has no rows for resolves to "all" — the whole bug was a
+  // <select> painting "All suppliers" (its first option, because the controlled value
+  // was not among the options) while the predicate tested all 327 rows against that
+  // orphaned value and rejected every one.
+  const effCategory = resolveFilterChoice(category, distinct.cats);
+  const effManufacturer = resolveFilterChoice(manufacturer, distinct.mfrs);
+  const effSupplier = resolveFilterChoice(supplier, distinct.sups);
+
+  // Write the correction back, so the orphan does not sit in localStorage waiting for
+  // the next job. Deriving above is what makes the FIRST paint right; this is what
+  // stops it recurring. Guarded so it only fires on an actual mismatch — setState in
+  // an effect that always ran would loop.
+  useEffect(() => {
+    if (effCategory !== category) setCategory(effCategory);
+    if (effManufacturer !== manufacturer) setManufacturer(effManufacturer);
+    if (effSupplier !== supplier) setSupplier(effSupplier);
+  }, [effCategory, effManufacturer, effSupplier, category, manufacturer, supplier, setCategory, setManufacturer, setSupplier]);
+
+  const filtersActive =
+    !statusIsDefault ||
+    effCategory !== FILTER_ALL ||
+    effManufacturer !== FILTER_ALL ||
+    effSupplier !== FILTER_ALL ||
+    query !== "" ||
+    dateType !== "purchase" ||
+    from !== "" ||
+    to !== "";
 
   const filtered = useMemo(() => {
     const q = query.trim().toLowerCase();
@@ -1366,11 +1418,14 @@ function PartsListTab({
         const matches = [...status].some((s) => (s === "noPO" ? isUncoveredPart(p) : p.st.key === s));
         if (!matches) return false;
       }
-      if (category !== "all" && p.category !== category) return false;
+      // effCategory / effManufacturer / effSupplier, never the raw state — an off-list
+      // choice has already resolved to FILTER_ALL, which is what the <select> is
+      // showing. Reading the raw value here is exactly how the two came apart.
+      if (effCategory !== FILTER_ALL && p.category !== effCategory) return false;
       // Compared through the same function that built the options, so a selected
       // option always matches every aliased line behind it.
-      if (manufacturer !== "all" && normalizeVendor(p.manufacturer) !== manufacturer) return false;
-      if (supplier !== "all" && normalizeVendor(p.supplier) !== supplier) return false;
+      if (effManufacturer !== FILTER_ALL && normalizeVendor(p.manufacturer) !== effManufacturer) return false;
+      if (effSupplier !== FILTER_ALL && normalizeVendor(p.supplier) !== effSupplier) return false;
       if (from || to) {
         if (windowStatus.active) {
           // Invoiced mode, window resolved: inclusion is "did this part have
@@ -1406,7 +1461,7 @@ function PartsListTab({
       }
       return true;
     });
-  }, [parts, status, category, manufacturer, supplier, from, to, dateType, query, windowStatus.active]);
+  }, [parts, status, effCategory, effManufacturer, effSupplier, from, to, dateType, query, windowStatus.active]);
 
   // A windowed Invoiced figure means something different from the lifetime one
   // ALL_COLS's static label describes (that array also drives the Columns-
@@ -1493,9 +1548,9 @@ function PartsListTab({
         <span className="mx-1 h-5 w-px bg-sdc-border" aria-hidden />
 
         <StatusFilter value={status} onChange={setStatus} />
-        <FilterSelect label="Category" value={category} onChange={setCategory} options={[{ value: "all", label: "All categories" }, ...distinct.cats.map((c) => ({ value: c, label: c }))]} />
-        <FilterSelect label="Mfr" value={manufacturer} onChange={setManufacturer} options={[{ value: "all", label: "All manufacturers" }, ...distinct.mfrs.map((c) => ({ value: c, label: c }))]} />
-        <FilterSelect label="Supplier" value={supplier} onChange={setSupplier} options={[{ value: "all", label: "All suppliers" }, ...distinct.sups.map((c) => ({ value: c, label: c }))]} />
+        <FilterSelect label="Category" value={effCategory} onChange={setCategory} options={[{ value: FILTER_ALL, label: "All categories" }, ...distinct.cats.map((c) => ({ value: c, label: c }))]} />
+        <FilterSelect label="Mfr" value={effManufacturer} onChange={setManufacturer} options={[{ value: FILTER_ALL, label: "All manufacturers" }, ...distinct.mfrs.map((c) => ({ value: c, label: c }))]} />
+        <FilterSelect label="Supplier" value={effSupplier} onChange={setSupplier} options={[{ value: FILTER_ALL, label: "All suppliers" }, ...distinct.sups.map((c) => ({ value: c, label: c }))]} />
 
         <span className="mx-1 h-5 w-px bg-sdc-border" aria-hidden />
 
@@ -3127,7 +3182,7 @@ function Segmented<T extends string>({ value, onChange, options }: { value: T; o
 }
 
 function FilterSelect({ value, onChange, options }: { label: string; value: string; onChange: (v: string) => void; options: { value: string; label: string }[] }) {
-  const active = value !== "all";
+  const active = value !== FILTER_ALL;
   return (
     <select
       value={value}

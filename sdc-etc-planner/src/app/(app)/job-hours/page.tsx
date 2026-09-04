@@ -202,7 +202,7 @@ export async function JobHoursView({ params }: { params: { jobs?: string; job?: 
   return (
     <div className={PAGE_SHELL}>
       <div className="mb-1 flex flex-wrap items-end justify-between gap-4">
-        <PageTitle>Job Hour Details</PageTitle>
+        <PageTitle>Job Details</PageTitle>
         <div className="flex items-center gap-2">
           <span className="text-xs text-sdc-muted">Jobs</span>
           {/* Multi-job picker. Several jobs aggregate into one set of hours

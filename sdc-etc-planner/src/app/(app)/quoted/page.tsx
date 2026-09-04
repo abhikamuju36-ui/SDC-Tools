@@ -932,7 +932,7 @@ export async function ProjectsView({ params }: { params: {
                       jobName: job.jobName,
                       schedulerUrl: schedulerJobNumbers.has(job.jobId) ? schedulerScheduleUrl(schedulerBaseUrl, job.jobId, schedulerSsoEmail) : null,
                     })}
-                    title={`Open ${job.jobId} in Job Hour Details — right-click for more`}
+                    title={`Open ${job.jobId} in Job Details — right-click for more`}
                     className={`frozen-col sticky left-8 z-10 w-20 min-w-20 max-w-20 overflow-hidden truncate px-2 py-1.5 text-center font-mono text-label ${zebraSticky}`}
                   >
                     <Link

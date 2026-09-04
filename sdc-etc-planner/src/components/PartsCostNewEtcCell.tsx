@@ -1,11 +1,11 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { registerEtcField, forgetEtcField, updateEtcField, adoptEtcFieldBaseline } from "@/lib/etc-dirty-tracker";
 import { PARTS_COL_W } from "@/components/ui/classnames";
 import { usd, usdExact } from "@/components/ui/format";
-import { publishPartsCell, forgetPartsCell } from "@/lib/etc-live-totals";
-import { isNewEtcCellDecided, formatNewEtcText, partsCostRisk, partsCostRiskTitle, type NewEtcCellState } from "@/lib/etc";
+import { publishPartsCell, forgetPartsCell, readPartsBreakoutSum, subscribeEtcLiveTotals } from "@/lib/etc-live-totals";
+import { isNewEtcCellDecided, formatNewEtcText, partsCostRisk, partsCostRiskTitle, round2, type NewEtcCellState } from "@/lib/etc";
 import { partsRiskStyle } from "@/components/ui/etc-diff-colors";
 import { useRemoteEtcValue, forgetRemoteEtcValue } from "@/lib/etc-remote-values";
 import { useCellSaveState, cellSaveStateStyle } from "@/lib/etc-save-state";
@@ -47,6 +47,7 @@ export function PartsCostNewEtcCell({
   cellState,
   hint,
   locked,
+  derived = false,
 }: {
   name: string;
   // Published to lib/etc-live-totals.ts so this cell's dollars reach Total ETC $
@@ -74,6 +75,23 @@ export function PartsCostNewEtcCell({
   // decided one; see the call site in etc/page.tsx.
   hint?: string;
   locked?: boolean;
+  // ── Calculated, not typed (2026-09-03, by request) ────────────────────────
+  //
+  // On a month that has the breakout columns, New ETC is no longer something a
+  // manager enters: it is Left to Invoice + Left to Purchase, and those two cells are
+  // what they type (components/PartsBreakoutCell.tsx). The cell then renders as text
+  // instead of an input and takes its value from the live breakout store.
+  //
+  // It is still the SAME cell rather than a separate read-only one, and that is the
+  // point of a flag here rather than a second component. Everything hanging off this
+  // figure — the published dollars behind Total ETC $, the row Diff, the footer, the
+  // under-planning warning, the `newEtcOverride__<id>` field Save and Submit read —
+  // has one implementation, so a calculated month and a typed one cannot come to
+  // different answers about what New ETC means.
+  //
+  // False before August 2026, where the breakout columns do not exist and the cell is
+  // typed exactly as it always was (lib/parts-breakout-scope.ts).
+  derived?: boolean;
 }) {
   const [value, setValue] = useState(initialValue);
   const [focused, setFocused] = useState(false);
@@ -98,8 +116,50 @@ export function PartsCostNewEtcCell({
   if (serverValue !== serverText) {
     const wasClean = value === serverValue;
     setServerValue(serverText);
-    if (wasClean && !focused) setValue(serverText);
+    // A DERIVED cell never adopts a server figure into its box: its value is the sum
+    // of the two breakout cells beside it, and those adopt server values of their own.
+    // Taking one here would put a figure on screen that its own inputs do not add up
+    // to — the one state a calculated cell must not be able to reach.
+    if (wasClean && !focused && !derived) setValue(serverText);
   }
+
+  // ── The calculation, live on every keystroke in either half ───────────────
+  //
+  // Left to Invoice and Left to Purchase are sibling client components, so this cell
+  // cannot see their state directly — it reads the store they publish into
+  // (lib/etc-live-totals.ts), the same route the row's Diff and the footer already
+  // take. `readPartsBreakoutSum` returns null when NEITHER half has been entered,
+  // which is a cell nobody has answered and renders blank; one half filled and the
+  // other empty counts the empty one as 0, which is what the requirement asks for.
+  //
+  // updateEtcField is what makes the recalculated figure SAVE. The hidden input below
+  // posts under `newEtcOverride__<id>` exactly as a typed cell does, and the dirty
+  // tracker is what puts that name into the autosave payload — so a change in either
+  // half persists the new sum through the same mechanism as before.
+  //
+  // `applied` is what stops the mount pass from dirtying the cell. The first apply()
+  // recomputes the same figure the server already rendered, and calling
+  // updateEtcField with it before registerEtcField below has run would land on an
+  // unregistered name — which the tracker treats as an edit, marking every Parts Cost
+  // row unsaved on page load. Reporting only genuine MOVEMENT makes this effect
+  // independent of the order the effects happen to run in.
+  const applied = useRef(initialValue);
+  useEffect(() => {
+    if (!derived) return;
+    const apply = () => {
+      const sum = readPartsBreakoutSum(jobId);
+      const next = sum == null ? "" : String(round2(sum));
+      if (applied.current === next) return;
+      applied.current = next;
+      setValue(next);
+      updateEtcField(name, next);
+    };
+    // Run once on mount as well as on every publish: the breakout cells render before
+    // this one in the row, so their initial publish has already happened by the time
+    // this effect runs and there would otherwise be no event left to catch.
+    apply();
+    return subscribeEtcLiveTotals(apply);
+  }, [derived, jobId, name]);
 
   // A fresh server render retires the realtime patch — a full payload is newer and
   // more complete than any single event. Same rule, same reason as EtcSectionCells.
@@ -249,8 +309,30 @@ export function PartsCostNewEtcCell({
       // is more urgent than "this figure looks low", and it is transient.
       title={saveState?.title ?? riskTip ?? undefined}
     >
-      <CellPresence cellKey={name} />
+      {/* No presence marker on a derived cell: nobody edits it, so "someone is in
+          this cell" would be a claim about a box that cannot be typed in. The two
+          cells it is calculated from are where an edit actually happens. */}
+      {!derived && <CellPresence cellKey={name} />}
+      {/* The hidden input is the cell in BOTH modes — it is what `newEtcOverride__<id>`
+          posts, so Save, Submit and the exports read the calculated figure through
+          exactly the path they read a typed one. */}
       <input type="hidden" name={name} value={value} disabled={locked} />
+      {derived ? (
+        <span
+          className={`block w-full px-1.5 text-center text-label font-bold leading-none ${
+            risk.atRisk ? "text-sdc-red-text" : "text-sdc-gray-600"
+          }`}
+          // Says what it is made of, because a cell that refuses the caret has to
+          // explain where the number comes from and where to change it.
+          title={
+            riskTip ??
+            `${displayValue === "" ? "No figure yet" : usdExact(Number(value))} = Left to Invoice + Left to Purchase. Calculated — edit those two cells.`
+          }
+          aria-label={`New ETC cost, ${jobName}, Parts Cost — calculated from Left to Invoice plus Left to Purchase`}
+        >
+          {displayValue === "" ? "—" : displayValue}
+        </span>
+      ) : (
       <input
         type="text"
         inputMode="decimal"
@@ -299,6 +381,7 @@ export function PartsCostNewEtcCell({
           risk.atRisk ? "text-sdc-red-text" : "text-sdc-gray-600"
         }`}
       />
+      )}
     </td>
   );
 }

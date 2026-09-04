@@ -22,7 +22,9 @@ import { EtcIssuesIndicator } from "@/components/EtcIssuesIndicator";
 // function exported from a "use client" module cannot be called there.
 import { buildEtcIssues } from "@/lib/etc-issues";
 import { PartsCostNewEtcCell } from "@/components/PartsCostNewEtcCell";
+import { PartsBreakoutCell } from "@/components/PartsBreakoutCell";
 import { readPartsEtcBreakout } from "@/lib/parts-etc-breakout";
+import { monthEndLabel } from "@/lib/left-to-invoice";
 import { showsPartsBreakout } from "@/lib/parts-breakout-scope";
 import { EtcSectionCells } from "@/components/EtcSectionCells";
 import {
@@ -69,15 +71,19 @@ const SUB_COLUMNS = ["Prior ETC", "Hours Worked Month", "Hours Left", "New ETC",
 // ── "Left to Invoice" / "Left to Purchase" added 2026-09-03, by request ──────
 //
 // They break New ETC into the two things it is made of, and they sit immediately
-// before it so the row reads left-to-right as the sum it is:
+// before it so the row reads left-to-right as the sum it IS:
 //
-//     Left to Invoice  +  Left to Purchase  =  the New ETC seed
+//     Left to Invoice  +  Left to Purchase  =  New ETC
 //
-// Both are LIVE Total ETO figures, which makes them the first thing on this page to
-// touch an upstream system — every other Parts Cost column here is an EtcEntry read.
-// lib/parts-etc-breakout.ts carries the fetch and the three leashes on it; measured
-// across all 49 jobs of 2026-08 it costs ~3s in one batched query plus a bounded BOM
-// fan-out.
+// Both are manager-typed, both start empty, and New ETC is calculated from them — it
+// is no longer an input at all on a month that has these columns. There is one
+// authoritative value: the two halves are stored per EtcEntry and the save derives
+// New ETC from them, so nothing can hold a manual figure that disagrees with the sum
+// beside it. See components/PartsBreakoutCell.tsx.
+//
+// Total ETO is still consulted, for ONE thing: the figure on an empty Left to
+// Invoice's tooltip. That makes it the only upstream call this page makes — a single
+// batched query, see lib/parts-etc-breakout.ts.
 // Not every month has all seven — see lib/parts-breakout-scope.ts. The two breakout
 // columns start at August 2026, so the grid derives its own list from this one and
 // EVERY consumer must use that derived list: the header colSpans, the body cells, the
@@ -288,10 +294,14 @@ function subColHeaderBg(col: string): string {
   if (col === "Prior ETC") return "bg-[#5E91D3] text-sdc-gray-700";
   if (col === "Hours Worked Month" || col === "Hours Worked" || col === "Money Spent Month") return HOURS_WORKED_BG;
   if (col === "Hours Left" || col === "Money Left") return HOURS_LEFT_BG;
-  // The two breakout columns share HOURS_LEFT_BG with Money Left: all three answer
-  // "what is still outstanding", and giving them their own tint would imply a
-  // different kind of figure rather than a finer split of the same one.
-  if (col === "Left to Invoice" || col === "Left to Purchase") return HOURS_LEFT_BG;
+  // ── The two breakout columns wear New ETC's grey (2026-09-03, by request) ──
+  //
+  // They shared Money Left's tint while they were read-only live figures. They are
+  // now the cells a manager types into and New ETC is calculated from them, so the
+  // grey is what says so: on this grid it is the editable-cell colour, and the three
+  // Parts Cost columns that take input have to look like one another rather than like
+  // the read-only column next door.
+  if (col === "Left to Invoice" || col === "Left to Purchase") return "bg-[#F2F2F2]";
   if (col === "New ETC" || col === "Total New ETC") return "bg-[#F2F2F2]";
   return "";
 }
@@ -302,7 +312,12 @@ function subColHeaderBg(col: string): string {
 // is read-only display now; Money Spent Month is likewise a read-only
 // actual; the Total/Standard columns are pure rollups), so the pencil only
 // appears on that column-label header cell.
-const EDITABLE_COL_LABELS = new Set(["New ETC"]);
+// Parts Cost New ETC is no longer typed — it is Left to Invoice + Left to Purchase —
+// so the pencil moved to the two cells that ARE typed. The set still carries "New ETC"
+// because the hours sections' New ETC column is unchanged, and this is one header row
+// shared by every section (the Parts Cost header is rendered from partsCostCols
+// below, which is where the exception is applied).
+const EDITABLE_COL_LABELS = new Set(["New ETC", "Left to Invoice", "Left to Purchase"]);
 function colHeaderLabel(col: string) {
   if (!EDITABLE_COL_LABELS.has(col)) return col;
   return (
@@ -317,10 +332,14 @@ function colHeaderLabel(col: string) {
 function subColBodyBg(col: string): string {
   if (col === "Hours Worked Month" || col === "Hours Worked" || col === "Money Spent Month") return HOURS_WORKED_BG;
   if (col === "Hours Left" || col === "Money Left") return HOURS_LEFT_BG;
-  // The two breakout columns share HOURS_LEFT_BG with Money Left: all three answer
-  // "what is still outstanding", and giving them their own tint would imply a
-  // different kind of figure rather than a finer split of the same one.
-  if (col === "Left to Invoice" || col === "Left to Purchase") return HOURS_LEFT_BG;
+  // ── The two breakout columns wear New ETC's grey (2026-09-03, by request) ──
+  //
+  // They shared Money Left's tint while they were read-only live figures. They are
+  // now the cells a manager types into and New ETC is calculated from them, so the
+  // grey is what says so: on this grid it is the editable-cell colour, and the three
+  // Parts Cost columns that take input have to look like one another rather than like
+  // the read-only column next door.
+  if (col === "Left to Invoice" || col === "Left to Purchase") return "bg-[#F2F2F2]";
   if (col === "New ETC" || col === "Total New ETC") return "bg-[#F2F2F2]";
   if (col === "Diff") return "bg-white";
   return "";
@@ -1021,6 +1040,10 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
   // client component: the button then renders correctly in the very first paint, and
   // the app has one place that turns "2026-07" into a human month.
   const monthNameOnly = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)) - 1, 1).toLocaleString("en-US", { month: "long" });
+  // The Left to Invoice cutoff, spelled out for the tooltip. From lib/left-to-invoice.ts
+  // so the words and the arithmetic cannot name different days — and so it is testable,
+  // which an IIFE inside this file is not.
+  const cutoffLabel = monthEndLabel(month);
 
   const [completeYear, completeMonthNum] = month.split("-").map(Number);
   const monthEndDate = new Date(Date.UTC(completeYear, completeMonthNum, 0)); // last day of the month
@@ -1082,6 +1105,9 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
   const partsBreakout = showBreakout
     ? await readPartsEtcBreakout(
         jobs.filter((j) => j.jobId).map((j) => ({ pk: j.id, jobNumber: j.jobId })),
+        // The month being closed IS the cutoff. Without it this read was "as of right
+        // now" on a month-end page — see lib/left-to-invoice.ts.
+        month,
       ).catch((e) => {
         console.error("[etc] parts breakout failed; Left to Invoice/Purchase will read —:", e);
         return null;
@@ -1529,7 +1555,11 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                         subColHeaderBg(col) || "bg-sdc-gray-100 text-sdc-gray-700"
                       }`}
                     >
-                      {colHeaderLabel(col)}
+                      {/* New ETC is CALCULATED in this section whenever the breakout
+                          columns are present, so it must not wear the "editable"
+                          pencil there — the two cells it is calculated from do. The
+                          hours sections' own New ETC header is untouched. */}
+                      {showBreakout && col === "New ETC" ? col : colHeaderLabel(col)}
                     </th>
                   ))}
                   {showStandards && (
@@ -1885,7 +1915,109 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                         const moneyLeft = calcHoursLeft(prior, spent);
                         const suggestedCost = suggestNewEtc(prior, spent);
                         const draftCost = partsCostEntry.newEtcDraft != null ? Number(partsCostEntry.newEtcDraft) : null;
-                        const effectiveNewEtcCost = effectiveNewEtc(partsCostEntry);
+                        // ── What the two editable breakout cells start with ─────────
+                        //
+                        // What is STORED, or nothing. Neither column is populated with a
+                        // figure nobody typed — Left to Purchase by explicit request, and
+                        // Left to Invoice for a reason worth writing down, because it did
+                        // start out seeded from Total ETO.
+                        //
+                        // A seed cannot survive New ETC becoming their sum. The seed is a
+                        // LIVE figure and it is not stored, so the box showed $59,205
+                        // while the database held null — and a save carrying only the
+                        // other half derived New ETC from 0 + that half, storing $2,500
+                        // under a cell reading $61,705. Making the save store the seed
+                        // too would mean freezing a live upstream number as though a
+                        // manager had entered it, and marking the cell dirty on arrival
+                        // would put the "unsaved changes" warning on a month nobody had
+                        // touched — the exact failure lib/etc-dirty-tracker.ts exists to
+                        // prevent.
+                        //
+                        // So the upstream figure moves to the TOOLTIP, which is what this
+                        // grid already does with New ETC's own suggestion, and for the
+                        // same stated reason: a cell nobody has answered has to read as
+                        // unanswered, and a suggestion in the box is indistinguishable
+                        // from a decision.
+                        //
+                        // round2 because this column is money and keeps two decimals: the
+                        // Total ETO sum arrives as a raw float (59205.01999499999 on the
+                        // first August job) under a cell that displays "$59,205".
+                        const suggestion = partsBreakout?.byJobPk.get(job.id) ?? null;
+                        const suggestedRaw = suggestion?.leftToInvoice ?? null;
+                        const suggestedLeftToInvoice = suggestedRaw == null ? null : round2(suggestedRaw);
+                        // ── The two ways this figure is not the whole story ──────────
+                        //
+                        // Both are real, both are small, and both used to live only in a
+                        // code comment. A difference from the Parts List that a manager
+                        // can only discover by re-adding the numbers themselves is the
+                        // same class of problem as the mismatch this whole change fixed.
+                        //
+                        // FLOORED: an over-invoiced job's raw figure is negative and this
+                        // cell shows $0. Two jobs in August 2026. The Parts List's own
+                        // column shows the negative, on purpose, so saying so here is
+                        // what makes the two reconcilable.
+                        const suggestionRawUnfloored =
+                          suggestion?.rawLeftToInvoice == null ? null : round2(suggestion.rawLeftToInvoice);
+                        const suggestionWasFloored =
+                          suggestionRawUnfloored != null && suggestionRawUnfloored < 0;
+                        // DRIFTING: a GL posting dated after the cutoff still reduces this
+                        // month, because the Parts List's rule pairs a purchase-date cutoff
+                        // with lifetime invoicing. 31 of 49 jobs in August 2026. The Parts
+                        // List drifts identically — the figures agree on any given day —
+                        // but a closed month whose number keeps moving should say so.
+                        const suggestionLatePostings = round2(suggestion?.postedAfterCutoff ?? 0);
+                        // ── A New ETC typed before these columns existed ─────────────
+                        //
+                        // August 2026 was already being filled in when New ETC became a
+                        // calculated field, so rows carry a figure a manager entered by
+                        // hand with both halves still empty. Left blank, that figure would
+                        // vanish from the grid the moment this shipped and be overwritten
+                        // by the first save of the row.
+                        //
+                        // So it carries into Left to Invoice, which is the half it most
+                        // likely described. Only while BOTH halves are unanswered: once
+                        // either is stored, the halves are the truth and the draft is
+                        // merely their sum. `saveAllNewEtcDrafts` applies the identical
+                        // rule against the identical stored fields, so the page and the
+                        // save cannot form different opinions about what this cell holds.
+                        const carriedLeftToInvoice =
+                          partsCostEntry.leftToInvoice == null &&
+                          partsCostEntry.leftToPurchase == null &&
+                          partsCostEntry.newEtcDraft != null
+                            ? round2(Number(partsCostEntry.newEtcDraft))
+                            : null;
+                        const leftToInvoiceValue =
+                          partsCostEntry.leftToInvoice != null
+                            ? round2(Number(partsCostEntry.leftToInvoice))
+                            : carriedLeftToInvoice;
+                        const leftToPurchaseValue =
+                          partsCostEntry.leftToPurchase != null ? round2(Number(partsCostEntry.leftToPurchase)) : null;
+                        // ── New ETC, calculated (2026-09-03, by request) ────────────
+                        //
+                        // The sum of the two cells above, with a blank half counting as
+                        // 0 — null only when NEITHER has been answered, which is the one
+                        // state that renders blank. This is the figure the whole rest of
+                        // this block is built from: the seed the cell displays, whether
+                        // the row counts as decided, its Diff, its risk flag and its
+                        // contribution to the footer.
+                        //
+                        // Computed from the SAME two values the cells are rendered with,
+                        // including the Left to Invoice seed. Deriving it from the stored
+                        // newEtcDraft instead would make the server's first paint
+                        // disagree with the sum the cells add up to the moment they
+                        // hydrate — and, worse, leave the cell permanently dirty: its
+                        // value would differ from its baseline with no edit behind it and
+                        // nothing a save could do about it.
+                        const breakoutSum =
+                          leftToInvoiceValue === null && leftToPurchaseValue === null
+                            ? null
+                            : round2((leftToInvoiceValue ?? 0) + (leftToPurchaseValue ?? 0));
+                        // Undecided still falls back to the carry-forward suggestion,
+                        // exactly as it does on a month without these columns — that is
+                        // what Submit would write, and next month's Prior ETC depends on
+                        // it. See effectiveNewEtc.
+                        const effectiveNewEtcCost =
+                          showBreakout && breakoutSum !== null ? breakoutSum : effectiveNewEtc(partsCostEntry);
                         // The SAME rule as the per-section-hours cells, with no
                         // exceptions left (lib/etc.ts): Parts Cost New ETC needs manager
                         // attention (yellow) exactly when money was spent this month
@@ -1910,7 +2042,13 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                           // returns true on hoursWorked 0). Money spent with an empty
                           // box is yellow, exactly like an hours cell.
                         } satisfies NewEtcCellState;
-                        const partsCostSeed = newEtcSeedText(partsCostState);
+                        // The calculated sum on a breakout month; the stored draft /
+                        // confirmed / carry-forward seed on every earlier one.
+                        const partsCostSeed = showBreakout
+                          ? breakoutSum === null
+                            ? ""
+                            : String(breakoutSum)
+                          : newEtcSeedText(partsCostState);
                         const decidedCost = isNewEtcCellDecided(partsCostState, partsCostSeed);
                         // Diff = Money Left − New ETC, where New ETC is the figure IN THE CELL:
                         // a blank box counts as 0, so Diff reads as the money nobody has planned
@@ -1948,16 +2086,14 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                           ? partsCostRiskTitle(moneyLeft, Math.max(effectiveNewEtcCost, 0), partsRisk.shortfall, currencyExact)
                           : null;
 
-                        const breakout = partsBreakout?.byJobPk.get(job.id);
-                        // Unknown halves contribute nothing to the totals rather than
-                        // zero, so a column footer never reads as a confident figure
-                        // built partly out of failures. The header says how many jobs
-                        // are missing when any are.
                         partsCostGrandTotal.prior += prior;
                         partsCostGrandTotal.worked += spent;
                         partsCostGrandTotal.newEtc += effectiveNewEtcCost;
-                        partsCostGrandTotal.leftToInvoice += breakout?.leftToInvoice ?? 0;
-                        partsCostGrandTotal.leftToPurchase += breakout?.leftToPurchase ?? 0;
+                        // A blank cell contributes nothing — the same rule the column
+                        // itself uses, so entering $1 moves the footer by $1 and a footer
+                        // total is never made partly of figures nobody can see.
+                        partsCostGrandTotal.leftToInvoice += leftToInvoiceValue ?? 0;
+                        partsCostGrandTotal.leftToPurchase += leftToPurchaseValue ?? 0;
 
                         return (
                           <Fragment key="parts-cost">
@@ -2019,36 +2155,76 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                             >
                               {currency(moneyLeft)}
                             </td>
-                            {/* ── The breakout, immediately left of New ETC ─────
-                                Both read "—" rather than $0 when unknown. A zero
-                                here would say "nothing outstanding", which is the
-                                opposite of not having been able to ask — on the two
-                                figures that seed the manager's forecast.
+                            {/* ── The two editable cells New ETC is made of ─────
+                                Both are typed, both wear New ETC's grey, and their
+                                sum IS the New ETC cell to their right — which is why
+                                that cell no longer takes a caret.
 
                                 Absent entirely before August 2026, matching the
                                 header — see lib/parts-breakout-scope.ts. */}
                             {showBreakout && (
                             <>
-                            <td
-                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-muted`}
-                              title={
-                                breakout?.leftToInvoice == null
-                                  ? "Left to Invoice could not be read from Total ETO for this job"
-                                  : `${currencyExact(breakout.leftToInvoice)} on a purchase order, not yet invoiced (live from Total ETO)`
+                            <PartsBreakoutCell
+                              which="invoice"
+                              name={`partsLeftToInvoice__${partsCostEntry.id}`}
+                              initialValue={leftToInvoiceValue == null ? "" : String(leftToInvoiceValue)}
+                              jobId={job.id}
+                              jobName={job.jobName}
+                              seedHint={
+                                // ── A CLOSED month gets no live number (2026-09-04) ──
+                                //
+                                // This row is confirmed history, and the only figure that
+                                // could appear here is a live upstream one that keeps
+                                // moving as later invoices post — so quoting it beside a
+                                // submitted month describes the month LESS accurately
+                                // every week, on a cell that is read-only and that nobody
+                                // answered before the month closed.
+                                //
+                                // A stored snapshot taken at submission was considered and
+                                // rejected: the submission never reads this figure
+                                // (monthly-report.ts takes newEtcDraft ?? the carry-forward
+                                // suggestion), nothing downstream reads it, and a frozen
+                                // copy would no longer equal the Parts List — which is
+                                // always live — reintroducing the exact mismatch reported
+                                // on 2026-09-03 in a narrower place. Saying nothing is both
+                                // cheaper and more accurate than saying something stale.
+                                //
+                                // `needsReview`, not `cellsReadOnly`: the latter folds in
+                                // the monthly-etc:edit permission, and a viewer without it
+                                // looking at an OPEN month should still see the figure.
+                                !partsCostEntry.needsReview
+                                  ? `This month is closed and nobody entered a figure here. The live Total ETO number is deliberately not shown — it moves as later invoices post, so it would no longer describe the month as submitted. For the current position, see this job's Parts List filtered through ${cutoffLabel}.`
+                                  : suggestedLeftToInvoice == null
+                                  ? "Nothing is filled in here automatically. Total ETO could not be reached for this job, so there is no suggestion either — type what is on order and not yet invoiced."
+                                  // Says "as of <month end>" because that is now what the
+                                  // figure IS. It used to be an as-of-today number on a
+                                  // month-end page, which is the bug fixed on 2026-09-03
+                                  // (lib/left-to-invoice.ts) — and a month-end figure that
+                                  // does not name its date invites the same confusion from
+                                  // the other direction. Matches the Parts List filtered
+                                  // through the same day, and the two sentences that may
+                                  // follow are the only two ways it does not.
+                                  : `Nothing is filled in here automatically. Total ETO says ${currencyExact(suggestedLeftToInvoice)} was on a purchase order and not yet invoiced as of ${cutoffLabel} — the same figure the job's Parts List shows filtered through that date.` +
+                                    (suggestionWasFloored
+                                      ? ` This job is over-invoiced by ${currencyExact(Math.abs(suggestionRawUnfloored))}, so the figure is shown as $0 rather than a negative; the Parts List's own column shows the negative.`
+                                      : "") +
+                                    (suggestionLatePostings > 0
+                                      ? ` ${currencyExact(suggestionLatePostings)} posted after ${cutoffLabel} against orders placed on or before it, and is already deducted — so this figure will keep falling as later invoices post.`
+                                      : "")
                               }
-                            >
-                              {breakout?.leftToInvoice == null ? "—" : currency(breakout.leftToInvoice)}
-                            </td>
-                            <td
-                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-muted`}
-                              title={
-                                breakout?.leftToPurchase == null
-                                  ? "Left to Purchase could not be read from Total ETO for this job"
-                                  : `${currencyExact(breakout.leftToPurchase)} of BOM parts with nothing bought against them yet, priced from the BOM (unit x qty) rather than from spend`
-                              }
-                            >
-                              {breakout?.leftToPurchase == null ? "—" : currency(breakout.leftToPurchase)}
-                            </td>
+                              bg={newEtcBg(true)}
+                              locked={cellsReadOnly}
+                            />
+                            <PartsBreakoutCell
+                              which="purchase"
+                              name={`partsLeftToPurchase__${partsCostEntry.id}`}
+                              initialValue={leftToPurchaseValue == null ? "" : String(leftToPurchaseValue)}
+                              jobId={job.id}
+                              jobName={job.jobName}
+                              seedHint="Nothing is filled in here automatically — type what is still to be bought."
+                              bg={newEtcBg(true)}
+                              locked={cellsReadOnly}
+                            />
                             </>
                             )}
                             <PartsCostNewEtcCell
@@ -2092,6 +2268,10 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                                   ? undefined
                                   : `Nothing decided yet. Money Left is ${currencyExact(moneyLeft)} — carrying that forward would give ${currencyExact(suggestedCost)}.`
                               }
+                              // Calculated from the two cells to its left on every month
+                              // that has them; typed, exactly as before, on every month
+                              // that does not.
+                              derived={showBreakout}
                               locked={cellsReadOnly}
                             />
                             <td
@@ -2312,15 +2492,22 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                           </td>
                           {showBreakout && (
                           <>
+                          {/* Both are typed columns now, so their totals move as they
+                              are typed — the same data-live hook the New ETC and Diff
+                              totals beside them already use (EtcLiveTotals). Without
+                              it these two would be the only Parts Cost totals that
+                              sat still while the column above them changed. */}
                           <td
-                            className={`border-l border-sdc-border ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-navy`}
+                            data-live="partsLeftToInvoice"
+                            className={`border-l border-sdc-border ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-navy`}
                             title={`${currencyExact(t.leftToInvoice)} on purchase orders, not yet invoiced, across every job shown`}
                           >
                             {currency(t.leftToInvoice)}
                           </td>
                           <td
-                            className={`border-l border-sdc-border ${HOURS_LEFT_BG} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-navy`}
-                            title={`${currencyExact(t.leftToPurchase)} of BOM parts not bought yet, across every job shown`}
+                            data-live="partsLeftToPurchase"
+                            className={`border-l border-sdc-border ${newEtcBg(true)} overflow-hidden px-1 py-2.5 text-center align-middle text-label whitespace-nowrap text-sdc-navy`}
+                            title={`${currencyExact(t.leftToPurchase)} still to be bought, across every job shown`}
                           >
                             {currency(t.leftToPurchase)}
                           </td>

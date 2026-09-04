@@ -20,13 +20,24 @@ import { useEffect } from "react";
 // They were built as live figures first (lib/parts-etc-breakout.ts), and it did not
 // hold up on the month-end page. The batched 49-job parts-lines query aborts under
 // real page load — `[parts-etc-breakout] batched parts lines failed: Error: aborted`
-// — and because the BOM half needs those lines to know which parts have already been
+// — and because the BOM half needed those lines to know which parts have already been
 // bought, Left to Purchase then read **$0 on every job**. A figure that is silently
 // zero is worse than one somebody typed, on a number that seeds the forecast.
 //
-// The live figure is not thrown away: Left to Invoice still arrives SEEDED from Total
-// ETO and stays overridable, so the manager only touches it when the fetch failed or
-// they disagree. Left to Purchase starts blank, by request.
+// ── Both cells start EMPTY, and the upstream figure is a tooltip ─────────────
+//
+// Left to Purchase by explicit request. Left to Invoice because a seed cannot coexist
+// with New ETC being the sum of these two: the seed is live and unstored, so the box
+// would show $59,205 against a stored null, and a save carrying only the other half
+// would derive New ETC from 0 + that half — storing $2,500 under a cell reading
+// $61,705. (Observed, not hypothesised.) Storing the seed on save would freeze a live
+// upstream number as though somebody had entered it; marking the cell dirty on arrival
+// would put the unsaved-changes warning on a month nobody had touched.
+//
+// The upstream figure is not thrown away — it is on the tooltip of an empty cell,
+// which is exactly what this grid already does with New ETC's own suggestion, and for
+// the reason stated there: a suggestion sitting IN the box is indistinguishable from a
+// decision somebody made.
 //
 // ── Deliberately thinner than PartsCostNewEtcCell ───────────────────────────
 //
@@ -49,13 +60,26 @@ export function PartsBreakoutCell({
 }: {
   /** `partsLeftToInvoice__<entryId>` or `partsLeftToPurchase__<entryId>`. */
   name: string;
-  /** The stored value, or the Total ETO seed for Left to Invoice. "" renders blank. */
+  /**
+   * The stored value, and "" renders blank. No upstream figure ever reaches this box —
+   * Total ETO's is on `seedHint` instead.
+   *
+   * The one non-stored value it may carry is a New ETC typed before these columns
+   * existed, which the page hands to Left to Invoice while BOTH halves are still empty
+   * (see etc/page.tsx). That is a stored figure a manager entered, not a suggestion,
+   * and `saveAllNewEtcDrafts` derives it by the same rule so the cell and the write
+   * agree about what is in here.
+   */
   initialValue: string;
   locked: boolean;
   jobId: number;
   which: "invoice" | "purchase";
   jobName: string;
-  /** Where a seeded starting value came from, so an untouched cell can say so. */
+  /**
+   * The tooltip for an EMPTY cell: that nothing is auto-filled here, plus whatever
+   * upstream figure is known (Total ETO's, on Left to Invoice). Replaced by the normal
+   * tooltip the moment a value is typed.
+   */
   seedHint?: string;
   bg: string;
 }) {

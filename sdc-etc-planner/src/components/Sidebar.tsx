@@ -173,7 +173,7 @@ const GROUPS: NavGroup[] = [
       },
       {
         href: "/job-hours",
-        label: "Job Hour Details",
+        label: "Job Details",
         isActive: (p) => p === "/job-hours",
         icon: (
           <Icon>
