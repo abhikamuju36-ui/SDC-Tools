@@ -182,8 +182,33 @@ jobs:
       # typecheck before any build fails with `Cannot find name 'RouteContext'` on the
       # dynamic API routes. Building produces those types and typechecks in the same
       # pass, so this one step covers both.
+      # ── Emit the failure as an ANNOTATION, not only into the log ────────────
+      #
+      # Added 2026-09-04. This job had failed 25 times out of 25 since CI was first
+      # enabled and the reason was unreachable: run logs need an authenticated token,
+      # whereas `::error::` annotations are readable from the public API. A failure now
+      # carries its own tail with it, so "why is CI red" stops requiring somebody to
+      # open the Actions tab and copy it out by hand.
+      #
+      # `set +e` plus the explicit `exit $code`: the step must still FAIL. Capturing
+      # output must never turn a broken build green, which is what a bare pipe into
+      # tail would do.
+      #
+      # `paste -sd'~'` flattens the tail onto one line, because an annotation is one
+      # line. Deliberately no backslash escapes anywhere in this block — they are
+      # awkward to get right through YAML's block scalar and buy nothing here.
       - name: Build (typechecks as it goes)
-        run: npm run build
+        shell: bash
+        run: |
+          set +e
+          npm run build > build.log 2>&1
+          code=$?
+          tail -c 4000 build.log
+          if [ $code -ne 0 ]; then
+            msg=$(tail -n 30 build.log | paste -sd'~' - | cut -c1-1400)
+            echo "::error title=Reports build failed::${msg}"
+          fi
+          exit $code
         env:
           # The build reads these; neither needs to be real, it just must parse.
           DATABASE_URL: mysql://ci:ci@127.0.0.1:3306/ci

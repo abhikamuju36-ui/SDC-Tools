@@ -35,12 +35,6 @@
         "repo": "SDC-Tools",
         "channel": "assemblies",
         "releaseType": "release"
-      },
-      {
-        "provider": "github",
-        "owner": "abhikamuju36-ui",
-        "repo": "sdc-assemblies-library",
-        "releaseType": "release"
       }
     ],
     "asar": true,
