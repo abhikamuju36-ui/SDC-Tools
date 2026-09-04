@@ -716,7 +716,7 @@ function AssembliesTab({ bom, onPartClick, onOpenPo }: { bom: JobBom; onPartClic
       {/* 1.01, up from 0.78 (2026-08-14, by request — "increase vertical height
           ~30%") — the extra room goes straight to more visible rows before this
           scrolls, since it's a max-height on the scroll container, not padding. */}
-      <DragScroll className="max-h-[calc(var(--app-vh)_*_1.01)] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
+      <DragScroll scrollKey="assemblies-tree" className="max-h-[calc(var(--app-vh)_*_1.01)] overflow-auto styled-scrollbar rounded-xl border border-sdc-border bg-white shadow-sm">
         <div className="min-w-[846px]">
           {bom.roots.map((section) => (
             <div key={section.key}>
@@ -1880,6 +1880,9 @@ function PartsTableView({
           The filters sit above this element and the totals are a sticky <tfoot> inside
           it, so the only thing that moves is the rows. */}
       <DragScroll
+        // Named so the Parts List keeps its place across a tab switch by NAME rather
+        // than by DOM position — see lib/tab-scroll-state.ts.
+        scrollKey="parts-list"
         scrollRef={scrollRef}
         className="overflow-auto styled-scrollbar"
         style={{ height: TABLE_H }}

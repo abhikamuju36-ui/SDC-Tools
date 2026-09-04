@@ -626,7 +626,7 @@ export async function ProjectsView({ params }: { params: {
       {/* One delegated handler for every date cell — see GridDateCells. */}
       <GridDateCells />
       <ProjectsEditFieldset>
-      <DragScroll className={`max-h-[calc(var(--app-vh)_-_170px)] min-w-[480px] ${GRID_SCROLLER}`}>
+      <DragScroll scrollKey="projects-grid" className={`max-h-[calc(var(--app-vh)_-_170px)] min-w-[480px] ${GRID_SCROLLER}`}>
         {/* quiet-controls: hide the per-row dropdown chevrons (Type/Billable/
             Status) and date calendar icons until the cell is hovered/focused —
             see globals.css. Scoped to this table so other grids (Employees)

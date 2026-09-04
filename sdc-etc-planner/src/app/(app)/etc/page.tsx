@@ -1359,7 +1359,7 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
               unconditional (`text-xs` + `mb-4`, one line at its shortest), so that is
               the constant recovered. The four banners were conditional and never part of
               this figure. */}
-          <DragScroll className={`max-h-[calc(var(--app-vh)_-_183px)] ${GRID_SCROLLER}`}>
+          <DragScroll scrollKey="etc-grid" className={`max-h-[calc(var(--app-vh)_-_183px)] ${GRID_SCROLLER}`}>
             <table data-grid="etc" className={`w-full text-sm ${TABLE_GRID} ${CELL_PADDING}`}>
               <thead className="sticky top-0 z-20 bg-sdc-gray-100">
                 <tr className={TABLE_HEADER_ROW}>

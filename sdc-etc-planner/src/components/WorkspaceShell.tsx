@@ -3,13 +3,13 @@
 import { Activity, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WorkspaceTabBar } from "@/components/WorkspaceTabBar";
+import { TabScrollMemory } from "@/components/TabScrollMemory";
 import { DEFAULT_RATIO, MIN_PANE_PX, clampRatio, ratioBounds } from "@/lib/split-view";
 import { publishWorkspace, registerWorkspaceApply } from "@/lib/workspace-store";
 import {
   activateTab,
   exitSplit,
   hasTab,
-  tabById,
   tabTitle,
   workspaceHref,
   type TabId,
@@ -53,60 +53,6 @@ import {
 //     open a new tab / duplicate / re-route a tab  router.replace — a pane must render
 //
 // `apply()` below is the single place that decides, so no caller has to know.
-function ScrollMemory({ scopeKey, children }: { scopeKey: string; children: React.ReactNode }) {
-  const ref = useRef<HTMLDivElement | null>(null);
-
-  // ── Still here, and still earning its place ──────────────────────────────
-  //
-  // <Activity> preserves the live scroll position of a mounted pane, so within one
-  // session this is no longer what makes switching tabs land where you left off. It is
-  // what survives a RELOAD — App Refresh is a full frontend reload on every deploy, and
-  // the panes are rebuilt from scratch. Keyed by route + params rather than by tab id
-  // for the same reason: the id is fresh after a reload, the view is not.
-  const key = `sdc.ws.scroll:${scopeKey}`;
-
-  useLayoutEffect(() => {
-    const el = ref.current;
-    if (!el) return;
-    try {
-      const saved = Number(sessionStorage.getItem(key));
-      // Restored in a layout effect so it happens before paint — a scroll set in a
-      // plain effect is visible as a jump from the top.
-      if (Number.isFinite(saved) && saved > 0) el.scrollTop = saved;
-    } catch {
-      // Private mode, or storage disabled. Starting at the top is a fine outcome.
-    }
-
-    let raf = 0;
-    const onScroll = () => {
-      // One write per frame at most: this fires on every scroll event of a long
-      // Monthly ETC grid.
-      if (raf) return;
-      raf = requestAnimationFrame(() => {
-        raf = 0;
-        try {
-          sessionStorage.setItem(key, String(el.scrollTop));
-        } catch {
-          /* see above */
-        }
-      });
-    };
-    el.addEventListener("scroll", onScroll, { passive: true });
-    return () => {
-      el.removeEventListener("scroll", onScroll);
-      if (raf) cancelAnimationFrame(raf);
-    };
-  }, [key]);
-
-  // overflow-auto both ways: dense pages scroll horizontally in here too, and
-  // ScrollHandoff (mounted once in AppShell, above this) keeps nested table scrolling
-  // working because it listens at the document level.
-  return (
-    <div ref={ref} className="min-h-0 flex-1 overflow-auto bg-background">
-      {children}
-    </div>
-  );
-}
 
 export function WorkspaceShell({
   ws: serverWs,
@@ -402,13 +348,6 @@ function PanePending() {
 }
 
 /** A tab's scroll identity: its route AND its params, so a new month starts at the top. */
-function scopeKeyFor(ws: Workspace, id: TabId): string {
-  const tab = tabById(ws, id);
-  if (!tab) return id;
-  const sp = new URLSearchParams(tab.params);
-  sp.sort(); // stable regardless of the order the params were written in
-  return `${tab.path}?${sp.toString()}`;
-}
 
 function PaneHost({
   ws,
@@ -478,7 +417,9 @@ function PaneHost({
       )}
       {/* Each pane its own scroll container: scrolling Monthly ETC on the left must not
           move Job Details on the right. */}
-      <ScrollMemory scopeKey={scopeKeyFor(ws, id)}>{children}</ScrollMemory>
+      {/* Keyed by the TAB, not by route+params: two Monthly ETC tabs on the same
+          month must not share a position. See lib/tab-scroll-state.ts. */}
+      <TabScrollMemory tabId={id}>{children}</TabScrollMemory>
     </section>
   );
 }

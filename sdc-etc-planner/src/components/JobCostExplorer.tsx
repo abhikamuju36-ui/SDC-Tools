@@ -938,7 +938,7 @@ export function JobCostExplorer({
            out on its own terms. The min() keeps today's safe, viewport-relative
            behavior as the FLOOR on a normal screen, while capping at 40 rows'
            worth on any screen tall enough to otherwise show more. */
-        <div className={`${GRID_SCROLLER} rounded-xl max-h-[min(87.5rem,calc(var(--app-vh)_-_11rem))]`}>
+        <div data-scroll-key="profitability-grid" className={`${GRID_SCROLLER} rounded-xl max-h-[min(87.5rem,calc(var(--app-vh)_-_11rem))]`}>
           {/* Still not TABLE_GRID (2026-08-12): that token draws a uniform
               #808080 line around every cell, which is the right call for the
               Projects/Monthly ETC grids (people EDIT cells there, and a

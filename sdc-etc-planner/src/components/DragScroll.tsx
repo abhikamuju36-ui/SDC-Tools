@@ -123,6 +123,7 @@ export function DragScroll({
   children,
   scrollRef,
   style,
+  scrollKey,
 }: {
   className?: string;
   children: ReactNode;
@@ -134,6 +135,16 @@ export function DragScroll({
    * lives here, so a parent's scrollTop is always 0.
    */
   scrollRef?: React.RefObject<HTMLDivElement | null>;
+  /**
+   * A stable name for this scroller, so its position survives a tab switch by NAME
+   * rather than by where it happens to sit in the DOM tree.
+   *
+   * Added 2026-09-04 with the per-tab scroll restore (lib/tab-scroll-state.ts). That
+   * mechanism falls back to a structural path, which is enough for a hide-and-show but
+   * cannot survive a re-render that changes the tree above the scroller — and the grids
+   * this component wraps are exactly the positions worth not losing.
+   */
+  scrollKey?: string;
   /** Inline styles for the scroll element — the Parts List sets a fixed height here. */
   style?: React.CSSProperties;
 }) {
@@ -273,6 +284,7 @@ export function DragScroll({
     <div
       ref={ref}
       className={className}
+      data-scroll-key={scrollKey}
       style={style}
       onMouseEnter={onMouseEnter}
       onMouseDown={onMouseDown}
