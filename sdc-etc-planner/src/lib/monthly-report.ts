@@ -1,4 +1,7 @@
 import { prisma } from "@/lib/prisma";
+import { showsPartsBreakout } from "@/lib/parts-breakout-scope";
+import { readPartsEtcBreakout } from "@/lib/parts-etc-breakout";
+import { resolveLeftToInvoice } from "@/lib/left-to-invoice";
 import { APP_VERSION } from "@/lib/app-version";
 import { createHash, randomUUID } from "crypto";
 import { calcHoursLeft, isMonthLocked, isValidMonth, newEtcSeedText, round2, suggestNewEtc, type NewEtcCellState } from "@/lib/etc";
@@ -463,6 +466,45 @@ type Tx = Parameters<Parameters<typeof prisma.$transaction>[0]>[0];
 // recomputed from scratch.
 export async function submitEtcEntriesInTx(tx: Tx, month: string, userId: number | null): Promise<number> {
   const entries = await tx.etcEntry.findMany({ where: { month } });
+
+  // ── Parts Cost New ETC is the SUM of two halves, one of them computed ─────
+  //
+  // 2026-09-04: Left to Invoice is the Parts List figure at this month's cutoff, read
+  // only. New ETC = that + Left to Purchase, which is what the grid renders.
+  //
+  // The submission has to derive it the same way or a signed-off month would disagree
+  // with the screen it was signed off on. It cannot rely on `newEtcDraft` alone: the
+  // save only writes that field when somebody actually edits a half, so a row where
+  // nobody typed anything has a null draft and would otherwise be confirmed at the
+  // carry-forward suggestion instead of the figure on screen.
+  //
+  // And it FREEZES the invoice half into `leftToInvoice`, which is what stops a closed
+  // month rewriting itself: that figure keeps moving as later invoices post (the Parts
+  // List moves with it), so history has to be a snapshot rather than a live read.
+  //
+  // One batched upstream query, once a month, before the transaction's writes.
+  const partsInvoice = new Map<number, number | null>();
+  if (showsPartsBreakout(month)) {
+    const partsJobIds = [...new Set(entries.filter((e) => e.section === PARTS_COST_SECTION).map((e) => e.jobId))];
+    const jobRows = await tx.job.findMany({
+      where: { id: { in: partsJobIds } },
+      select: { id: true, jobId: true },
+    });
+    const breakout = await readPartsEtcBreakout(
+      jobRows.filter((j) => j.jobId).map((j) => ({ pk: j.id, jobNumber: j.jobId as string })),
+      month,
+    ).catch((e) => {
+      // Not fatal: a row falls back to its stored draft below, exactly as it did before
+      // these columns existed. Submitting a month must not depend on Total ETO being up.
+      console.error(`[monthly-report] ${month}: Left to Invoice unavailable at submission:`, e);
+      return null;
+    });
+    if (breakout) {
+      for (const [pk, b] of breakout.byJobPk) {
+        partsInvoice.set(pk, b.rawLeftToInvoice == null ? null : round2(b.rawLeftToInvoice));
+      }
+    }
+  }
   if (entries.length === 0) throw new Error(`${month} has no entries to submit.`);
   if (isMonthLocked(entries)) throw new Error(`${month} is already submitted and locked.`);
 
@@ -506,10 +548,26 @@ export async function submitEtcEntriesInTx(tx: Tx, month: string, userId: number
     // An already-confirmed row is history; leave it exactly as it is.
     if (!entry.needsReview) continue;
     const draft = entry.newEtcDraft != null ? round2(Number(entry.newEtcDraft)) : null;
-    const newEtc = draft ?? round2(suggestNewEtc(priorEtc, hoursWorked));
+    // The two-half rule, for Parts Cost on a breakout month. `resolveLeftToInvoice`
+    // is the same function the grid renders by, so the confirmed figure is the one
+    // that was on screen. A blank Left to Purchase counts as 0 — the grid shows the
+    // sum that way too.
+    const resolvedInvoice = partsInvoice.size > 0 && entry.section === PARTS_COST_SECTION
+      ? resolveLeftToInvoice({
+          computed: partsInvoice.get(entry.jobId) ?? null,
+          stored: entry.leftToInvoice != null ? round2(Number(entry.leftToInvoice)) : null,
+          submitted: false,
+        }).value
+      : null;
+    const purchase = entry.leftToPurchase != null ? round2(Number(entry.leftToPurchase)) : null;
+    const breakoutSum =
+      resolvedInvoice === null && purchase === null ? null : resolvedInvoice === null ? null : round2(resolvedInvoice + (purchase ?? 0));
+    const newEtc = breakoutSum ?? draft ?? round2(suggestNewEtc(priorEtc, hoursWorked));
     await tx.etcEntry.update({
       where: { id: entry.id },
       data: {
+        // Frozen, so a closed month cannot drift. Only for the rows this applies to.
+        ...(resolvedInvoice !== null ? { leftToInvoice: resolvedInvoice } : {}),
         hoursLeftCalc: round2(calcHoursLeft(priorEtc, hoursWorked)),
         newEtc,
         newEtcDraft: null, // consumed by the submission

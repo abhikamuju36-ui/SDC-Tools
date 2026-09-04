@@ -210,61 +210,51 @@ test("before August 2026 the Parts Cost rows shrink by exactly the two breakout 
   }
 });
 
-test("both breakout columns are typed cells, and neither is ever seeded", () => {
-  // Requested 2026-09-03: both are editable and start blank, with nothing populating
-  // them automatically. The test names the SEED rather than the emptiness — a cell can
-  // look empty by accident, but a seed is always deliberate.
+test("Left to Invoice is computed and read-only; Left to Purchase is the typed half", () => {
+  // REWRITTEN 2026-09-04. The premise this test used to assert — "both breakout columns
+  // are typed cells, and neither is ever seeded" — was the 2026-09-03 design, and it is
+  // exactly what the reconciliation decision reversed: "Monthly ETC Left to Invoice =
+  // Parts List Left to Invoice … exact reconciliation every time." A typed figure cannot
+  // equal a computed one.
   //
-  // Left to Purchase was the explicit request. Left to Invoice followed: a live,
-  // unstored seed cannot coexist with New ETC being the sum of these two, because a
-  // save carrying only the other half derives New ETC from 0 + that half. The upstream
-  // figure lives on the tooltip instead.
+  // So the halves are now asymmetric, and that asymmetry is the thing worth pinning:
+  // Left to Invoice is a fact (the Parts List figure at this month's cutoff), Left to
+  // Purchase is a judgement nobody can compute — a BOM part with no purchase line does
+  // not appear in the parts rows at all.
   assert.match(ETC_PAGE, /<PartsBreakoutCell[\s\S]{0,400}?which="invoice"/);
   assert.match(ETC_PAGE, /<PartsBreakoutCell[\s\S]{0,400}?which="purchase"/);
-  // Repointed 2026-09-04: the carry rule moved into lib/left-to-invoice.ts
-  // (`shownLeftToInvoice`) so the grid, the save and the reconciliation audit share one
-  // implementation. The INTENT is unchanged and is what is asserted — a cell's value
-  // comes from the stored fields or from nothing, and never from the upstream figure.
+
+  // The invoice cell renders, and cannot accept, a figure.
+  assert.match(ETC_PAGE, /which="invoice"[\s\S]{0,400}?readOnly/, "Left to Invoice must be read-only");
   assert.match(
     ETC_PAGE,
-    /const leftToInvoiceValue = shownLeftToInvoice\(\{[\s\S]{0,700}?\}\);/,
-    "Left to Invoice must resolve through the shared rule",
+    /const resolvedInvoice = resolveLeftToInvoice\(\{[\s\S]{0,700}?\}\);/,
+    "and must resolve through the shared rule",
   );
+  // Computed on an open row, frozen on a submitted one — never a stored manual entry
+  // winning over the upstream figure while the month is still open.
+  assert.match(ETC_PAGE, /submitted: !partsCostEntry\.needsReview/);
+
+  // The purchase half is still typed, and still starts blank.
   assert.match(
     ETC_PAGE,
     /const leftToPurchaseValue =\s*partsCostEntry\.leftToPurchase != null \? round2\(Number\(partsCostEntry\.leftToPurchase\)\) : null;/,
     "Left to Purchase comes from storage or from nothing",
   );
-  // The seed must not reach either value. This is the assertion that actually protects
-  // the column, and it survives the rule moving.
-  const valueBlock = ETC_PAGE.slice(
-    ETC_PAGE.indexOf("const leftToPurchaseValue ="),
-    ETC_PAGE.indexOf("const breakoutSum ="),
-  );
-  assert.ok(valueBlock.length > 0, "could not locate the cell-value block");
+  assert.match(ETC_PAGE, /which="purchase"[\s\S]{0,300}?name=\{`partsLeftToPurchase__/);
   assert.ok(
-    !/suggest/i.test(valueBlock),
-    "a breakout cell may come from storage or from nothing — never from an upstream seed",
+    !/which="purchase"[\s\S]{0,300}?readOnly/.test(ETC_PAGE),
+    "Left to Purchase must stay editable — nothing upstream can compute it",
   );
-  // The one thing Left to Invoice MAY fall back to is a New ETC somebody typed before
-  // these columns existed — a stored figure, and only while BOTH halves are empty. The
-  // save applies the same rule against the same fields, so the cell and the write
-  // cannot form different opinions about what that cell holds.
-  // The carry itself is now one tested function, so what these assert is that both
-  // sides REACH it — and, for the page, that it is handed the entry's own draft rather
-  // than anything upstream.
-  assert.match(
-    ETC_PAGE,
-    /shownLeftToInvoice\(\{[\s\S]{0,400}?newEtcDraft:[\s\S]{0,40}?partsCostEntry\.newEtcDraft != null/,
-    "the page must carry a pre-existing New ETC into Left to Invoice",
-  );
-  assert.match(
-    readFileSync(join(process.cwd(), "src", "lib", "etc-actions.ts"), "utf8"),
-    /const carriedInvoice = shownLeftToInvoice\(\{/,
-    "the save must apply the same carry rule as the page",
-  );
-  // And nothing upstream computes such a figure any more: the BOM half that used to
-  // fill this column was removed with this change.
+
+  // A New ETC typed before these columns existed is no longer shown as Left to Invoice
+  // (that cell is computed now), but it is not discarded either: it moves to the
+  // tooltip so a manager can see the figure their row used to carry.
+  assert.match(ETC_PAGE, /const supersededNewEtc =/);
+  assert.match(ETC_PAGE, /previously carried a hand-typed New ETC/);
+
+  // And nothing upstream computes a Left to PURCHASE figure: the BOM half that used to
+  // fill that column was removed on 2026-09-03.
   const breakoutLib = readFileSync(join(process.cwd(), "src", "lib", "parts-etc-breakout.ts"), "utf8");
   // The IMPORTS, not the prose: the file explains at length what it used to do, and
   // matching on the names alone would fail on its own history.

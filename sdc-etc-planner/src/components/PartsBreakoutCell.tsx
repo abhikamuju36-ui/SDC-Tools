@@ -54,6 +54,7 @@ export function PartsBreakoutCell({
   locked,
   jobId,
   which,
+  readOnly = false,
   jobName,
   seedHint,
   bg,
@@ -74,6 +75,16 @@ export function PartsBreakoutCell({
   locked: boolean;
   jobId: number;
   which: "invoice" | "purchase";
+  /**
+   * Render the figure; do not accept one.
+   *
+   * Left to Invoice became COMPUTED on 2026-09-04 — "Monthly ETC Left to Invoice =
+   * Parts List Left to Invoice … exact reconciliation every time" — so it has no
+   * caret, no hidden input and no dirty-tracker registration: there is nothing for a
+   * save to write. It still PUBLISHES, because New ETC is the live sum of the two
+   * halves and the client cannot see a server-rendered number.
+   */
+  readOnly?: boolean;
   jobName: string;
   /**
    * The tooltip for an EMPTY cell: that nothing is auto-filled here, plus whatever
@@ -100,15 +111,20 @@ export function PartsBreakoutCell({
   // month switch self-cleaning. Without this the autosave debounce never sees these
   // cells and a typed value would only persist via the Save button.
   useEffect(() => {
+    // A read-only cell has nothing to save, so registering it would leave a
+    // permanently clean field in the tracker and hand the unsaved-changes guard a name
+    // no save could ever resolve.
+    if (readOnly) return;
     registerEtcField(name, initialValue);
     return () => forgetEtcField(name);
     // initialValue is the mount-time baseline by design — see EtcSectionCells.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name]);
+  }, [name, readOnly]);
 
   useEffect(() => {
+    if (readOnly) return;
     if (value === serverValue) adoptEtcFieldBaseline(name, serverValue);
-  }, [name, serverValue, value]);
+  }, [name, serverValue, value, readOnly]);
 
   // Publish for the live New ETC sum. New ETC is a read-only cell rendered by the
   // page, so it cannot see this state — the same reason the Parts Cost row's Diff is
@@ -123,6 +139,21 @@ export function PartsBreakoutCell({
   // Formatted when idle, raw while typing — a caret must never sit inside a "$" or a
   // thousands separator.
   const display = focused ? value : value.trim() === "" ? "" : usd(Number(value));
+
+  if (readOnly) {
+    // No input, no hidden field, no `name` in the form at all — so a save cannot write
+    // this column even by accident, and the tab order skips a cell nobody can answer.
+    // An em dash rather than $0 when the figure is unknown: a zero here would assert
+    // "nothing outstanding", which is the opposite of not having been able to ask.
+    return (
+      <td
+        className={`motion-cell relative border-l border-sdc-border ${bg} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`}
+        title={seedHint}
+      >
+        {value.trim() === "" ? <span className="text-sdc-muted">—</span> : usd(Number(value))}
+      </td>
+    );
+  }
 
   return (
     <td className={`motion-cell relative border-l border-sdc-border ${bg} ${PARTS_COL_W} px-1 py-1 text-center`}>

@@ -232,57 +232,71 @@ export function explainLeftToInvoice(
   };
 }
 
-// ── What the CELL shows, as opposed to what the rows compute ─────────────────
+// ── What the CELL shows — computed, not entered (2026-09-04) ─────────────────
 //
-// REPORTED 2026-09-04, with screenshots: Monthly ETC's Left to Invoice column showed
-// $10,000 against a Parts List reading $35,496, and "I want a root-cause fix, not a
-// display patch."
+// The reconciliation report was answered with a decision: "Monthly ETC Left to
+// Invoice = Parts List Left to Invoice … exact reconciliation every time." That
+// settles a conflict rather than adding a feature, so it is worth writing down what
+// it overrides.
 //
-// The root cause is not in the arithmetic above — that was unified on 2026-09-03 and
-// tests/left-to-invoice-parity.test.ts holds it there. It is that the COLUMN does not
-// render the arithmetic. Left to Invoice became a manager-entered cell, so what it
-// displays is the stored figure, or — on a row from before the column existed — the
-// hand-typed New ETC that was already there. The computed figure reaches only the
-// tooltip of an empty cell. Every row in the report's screenshot is the carried case,
-// which is why each one equalled its own New ETC exactly and reconciled with nothing.
+// On 2026-09-03 this column was made a manager-entered cell, with New ETC as the sum
+// of it and Left to Purchase. A typed figure cannot equal a computed one, so the
+// column disagreed with the Parts List by whatever a manager had typed — $10,000
+// against $35,496 in the report's screenshots — and no change to the arithmetic
+// above could have closed that gap. Editable and always-equal-to-upstream are
+// different things, and always-equal won.
 //
-// That rule was written out twice, in etc/page.tsx and in etc-actions.ts, deliberately
-// mirrored by hand so a save could not drop the figure a manager was looking at. Two
-// hand-mirrored copies is what the report asked to stop doing, and a third was about
-// to be written for the reconciliation audit. This is that rule, once.
+// So Left to Invoice is now COMPUTED and read-only. `rawLeftToInvoice` is what it
+// shows: the signed per-line sum through the month-end cutoff, which is exactly what
+// the Parts List's own column sums. Not the floored figure — flooring at zero is the
+// one place the two legitimately disagreed (two August jobs, $521.28 together), and
+// "exact" leaves no room for it. An over-invoiced job now reads negative here, as it
+// already does there, because that is true and it is the reason to look.
+//
+// Left to Purchase stays manager-entered. It always was the half nobody can compute:
+// a BOM part with no purchase line does not appear in the parts rows at all.
 
-/** The stored halves plus the draft, already rounded to cents by the caller. */
-export type PartsBreakoutStored = {
-  leftToInvoice: number | null;
-  leftToPurchase: number | null;
-  /** A pre-breakout hand-typed New ETC, when there is one. */
-  newEtcDraft: number | null;
+/** Where a displayed Left to Invoice came from. The audit prints it. */
+export type LeftToInvoiceSource =
+  /** Live from Total ETO through the month-end cutoff — an open month. */
+  | "computed"
+  /** Frozen when the row was submitted, so a closed month cannot drift. */
+  | "frozen"
+  /** A closed row with nothing frozen (submitted before this change), recomputed. */
+  | "recomputed"
+  /** Upstream is unreachable and nothing was frozen. Renders as an em dash. */
+  | "unavailable";
+
+export type LeftToInvoiceInputs = {
+  /** The Parts List figure at this month's cutoff, or null when upstream failed. */
+  computed: number | null;
+  /** What was written to EtcEntry.leftToInvoice when the row was submitted. */
+  stored: number | null;
+  /** The row has been submitted — `!needsReview`. */
+  submitted: boolean;
 };
 
 /**
- * What the Left to Invoice cell displays.
+ * The figure the cell shows, and why.
  *
- * The stored figure when there is one. Otherwise a pre-breakout New ETC, but ONLY
- * while both halves are unanswered: once either is stored, the halves are the truth
- * and the draft is merely their sum, so reading it back would double-count.
+ * A SUBMITTED row prefers what was frozen at submission. Two reasons, and both
+ * matter: a closed month's numbers are history and must not move, and this figure
+ * genuinely does drift — the Parts List's rule pairs a purchase-date cutoff with
+ * lifetime invoicing, so a September posting against an August PO keeps reducing
+ * August. Freezing is what stops a signed-off month rewriting itself.
  *
- * Null means the cell is blank — which is the state that shows the computed figure as
- * a hint, and the only state in which this column reconciles with the Parts List.
+ * An OPEN row prefers the computed figure, and that is the whole point of the change:
+ * whatever is stored on an open row is a superseded manual entry, so it must not win.
+ * It is still used as a fallback when upstream is unreachable, because a stale number
+ * that says where it came from beats an em dash on the column New ETC is built from.
  */
-export function shownLeftToInvoice(e: PartsBreakoutStored): number | null {
-  if (e.leftToInvoice !== null) return e.leftToInvoice;
-  if (e.leftToPurchase === null && e.newEtcDraft !== null) return e.newEtcDraft;
-  return null;
-}
-
-/**
- * Where a displayed figure came from. The audit prints it, because "these two numbers
- * differ" is only actionable once you know whether a person typed the one on screen.
- */
-export type ShownSource = "stored" | "carried-new-etc" | "blank";
-
-export function shownLeftToInvoiceSource(e: PartsBreakoutStored): ShownSource {
-  if (e.leftToInvoice !== null) return "stored";
-  if (e.leftToPurchase === null && e.newEtcDraft !== null) return "carried-new-etc";
-  return "blank";
+export function resolveLeftToInvoice(x: LeftToInvoiceInputs): { value: number | null; source: LeftToInvoiceSource } {
+  if (x.submitted) {
+    if (x.stored !== null) return { value: x.stored, source: "frozen" };
+    if (x.computed !== null) return { value: x.computed, source: "recomputed" };
+    return { value: null, source: "unavailable" };
+  }
+  if (x.computed !== null) return { value: x.computed, source: "computed" };
+  if (x.stored !== null) return { value: x.stored, source: "frozen" };
+  return { value: null, source: "unavailable" };
 }

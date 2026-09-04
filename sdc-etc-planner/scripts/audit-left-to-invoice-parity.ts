@@ -6,8 +6,7 @@ import {
   leftToInvoiceForLines,
   monthEndCutoff,
   explainLeftToInvoice,
-  shownLeftToInvoice,
-  shownLeftToInvoiceSource,
+  resolveLeftToInvoice,
 } from "../src/lib/left-to-invoice";
 
 // ── Why Monthly ETC's Left to Invoice and the Parts List disagree ────────────
@@ -63,7 +62,7 @@ async function main() {
     // The three stored fields the CELL is rendered from. Added 2026-09-04: this audit
     // compared computed-against-computed and so reported parity while the screen showed
     // $10,000 against the Parts List's $35,496. See the DISPLAYED section below.
-    select: { jobId: true, leftToInvoice: true, leftToPurchase: true, newEtcDraft: true },
+    select: { jobId: true, leftToInvoice: true, leftToPurchase: true, newEtcDraft: true, needsReview: true },
   });
   const jobs = await prisma.job.findMany({
     where: { id: { in: [...new Set(entries.map((e) => e.jobId))] } },
@@ -146,7 +145,8 @@ DRIFT: ${drifting.length} job(s) have GL postings dated after ${END}`);
   // the column actually shows, plus the reason each figure is what it is.
   const round2 = (n: number) => Math.round(n * 100) / 100;
   const dec = (v: unknown) => (v == null ? null : round2(Number(v)));
-  const shownByJob = new Map<number, { shown: number | null; source: string }>();
+  const shownByJob = new Map<number, { leftToInvoice: number | null; leftToPurchase: number | null; newEtcDraft: number | null }>();
+  const submittedByJob = new Map<number, boolean>();
   for (const e of entries) {
     const stored = {
       leftToInvoice: dec(e.leftToInvoice),
@@ -155,7 +155,10 @@ DRIFT: ${drifting.length} job(s) have GL postings dated after ${END}`);
     };
     // The SAME function the grid and the save render the cell from, so this cannot
     // report a figure the screen does not show.
-    shownByJob.set(e.jobId, { shown: shownLeftToInvoice(stored), source: shownLeftToInvoiceSource(stored) });
+    // The SAME resolution the grid and the submission use, so this cannot report a
+    // figure the screen does not show. `computed` is filled in per job below.
+    shownByJob.set(e.jobId, stored);
+    submittedByJob.set(e.jobId, !e.needsReview);
   }
 
   console.log("");
@@ -165,8 +168,20 @@ DRIFT: ${drifting.length} job(s) have GL postings dated after ${END}`);
   let listTotalShown = 0;
   const mismatches: { job: string; name: string; list: number; shown: number | null; source: string }[] = [];
   for (const j of withNumbers) {
-    const list = Math.max(0, defs.purchaseCutoff(byJob.get(j.jobId) ?? []));
-    const s = shownByJob.get(j.id) ?? { shown: null, source: "no-entry" };
+    // RAW, not floored: the cell shows the signed figure now, which is exactly what the
+    // Parts List column sums. See lib/left-to-invoice.ts.
+    const list = round2(defs.purchaseCutoff(byJob.get(j.jobId) ?? []));
+    const stored = shownByJob.get(j.id);
+    const r = stored
+      ? resolveLeftToInvoice({
+          // The batched query succeeded, so a job with no lines genuinely has $0
+          // on order — not "unknown". Null is reserved for an upstream failure.
+          computed: list,
+          stored: stored.leftToInvoice,
+          submitted: submittedByJob.get(j.id) ?? false,
+        })
+      : { value: null, source: "no-entry" as const };
+    const s = { shown: r.value, source: r.source };
     listTotalShown += list;
     shownTotal += s.shown ?? 0;
     const diff = (s.shown ?? 0) - list;

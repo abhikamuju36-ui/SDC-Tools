@@ -26,7 +26,7 @@ import { PartsBreakoutCell } from "@/components/PartsBreakoutCell";
 import { readPartsEtcBreakout } from "@/lib/parts-etc-breakout";
 import { monthEndLabel } from "@/lib/left-to-invoice";
 import { showsPartsBreakout } from "@/lib/parts-breakout-scope";
-import { shownLeftToInvoice } from "@/lib/left-to-invoice";
+import { resolveLeftToInvoice } from "@/lib/left-to-invoice";
 import { EtcSectionCells } from "@/components/EtcSectionCells";
 import {
   StandardRatesProvider,
@@ -1944,59 +1944,55 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                         // Total ETO sum arrives as a raw float (59205.01999499999 on the
                         // first August job) under a cell that displays "$59,205".
                         const suggestion = partsBreakout?.byJobPk.get(job.id) ?? null;
-                        const suggestedRaw = suggestion?.leftToInvoice ?? null;
-                        const suggestedLeftToInvoice = suggestedRaw == null ? null : round2(suggestedRaw);
-                        // ── The two ways this figure is not the whole story ──────────
+                        // ── The one way this figure is not the whole story ───────────
                         //
-                        // Both are real, both are small, and both used to live only in a
-                        // code comment. A difference from the Parts List that a manager
-                        // can only discover by re-adding the numbers themselves is the
-                        // same class of problem as the mismatch this whole change fixed.
+                        // The FLOOR caveat is gone with the change below: the cell now
+                        // shows the signed figure, so an over-invoiced job reads negative
+                        // here exactly as it does in the Parts List, and there is nothing
+                        // left to explain away.
                         //
-                        // FLOORED: an over-invoiced job's raw figure is negative and this
-                        // cell shows $0. Two jobs in August 2026. The Parts List's own
-                        // column shows the negative, on purpose, so saying so here is
-                        // what makes the two reconcilable.
-                        const suggestionRawUnfloored =
-                          suggestion?.rawLeftToInvoice == null ? null : round2(suggestion.rawLeftToInvoice);
-                        const suggestionWasFloored =
-                          suggestionRawUnfloored != null && suggestionRawUnfloored < 0;
-                        // DRIFTING: a GL posting dated after the cutoff still reduces this
-                        // month, because the Parts List's rule pairs a purchase-date cutoff
-                        // with lifetime invoicing. 31 of 49 jobs in August 2026. The Parts
-                        // List drifts identically — the figures agree on any given day —
-                        // but a closed month whose number keeps moving should say so.
+                        // DRIFT is real and stays: a GL posting dated after the cutoff
+                        // still reduces this month, because the Parts List’s rule pairs a
+                        // purchase-date cutoff with lifetime invoicing. 31 of 49 jobs in
+                        // August 2026. It does NOT make the two surfaces disagree — they
+                        // drift together — but a month whose number keeps moving should
+                        // say so.
                         const suggestionLatePostings = round2(suggestion?.postedAfterCutoff ?? 0);
-                        // ── A New ETC typed before these columns existed ─────────────
+                        // ── Left to Invoice is COMPUTED, not entered (2026-09-04) ───
                         //
-                        // August 2026 was already being filled in when New ETC became a
-                        // calculated field, so rows carry a figure a manager entered by
-                        // hand with both halves still empty. Left blank, that figure would
-                        // vanish from the grid the moment this shipped and be overwritten
-                        // by the first save of the row.
+                        // "Monthly ETC Left to Invoice = Parts List Left to Invoice …
+                        // exact reconciliation every time." So the cell renders the
+                        // upstream figure at this month's cutoff rather than anything a
+                        // manager typed, and lib/left-to-invoice.ts decides which figure
+                        // that is — computed on an open row, frozen on a submitted one.
                         //
-                        // So it carries into Left to Invoice, which is the half it most
-                        // likely described. Only while BOTH halves are unanswered: once
-                        // either is stored, the halves are the truth and the draft is
-                        // merely their sum. `saveAllNewEtcDrafts` applies the identical
-                        // rule against the identical stored fields, so the page and the
-                        // save cannot form different opinions about what this cell holds.
-                        //
-                        // The rule itself now lives in lib/left-to-invoice.ts beside the
-                        // arithmetic it shadows. It was written out here AND in
-                        // etc-actions.ts, mirrored by hand; the 2026-09-04 report asked
-                        // for one implementation of this business rule, and the
-                        // reconciliation audit needed to ask the same question a third
-                        // time. `shownLeftToInvoice` is the one answer all three use.
+                        // `rawLeftToInvoice`, deliberately, not the floored figure: the
+                        // Parts List's column is a signed sum, and flooring at zero was
+                        // the one place the two legitimately disagreed. "Exact" leaves
+                        // no room for it, so an over-invoiced job reads negative here too.
+                        // Still manager-entered, and always was the half nobody can
+                        // compute: a BOM part with no purchase line does not appear in
+                        // the parts rows at all.
                         const leftToPurchaseValue =
                           partsCostEntry.leftToPurchase != null ? round2(Number(partsCostEntry.leftToPurchase)) : null;
-                        const leftToInvoiceValue = shownLeftToInvoice({
-                          leftToInvoice:
+                        const resolvedInvoice = resolveLeftToInvoice({
+                          computed: suggestion?.rawLeftToInvoice == null ? null : round2(suggestion.rawLeftToInvoice),
+                          stored:
                             partsCostEntry.leftToInvoice != null ? round2(Number(partsCostEntry.leftToInvoice)) : null,
-                          leftToPurchase: leftToPurchaseValue,
-                          newEtcDraft:
-                            partsCostEntry.newEtcDraft != null ? round2(Number(partsCostEntry.newEtcDraft)) : null,
+                          submitted: !partsCostEntry.needsReview,
                         });
+                        const leftToInvoiceValue = resolvedInvoice.value;
+                        // A New ETC typed before these columns existed. No longer shown
+                        // as Left to Invoice — that cell is computed now — but not thrown
+                        // away either: it moves to New ETC’s tooltip, so a manager can see
+                        // the figure their row used to carry and re-enter the part of it
+                        // that was still to buy.
+                        const supersededNewEtc =
+                          partsCostEntry.leftToInvoice == null &&
+                          partsCostEntry.leftToPurchase == null &&
+                          partsCostEntry.newEtcDraft != null
+                            ? round2(Number(partsCostEntry.newEtcDraft))
+                            : null;
                         // ── New ETC, calculated (2026-09-03, by request) ────────────
                         //
                         // The sum of the two cells above, with a blank half counting as
@@ -2171,50 +2167,30 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                             <>
                             <PartsBreakoutCell
                               which="invoice"
+                              // COMPUTED, not entered. `name` is still passed for the
+                              // aria label and the publish key; readOnly means it puts
+                              // no field in the form, so no save can write it.
+                              readOnly
                               name={`partsLeftToInvoice__${partsCostEntry.id}`}
                               initialValue={leftToInvoiceValue == null ? "" : String(leftToInvoiceValue)}
                               jobId={job.id}
                               jobName={job.jobName}
                               seedHint={
-                                // ── A CLOSED month gets no live number (2026-09-04) ──
-                                //
-                                // This row is confirmed history, and the only figure that
-                                // could appear here is a live upstream one that keeps
-                                // moving as later invoices post — so quoting it beside a
-                                // submitted month describes the month LESS accurately
-                                // every week, on a cell that is read-only and that nobody
-                                // answered before the month closed.
-                                //
-                                // A stored snapshot taken at submission was considered and
-                                // rejected: the submission never reads this figure
-                                // (monthly-report.ts takes newEtcDraft ?? the carry-forward
-                                // suggestion), nothing downstream reads it, and a frozen
-                                // copy would no longer equal the Parts List — which is
-                                // always live — reintroducing the exact mismatch reported
-                                // on 2026-09-03 in a narrower place. Saying nothing is both
-                                // cheaper and more accurate than saying something stale.
-                                //
-                                // `needsReview`, not `cellsReadOnly`: the latter folds in
-                                // the monthly-etc:edit permission, and a viewer without it
-                                // looking at an OPEN month should still see the figure.
-                                !partsCostEntry.needsReview
-                                  ? `This month is closed and nobody entered a figure here. The live Total ETO number is deliberately not shown — it moves as later invoices post, so it would no longer describe the month as submitted. For the current position, see this job's Parts List filtered through ${cutoffLabel}.`
-                                  : suggestedLeftToInvoice == null
-                                  ? "Nothing is filled in here automatically. Total ETO could not be reached for this job, so there is no suggestion either — type what is on order and not yet invoiced."
-                                  // Says "as of <month end>" because that is now what the
-                                  // figure IS. It used to be an as-of-today number on a
-                                  // month-end page, which is the bug fixed on 2026-09-03
-                                  // (lib/left-to-invoice.ts) — and a month-end figure that
-                                  // does not name its date invites the same confusion from
-                                  // the other direction. Matches the Parts List filtered
-                                  // through the same day, and the two sentences that may
-                                  // follow are the only two ways it does not.
-                                  : `Nothing is filled in here automatically. Total ETO says ${currencyExact(suggestedLeftToInvoice)} was on a purchase order and not yet invoiced as of ${cutoffLabel} — the same figure the job's Parts List shows filtered through that date.` +
-                                    (suggestionWasFloored
-                                      ? ` This job is over-invoiced by ${currencyExact(Math.abs(suggestionRawUnfloored))}, so the figure is shown as $0 rather than a negative; the Parts List's own column shows the negative.`
-                                      : "") +
+                                // The tooltip now explains a figure that is ON SCREEN,
+                                // rather than offering one nobody had entered. Three
+                                // things a manager needs in order to trust it: where it
+                                // came from, that it matches the Parts List filtered
+                                // through the same day, and the one way it keeps moving.
+                                leftToInvoiceValue == null
+                                  ? `Total ETO could not be reached for this job, so Left to Invoice is unknown and New ETC cannot include it. It is not zero — it is unmeasured.`
+                                  : resolvedInvoice.source === "frozen"
+                                  ? `${currencyExact(leftToInvoiceValue)}, frozen when this month was submitted. Held rather than recomputed so a closed month cannot rewrite itself as later invoices post.`
+                                  : `${currencyExact(leftToInvoiceValue)} on purchase orders and not yet invoiced as of ${cutoffLabel} — the same figure this job’s Parts List shows filtered through that date, from the same rows and the same formula (lib/left-to-invoice.ts). Computed, not typed: it cannot be edited here.` +
                                     (suggestionLatePostings > 0
-                                      ? ` ${currencyExact(suggestionLatePostings)} posted after ${cutoffLabel} against orders placed on or before it, and is already deducted — so this figure will keep falling as later invoices post.`
+                                      ? ` ${currencyExact(suggestionLatePostings)} has posted after ${cutoffLabel} against orders placed on or before it, and is already deducted — so this figure keeps falling as later invoices post. The Parts List moves with it.`
+                                      : "") +
+                                    (supersededNewEtc != null
+                                      ? ` This row previously carried a hand-typed New ETC of ${currencyExact(supersededNewEtc)}; New ETC is now this figure plus Left to Purchase, so enter what is still to be bought.`
                                       : "")
                               }
                               bg={newEtcBg(true)}

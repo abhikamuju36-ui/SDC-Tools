@@ -11,8 +11,7 @@ import {
   rawLeftToInvoice,
   explainLeftToInvoice,
   monthEndLabel,
-  shownLeftToInvoice,
-  shownLeftToInvoiceSource,
+  resolveLeftToInvoice,
 } from "../src/lib/left-to-invoice";
 import type { PartsCostLine } from "../src/lib/sync-totaleto";
 
@@ -361,22 +360,6 @@ test("a job with no late postings reports no caveat at all", () => {
   assert.equal(clean.raw, clean.total, "nothing floored");
 });
 
-test("the grid carries both caveats out of the data layer", () => {
-  // Structural: a figure the page cannot explain is a figure that will be re-reported
-  // as a bug. These three fields are what the tooltip is built from.
-  const breakout = readFileSync(join(process.cwd(), "src", "lib", "parts-etc-breakout.ts"), "utf8");
-  assert.match(breakout, /rawLeftToInvoice: number \| null;/);
-  assert.match(breakout, /postedAfterCutoff: number;/);
-  assert.match(breakout, /const x = explainLeftToInvoice\(lines, \{ asOf \}\);/);
-
-  const page = readFileSync(join(process.cwd(), "src", "app", "(app)", "etc", "page.tsx"), "utf8");
-  assert.match(page, /const cutoffLabel = monthEndLabel\(month\);/, "the page must use the shared label");
-  assert.ok(!/const monthEndLabel = \(\(\) =>/.test(page), "the untestable inline copy must be gone");
-  assert.match(page, /suggestionWasFloored/, "the floor must reach the tooltip");
-  assert.match(page, /suggestionLatePostings/, "the drift must reach the tooltip");
-  // The tooltip states the cutoff date, which is what makes the figure self-describing.
-  assert.match(page, /not yet invoiced as of \$\{cutoffLabel\}/);
-});
 
 // ── Why there is no submission-time snapshot ─────────────────────────────────
 //
@@ -393,15 +376,6 @@ test("the grid carries both caveats out of the data layer", () => {
 // What the drift actually justified is smaller and free: on a closed month, do not
 // quote a moving number at all.
 
-test("the submission freezes the carry-forward suggestion, not the upstream figure", () => {
-  // Point 1. If this ever changes, a snapshot becomes a real question again.
-  const report = readFileSync(join(process.cwd(), "src", "lib", "monthly-report.ts"), "utf8");
-  assert.match(report, /const newEtc = draft \?\? round2\(suggestNewEtc\(priorEtc, hoursWorked\)\);/);
-  assert.ok(
-    !/leftToInvoice|readPartsEtcBreakout|left-to-invoice/.test(report.replace(/\/\/.*$/gm, "")),
-    "the submission must not depend on the live upstream Left to Invoice figure",
-  );
-});
 
 test("the upstream figure reaches exactly one place: an empty cell's tooltip", () => {
   // Point 2. A second consumer would mean a drifting number somewhere that matters.
@@ -419,88 +393,59 @@ test("the upstream figure reaches exactly one place: an empty cell's tooltip", (
   assert.match(cell, /value\.trim\(\) === "" && seedHint/);
 });
 
-test("a closed month is told nothing rather than something stale", () => {
-  // The fix the drift actually justified. Gated on the ROW's needsReview, not on
-  // cellsReadOnly — that folds in the monthly-etc:edit permission, and a viewer
-  // without it looking at an open month should still see the live figure.
+test("the grid carries the drift caveat out of the data layer", () => {
+  // Structural: a figure the page cannot explain is a figure that will be re-reported
+  // as a bug. Rewritten 2026-09-04 — the FLOOR caveat is gone because the cell now
+  // shows the signed figure, so there is nothing left to explain away. The drift is
+  // still real and still disclosed.
+  const breakout = readFileSync(join(process.cwd(), "src", "lib", "parts-etc-breakout.ts"), "utf8");
+  assert.match(breakout, /rawLeftToInvoice: number \| null;/);
+  assert.match(breakout, /postedAfterCutoff: number;/);
+  assert.match(breakout, /const x = explainLeftToInvoice\(lines, \{ asOf \}\);/);
+
   const page = readFileSync(join(process.cwd(), "src", "app", "(app)", "etc", "page.tsx"), "utf8");
-  assert.match(page, /!partsCostEntry\.needsReview\s*\?\s*`This month is closed and nobody entered a figure here\./);
-  assert.ok(
-    !/cellsReadOnly\s*\?\s*`This month is closed/.test(page),
-    "must not gate on the permission-bearing flag",
-  );
-  // The closed-month text points at the source of truth instead of quoting a number.
-  const closed = page.slice(page.indexOf("This month is closed"), page.indexOf("This month is closed") + 400);
-  assert.ok(!/currencyExact\(suggested/.test(closed), "a closed month must not quote the live figure");
-  assert.match(closed, /Parts List filtered through \$\{cutoffLabel\}/);
+  assert.match(page, /const cutoffLabel = monthEndLabel\(month\);/, "the page must use the shared label");
+  assert.ok(!/const monthEndLabel = \(\(\) =>/.test(page), "the untestable inline copy must be gone");
+  assert.match(page, /suggestionLatePostings/, "the drift must reach the tooltip");
+  // The tooltip states the cutoff date, which is what makes the figure self-describing.
+  assert.match(page, /not yet invoiced as of \$\{cutoffLabel\}/);
+  // And it says the figure cannot be edited, because that is now the surprising part.
+  assert.match(page, /Computed, not typed/);
 });
 
-// ── What the CELL shows, which is not what the rows compute ────────────────
-//
-// The 2026-09-04 report photographed $10,000 in a column the Parts List put at
-// $35,496 and asked for a root-cause fix. The arithmetic above was not the cause: the
-// column is manager-entered, so it shows a stored figure or a pre-breakout hand-typed
-// New ETC, and the computed figure only ever reaches an empty cell's tooltip. That
-// rule was written out twice, mirrored by hand, and the audit was about to need it a
-// third time — so it lives in one place now, and these are its cases.
-
-test("a stored figure is what the cell shows", () => {
-  assert.equal(shownLeftToInvoice({ leftToInvoice: 1234.5, leftToPurchase: null, newEtcDraft: 9999 }), 1234.5);
-  assert.equal(shownLeftToInvoiceSource({ leftToInvoice: 1234.5, leftToPurchase: null, newEtcDraft: 9999 }), "stored");
-  // Zero is a figure a manager entered, not an absence.
-  assert.equal(shownLeftToInvoice({ leftToInvoice: 0, leftToPurchase: null, newEtcDraft: 500 }), 0);
+test("the submission derives Parts Cost New ETC from the two halves, and freezes one", () => {
+  // REVERSED 2026-09-04, deliberately. This test used to assert the opposite — that the
+  // submission must NOT touch the upstream figure — and that was right while Left to
+  // Invoice was a typed cell whose stored value the draft already carried.
+  //
+  // The decision "Monthly ETC Left to Invoice = Parts List Left to Invoice … exact
+  // reconciliation every time" makes that impossible: the half is computed, the save
+  // only writes newEtcDraft when somebody edits the OTHER half, so a row nobody touched
+  // has a null draft. Confirming it at the carry-forward suggestion would sign off a
+  // figure that was never on screen.
+  const report = readFileSync(join(process.cwd(), "src", "lib", "monthly-report.ts"), "utf8");
+  assert.match(report, /const newEtc = breakoutSum \?\? draft \?\? round2\(suggestNewEtc\(priorEtc, hoursWorked\)\);/);
+  assert.match(report, /resolveLeftToInvoice\(\{/, "through the shared rule, not a private copy");
+  // Frozen, so a closed month cannot drift as later invoices post.
+  assert.match(report, /leftToInvoice: resolvedInvoice/);
+  // And an upstream outage must not be able to block closing a month.
+  assert.match(report, /Left to Invoice unavailable at submission/);
+  assert.match(report, /return null;/);
 });
 
-test("a pre-breakout New ETC carries in, but ONLY while both halves are unanswered", () => {
-  // This is the case in every row of the report's screenshot, and it is why each one
-  // equalled its own New ETC exactly and reconciled with nothing.
-  assert.equal(shownLeftToInvoice({ leftToInvoice: null, leftToPurchase: null, newEtcDraft: 10000 }), 10000);
-  assert.equal(
-    shownLeftToInvoiceSource({ leftToInvoice: null, leftToPurchase: null, newEtcDraft: 10000 }),
-    "carried-new-etc",
-  );
-  // Once the OTHER half is stored, the halves are the truth and the draft is merely
-  // their sum — reading it back would double-count it.
-  assert.equal(shownLeftToInvoice({ leftToInvoice: null, leftToPurchase: 2500, newEtcDraft: 10000 }), null);
-  assert.equal(shownLeftToInvoiceSource({ leftToInvoice: null, leftToPurchase: 2500, newEtcDraft: 10000 }), "blank");
-});
-
-test("nothing stored anywhere is blank, which is the only state that reconciles", () => {
-  // A blank cell shows the computed figure as its hint, so it agrees with the Parts
-  // List by construction. Every other state is a number somebody typed.
-  assert.equal(shownLeftToInvoice({ leftToInvoice: null, leftToPurchase: null, newEtcDraft: null }), null);
-  assert.equal(shownLeftToInvoiceSource({ leftToInvoice: null, leftToPurchase: null, newEtcDraft: null }), "blank");
-});
-
-test("the rule has ONE implementation — the grid, the save and the audit all call it", () => {
-  // The specific duplication the report asked to end. Both call sites used to spell
-  // the rule out; a third copy was about to be written for the audit.
+test("a closed month shows the frozen figure, not a live one", () => {
+  // Rewritten 2026-09-04. The old rule — say nothing on a closed month — existed
+  // because the only available number was live and therefore wrong for a submitted
+  // month. There is a frozen one now, so the cell shows it and the tooltip says it is
+  // frozen. That is strictly more informative and cannot go stale.
   const page = readFileSync(join(process.cwd(), "src", "app", "(app)", "etc", "page.tsx"), "utf8");
-  const actions = readFileSync(join(process.cwd(), "src", "lib", "etc-actions.ts"), "utf8");
-  const audit = readFileSync(join(process.cwd(), "scripts", "audit-left-to-invoice-parity.ts"), "utf8");
-  for (const [name, src] of [["the ETC page", page], ["the save action", actions], ["the audit", audit]] as const) {
-    assert.ok(src.includes("shownLeftToInvoice"), `${name} must call the shared rule`);
-  }
-  // And none of them may re-derive it. The signature of the old copies was a
-  // three-way test against newEtcDraft.
-  for (const [name, src] of [["the ETC page", page], ["the save action", actions]] as const) {
-    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
-    assert.ok(
-      !/leftToPurchase\s*==?=?\s*null\s*&&[\s\S]{0,80}newEtcDraft/.test(code),
-      `${name} still re-derives the carry rule`,
-    );
-  }
-});
-
-test("the audit compares what is DISPLAYED, not just two calculations", () => {
-  // The gap that let this ship looking fixed: the audit measured rows against rows and
-  // reported parity while the screen disagreed. It now reads the stored fields and
-  // prints the Job / Parts List / Monthly ETC / difference table that was asked for.
-  const audit = readFileSync(join(process.cwd(), "scripts", "audit-left-to-invoice-parity.ts"), "utf8");
-  assert.match(audit, /leftToInvoice: true, leftToPurchase: true, newEtcDraft: true/, "it must read the stored cells");
-  assert.ok(audit.includes("DISPLAYED:"), "it must report the displayed comparison");
-  assert.ok(audit.includes("does not reconcile"), "it must count the mismatches");
-  // And name the contributing rows, so a mismatch is traceable.
-  assert.ok(audit.includes("EXCLUDED (after cutoff)"));
-  assert.match(audit, /shownLeftToInvoiceSource/, "each figure must say where it came from");
+  assert.match(page, /resolvedInvoice\.source === "frozen"/, "the tooltip must distinguish frozen from computed");
+  assert.match(page, /frozen when this month was submitted/);
+  // The reason, stated where somebody will read it.
+  assert.match(page, /so a closed month cannot rewrite itself/);
+  // The resolution itself is gated on the ROW's needsReview, not on cellsReadOnly —
+  // that folds in the monthly-etc:edit permission, and a viewer without it looking at
+  // an open month must still see the computed figure.
+  assert.match(page, /submitted: !partsCostEntry\.needsReview/);
+  assert.ok(!/submitted: cellsReadOnly/.test(page), "must not gate on the permission-bearing flag");
 });

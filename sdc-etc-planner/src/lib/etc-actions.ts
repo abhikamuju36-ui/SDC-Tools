@@ -10,7 +10,8 @@ import {
   parseNewEtcField,
   type NewEtcWriteIntent,
 } from "@/lib/etc";
-import { shownLeftToInvoice } from "@/lib/left-to-invoice";
+import { resolveLeftToInvoice } from "@/lib/left-to-invoice";
+import { readPartsEtcBreakout } from "@/lib/parts-etc-breakout";
 import { derivePriorEtcForMonth, cascadePriorEtcForward } from "@/lib/etc-prior-etc";
 import { seedMonthRows } from "@/lib/etc-seeding";
 import { etcActiveJobFilter } from "@/lib/job-filters";
@@ -279,6 +280,11 @@ export async function saveAllNewEtcDrafts(
       newEtcClearedAt: true,
       leftToInvoice: true,
       leftToPurchase: true,
+      // The job NUMBER, so Left to Invoice can be recomputed here. Needed since
+      // 2026-09-04: that half is no longer posted by the client, so the derived New ETC
+      // has to be built from the upstream figure the grid is showing.
+      jobId: true,
+      job: { select: { jobId: true } },
     },
   });
 
@@ -302,6 +308,43 @@ export async function saveAllNewEtcDrafts(
   // Does this month split Parts Cost New ETC into Left to Invoice + Left to Purchase?
   // Same rule the grid renders by, so the server writes what the page shows.
   const breakoutInScope = showsPartsBreakout(month);
+  // ── Left to Invoice is COMPUTED, so the SAVE has to compute it too ─────────
+  //
+  // 2026-09-04: "Monthly ETC Left to Invoice = Parts List Left to Invoice … exact
+  // reconciliation every time." The cell is read-only and posts no field, so this
+  // action can no longer take that half from the payload — and it cannot take it from
+  // storage either, because storage holds superseded manual entries on an open row.
+  //
+  // It matters that this is right rather than approximately right: `newEtcDraft` is
+  // written here as the SUM of the two halves, and the submission, the export and next
+  // month's Prior ETC all read that field. A save that derived New ETC from a stale
+  // invoice half would put a stored figure behind the grid's own, which is the exact
+  // class of mismatch this whole change removes.
+  //
+  // One batched query for the month (the BOM half was removed on 2026-09-03, so this is
+  // a single `ProjectID IN (…)` round trip — measured 547ms across August's 49 jobs).
+  // Failure yields nulls and is handled per row.
+  const computedInvoice = new Map<number, number | null>();
+  if (breakoutInScope) {
+    const jobs = [
+      ...new Map(
+        entries
+          .filter((e) => e.section === PARTS_COST_SECTION && e.job?.jobId)
+          .map((e) => [e.jobId, { pk: e.jobId, jobNumber: e.job!.jobId as string }]),
+      ).values(),
+    ];
+    const breakout = await readPartsEtcBreakout(jobs, month).catch((e) => {
+      console.error("[etc-save] Left to Invoice could not be read; New ETC falls back to what is stored:", e);
+      return null;
+    });
+    if (breakout) {
+      for (const [pk, b] of breakout.byJobPk) {
+        // `rawLeftToInvoice` — the signed figure the cell shows, so the stored sum and
+        // the rendered sum are the same arithmetic. See lib/left-to-invoice.ts.
+        computedInvoice.set(pk, b.rawLeftToInvoice == null ? null : round2(b.rawLeftToInvoice));
+      }
+    }
+  }
   // The half-cell edits themselves, for the audit metadata. Deliberately NOT pushed
   // into `changes`: that list drives the notification banner and the incremental
   // cell push, both of which name their column from the entry's SECTION — so a Left
@@ -328,22 +371,23 @@ export async function saveAllNewEtcDrafts(
     // The SAME function etc/page.tsx renders the cell from (lib/left-to-invoice.ts).
     // It used to be this rule written out again here, mirrored by hand — which is
     // exactly the duplication the 2026-09-04 reconciliation report asked to end.
-    const carriedInvoice = shownLeftToInvoice({
-      leftToInvoice: null,
-      leftToPurchase: storedPurchase,
-      newEtcDraft: entry.newEtcDraft != null ? round2(Number(entry.newEtcDraft)) : null,
-    });
+    // ── Only ONE half is posted now ──────────────────────────────────────────
+    //
+    // Left to Invoice is computed and read-only, so it is not in the payload and there
+    // is nothing to guard against a stale write of: the figure comes from Total ETO,
+    // and the same resolution rule the grid renders by decides which one (computed
+    // while the row is open, whatever was frozen once it is submitted). Falling back to
+    // the stored figure when upstream is unreachable is what stops an outage silently
+    // rewriting New ETC to just the purchase half.
+    const resolvedInvoice = resolveLeftToInvoice({
+      computed: computedInvoice.get(entry.jobId) ?? null,
+      stored: storedInvoice,
+      submitted: !entry.needsReview,
+    }).value;
     const halves = [
       // `shown` is what the manager's cell was displaying, which is what an incoming
-      // value has to be compared against — otherwise clearing a carried figure looks
-      // like "null, unchanged" and the clear does nothing. `stored` stays separate for
-      // the stale-write guard, which asks about the DATABASE.
-      {
-        key: "invoice" as const,
-        field: `partsLeftToInvoice__${entry.id}`,
-        stored: storedInvoice,
-        shown: storedInvoice ?? carriedInvoice,
-      },
+      // value has to be compared against. `stored` stays separate for the stale-write
+      // guard, which asks about the DATABASE.
       {
         key: "purchase" as const,
         field: `partsLeftToPurchase__${entry.id}`,
@@ -351,11 +395,9 @@ export async function saveAllNewEtcDrafts(
         shown: storedPurchase,
       },
     ];
-    // Seeded with what the CELLS HELD, so a save carrying only one half keeps the
-    // other exactly as the manager saw it. The client posts only the cells this user
-    // touched (changedEtcFormData), so a one-half payload is the normal case.
+    // The computed half is not negotiable; only the typed one comes from the payload.
     const next: { invoice: number | null; purchase: number | null } = {
-      invoice: storedInvoice ?? carriedInvoice,
+      invoice: resolvedInvoice,
       purchase: storedPurchase,
     };
     let touched = false;
