@@ -28,7 +28,7 @@ const usd = (n: number) =>
   (n < 0 ? "-" : "") + "$" + Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
 /** Kept in step with SAGE_FIRST_VENDORS in lib/sync-totaleto.ts — the test asserts they match. */
-const ALLOWED = new Set(["SDC Credit Card"]);
+const ALLOWED = new Set(["SDC Credit Card", "Steven Douglas Corp. Expense Reports"]);
 
 type Row = { CompanyID: number; CName: string; Docs: number; Lines: number; Amount: number; FirstSeen: string; LastSeen: string };
 

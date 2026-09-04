@@ -138,8 +138,40 @@ gross of the positive lines; the **net is $253,667**, after the −$675,000 reve
 | What it is | Amount | Counts as spent? |
 |---|---:|---|
 | Sage-first purchases — SDC Credit Card, 158 lines | $112,630 | **Yes**, as of 2026-09-04 |
+| Employee expense reimbursements — 59 lines | $44,524 | **Yes**, as of 2026-09-04 |
 | ETO→Sage reconciling adjustments | ~$253,600 | **No** — would double-count |
-| Internal SDC billings / expense reports | $475,253 | **Not yet** — no ledger match found |
+| Internal SDC billings (`Steven Douglas Corp.`) | $430,729 | **Not yet** — no ledger match found |
+
+#### 2.2 Job 1101's Extra Payables, reconciled line for line
+
+**Added 2026-09-04**, from ETO's own material-costs report for the job. The app's
+extra-cost lines total **$29,100.81** across 17 rows — matching that report exactly.
+
+Applying the same ledger test the card charges passed, the expense reimbursements pass
+it too. All three in-period lines reconcile to the cent as `GENJ` *Payroll* postings,
+one of them split across two employees on a single day exactly as the card charges split
+into freight and food components:
+
+```
+2026-02-20   $57.64   Employee reimbursements - Shaffer
+2026-05-29   $40.00   Employee reimbursements - Klingensmith  } $61.02
+2026-05-29   $21.02   Employee reimbursements - Siegfried     }
+2026-07-24   $10.49   Employee reimbursements - Novotney
+            $129.15 = 57.64 + 61.02 + 10.49
+```
+
+(The fourth, $22.02, is dated 2026-09-04 — after this ledger draft — so its absence is
+the draft's period, not evidence against it.)
+
+**One line on job 1101 is still excluded: $480.00**, the flagged
+`Reconciling with Sage - Factory Automation PO 51206` entry, which has no ledger
+counterpart. Correct.
+
+And it exposes something the flag alone cannot explain: job 1101 carries **three**
+`Reconciling With Sage - SDC` entries, and only that one is flagged. The other two —
+$9,430.05 and $4.34 — are unflagged and have therefore counted as spend all along. The
+flag is applied inconsistently *within a single vendor on a single job*, which is the
+sharpest remaining question for accounting.
 
 #### What shipped
 

@@ -279,7 +279,26 @@ const AP_LINE_AMOUNT = sqlRefundSigned(AP_LINE_AMOUNT_RAW, "APDD.APDocItemDesc")
 // the above: `Steven Douglas Corp.` internal billings (280 lines, $58,281),
 // `Steven Douglas Corp. Expense Reports` (21 lines, $15,324) and
 // `Reconciling With Sage - SDC` (2 lines, $610).
-const SAGE_FIRST_VENDORS = "'SDC Credit Card'";
+// ── Expense Reports added 2026-09-04, on the same evidence as the card ──────
+//
+// Job 1101's ETO material-costs report lists four expense-report lines as Extra
+// Payables. Three fall inside the August ledger draft, and all three reconcile to the
+// cent as GENJ "Payroll" postings — one of them split across two employees on the same
+// day, exactly the way the card charges are split into freight and food components:
+//
+//     2026-02-20   $57.64   Employee reimbursements - Shaffer
+//     2026-05-29   $40.00   Employee reimbursements - Klingensmith  } $61.02
+//     2026-05-29   $21.02   Employee reimbursements - Siegfried     }
+//     2026-07-24   $10.49   Employee reimbursements - Novotney
+//                 $129.15 = 57.64 + 61.02 + 10.49
+//
+// (The fourth, $22.02, is dated 2026-09-04 — after that draft — so its absence is the
+// ledger's period, not evidence against it.)
+//
+// These are employees paid back for things bought for the job. They are real cost,
+// they post through payroll, and they appear on the job ledger — the same three tests
+// the credit card had to pass.
+const SAGE_FIRST_VENDORS = "'SDC Credit Card', 'Steven Douglas Corp. Expense Reports'";
 
 /**
  * The GL-posted test, against an ALREADY-JOINED tblCompany alias.

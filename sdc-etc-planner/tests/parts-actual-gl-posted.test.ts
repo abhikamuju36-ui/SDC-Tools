@@ -490,7 +490,9 @@ test("a Sage-first vendor is matched EXACTLY, never by pattern", () => {
   // them flagged, so the mistake would be invisible today and would appear the first
   // time someone ticked the box on one of its invoices. Same hazard, same treatment as
   // the "SDC" acronym in lib/vendor-normalize.ts: match narrowly.
-  assert.match(totalEtoCode, /const SAGE_FIRST_VENDORS = "'SDC Credit Card'";/);
+  // The list itself is asserted by the audit-parity test below; here the point is only
+  // that entries are quoted literals in an IN list, never a pattern.
+  assert.match(totalEtoCode, /const SAGE_FIRST_VENDORS = "(?:'[^']+'(?:, )?)+";/);
   const predicate = /glPostedAp = \(companyAlias: string\) =>[\s\S]{0,240}?;/.exec(totalEtoCode)?.[0] ?? "";
   assert.ok(predicate.includes("IN (${SAGE_FIRST_VENDORS})"), "an IN list");
   assert.ok(!/LIKE/i.test(predicate), "never a LIKE — it would catch unrelated vendors");
@@ -522,7 +524,7 @@ test("the audit script's allow-list is the same one the query uses", () => {
   const inAudit = /const ALLOWED = new Set\(\[([^\]]*)\]\)/.exec(audit)?.[1] ?? "";
   const names = (s: string) => (s.match(/'[^']+'|"[^"]+"/g) ?? []).map((x) => x.slice(1, -1)).sort();
   assert.deepEqual(names(inQuery), names(inAudit), "SAGE_FIRST_VENDORS and the audit's ALLOWED must match");
-  assert.deepEqual(names(inQuery), ["SDC Credit Card"]);
+  assert.deepEqual(names(inQuery), ["SDC Credit Card", "Steven Douglas Corp. Expense Reports"].sort());
 });
 
 test("only the verified category counts — corrections stay excluded", () => {
@@ -533,7 +535,20 @@ test("only the verified category counts — corrections stay excluded", () => {
   // without checking the ledger the way 1101's charges were checked is how a quarter of
   // a million dollars of corrections becomes reported job cost.
   const inQuery = /const SAGE_FIRST_VENDORS = "([^"]+)";/.exec(totalEtoCode)?.[1] ?? "";
-  for (const notYet of ["Steven Douglas Corp.", "Expense Reports", "Reconciling With Sage", "Innovations"]) {
+  // Expense Reports joined the list 2026-09-04 on the SAME evidence the card had:
+  // job 1101's three in-period lines reconcile to the cent as GENJ "Payroll" postings
+  // ($57.64 + $61.02 + $10.49 = $129.15), one of them split across two employees on
+  // one day exactly as the card charges split into freight and food.
+  //
+  // These three have NOT earned it. `Reconciling With Sage - SDC` in particular is
+  // the counter-example that proves the rule: job 1101's flagged $480 entry has no
+  // ledger counterpart at all, while its unflagged siblings ($9,430.05, $4.34)
+  // already count — the flag is applied inconsistently within one vendor.
+  for (const notYet of ["Reconciling With Sage", "Innovations", "BlackHawk"]) {
     assert.ok(!inQuery.includes(notYet), `${notYet} must not be allow-listed without ledger evidence`);
   }
+  // The bare internal-billing vendor is NOT the expense-report one, and only the
+  // second is allow-listed. `Steven Douglas Corp.` alone carries $430,729 of flagged
+  // spend with no ledger match found.
+  assert.ok(!/'Steven Douglas Corp\.'/.test(inQuery), "the bare internal-billing vendor stays excluded");
 });
