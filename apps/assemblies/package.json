@@ -3,7 +3,7 @@
   "version": "1.0.24",
   "repository": {
     "type": "git",
-    "url": "https://github.com/abhikamuju36-ui/sdc-assemblies-library.git"
+    "url": "https://github.com/abhikamuju36-ui/SDC-Tools.git"
   },
   "type": "commonjs",
   "main": "electron/main.js",
@@ -32,10 +32,12 @@
       {
         "provider": "github",
         "owner": "abhikamuju36-ui",
-        "repo": "sdc-assemblies-library",
+        "repo": "SDC-Tools",
+        "channel": "assemblies",
         "releaseType": "release"
       }
     ],
+    "updaterCacheDirName": "sdc-assemblies-updater",
     "asar": true,
     "asarUnpack": [
       "server/**/*",

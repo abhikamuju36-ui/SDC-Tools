@@ -1,5 +1,25 @@
 /**
- * scripts/server-auto-update.js — SDC Tools monorepo server updater
+ * scripts/server-auto-update.js — SUPERSEDED, DO NOT START
+ *
+ * ── Read this before running it (2026-09-04) ─────────────────────────────────
+ *
+ * This is not the updater in use. The live one is `sdc-updater-hub` (see
+ * ecosystem.config.js), which runs scripts/sdc-main-updater.js for the monorepo plus
+ * the Scheduler and State Logic updaters in one process. This file is referenced by
+ * nothing.
+ *
+ * It is kept because it documents the original design, and it is marked because
+ * starting it would actively break the Reports app. Its only deploy step is
+ * `npm run deploy`, which is `build:apps && pm2 startOrRestart` — and `build:apps`
+ * builds apps/assemblies and apps/state-logic ONLY. Reports (sdc-etc-planner, 4006)
+ * is a Next.js app with its own Prisma schema: it needs `prisma migrate deploy`, then
+ * `prisma generate` with the app STOPPED (the running process holds a lock on the
+ * query engine DLL), then `next build`. sdc-main-updater.js does exactly that in its
+ * step 7b. This file would pull new Reports source and restart the process on a stale
+ * build.
+ *
+ * The app list in the header below is also out of date: it predates Reports and
+ * PowerBI joining the monorepo.
  *
  * Mirrors the Electron shell's electron-updater behaviour for the PM2-hosted
  * backend services. Every CHECK_INTERVAL_MS it:

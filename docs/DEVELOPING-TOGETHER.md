@@ -361,6 +361,15 @@ box:**
 3. **Set up Dan's worktree** on his own path, same two steps as §3.
 4. **Archive `sdc-sheets` and `SDC-PowerBI`** on GitHub — do not delete. They are the
    fallback if the subtree merge needs undoing.
+
+   Safe to archive as of 2026-09-04: every branch on both is merged into SDC-Tools, and
+   the one that was not — `sdc-sheets`'s `ux/design-system`, a single unmerged commit
+   from 2026-08-25 — is preserved on the `rescue/ux-design-system` branch here. Its
+   content was re-applied under `sdc-etc-planner/` rather than cherry-picked, because
+   the old repo held that app's files at the root, so the commit SHA is not an ancestor
+   even though the change is.
+
+   Do NOT archive `sdc-assemblies-library` or `sdc_calender`. See §11.
 5. **Review what came in unreviewed.** `sdc-etc-planner` arrived at the tip of
    `feat/split-view-and-parts-projection`: split view, the Parts Cost projection rebuild,
    the Monthly ETC red highlight. Tests pass, nothing browser-verified.
@@ -376,3 +385,81 @@ box:**
 - The monorepo still carries `dan` and `upstream` remotes pointing at
   `danbelliveau2/SDC_Scheduler`, plus the new `reports` and `powerbi` remotes. The latter
   two can be dropped once the move has settled (`git remote remove reports powerbi`).
+
+---
+
+## 11. Auto-update: what updates from where (2026-09-04)
+
+Asked for: "auto updater for all the apps with SDC Tools, the same way it happens for the
+Scheduler with Dan's repo." Most of it was already true; this records the whole picture
+and closes the two gaps.
+
+### Server-hosted apps — already done, nothing to change
+
+`sdc-updater-hub` (PM2) runs three updaters in one process:
+
+| Updater | Pulls from | Covers |
+|---|---|---|
+| `sdc-main-updater.js` | **SDC-Tools** `master` | assemblies 4001, readiness 4002, statelogic 4004, calendar 4005, Reports 4006 |
+| scheduler updater | Dan's `SDC_Scheduler` | scheduler 4003 |
+| statelogic updater | upstream fork | State Logic vendored copy |
+
+So every server-hosted app already auto-updates from SDC-Tools — including Reports, which
+gets its own step (7b) because it needs `prisma migrate deploy` → `prisma generate` with
+the process STOPPED → `next build`, not the generic `npm run deploy`.
+
+The Scheduler deliberately keeps pulling from Dan's repo: that is the pattern being
+mirrored, not something to migrate.
+
+`scripts/server-auto-update.js` is NOT this. It is superseded, wired to nothing, and
+would restart Reports on a stale build if anyone started it — it is marked accordingly
+at the top of the file.
+
+### Desktop apps — one artifact, one feed
+
+The SDC Tools **shell** is the only desktop app anyone should install. It publishes to
+SDC-Tools Releases (`release.yml`) and every installed copy OTA-updates within ~30
+minutes. Assemblies and Calendar are tiles inside it, served from their localhost ports,
+so a backend change reaches users through the server updater with no installer at all.
+
+Their standalone Electron builds predate the shell. Both now publish to SDC-Tools rather
+than to their old repos:
+
+| App | Feed | Channel | Polls for updates? |
+|---|---|---|---|
+| shell | SDC-Tools | `latest` | yes |
+| assemblies | SDC-Tools | `assemblies` | yes |
+| calendar | SDC-Tools | `calendar` | **no** — no `autoUpdater` in its electron main |
+
+**The channel is load-bearing.** electron-updater looks for a metadata file in the newest
+release, `latest.yml` by default. Three apps publishing to one repo would each read
+whichever manifest landed last and try to install another app's installer. A named
+channel gives each its own (`assemblies.yml`, `calendar.yml`), so the feeds coexist. The
+`channel` in the publish block and `autoUpdater.channel` in the app must match.
+
+### The one thing this change CANNOT do by itself
+
+An installed copy reads its feed from `app-update.yml` baked into its own resources at
+build time. Every Assemblies install out there still says:
+
+```
+owner: abhikamuju36-ui
+repo: sdc-assemblies-library
+```
+
+Repointing the source does not reach them. They will keep polling the old repo until they
+receive one more update FROM it carrying the new pointer. So:
+
+1. Build Assemblies with these changes and publish it **once to
+   `sdc-assemblies-library`** (temporarily set `repo` back for that one build).
+2. Installed copies take that update, and their `app-update.yml` now names SDC-Tools.
+3. Every release after that goes to SDC-Tools on the `assemblies` channel.
+4. Only then is `sdc-assemblies-library` safe to archive.
+
+Skip step 1 and installed copies go quiet: no errors, no updates, which is the worst of
+the available failure modes. Calendar needs none of this — nothing polls, so there is no
+installed base to strand.
+
+If nobody actually runs a standalone Assemblies install any more, the simpler answer is
+to delete both publish blocks and let the shell be the only installer. That is a call
+about who has what installed, not a technical one.

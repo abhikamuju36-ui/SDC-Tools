@@ -37,9 +37,11 @@
     "publish": {
       "provider": "github",
       "owner": "abhikamuju36-ui",
-      "repo": "sdc_calender",
+      "repo": "SDC-Tools",
+      "channel": "calendar",
       "releaseType": "release"
-    }
+    },
+    "updaterCacheDirName": "sdc-calendar-updater"
   },
   "devDependencies": {
     "electron": "^29.0.0",

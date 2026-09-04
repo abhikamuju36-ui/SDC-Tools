@@ -121,6 +121,20 @@ app.whenReady().then(async () => {
     if (!isDev) {
         // Lazy-load electron-updater only in production, after app is ready
         ({ autoUpdater } = require('electron-updater'));
+        // ── Auto-update comes from SDC-Tools now, on its own channel ──────────
+        //
+        // 2026-09-04: this app used to publish to (and update from) its own repo,
+        // `sdc-assemblies-library`. Everything now lives in the SDC-Tools monorepo, so
+        // releases go there too.
+        //
+        // The CHANNEL is what makes that safe. electron-updater looks for a metadata
+        // file in the newest release — `latest.yml` by default — and the SDC Tools shell
+        // already publishes its own `latest.yml` to this repo. Sharing one feed would
+        // mean each app reading the other's manifest and trying to install the other's
+        // installer. Naming a channel gives this app `assemblies.yml` instead, so the
+        // two feeds sit in the same repo without touching each other. It must match the
+        // `channel` in package.json's publish block.
+        autoUpdater.channel = 'assemblies';
         autoUpdater.on('update-available', () => console.log('Update available.'));
         autoUpdater.on('update-downloaded', () => {
             console.log('Update downloaded; will install on next quit.');
