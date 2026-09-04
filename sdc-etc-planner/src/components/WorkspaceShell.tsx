@@ -1,45 +1,68 @@
 "use client";
 
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { Activity, useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { WorkspaceTabBar } from "@/components/WorkspaceTabBar";
 import { DEFAULT_RATIO, MIN_PANE_PX, clampRatio, ratioBounds } from "@/lib/split-view";
-import { activateTab, encodeWorkspace, exitSplit, tabLabel, workspaceHref, type Workspace } from "@/lib/workspace";
+import { publishWorkspace, registerWorkspaceApply } from "@/lib/workspace-store";
+import {
+  activateTab,
+  exitSplit,
+  hasTab,
+  tabById,
+  tabTitle,
+  workspaceHref,
+  type TabId,
+  type Workspace,
+} from "@/lib/workspace";
 
 // ── The workspace's chrome: the tab bar, and the split beneath it ────────────
 //
-// Layout and interaction only. Every tab's CONTENT is rendered on the server and handed
-// in as children, so nothing about a drag, a focus change or a keyboard shortcut can
-// re-render a page's body.
+// ── Every open tab stays MOUNTED; switching is a visibility toggle ──────────
 //
-// ── What is rendered, and what that costs ───────────────────────────────────
+// Rewritten 2026-09-04. This used to render only the visible tab(s), and a tab switch
+// was a `router.push` — a server navigation that re-ran the target page's whole render
+// and remounted its client tree. Reported as "switching tabs is too slow", and it was:
+// getPartsCostForJobs over 49 jobs is 547ms on its own, before Monthly ETC's Prisma
+// reads, and the remount is why scroll position, open drill-downs and half-typed
+// filters all reset on the way back.
 //
-// Only what is VISIBLE: the active tab, or the two tabs in the split. Not every open
-// tab. The alternative — mounting all eight and toggling CSS visibility — is the only
-// way to make a tab switch truly instant and preserve live client state across it, and
-// it was rejected on cost: /w is a dynamic route whose render runs each mounted tab's
-// data loads, so eight open tabs would re-run Monthly ETC's queries (~3s) and Job Hour
-// Details' live Total ETO call on EVERY navigation, for seven tabs nobody is looking at.
+// The old header argued that mounting all eight was "the only way to make a tab switch
+// truly instant" and rejected it on cost, because /w re-ran every mounted tab's data
+// loads on EVERY navigation. That reasoning was right about the mechanism and wrong
+// about the conclusion: the cost only exists if switching is still a navigation. Take
+// the navigation away and the panes are rendered once, on load, and never again.
 //
-// So a tab switch is a server navigation, and the consequences are honest rather than
-// hidden:
+// So: /w renders every open tab, and each one lives inside React's <Activity>.
 //
-//   * A tab's CONTEXT survives — its month, job, filters and sort all live in the URL
-//     under its own `t<i>.` namespace, so switching away and back returns you to the
-//     same view of the same data. That is the part that matters and it is exact.
-//   * Its SCROLL POSITION survives, restored per tab by ScrollMemory below.
-//   * Transient client state does NOT survive: an open dropdown, a half-typed filter,
-//     an expanded drill-down. Unsaved ETC cell edits are the one case where that would
-//     be destructive, and they are already protected — etc-dirty-tracker's navigation
-//     guard fires on a tab switch exactly as it does on a sidebar click, because both
-//     are ordinary router navigations.
+//     <Activity mode="visible">  the tab you are looking at
+//     <Activity mode="hidden">   every other open tab — display:none, state intact
+//
+// Activity keeps the DOM in the document and the component state alive while hiding it
+// (React 19.2; Next 16 uses the same primitive for its own cross-navigation state
+// preservation — see node_modules/next/dist/docs/01-app/02-guides/preserving-ui-state.md).
+// So a switch is a CSS toggle: no fetch, no render, no remount, and scroll position,
+// filters, expanded sections, search text and drill state are all simply still there
+// because they never went away.
+//
+// ── Which actions still touch the server ───────────────────────────────────
+//
+// Only the ones that need pane content that does not exist yet:
+//
+//     activate / close / reorder / split / ratio   local state, history.replaceState
+//     open a new tab / duplicate / re-route a tab  router.replace — a pane must render
+//
+// `apply()` below is the single place that decides, so no caller has to know.
 function ScrollMemory({ scopeKey, children }: { scopeKey: string; children: React.ReactNode }) {
   const ref = useRef<HTMLDivElement | null>(null);
 
-  // sessionStorage, not the URL: a scroll offset is not something to put in a link
-  // somebody shares, and it is per-window by nature. Keyed by the tab's route + params
-  // so returning to the same view of the same data lands where you left it, while
-  // changing the month legitimately starts at the top.
+  // ── Still here, and still earning its place ──────────────────────────────
+  //
+  // <Activity> preserves the live scroll position of a mounted pane, so within one
+  // session this is no longer what makes switching tabs land where you left off. It is
+  // what survives a RELOAD — App Refresh is a full frontend reload on every deploy, and
+  // the panes are rebuilt from scratch. Keyed by route + params rather than by tab id
+  // for the same reason: the id is fresh after a reload, the view is not.
   const key = `sdc.ws.scroll:${scopeKey}`;
 
   useLayoutEffect(() => {
@@ -86,23 +109,108 @@ function ScrollMemory({ scopeKey, children }: { scopeKey: string; children: Reac
 }
 
 export function WorkspaceShell({
-  ws,
+  ws: serverWs,
   panes,
 }: {
   /** Decoded on the server, so the first paint is already the right layout — no post-hydration snap. */
   ws: Workspace;
   /**
-   * The rendered content for the visible tabs, keyed by tab index. One entry when not
-   * split, two when split — the route decides, so this component never has to know
-   * which views exist.
+   * Rendered content for EVERY open tab, keyed by tab id — not just the visible ones.
+   * That is what lets this component keep them all mounted; see the header.
    */
-  panes: Record<number, React.ReactNode>;
+  panes: Record<TabId, React.ReactNode>;
 }) {
   const router = useRouter();
   const rowRef = useRef<HTMLDivElement | null>(null);
 
-  const [ratio, setRatio] = useState(() => clampRatio(ws.split?.ratio ?? DEFAULT_RATIO));
+  // ── Local state is the live workspace; the server prop re-seeds it ────────
+  //
+  // Activating a tab must not wait for a server round-trip, so `ws` lives here. The
+  // prop wins whenever the server sends a genuinely different SET of tabs — which only
+  // happens on the navigations listed in the header, plus a reload. Comparing the
+  // id~path signature rather than object identity is what keeps a re-render caused by
+  // something else from throwing away the user's current tab.
+  const signature = serverWs.tabs.map((t) => `${t.id}~${t.path}`).join(",");
+  const [seen, setSeen] = useState(signature);
+  const [ws, setWs] = useState(serverWs);
+  if (seen !== signature) {
+    // The documented derive-state-from-props pattern: a guarded setState during render,
+    // which React applies before committing rather than as a second pass.
+    setSeen(signature);
+    setWs(serverWs);
+  }
+
+  const [ratio, setRatio] = useState(() => clampRatio(serverWs.split?.ratio ?? DEFAULT_RATIO));
   const [dragging, setDragging] = useState(false);
+
+  /**
+   * Commit a workspace change.
+   *
+   * `navigate` means "a pane exists in `next` that has never been rendered", which is
+   * the only reason to involve the router at all. Everything else updates local state
+   * and rewrites the address bar in place — history.replaceState does NOT notify the
+   * router, so there is no RSC request and no refetch.
+   */
+  const apply = useCallback(
+    (next: Workspace, opts?: { navigate?: boolean }) => {
+      setWs(next);
+      const href = workspaceHref(next);
+      if (opts?.navigate) {
+        router.replace(href);
+        return;
+      }
+      if (typeof window !== "undefined") window.history.replaceState(null, "", href);
+    },
+    [router],
+  );
+
+  // ── Publish, so the sidebar is never reading a stale workspace ───────────
+  //
+  // The sidebar lives in the (app) layout, above this page, and used to decode the
+  // workspace from useSearchParams(). Since a tab switch is now history.replaceState —
+  // which does not notify the router — those params go stale the moment anyone
+  // switches a tab, and a sidebar click was resolving against an out-of-date tab list.
+  // That is the reported "clicking a page in the sidebar does not reliably switch to
+  // its open tab". See lib/workspace-store.ts.
+  useEffect(() => {
+    publishWorkspace(ws);
+  }, [ws]);
+
+  // The browser tab's own title follows the active workspace tab. Without this every
+  // tab reads "SDC Projects Reports" (the layout's static metadata), because /w is one
+  // route and switching tabs is no longer a navigation for Next to retitle on.
+  useEffect(() => {
+    if (!ws.tabs.length) return;
+    const name = tabTitle(ws, ws.active, { detailed: true });
+    if (name) document.title = `${name} · SDC Projects Reports`;
+  }, [ws]);
+
+  // Registered separately from the value: this must survive every re-render and be
+  // torn down exactly once, so a sidebar click can never call into an unmounted tree.
+  useEffect(() => registerWorkspaceApply(apply), [apply]);
+
+  const syncRatio = useCallback(
+    (r: number) => {
+      if (!ws.split) return;
+      apply({ ...ws, split: { ...ws.split, ratio: clampRatio(r) } });
+    },
+    [apply, ws],
+  );
+
+  // Ctrl+\ leaves the split, keeping the pane you were in — the toggle's "off"
+  // direction. Turning it ON needs a target tab, which a shortcut cannot guess; that
+  // is what the Split View picker is for.
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.key !== "\\" || !ws.split) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
+      e.preventDefault();
+      apply(exitSplit(ws, ws.active));
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [apply, ws]);
 
   // ── Responsive collapse ──────────────────────────────────────────────────
   //
@@ -120,41 +228,8 @@ export function WorkspaceShell({
     return () => ro.disconnect();
   }, []);
 
-  // ── Why a divider drag must never touch the router ──────────────────────
-  //
-  // The ratio lives in the URL so a reload restores the layout. router.replace would
-  // write it correctly and re-run /w's render — both panes' data loads — because
-  // somebody nudged a divider two pixels. history.replaceState updates the address bar
-  // WITHOUT notifying the router: no navigation, no RSC request, no refetch. This is
-  // the documented pattern for search-param state that is not a navigation, and it is
-  // the same mechanism SplitViewShell uses.
-  const syncRatio = useCallback(
-    (r: number) => {
-      if (typeof window === "undefined" || !ws.split) return;
-      const next: Workspace = { ...ws, split: { ...ws.split, ratio: clampRatio(r) } };
-      window.history.replaceState(null, "", `/w?${encodeWorkspace(next)}`);
-    },
-    [ws],
-  );
+  const bar = <WorkspaceTabBar ws={ws} apply={apply} />;
 
-  // Ctrl+\ leaves the split, keeping the pane you were in — the toggle's "off"
-  // direction. Turning it ON needs a target tab, which a shortcut cannot guess; that
-  // is what the Split View picker is for.
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (!(e.ctrlKey || e.metaKey) || e.key !== "\\" || !ws.split) return;
-      const t = e.target as HTMLElement | null;
-      if (t && (t.isContentEditable || /^(INPUT|TEXTAREA|SELECT)$/.test(t.tagName))) return;
-      e.preventDefault();
-      router.push(workspaceHref(exitSplit(ws, ws.active)));
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [router, ws]);
-
-  const bar = <WorkspaceTabBar ws={ws} />;
-
-  // ── No tabs ──────────────────────────────────────────────────────────────
   if (ws.tabs.length === 0) {
     return (
       <div className="flex min-h-[var(--app-vh)] flex-col">
@@ -169,24 +244,12 @@ export function WorkspaceShell({
     );
   }
 
-  // ── One tab ──────────────────────────────────────────────────────────────
-  if (!ws.split) {
-    return (
-      <div className="flex min-h-[var(--app-vh)] flex-col">
-        {bar}
-        {/* No pane header: with one tab, the tab strip already names the page, and a
-            second title bar under it would be chrome competing with the page's own. */}
-        <ScrollMemory scopeKey={scopeKeyFor(ws, ws.active)}>{panes[ws.active]}</ScrollMemory>
-      </div>
-    );
-  }
-
   const bounds = available == null ? null : ratioBounds(available);
   // Too narrow for two panes: show only the active one, full width, and say so. The
   // split is NOT closed — the URL still holds both tabs, so widening the window (or
   // collapsing the sidebar) brings the other one straight back. Requirement: never
   // create unreadable 200px-wide Monthly ETC tables.
-  const collapsed = available != null && bounds == null;
+  const collapsed = ws.split != null && available != null && bounds == null;
   const effectiveRatio = bounds ? Math.min(bounds.max, Math.max(bounds.min, ratio)) : ratio;
 
   const onPointerDown = (e: React.PointerEvent<HTMLDivElement>) => {
@@ -243,7 +306,29 @@ export function WorkspaceShell({
     else if (e.key === "Enter" || e.key === " ") at(DEFAULT_RATIO);
   };
 
-  const { left, right } = ws.split;
+  const split = ws.split;
+  // ── Visual order without moving DOM nodes ────────────────────────────────
+  //
+  // The panes are emitted in TAB order and always in the same position in the tree, so
+  // React never has to move a mounted pane's DOM. Flex `order` puts the split's left
+  // and right where they belong visually. Reordering the children instead would move
+  // the nodes, and moving a scroll container's node is exactly what resets its
+  // scrollTop — the thing this whole change exists to stop.
+  const orderOf = (id: TabId): number => {
+    if (!split) return 0;
+    if (id === split.left) return 0;
+    if (id === split.right) return 2;
+    return 0;
+  };
+  const isVisible = (id: TabId): boolean => {
+    if (!split) return id === ws.active;
+    if (collapsed) return id === ws.active || (ws.active !== split.left && ws.active !== split.right && id === split.left);
+    return id === split.left || id === split.right;
+  };
+  const widthOf = (id: TabId): string => {
+    if (!split || collapsed) return "100%";
+    return id === split.left ? `${effectiveRatio}%` : `${100 - effectiveRatio}%`;
+  };
 
   return (
     <div className="flex min-h-[var(--app-vh)] flex-col">
@@ -253,17 +338,25 @@ export function WorkspaceShell({
         className="flex min-h-0 flex-1 items-stretch"
         style={dragging ? { userSelect: "none", cursor: "col-resize" } : undefined}
       >
-        <SplitPane
-          ws={ws}
-          id={left}
-          hidden={collapsed && ws.active !== left}
-          width={collapsed ? "100%" : `${effectiveRatio}%`}
-          collapsed={collapsed}
-        >
-          {panes[left]}
-        </SplitPane>
+        {ws.tabs.map((tab) => (
+          // key is the tab's own id, so a reorder, a close or a duplicate never makes
+          // React reconcile one tab's pane into another's slot.
+          <Activity key={tab.id} mode={isVisible(tab.id) ? "visible" : "hidden"}>
+            <PaneHost
+              ws={ws}
+              id={tab.id}
+              order={orderOf(tab.id)}
+              width={widthOf(tab.id)}
+              showHeader={split != null && !collapsed}
+              collapsed={collapsed}
+              apply={apply}
+            >
+              {panes[tab.id] ?? <PanePending />}
+            </PaneHost>
+          </Activity>
+        ))}
 
-        {!collapsed && (
+        {split && !collapsed && (
           <div
             role="separator"
             aria-orientation="vertical"
@@ -276,13 +369,13 @@ export function WorkspaceShell({
             onDoubleClick={() => nudge(DEFAULT_RATIO)}
             onKeyDown={onKeyDown}
             title="Drag to resize · double-click for an even split"
+            style={{ touchAction: "none", order: 1 }}
             // 9px of hit area around a 1px rule: easy to grab, without a fat visible
             // seam. `group` drives the inner rule's hover colour, so the target and
             // the thing that looks like the target are the same element.
             className={`group relative z-10 w-[9px] shrink-0 cursor-col-resize touch-none focus:outline-none ${
               dragging ? "bg-sdc-blue/10" : "hover:bg-sdc-blue/5"
             }`}
-            style={{ touchAction: "none" }}
           >
             <span
               aria-hidden
@@ -292,54 +385,58 @@ export function WorkspaceShell({
             />
           </div>
         )}
-
-        <SplitPane
-          ws={ws}
-          id={right}
-          hidden={collapsed && ws.active !== right}
-          width={collapsed ? "100%" : `${100 - effectiveRatio}%`}
-          collapsed={collapsed}
-        >
-          {panes[right]}
-        </SplitPane>
       </div>
     </div>
   );
 }
 
+/**
+ * A tab whose server content has not arrived yet.
+ *
+ * Only ever seen for the few hundred ms between opening a brand-new tab and its pane
+ * streaming in — every already-open tab has its content mounted. Deliberately quiet:
+ * a spinner here would be the "add a loading spinner" non-fix the report ruled out.
+ */
+function PanePending() {
+  return <div className="p-6 text-body text-sdc-muted">Opening…</div>;
+}
+
 /** A tab's scroll identity: its route AND its params, so a new month starts at the top. */
-function scopeKeyFor(ws: Workspace, id: number): string {
-  const tab = ws.tabs[id];
-  if (!tab) return String(id);
+function scopeKeyFor(ws: Workspace, id: TabId): string {
+  const tab = tabById(ws, id);
+  if (!tab) return id;
   const sp = new URLSearchParams(tab.params);
   sp.sort(); // stable regardless of the order the params were written in
   return `${tab.path}?${sp.toString()}`;
 }
 
-function SplitPane({
+function PaneHost({
   ws,
   id,
-  hidden,
+  order,
   width,
+  showHeader,
   collapsed,
+  apply,
   children,
 }: {
   ws: Workspace;
-  id: number;
-  hidden: boolean;
+  id: TabId;
+  order: number;
   width: string;
+  showHeader: boolean;
   collapsed: boolean;
+  apply: (next: Workspace, opts?: { navigate?: boolean }) => void;
   children: React.ReactNode;
 }) {
-  const router = useRouter();
-  const tab = ws.tabs[id];
   const isActive = ws.active === id;
-  const label = tab ? tabLabel(tab) : "";
+  const label = tabTitle(ws, id, { detailed: true });
+  if (!hasTab(ws, id)) return null;
 
-  if (hidden || !tab) return null;
-
+  // Activating is local state now, so this is free — which is what makes clicking into
+  // the other pane feel like clicking into a pane rather than like a navigation.
   const activate = () => {
-    if (!isActive) router.push(workspaceHref(activateTab(ws, id)));
+    if (!isActive) apply(activateTab(ws, id));
   };
 
   return (
@@ -354,29 +451,33 @@ function SplitPane({
       // than forcing the pane wider than its share, which would push the divider off
       // the ratio the user set.
       className="flex min-w-0 flex-col"
-      style={{ width, minWidth: collapsed ? undefined : MIN_PANE_PX }}
+      style={{ width, order, minWidth: collapsed || !showHeader ? undefined : MIN_PANE_PX }}
     >
       {/* Thin (h-7, one line): two of these are on screen at once, above pages that
           already have their own titles and toolbars. The tab strip above names both
           pages, so this bar carries only what the strip cannot — WHICH pane the
-          sidebar will open into. */}
-      <header
-        className={`flex h-7 shrink-0 items-center gap-1.5 border-b px-2 ${
-          isActive ? "border-sdc-blue/40 bg-sdc-blue-light/40" : "border-sdc-border bg-sdc-gray-50"
-        }`}
-      >
-        <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${isActive ? "bg-sdc-blue" : "bg-sdc-gray-300"}`} />
-        <span className={`truncate text-label font-semibold ${isActive ? "text-sdc-navy" : "text-sdc-gray-600"}`}>
-          {label}
-        </span>
-        {isActive && (
-          // Says WHY the highlight matters, which an active-pane outline on its own
-          // never manages to communicate.
-          <span className="hidden whitespace-nowrap text-micro text-sdc-blue-dark sm:inline">· sidebar opens here</span>
-        )}
-      </header>
+          sidebar will open into. Not rendered at all outside the split, where the strip
+          alone names the page and a second title bar would be chrome competing with
+          the page's own. */}
+      {showHeader && (
+        <header
+          className={`flex h-7 shrink-0 items-center gap-1.5 border-b px-2 ${
+            isActive ? "border-sdc-blue/40 bg-sdc-blue-light/40" : "border-sdc-border bg-sdc-gray-50"
+          }`}
+        >
+          <span aria-hidden className={`h-1.5 w-1.5 shrink-0 rounded-full ${isActive ? "bg-sdc-blue" : "bg-sdc-gray-300"}`} />
+          <span className={`truncate text-label font-semibold ${isActive ? "text-sdc-navy" : "text-sdc-gray-600"}`}>
+            {label}
+          </span>
+          {isActive && (
+            // Says WHY the highlight matters, which an active-pane outline on its own
+            // never manages to communicate.
+            <span className="hidden whitespace-nowrap text-micro text-sdc-blue-dark sm:inline">· sidebar opens here</span>
+          )}
+        </header>
+      )}
       {/* Each pane its own scroll container: scrolling Monthly ETC on the left must not
-          move Job Hour Details on the right. */}
+          move Job Details on the right. */}
       <ScrollMemory scopeKey={scopeKeyFor(ws, id)}>{children}</ScrollMemory>
     </section>
   );

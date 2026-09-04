@@ -111,10 +111,19 @@ export const SPLIT_ROUTES: readonly {
   label: string;
   params: readonly string[];
   exclusive?: true;
+  /**
+   * The param that says WHICH thing this instance is about — the job, the month.
+   *
+   * Added 2026-09-04 with duplicate tabs: three Job Details tabs are three jobs, and a
+   * strip of three identical "Job Details" labels is unusable. lib/workspace.ts reads
+   * this to build "Job Details — 1101". Absent means the route has no such notion, and
+   * its duplicates are told apart by position alone.
+   */
+  instanceParam?: string;
 }[] = [
   { path: "/", label: "Dashboard", params: ["tab", "m", "dqFrom", "dqTo", "dqEmp", "dqFn", "dqMtd"] },
-  { path: "/job-hours", label: "Job Details", params: ["jobs", "job"] },
-  { path: "/etc", label: "Monthly ETC", params: ["month", "dept", "jobname", "billables"], exclusive: true },
+  { path: "/job-hours", label: "Job Details", params: ["jobs", "job"], instanceParam: "jobs" },
+  { path: "/etc", label: "Monthly ETC", params: ["month", "dept", "jobname", "billables"], exclusive: true, instanceParam: "month" },
   {
     path: "/quoted",
     label: "Projects",
@@ -139,11 +148,11 @@ export const SPLIT_ROUTES: readonly {
     label: "Hours",
     params: ["jobs", "employees", "sections", "departments", "from", "to", "page", "groupBy", "sort", "dir", "view"],
   },
-  { path: "/tm", label: "T&M", params: ["jobs", "start", "end"] },
+  { path: "/tm", label: "T&M", params: ["jobs", "start", "end"], instanceParam: "jobs" },
   { path: "/build-readiness", label: "Build Readiness", params: [] },
   { path: "/jobs", label: "Jobs", params: ["q", "status", "type", "customer"] },
-  { path: "/job-cost-explorer", label: "Profitability", params: ["asOf"] },
-  { path: "/cash-flow", label: "Cash Flow", params: ["as", "compare"] },
+  { path: "/job-cost-explorer", label: "Profitability", params: ["asOf"], instanceParam: "asOf" },
+  { path: "/cash-flow", label: "Cash Flow", params: ["as", "compare"], instanceParam: "as" },
   { path: "/employees", label: "Employees", params: [] },
   { path: "/audit-log", label: "Audit Log", params: [] },
 ];
@@ -435,6 +444,18 @@ export function swap(state: SplitState): SplitState {
  * they try it: a disabled menu entry with no explanation reads as a bug, and the
  * reason here ("already open in the other pane") is one they can act on.
  */
+/**
+ * May this route be open more than once at a time?
+ *
+ * The same `exclusive` flag that already refused it in both split panes, now asked of
+ * tab INSTANCES too — because keeping every open tab mounted (see lib/workspace.ts)
+ * makes two Monthly ETC grids live simultaneously whether or not they are split, which
+ * is the condition the flag exists to prevent.
+ */
+export function isExclusive(path: string): boolean {
+  return splitRoute(normalizePath(path))?.exclusive === true;
+}
+
 export function pairingRefusal(path: string, otherPath: string | null | undefined): string | null {
   if (!otherPath) return null;
   const a = splitRoute(normalizePath(path));

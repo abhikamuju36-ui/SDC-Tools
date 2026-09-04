@@ -4,6 +4,8 @@ import Image from "next/image";
 import Link, { useLinkStatus } from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useSplitNav } from "@/components/useSplitNav";
+import { applyWorkspace } from "@/lib/workspace-store";
+import { openTab, tabById } from "@/lib/workspace";
 import { splitRoute, closePaneHref } from "@/lib/split-view";
 import {
   applyNavOrder,
@@ -337,6 +339,12 @@ export default function Sidebar({
   // See components/useSplitNav.ts for the URL derivation and lib/split-view.ts for
   // why a split is one document with a namespaced URL rather than two frames.
   const splitNav = useSplitNav();
+  // Which page the sidebar should call "current". On an ordinary route that is the
+  // pathname; in the workspace it is whichever tab is active, because the pathname
+  // there is always "/w".
+  const sidebarPath = splitNav.workspace
+    ? tabById(splitNav.workspace, splitNav.workspace.active)?.path ?? pathname
+    : pathname;
   const [navMenu, setNavMenu] = useState<{ href: string; label: string; x: number; y: number } | null>(null);
   const router = useRouter();
   // Every item is filtered against visibleHrefs — computed server-side from
@@ -664,7 +672,10 @@ export default function Sidebar({
             </p>
             <div className="flex flex-col gap-[3px]">
               {group.items.map((item, index) => {
-                const active = item.isActive(pathname);
+                // In the workspace the pathname is always "/w", so isActive(pathname)
+                // never matched anything and NO sidebar item was highlighted. The
+                // page that is actually on screen is the active tab's route.
+                const active = item.isActive(sidebarPath);
                 const isDragging = drag?.group === group.label && drag.index === index;
                 const isOver = over?.group === group.label && over.index === index && !isDragging;
                 return (
@@ -675,7 +686,45 @@ export default function Sidebar({
                     // context menu and the drag payload use, since those are about
                     // the item itself rather than about where a click lands.
                     href={splitNav.hrefFor(item.href)}
-                    onClick={handleNavClick}
+                    onClick={(e) => {
+                      // ── The reported bug ──────────────────────────────────
+                      //
+                      // Inside the workspace this used to follow an href built from
+                      // useSearchParams(), which goes stale the moment a tab is
+                      // switched (replaceState does not notify the router). So the
+                      // click resolved "already open?" against an out-of-date tab
+                      // list and could open a duplicate, land on the wrong tab, or
+                      // revert tabs opened since.
+                      //
+                      // Now it drives the LIVE workspace directly: find the open
+                      // instances of this page, activate the most recently used one,
+                      // and only create a tab when there is none. No navigation, no
+                      // refetch, no remount - the pane is already mounted behind
+                      // <Activity>, so this is a visibility toggle.
+                      const live = splitNav.workspace;
+                      if (live && !e.metaKey && !e.ctrlKey && !e.shiftKey && e.button === 0) {
+                        const next = openTab(live, item.href);
+                        // A brand-new tab needs a pane rendered; resuming one does not.
+                        const isNew = next.tabs.length !== live.tabs.length;
+                        if (next !== live && applyWorkspace(next, isNew ? { navigate: true } : undefined)) {
+                          e.preventDefault();
+                          return;
+                        }
+                      }
+                      handleNavClick(e);
+                    }}
+                    onAuxClick={(e) => {
+                      // Middle-click = another instance of this page, the same gesture
+                      // that opens a new tab in a browser. A plain click resumes the
+                      // one you already have (lib/workspace.ts), which is what keeps
+                      // duplicates from being accidental.
+                      if (e.button !== 1) return;
+                      const target = splitNav.newTabHrefFor(item.href);
+                      if (!target) return;
+                      e.preventDefault();
+                      if (isEtcDirty() && !window.confirm("You have unsaved New ETC changes that haven't been saved. Leave this page anyway?")) return;
+                      router.push(target);
+                    }}
                     onContextMenu={(e) => {
                       // Only where a split is actually possible — an admin route has
                       // no pane view, and a menu whose only entry is disabled is
@@ -684,7 +733,11 @@ export default function Sidebar({
                       e.preventDefault();
                       setNavMenu({ href: item.href, label: item.label, x: e.clientX, y: e.clientY });
                     }}
-                    title={collapsed ? item.label : `${item.label} — right-click to open in split view; drag to reorder, or Alt+↑/↓`}
+                    title={
+                      collapsed
+                        ? item.label
+                        : `${item.label} — middle-click for another tab; right-click for more; drag to reorder, or Alt+↑/↓`
+                    }
                     // Reorderable by drag, and by Alt+Arrow for anyone not using a
                     // mouse. Only within this group: the headings above say what
                     // these links are, so a link that moved out from under one

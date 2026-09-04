@@ -1,3 +1,4 @@
+import { Suspense } from "react";
 import { redirect } from "next/navigation";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PaneView } from "@/components/PaneView";
@@ -22,12 +23,28 @@ import { pairingRefusal, splitRoute } from "@/lib/split-view";
 // which is the whole argument for a single document. One SSE connection, one heartbeat,
 // one refresh pipeline, one autosave client, however many tabs are open.
 //
-// ── Only the visible tabs are rendered ──────────────────────────────────────
+// ── EVERY open tab is rendered, and stays mounted (rewritten 2026-09-04) ────
 //
-// One view when not split, two when split — never all eight. WorkspaceShell's header
-// carries the reasoning and what it costs the user; the short version is that /w is a
-// dynamic route whose render runs each rendered tab's data loads, and Monthly ETC alone
-// is ~3s.
+// This used to render only the visible tab(s) — one, or two when split — and a tab
+// switch was a server navigation. Reported as "switching tabs is too slow", and the
+// measurement agrees: a switch re-ran the target page's whole server render, of which
+// getPartsCostForJobs over 49 jobs alone is 547ms, before its Prisma reads and KPIs.
+// It also remounted the client tree, which is why scroll position, open drill-downs and
+// half-typed filters all reset.
+//
+// So every open tab is rendered here, and WorkspaceShell keeps them all mounted behind
+// React's <Activity> — switching is then a visibility toggle with no navigation, no
+// fetch and no remount. That is the architecture the request asked for in as many
+// words: "open tab instance -> mounted/cached page state -> hide/show when switching".
+//
+// ── What that costs, honestly ───────────────────────────────────────────────
+//
+// A workspace with N tabs renders N pages on FIRST load. They are siblings under
+// independent Suspense boundaries, so React streams them concurrently — wall clock is
+// roughly the slowest tab, not the sum — and the active one paints first regardless.
+// The cost lands on a cold load (including App Refresh, which is a full reload) and is
+// paid once; every switch afterwards is free, which is the trade the report asked for.
+// MAX_TABS is 8, and only one of them can ever be Monthly ETC.
 
 export default async function WorkspacePage({ searchParams }: { searchParams: Promise<RawParams> }) {
   const ws = decodeWorkspace(await searchParams);
@@ -43,7 +60,8 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
   // because redirecting that would make "/w" itself unreachable.
   if (ws.tabs.length === 1 && !ws.split) redirect(tabHref(ws.tabs[0]));
 
-  const visible = ws.split ? [ws.split.left, ws.split.right] : ws.tabs.length ? [ws.active] : [];
+  // Every tab, not just the visible ones — see the header.
+  const rendered = ws.tabs.map((t) => t.id);
 
   // ── The one pairing this route refuses ────────────────────────────────────
   //
@@ -55,12 +73,15 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
   // and the guard has to be where the render is.
   const clash =
     ws.split != null
-      ? pairingRefusal(ws.tabs[ws.split.right]?.path ?? "", ws.tabs[ws.split.left]?.path)
+      ? pairingRefusal(
+          ws.tabs.find((t) => t.id === ws.split!.right)?.path ?? "",
+          ws.tabs.find((t) => t.id === ws.split!.left)?.path,
+        )
       : null;
 
-  const panes: Record<number, React.ReactNode> = {};
-  for (const id of visible) {
-    const tab = ws.tabs[id];
+  const panes: Record<string, React.ReactNode> = {};
+  for (const id of rendered) {
+    const tab = ws.tabs.find((t) => t.id === id);
     if (!tab) continue;
     // The refused pane shows the reason instead of the grid, rather than being silently
     // dropped: the URL asked for something specific, and a pane that just vanishes reads
@@ -81,10 +102,34 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
       );
       continue;
     }
-    // Rendered as siblings, so React streams them independently — a slow live Total ETO
-    // call in one pane does not hold up the other pane's first paint.
-    panes[id] = <PaneView key={id} pane={tab} />;
+    // ── One Suspense boundary EACH, and it is load-bearing ──────────────────
+    //
+    // PaneView is an async server component with no boundary of its own. Siblings do
+    // render concurrently, so their awaits overlap — but without a boundary React
+    // cannot flush ANY of them until the slowest resolves, which on a cold load of
+    // eight tabs would mean waiting on a hidden tab before seeing the active one.
+    //
+    // A boundary per pane makes each one stream on its own: the shell and the tab
+    // strip paint immediately, the active tab lands as soon as its own data does, and
+    // the tabs nobody is looking at fill in behind it. That is what makes "render every
+    // open tab" affordable, and it is the difference between max() and "everything".
+    panes[id] = (
+      <Suspense key={id} fallback={<PaneLoading />}>
+        <PaneView pane={tab} />
+      </Suspense>
+    );
   }
 
   return <WorkspaceShell ws={ws} panes={panes} />;
+}
+
+/**
+ * A pane that has not finished loading yet.
+ *
+ * Deliberately near-silent. This is only ever seen on a cold load, and mostly by tabs
+ * that are hidden anyway — a spinner per hidden tab would be eight spinners for a
+ * workspace nobody is waiting on.
+ */
+function PaneLoading() {
+  return <div className="p-6 text-body text-sdc-muted">Loading…</div>;
 }

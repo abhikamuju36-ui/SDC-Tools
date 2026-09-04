@@ -1,21 +1,24 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
-import { useRouter } from "next/navigation";
 import {
   MAX_TABS,
   activateTab,
+  closeOtherTabs,
   closeTab,
+  duplicateTab,
   enterSplit,
   exitSplit,
   moveTab,
   openTab,
   openableRoutes,
-  tabLabel,
-  workspaceHref,
+  tabById,
+  tabIndex,
+  tabTitle,
+  type TabId,
   type Workspace,
 } from "@/lib/workspace";
-import { pairingRefusal } from "@/lib/split-view";
+import { isExclusive, pairingRefusal } from "@/lib/split-view";
 
 // ── The tab strip ────────────────────────────────────────────────────────────
 //
@@ -24,20 +27,31 @@ import { pairingRefusal } from "@/lib/split-view";
 // and where a drag leaves the indices are all decided (and tested) there. What lives
 // here is the strip, the two menus, and the drag.
 //
-// ── Why every tab action is a router.push ───────────────────────────────────
+// ── No action here is a navigation any more (2026-09-04) ────────────────────
 //
-// A tab switch genuinely changes what is rendered, so it IS a navigation — unlike a
-// divider drag, which is why that one alone uses history.replaceState (see
-// WorkspaceSplit). Pushing rather than replacing is deliberate: it makes browser Back
-// undo a tab switch, a close and a reorder, which is the behaviour a tab strip implies
-// and the cheapest possible undo for closing the wrong tab.
-export function WorkspaceTabBar({ ws }: { ws: Workspace }) {
-  const router = useRouter();
-  const go = (next: Workspace) => router.push(workspaceHref(next));
+// Every tab action used to be a router.push, which meant a tab switch re-ran the
+// target page on the server and remounted it — the reported slowness. Panes are now
+// all mounted at once behind <Activity> (see WorkspaceShell), so switching, closing,
+// reordering and splitting are pure state changes.
+//
+// `apply` is the shell's single commit point and it decides which of the two kinds an
+// action is. This file passes `{ navigate: true }` for exactly the actions that need a
+// pane nobody has rendered yet: opening a page in a new tab, and duplicating one.
+export function WorkspaceTabBar({
+  ws,
+  apply,
+}: {
+  ws: Workspace;
+  apply: (next: Workspace, opts?: { navigate?: boolean }) => void;
+}) {
+  const go = (next: Workspace) => apply(next);
+  const goOpen = (next: Workspace) => apply(next, { navigate: true });
 
   const [menu, setMenu] = useState<null | "add" | "split">(null);
   const [dragFrom, setDragFrom] = useState<number | null>(null);
   const [dragOver, setDragOver] = useState<number | null>(null);
+  /** Which tab's right-click menu is open. */
+  const [ctxMenu, setCtxMenu] = useState<TabId | null>(null);
   const stripRef = useRef<HTMLDivElement | null>(null);
 
   // Close either menu on an outside click or Escape. Both are single-select and
@@ -80,7 +94,8 @@ export function WorkspaceTabBar({ ws }: { ws: Workspace }) {
       if (e.key === "Tab" && ws.tabs.length > 1) {
         e.preventDefault();
         const step = e.shiftKey ? -1 : 1;
-        go(activateTab(ws, (ws.active + step + ws.tabs.length) % ws.tabs.length));
+        const at = tabIndex(ws, ws.active);
+        go(activateTab(ws, ws.tabs[(at + step + ws.tabs.length) % ws.tabs.length].id));
       } else if (e.key.toLowerCase() === "w" && ws.tabs.length > 0) {
         e.preventDefault();
         go(closeTab(ws, ws.active));
@@ -88,7 +103,7 @@ export function WorkspaceTabBar({ ws }: { ws: Workspace }) {
         const i = Number(e.key) - 1;
         if (i < ws.tabs.length) {
           e.preventDefault();
-          go(activateTab(ws, i));
+          go(activateTab(ws, ws.tabs[i].id));
         }
       }
     };
@@ -100,7 +115,7 @@ export function WorkspaceTabBar({ ws }: { ws: Workspace }) {
 
   const atCap = ws.tabs.length >= MAX_TABS;
   const openPaths = new Set(ws.tabs.map((t) => t.path));
-  const activePath = ws.tabs[ws.active]?.path;
+  const activePath = tabById(ws, ws.active)?.path;
 
   return (
     <div className="flex h-9 shrink-0 items-stretch border-b border-sdc-border bg-sdc-gray-50">
@@ -113,13 +128,29 @@ export function WorkspaceTabBar({ ws }: { ws: Workspace }) {
         className="flex min-w-0 flex-1 items-stretch overflow-x-auto [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
       >
         {ws.tabs.map((tab, i) => {
-          const isActive = i === ws.active;
-          const inSplit = ws.split != null && (ws.split.left === i || ws.split.right === i);
-          const label = tabLabel(tab);
+          const id = tab.id;
+          const isActive = id === ws.active;
+          const inSplit = ws.split != null && (ws.split.left === id || ws.split.right === id);
+          // tabTitle appends the instance hint ("Job Details - 1101") only when this
+          // workspace actually holds more than one of that page, so a lone tab keeps its
+          // plain name. See lib/workspace.ts.
+          const label = tabTitle(ws, id);
           return (
             <div
-              key={`${tab.path}-${i}`}
+              key={id}
               data-active={isActive}
+              data-tab-id={id}
+              onContextMenu={(e) => {
+                e.preventDefault();
+                setCtxMenu(ctxMenu === id ? null : id);
+              }}
+              onAuxClick={(e) => {
+                // Middle-click closes, as it does in every browser tab strip.
+                if (e.button === 1) {
+                  e.preventDefault();
+                  go(closeTab(ws, id));
+                }
+              }}
               draggable
               onDragStart={(e) => {
                 setDragFrom(i);
@@ -134,7 +165,7 @@ export function WorkspaceTabBar({ ws }: { ws: Workspace }) {
               }}
               onDrop={(e) => {
                 e.preventDefault();
-                if (dragFrom !== null && dragFrom !== i) go(moveTab(ws, dragFrom, i));
+                if (dragFrom !== null && dragFrom !== i) go(moveTab(ws, ws.tabs[dragFrom].id, i));
                 setDragFrom(null);
                 setDragOver(null);
               }}
@@ -154,9 +185,9 @@ export function WorkspaceTabBar({ ws }: { ws: Workspace }) {
                 role="tab"
                 aria-selected={isActive}
                 onClick={() => {
-                  if (!isActive) go(activateTab(ws, i));
+                  if (!isActive) go(activateTab(ws, id));
                 }}
-                title={label}
+                title={tabTitle(ws, id, { detailed: true })}
                 className={`min-w-0 truncate py-1 text-label ${
                   isActive ? "font-semibold text-sdc-navy" : "font-medium text-sdc-gray-600"
                 }`}
@@ -177,7 +208,7 @@ export function WorkspaceTabBar({ ws }: { ws: Workspace }) {
                 type="button"
                 onClick={(e) => {
                   e.stopPropagation();
-                  go(closeTab(ws, i));
+                  go(closeTab(ws, id));
                 }}
                 aria-label={`Close ${label}`}
                 title={`Close ${label}`}
@@ -198,6 +229,48 @@ export function WorkspaceTabBar({ ws }: { ws: Workspace }) {
                   <path d="M3.5 3.5l7 7M10.5 3.5l-7 7" strokeLinecap="round" />
                 </svg>
               </button>
+              {ctxMenu === id && (
+                // Right-click menu. Duplicate is the explicit "give me another one of
+                // these" the request asked for, alongside middle-clicking a sidebar
+                // item - a second instance is never what a plain click does.
+                <div data-ws-menu className="absolute left-0 top-full z-30">
+                  <Menu title={label}>
+                    <MenuItem
+                      disabled={atCap || isExclusive(tab.path)}
+                      note={
+                        isExclusive(tab.path)
+                          ? "only one at a time - its unsaved-cell tracking is shared"
+                          : atCap
+                            ? `at the ${MAX_TABS}-tab limit`
+                            : undefined
+                      }
+                      onClick={() => {
+                        setCtxMenu(null);
+                        goOpen(duplicateTab(ws, id));
+                      }}
+                    >
+                      Duplicate Tab
+                    </MenuItem>
+                    <MenuItem
+                      onClick={() => {
+                        setCtxMenu(null);
+                        go(closeTab(ws, id));
+                      }}
+                    >
+                      Close
+                    </MenuItem>
+                    <MenuItem
+                      disabled={ws.tabs.length < 2}
+                      onClick={() => {
+                        setCtxMenu(null);
+                        go(closeOtherTabs(ws, id));
+                      }}
+                    >
+                      Close Other Tabs
+                    </MenuItem>
+                  </Menu>
+                </div>
+              )}
             </div>
           );
         })}
@@ -223,12 +296,20 @@ export function WorkspaceTabBar({ ws }: { ws: Workspace }) {
                   key={r.path}
                   onClick={() => {
                     setMenu(null);
-                    go(openTab(ws, r.path));
+                    goOpen(openTab(ws, r.path, {}, { newInstance: true }));
                   }}
-                  // Already-open is deliberately NOT disabled: lib/workspace.ts
-                  // activates the existing tab rather than duplicating it, which is
-                  // the useful answer to this click, and the note says so.
-                  note={openPaths.has(r.path) ? "already open — switches to it" : undefined}
+                  // "+" is the EXPLICIT way to ask for another instance, so it requests
+                  // a new one rather than resuming - that is exactly what separates it
+                  // from a sidebar click. Monthly ETC resumes anyway, and the note says
+                  // so rather than the item being disabled, because switching to it is
+                  // still a useful answer to this click.
+                  note={
+                    !openPaths.has(r.path)
+                      ? undefined
+                      : isExclusive(r.path)
+                        ? "already open - switches to it"
+                        : "opens another one"
+                  }
                 >
                   {r.label}
                 </MenuItem>
@@ -268,8 +349,8 @@ export function WorkspaceTabBar({ ws }: { ws: Workspace }) {
         )}
         {menu === "split" && (
           <Menu title="Show beside this tab" align="right">
-            {ws.tabs.map((t, i) => {
-              if (i === ws.active) return null;
+            {ws.tabs.map((t) => {
+              if (t.id === ws.active) return null;
               // Monthly ETC beside Monthly ETC is refused, with the reason shown.
               // Path-based duplicate matching means two ETC tabs cannot normally both
               // exist, so this is reachable only from a hand-edited URL — but the
@@ -277,15 +358,18 @@ export function WorkspaceTabBar({ ws }: { ws: Workspace }) {
               const refusal = pairingRefusal(t.path, activePath);
               return (
                 <MenuItem
-                  key={`${t.path}-${i}`}
+                  key={t.id}
                   disabled={refusal != null}
                   note={refusal ?? undefined}
                   onClick={() => {
                     setMenu(null);
-                    go(enterSplit(ws, i));
+                    go(enterSplit(ws, t.id));
                   }}
                 >
-                  {tabLabel(t)}
+                  {/* detailed: the whole job of a label HERE is telling two otherwise
+                      identical entries apart, which is the case the request called out
+                      - "show enough context to distinguish duplicate tabs". */}
+                  {tabTitle(ws, t.id, { detailed: true })}
                 </MenuItem>
               );
             })}

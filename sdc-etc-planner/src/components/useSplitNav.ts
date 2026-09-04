@@ -1,6 +1,7 @@
 "use client";
 
 import { useCallback, useMemo } from "react";
+import { useLiveWorkspace } from "@/lib/workspace-store";
 import { usePathname, useSearchParams } from "next/navigation";
 import {
   decodeSplit,
@@ -12,6 +13,7 @@ import {
   pairingRefusal,
   splitRoute,
   type SplitState,
+  isExclusive,
 } from "@/lib/split-view";
 import {
   EMPTY_WORKSPACE,
@@ -23,6 +25,7 @@ import {
   sidebarTarget,
   workspaceHref,
   type Workspace,
+  tabById,
 } from "@/lib/workspace";
 
 // ── What the sidebar needs to know about split view ─────────────────────────
@@ -67,10 +70,19 @@ export function useSplitNav() {
   // rather than adding a second hook is deliberate — Sidebar asks ONE question ("where
   // does this click go?") and there must be exactly one answer, not two hooks racing
   // to produce an href.
-  const workspace: Workspace | null = useMemo(() => {
+  // ── The LIVE workspace wins over the URL ─────────────────────────────────
+  //
+  // useSearchParams() only updates on a real navigation, and tab switches are
+  // history.replaceState now, so the decoded copy can be several tab operations stale.
+  // The store is published by WorkspaceShell on every change; the URL decode stays as
+  // the fallback for the first render before hydration, and for anything that reaches
+  // this hook while no shell is mounted.
+  const live = useLiveWorkspace();
+  const fromUrl: Workspace | null = useMemo(() => {
     if (pathname !== "/w") return null;
     return decodeWorkspace(Object.fromEntries(new URLSearchParams(searchKey)));
   }, [pathname, searchKey]);
+  const workspace: Workspace | null = live ?? fromUrl;
 
   /** The current page's own params — what travels with it when it becomes a pane. */
   const currentParams = useMemo(() => {
@@ -105,8 +117,8 @@ export function useSplitNav() {
         if (workspace.split) {
           const other =
             workspace.split.left === workspace.active
-              ? workspace.tabs[workspace.split.right]?.path
-              : workspace.tabs[workspace.split.left]?.path;
+              ? tabById(workspace, workspace.split.right)?.path
+              : tabById(workspace, workspace.split.left)?.path;
           // Would create the one pairing /w refuses (Monthly ETC twice). Leaving the
           // workspace and opening the page full width is the useful reading of the
           // click, and it is what the menu's own refusal explains.
@@ -139,7 +151,7 @@ export function useSplitNav() {
         if (workspace.tabs.length >= MAX_TABS && !workspace.tabs.some((t) => t.path === href)) {
           return `At the ${MAX_TABS}-tab limit — close a tab to open another`;
         }
-        return pairingRefusal(href, workspace.tabs[sidebarTarget(workspace)]?.path);
+        return pairingRefusal(href, tabById(workspace, sidebarTarget(workspace))?.path);
       }
       if (!state) return null;
       const other = state.active === "l" ? state.r?.path : state.l.path;
@@ -163,7 +175,7 @@ export function useSplitNav() {
         // as a tab first if it is not open yet. enterSplit takes a tab ID because the
         // split is a view onto tabs that already exist — see lib/workspace.ts.
         const anchorTab = sidebarTarget(workspace);
-        if (pairingRefusal(href, workspace.tabs[anchorTab]?.path)) return null;
+        if (pairingRefusal(href, tabById(workspace, anchorTab)?.path)) return null;
         const opened = openTab(workspace, href);
         // openTab refused (every tab is in use at the cap), or `href` IS the tab we
         // would be splitting against. Neither is a split.
@@ -198,21 +210,29 @@ export function useSplitNav() {
    *
    * From a normal route it builds a two-tab workspace: the page you are on, carrying
    * its own params, plus the target, which becomes active. From inside the workspace it
-   * is just openTab. Null when it cannot apply — an unhostable current page (an admin
-   * screen) would leave nothing to keep as the first tab.
+   * asks openTab for a NEW INSTANCE — that is the whole difference between this and a
+   * plain click, which resumes the most recent one. It is what makes three Job Details
+   * tabs reachable, and it is deliberately behind middle-click and the context menu so
+   * that duplicates are never something an ordinary sidebar click produces.
+   *
+   * Null when it cannot apply — an unhostable current page (an admin screen) would
+   * leave nothing to keep as the first tab, and Monthly ETC refuses a second instance
+   * outright (see lib/workspace.ts), so there is no new tab to offer.
    */
   const newTabHrefFor = useCallback(
     (href: string): string | null => {
       if (!isSplittable(href)) return null;
       if (workspace) {
-        const opened = openTab(workspace, href);
+        if (isExclusive(href) && workspace.tabs.some((t) => t.path === normalizePath(href))) return null;
+        const opened = openTab(workspace, href, {}, { newInstance: true });
         return opened === workspace ? null : workspaceHref(opened);
       }
       if (state) return null; // /split has its own two-pane model; use Expand first
       if (!isSplittable(pathname)) return null;
-      if (normalizePath(pathname) === normalizePath(href)) return null; // already here
       const base = openTab(EMPTY_WORKSPACE, pathname, currentParams);
-      return workspaceHref(openTab(base, href));
+      // newInstance so "open another one of the page I am already on" works from an
+      // ordinary route too — the case the old `already here` guard refused outright.
+      return workspaceHref(openTab(base, href, {}, { newInstance: true }));
     },
     [workspace, state, pathname, currentParams],
   );
