@@ -1,5 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { csvCell, csvRow, buildCsv } from "../src/lib/export/csv";
 import { exportFileName, safeSheetName, todayStamp, type SheetSpec } from "../src/lib/export/sheet";
 import { buildProjectsQuery } from "../src/lib/projects-query";
@@ -233,4 +235,20 @@ test("sorting is validated against the known keys", () => {
   // An unknown key falls back rather than reaching orderBy as a column that does not
   // exist (which Prisma rejects at runtime).
   assert.equal(buildProjectsQuery({ sort: "; DROP TABLE" }, options).sortKey, "jobId");
+});
+
+test("the Parts Cost Actual export column states its basis", () => {
+  // docs/PARTS-COST-VARIANCE-2026-09.md exists because a column called "Parts Cost
+  // Actual" in this export was compared against a column called the same thing in a
+  // spreadsheet, on a different basis — GL-posted here, everything-billed there — and
+  // neither said which. The difference read as an app error for weeks.
+  //
+  // The filename already carries todayStamp(now), so the as-of half is answered. This
+  // is the other half: a comparison is either like-for-like or visibly not.
+  const src = readFileSync(join(process.cwd(), "src", "lib", "export", "projects-export.ts"), "utf8");
+  assert.match(src, /\{ header: "Parts Cost Actual \(GL-posted\)", type: "currency" \}/);
+  assert.ok(
+    !/\{ header: "Parts Cost Actual", type: "currency" \}/.test(src),
+    "the unqualified header must be gone — it is the one that was ambiguous",
+  );
 });

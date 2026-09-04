@@ -69,7 +69,17 @@ export async function buildProjectsExport(
     { header: "Actual Hours (total)", type: "hours", width: 14 },
     { header: "Hours Remaining (total)", type: "hours", width: 16 },
     { header: "Parts Cost Quoted", type: "currency" },
-    { header: "Parts Cost Actual", type: "currency" },
+    // ── The basis is IN the header (2026-09-04) ──────────────────────────
+    //
+    // docs/PARTS-COST-VARIANCE-2026-09.md exists because a column called "Parts Cost
+    // Actual" in this export was compared against a column called the same thing in a
+    // spreadsheet, and the two were measured on different bases — GL-posted here,
+    // everything-billed there. Neither said which, so the difference read as an app
+    // error for weeks.
+    //
+    // The filename already carries todayStamp(now), so the as-of half is answered.
+    // This is the other half: a comparison is now either like-for-like or visibly not.
+    { header: "Parts Cost Actual (GL-posted)", type: "currency" },
     { header: "Parts Cost Remaining", type: "currency" },
     ...sectionColumns,
   ];

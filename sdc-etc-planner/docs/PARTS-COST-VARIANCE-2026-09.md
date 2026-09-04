@@ -255,8 +255,28 @@ But **that view is one job at a time.** The Procurement drawer is deliberately s
 BOM tree is per job), so a PO spanning three jobs takes three lookups and manual addition.
 There is no cross-job PO search in the app today.
 
-**Possible follow-up:** a PO lookup that spans jobs and reports purchased / invoiced / left
-to invoice per job with a total. Not built.
+**Built 2026-09-04.** `lib/po-across-jobs.ts` reports purchased / invoiced / left to
+invoice per job with a total, for any PO. It runs on the ordinary parts pipeline
+(`getPartsCostForJobs`) rather than its own query, so its figures are the Parts List's
+by construction. Verified against this PO — it reproduces §5's table exactly.
+
+```
+npx tsx -r ./scripts/shim-server-only.cjs scripts/po-lookup.ts 103046
+```
+
+```
+PO 103046 - 3 job(s)   ** spans jobs **
+
+  JOB    LINES        PURCHASED         INVOICED    LEFT TO INV  SUPPLIER
+  1130       5    $1,554,100.00    $1,554,100.00          $0.00  G2V OPTICS INC
+  1142       4    $1,249,925.00    $1,249,925.00          $0.00  G2V OPTICS INC
+  1143       4      $796,475.00      $796,475.00          $0.00  G2V OPTICS INC
+  TOTAL     13    $3,600,500.00    $3,600,500.00          $0.00
+```
+
+**Still to do:** an in-app surface. The capability and its tests are in place; the
+Procurement drawer is single-job by design, so where a cross-job panel belongs is a UI
+question that wanted browser verification this change could not perform.
 
 ---
 
