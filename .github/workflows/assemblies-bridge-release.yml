@@ -1,0 +1,159 @@
+name: Assemblies — bridging release (one-time)
+
+# ─────────────────────────────────────────────────────────────────────────────
+# THE ONE-TIME RELEASE THAT MOVES INSTALLED ASSEMBLIES CLIENTS TO SDC-TOOLS
+#
+# Why this exists
+# ---------------
+# electron-updater reads its feed from `app-update.yml`, which is baked into the
+# installed app's resources AT BUILD TIME. Every Assemblies install out there was
+# built when this app published to its own repo, so each one still says:
+#
+#     owner: abhikamuju36-ui
+#     repo:  sdc-assemblies-library
+#
+# Repointing the source (2026-09-04) does not reach them. They will keep polling the
+# OLD repo forever — silently: no error, no update. So one more release has to appear
+# on the old repo, carrying an installer whose baked pointer is the NEW one.
+#
+# How this build does both at once
+# --------------------------------
+# apps/assemblies/package.json now lists TWO publish targets, and the ORDER is
+# load-bearing. app-builder-lib's getAppUpdatePublishConfiguration takes
+# `publishConfigs[0]` for app-update.yml (see PublishManager.js), so:
+#
+#   [0] SDC-Tools, channel "assemblies"   -> what gets baked into the installer,
+#                                            so this build's clients follow SDC-Tools
+#                                            from now on and read assemblies.yml
+#                                            (never latest.yml, which is the shell's)
+#   [1] sdc-assemblies-library, no channel -> publishes latest.yml + the installer to
+#                                            the OLD repo, which is exactly where
+#                                            today's v1.0.24 clients are looking
+#
+# One build, one version, two feeds. After it lands:
+#
+#   * v1.0.24 clients poll the old repo, see latest.yml -> 1.0.25, install it
+#   * the installed 1.0.25 has app-update.yml pointing at SDC-Tools/assemblies
+#   * every release after this one can drop publish target [1] entirely
+#   * ONLY THEN is `sdc-assemblies-library` safe to archive
+#
+# Version: 1.0.25. It must be greater than 1.0.24 (the old repo's current release,
+# published 2026-05-04) or electron-updater will not consider it an update at all.
+#
+# The one thing you must set up first
+# -----------------------------------
+# `secrets.GITHUB_TOKEN` can only write to THIS repo, and this build publishes to two.
+# So it needs a token with contents:write on BOTH `SDC-Tools` and
+# `sdc-assemblies-library`:
+#
+#   1. GitHub -> Settings -> Developer settings -> Personal access tokens
+#      -> Fine-grained tokens -> Generate new token
+#   2. Repository access: select both SDC-Tools and sdc-assemblies-library
+#   3. Permissions -> Repository -> Contents: Read and write
+#   4. Save it in THIS repo as the secret ASSEMBLIES_BRIDGE_TOKEN
+#      (Settings -> Secrets and variables -> Actions -> New repository secret)
+#
+# Without it the run fails at the publish step with a 404 on the old repo — which is
+# a clean failure, not a half-published release.
+#
+# Then: Actions -> "Assemblies — bridging release (one-time)" -> Run workflow.
+#
+# Deliberately manual (workflow_dispatch). This is a one-time migration that puts
+# software on people's machines; it should happen when somebody decides to, not on a
+# push.
+# ─────────────────────────────────────────────────────────────────────────────
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: 'Type "bridge" to confirm you intend to publish to BOTH repos'
+        required: true
+        default: ""
+
+# Only the old repo needs the PAT; this repo's own release could use GITHUB_TOKEN.
+# electron-builder uses ONE GH_TOKEN for every target, so the PAT covers both and
+# this stays at read for the checkout.
+permissions:
+  contents: read
+
+jobs:
+  bridge:
+    name: Build 1.0.25 and publish to SDC-Tools + sdc-assemblies-library
+    runs-on: windows-latest
+
+    steps:
+      - name: Refuse an accidental run
+        shell: bash
+        run: |
+          if [ "${{ inputs.confirm }}" != "bridge" ]; then
+            echo "::error::Type 'bridge' in the confirm field. This publishes to two repos and reaches installed desktops."
+            exit 1
+          fi
+
+      - uses: actions/checkout@v4.2.2
+
+      - uses: actions/setup-node@v4.1.0
+        with:
+          node-version: 20
+
+      # Not `npm ci`: this app has no package-lock.json committed, and the shell's
+      # own release workflow uses `npm install` here for the same reason.
+      - name: Install dependencies
+        working-directory: apps/assemblies
+        run: npm install
+
+      # Proves the two publish targets and the version are what this workflow's
+      # header describes, BEFORE anything is built or uploaded. A silent reorder of
+      # the publish array would otherwise bake the OLD pointer back into the
+      # installer and strand every client permanently — the exact failure this
+      # release exists to prevent.
+      - name: Verify the bridging configuration
+        shell: bash
+        run: |
+          node -e '
+            const pkg = require("./apps/assemblies/package.json");
+            const pub = pkg.build.publish;
+            const fail = (m) => { console.error("::error::" + m); process.exit(1); };
+
+            if (pkg.version !== "1.0.25") fail(`version must be 1.0.25, found ${pkg.version}`);
+            if (!Array.isArray(pub) || pub.length !== 2) fail("publish must be an array of exactly two targets");
+
+            // [0] is what gets baked into app-update.yml.
+            if (pub[0].repo !== "SDC-Tools") fail(`publish[0].repo must be SDC-Tools, found ${pub[0].repo}`);
+            if (pub[0].channel !== "assemblies") fail(`publish[0].channel must be "assemblies", found ${pub[0].channel}`);
+
+            // [1] is the old feed the installed base is still polling.
+            if (pub[1].repo !== "sdc-assemblies-library") fail(`publish[1].repo must be sdc-assemblies-library, found ${pub[1].repo}`);
+            if (pub[1].channel) fail("publish[1] must have NO channel — v1.0.24 clients look for latest.yml");
+
+            console.log("OK: 1.0.25, app-update.yml -> SDC-Tools/assemblies, bridge -> sdc-assemblies-library/latest.yml");
+          '
+
+      - name: Build and publish to both repos
+        working-directory: apps/assemblies
+        env:
+          # One token, both targets — see the header. electron-builder does not take a
+          # different token per publish entry.
+          GH_TOKEN: ${{ secrets.ASSEMBLIES_BRIDGE_TOKEN }}
+        run: npx electron-builder --win --publish always
+
+      - name: What to check, and what to do next
+        if: success()
+        shell: bash
+        run: |
+          echo "### Bridging release published" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Verify BOTH of these before archiving anything:" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "1. \`sdc-assemblies-library\` releases has **v1.0.25** with a \`latest.yml\` asset." >> $GITHUB_STEP_SUMMARY
+          echo "   This is what today's installed clients poll. Without it they never migrate." >> $GITHUB_STEP_SUMMARY
+          echo "2. \`SDC-Tools\` releases has v1.0.25 with an **\`assemblies.yml\`** asset —" >> $GITHUB_STEP_SUMMARY
+          echo "   NOT \`latest.yml\`. \`latest.yml\` here belongs to the shell, and an Assemblies" >> $GITHUB_STEP_SUMMARY
+          echo "   build writing it would make each app offer the other's installer." >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "Then, once installed copies have picked up 1.0.25 (they check on launch):" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "* drop publish target \`[1]\` from apps/assemblies/package.json" >> $GITHUB_STEP_SUMMARY
+          echo "* archive \`sdc-assemblies-library\`" >> $GITHUB_STEP_SUMMARY
+          echo "* delete this workflow — it is one-time by design" >> $GITHUB_STEP_SUMMARY

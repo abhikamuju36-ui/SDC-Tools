@@ -450,11 +450,37 @@ repo: sdc-assemblies-library
 Repointing the source does not reach them. They will keep polling the old repo until they
 receive one more update FROM it carrying the new pointer. So:
 
-1. Build Assemblies with these changes and publish it **once to
-   `sdc-assemblies-library`** (temporarily set `repo` back for that one build).
-2. Installed copies take that update, and their `app-update.yml` now names SDC-Tools.
-3. Every release after that goes to SDC-Tools on the `assemblies` channel.
-4. Only then is `sdc-assemblies-library` safe to archive.
+**This is now set up and ready to run** — `.github/workflows/assemblies-bridge-release.yml`,
+Actions → "Assemblies — bridging release (one-time)" → Run workflow, type `bridge`.
+
+It does both halves in ONE build, rather than the two-build dance first sketched here.
+`apps/assemblies/package.json` lists two publish targets and the ORDER carries the
+meaning — app-builder-lib takes `publishConfigs[0]` for `app-update.yml`
+(`PublishManager.js`, `getAppUpdatePublishConfiguration`):
+
+| # | Target | Channel | What it is for |
+|---|---|---|---|
+| 0 | `SDC-Tools` | `assemblies` | baked into the installer, so this build's clients follow SDC-Tools from here on |
+| 1 | `sdc-assemblies-library` | *(none)* | writes `latest.yml` to the old repo, where today's v1.0.24 clients are looking |
+
+Version is **1.0.25**; it has to exceed 1.0.24 (the old repo's release, published
+2026-05-04) or electron-updater ignores it. The workflow verifies the version and both
+targets BEFORE building — a silently reordered publish array would bake the OLD pointer
+back in and strand every client permanently, which is the one failure worth a preflight.
+
+**One prerequisite:** `secrets.GITHUB_TOKEN` can only write to this repo, and this
+publishes to two. Create a fine-grained PAT with contents:write on BOTH `SDC-Tools` and
+`sdc-assemblies-library`, saved here as `ASSEMBLIES_BRIDGE_TOKEN`. Missing it fails the
+run cleanly at the publish step rather than half-publishing.
+
+Afterwards:
+
+1. Check `sdc-assemblies-library` has v1.0.25 **with `latest.yml`** — that asset is the
+   whole point; without it nothing migrates.
+2. Check `SDC-Tools` has v1.0.25 with **`assemblies.yml`**, not `latest.yml`
+   (`latest.yml` there is the shell's).
+3. Once installed copies have taken 1.0.25, drop publish target `[1]`, archive
+   `sdc-assemblies-library`, and delete the workflow — it is one-time by design.
 
 Skip step 1 and installed copies go quiet: no errors, no updates, which is the worst of
 the available failure modes. Calendar needs none of this — nothing polls, so there is no

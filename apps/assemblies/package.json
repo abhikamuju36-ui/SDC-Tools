@@ -1,6 +1,6 @@
 {
   "name": "sdc-assemblies-library",
-  "version": "1.0.24",
+  "version": "1.0.25",
   "repository": {
     "type": "git",
     "url": "https://github.com/abhikamuju36-ui/SDC-Tools.git"
@@ -34,6 +34,12 @@
         "owner": "abhikamuju36-ui",
         "repo": "SDC-Tools",
         "channel": "assemblies",
+        "releaseType": "release"
+      },
+      {
+        "provider": "github",
+        "owner": "abhikamuju36-ui",
+        "repo": "sdc-assemblies-library",
         "releaseType": "release"
       }
     ],
