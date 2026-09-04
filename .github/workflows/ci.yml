@@ -171,6 +171,30 @@ jobs:
       - name: Install
         run: npm ci
 
+      # ── libsecret, or the build cannot collect page data ────────────────────
+      #
+      # THE reason this job failed 25 times out of 25 from the day CI was enabled:
+      #
+      #   Failed to collect configuration for /job-cost-explorer
+      #     [cause] Failed to load external module @azure/msal-node-extensions:
+      #             libsecret-1.so.0: cannot open shared object file
+      #
+      # lib/fabric-warehouse.ts authenticates to the Fabric warehouse with
+      # @azure/msal-node, which pulls in @azure/msal-node-extensions for persistent
+      # token caching. On Linux that binds to libsecret (the GNOME keyring); on Windows
+      # it uses the OS credential store, which is why this never appears locally and why
+      # production — a Windows box — has never hit it.
+      #
+      # `next build` evaluates the module graph while collecting page data, so the
+      # import is reached at BUILD time even though nothing signs in. Hence a build-time
+      # failure for a runtime-only dependency.
+      #
+      # Installing the library is the honest fix: it keeps the build exercising the same
+      # module graph production runs, rather than stubbing out a real dependency to make
+      # CI go green.
+      - name: Install libsecret (needed by @azure/msal-node-extensions on Linux)
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq libsecret-1-0
+
       # Before the build: the Prisma client is generated code, not committed, and
       # every server module that imports it fails to compile without it. Generate
       # needs the schema only, not a reachable database.
