@@ -11,6 +11,8 @@ import {
   rawLeftToInvoice,
   explainLeftToInvoice,
   monthEndLabel,
+  shownLeftToInvoice,
+  shownLeftToInvoiceSource,
 } from "../src/lib/left-to-invoice";
 import type { PartsCostLine } from "../src/lib/sync-totaleto";
 
@@ -229,7 +231,10 @@ test("the cutoff is what the fix IS — without it August inherits September", (
   // And the ETC page must actually pass a month — a default of "lifetime" here reads
   // as working code and is the whole defect.
   const page = readFileSync(join(process.cwd(), "src", "app", "(app)", "etc", "page.tsx"), "utf8");
-  assert.match(page, /readPartsEtcBreakout\([\s\S]{0,400}?\n\s*month,\n\s*\)/, "the ETC page must pass its month");
+  // `\r?\n`, not `\n`: this repo's worktree is CRLF, and an earlier pass of this file
+  // happened to be written with LF, so the guard passed for a reason that had nothing
+  // to do with what it checks. A source guard must not depend on line endings.
+  assert.match(page, /readPartsEtcBreakout\([\s\S]{0,400}?\r?\n\s*month,\s*\r?\n\s*\)/, "the ETC page must pass its month");
   const breakout = readFileSync(join(process.cwd(), "src", "lib", "parts-etc-breakout.ts"), "utf8");
   // explainLeftToInvoice, not leftToInvoiceForLines — same arithmetic (`total` IS what
   // leftToInvoiceForLines returns), and it also yields the floor and drift figures the
@@ -428,4 +433,74 @@ test("a closed month is told nothing rather than something stale", () => {
   const closed = page.slice(page.indexOf("This month is closed"), page.indexOf("This month is closed") + 400);
   assert.ok(!/currencyExact\(suggested/.test(closed), "a closed month must not quote the live figure");
   assert.match(closed, /Parts List filtered through \$\{cutoffLabel\}/);
+});
+
+// ── What the CELL shows, which is not what the rows compute ────────────────
+//
+// The 2026-09-04 report photographed $10,000 in a column the Parts List put at
+// $35,496 and asked for a root-cause fix. The arithmetic above was not the cause: the
+// column is manager-entered, so it shows a stored figure or a pre-breakout hand-typed
+// New ETC, and the computed figure only ever reaches an empty cell's tooltip. That
+// rule was written out twice, mirrored by hand, and the audit was about to need it a
+// third time — so it lives in one place now, and these are its cases.
+
+test("a stored figure is what the cell shows", () => {
+  assert.equal(shownLeftToInvoice({ leftToInvoice: 1234.5, leftToPurchase: null, newEtcDraft: 9999 }), 1234.5);
+  assert.equal(shownLeftToInvoiceSource({ leftToInvoice: 1234.5, leftToPurchase: null, newEtcDraft: 9999 }), "stored");
+  // Zero is a figure a manager entered, not an absence.
+  assert.equal(shownLeftToInvoice({ leftToInvoice: 0, leftToPurchase: null, newEtcDraft: 500 }), 0);
+});
+
+test("a pre-breakout New ETC carries in, but ONLY while both halves are unanswered", () => {
+  // This is the case in every row of the report's screenshot, and it is why each one
+  // equalled its own New ETC exactly and reconciled with nothing.
+  assert.equal(shownLeftToInvoice({ leftToInvoice: null, leftToPurchase: null, newEtcDraft: 10000 }), 10000);
+  assert.equal(
+    shownLeftToInvoiceSource({ leftToInvoice: null, leftToPurchase: null, newEtcDraft: 10000 }),
+    "carried-new-etc",
+  );
+  // Once the OTHER half is stored, the halves are the truth and the draft is merely
+  // their sum — reading it back would double-count it.
+  assert.equal(shownLeftToInvoice({ leftToInvoice: null, leftToPurchase: 2500, newEtcDraft: 10000 }), null);
+  assert.equal(shownLeftToInvoiceSource({ leftToInvoice: null, leftToPurchase: 2500, newEtcDraft: 10000 }), "blank");
+});
+
+test("nothing stored anywhere is blank, which is the only state that reconciles", () => {
+  // A blank cell shows the computed figure as its hint, so it agrees with the Parts
+  // List by construction. Every other state is a number somebody typed.
+  assert.equal(shownLeftToInvoice({ leftToInvoice: null, leftToPurchase: null, newEtcDraft: null }), null);
+  assert.equal(shownLeftToInvoiceSource({ leftToInvoice: null, leftToPurchase: null, newEtcDraft: null }), "blank");
+});
+
+test("the rule has ONE implementation — the grid, the save and the audit all call it", () => {
+  // The specific duplication the report asked to end. Both call sites used to spell
+  // the rule out; a third copy was about to be written for the audit.
+  const page = readFileSync(join(process.cwd(), "src", "app", "(app)", "etc", "page.tsx"), "utf8");
+  const actions = readFileSync(join(process.cwd(), "src", "lib", "etc-actions.ts"), "utf8");
+  const audit = readFileSync(join(process.cwd(), "scripts", "audit-left-to-invoice-parity.ts"), "utf8");
+  for (const [name, src] of [["the ETC page", page], ["the save action", actions], ["the audit", audit]] as const) {
+    assert.ok(src.includes("shownLeftToInvoice"), `${name} must call the shared rule`);
+  }
+  // And none of them may re-derive it. The signature of the old copies was a
+  // three-way test against newEtcDraft.
+  for (const [name, src] of [["the ETC page", page], ["the save action", actions]] as const) {
+    const code = src.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+    assert.ok(
+      !/leftToPurchase\s*==?=?\s*null\s*&&[\s\S]{0,80}newEtcDraft/.test(code),
+      `${name} still re-derives the carry rule`,
+    );
+  }
+});
+
+test("the audit compares what is DISPLAYED, not just two calculations", () => {
+  // The gap that let this ship looking fixed: the audit measured rows against rows and
+  // reported parity while the screen disagreed. It now reads the stored fields and
+  // prints the Job / Parts List / Monthly ETC / difference table that was asked for.
+  const audit = readFileSync(join(process.cwd(), "scripts", "audit-left-to-invoice-parity.ts"), "utf8");
+  assert.match(audit, /leftToInvoice: true, leftToPurchase: true, newEtcDraft: true/, "it must read the stored cells");
+  assert.ok(audit.includes("DISPLAYED:"), "it must report the displayed comparison");
+  assert.ok(audit.includes("does not reconcile"), "it must count the mismatches");
+  // And name the contributing rows, so a mismatch is traceable.
+  assert.ok(audit.includes("EXCLUDED (after cutoff)"));
+  assert.match(audit, /shownLeftToInvoiceSource/, "each figure must say where it came from");
 });

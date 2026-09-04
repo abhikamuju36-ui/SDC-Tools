@@ -26,6 +26,7 @@ import { PartsBreakoutCell } from "@/components/PartsBreakoutCell";
 import { readPartsEtcBreakout } from "@/lib/parts-etc-breakout";
 import { monthEndLabel } from "@/lib/left-to-invoice";
 import { showsPartsBreakout } from "@/lib/parts-breakout-scope";
+import { shownLeftToInvoice } from "@/lib/left-to-invoice";
 import { EtcSectionCells } from "@/components/EtcSectionCells";
 import {
   StandardRatesProvider,
@@ -1980,18 +1981,22 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                         // merely their sum. `saveAllNewEtcDrafts` applies the identical
                         // rule against the identical stored fields, so the page and the
                         // save cannot form different opinions about what this cell holds.
-                        const carriedLeftToInvoice =
-                          partsCostEntry.leftToInvoice == null &&
-                          partsCostEntry.leftToPurchase == null &&
-                          partsCostEntry.newEtcDraft != null
-                            ? round2(Number(partsCostEntry.newEtcDraft))
-                            : null;
-                        const leftToInvoiceValue =
-                          partsCostEntry.leftToInvoice != null
-                            ? round2(Number(partsCostEntry.leftToInvoice))
-                            : carriedLeftToInvoice;
+                        //
+                        // The rule itself now lives in lib/left-to-invoice.ts beside the
+                        // arithmetic it shadows. It was written out here AND in
+                        // etc-actions.ts, mirrored by hand; the 2026-09-04 report asked
+                        // for one implementation of this business rule, and the
+                        // reconciliation audit needed to ask the same question a third
+                        // time. `shownLeftToInvoice` is the one answer all three use.
                         const leftToPurchaseValue =
                           partsCostEntry.leftToPurchase != null ? round2(Number(partsCostEntry.leftToPurchase)) : null;
+                        const leftToInvoiceValue = shownLeftToInvoice({
+                          leftToInvoice:
+                            partsCostEntry.leftToInvoice != null ? round2(Number(partsCostEntry.leftToInvoice)) : null,
+                          leftToPurchase: leftToPurchaseValue,
+                          newEtcDraft:
+                            partsCostEntry.newEtcDraft != null ? round2(Number(partsCostEntry.newEtcDraft)) : null,
+                        });
                         // ── New ETC, calculated (2026-09-03, by request) ────────────
                         //
                         // The sum of the two cells above, with a blank half counting as

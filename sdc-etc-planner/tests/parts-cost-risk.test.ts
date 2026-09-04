@@ -221,25 +221,46 @@ test("both breakout columns are typed cells, and neither is ever seeded", () => 
   // figure lives on the tooltip instead.
   assert.match(ETC_PAGE, /<PartsBreakoutCell[\s\S]{0,400}?which="invoice"/);
   assert.match(ETC_PAGE, /<PartsBreakoutCell[\s\S]{0,400}?which="purchase"/);
-  const fromStorageOrNothing = [
-    /const leftToInvoiceValue =\s*partsCostEntry\.leftToInvoice != null\s*[?] round2\(Number\(partsCostEntry\.leftToInvoice\)\)\s*: carriedLeftToInvoice;/,
+  // Repointed 2026-09-04: the carry rule moved into lib/left-to-invoice.ts
+  // (`shownLeftToInvoice`) so the grid, the save and the reconciliation audit share one
+  // implementation. The INTENT is unchanged and is what is asserted — a cell's value
+  // comes from the stored fields or from nothing, and never from the upstream figure.
+  assert.match(
+    ETC_PAGE,
+    /const leftToInvoiceValue = shownLeftToInvoice\(\{[\s\S]{0,700}?\}\);/,
+    "Left to Invoice must resolve through the shared rule",
+  );
+  assert.match(
+    ETC_PAGE,
     /const leftToPurchaseValue =\s*partsCostEntry\.leftToPurchase != null \? round2\(Number\(partsCostEntry\.leftToPurchase\)\) : null;/,
-  ];
-  for (const re of fromStorageOrNothing) {
-    assert.match(ETC_PAGE, re, "a breakout cell may come from storage or from nothing — never from an upstream seed");
-  }
+    "Left to Purchase comes from storage or from nothing",
+  );
+  // The seed must not reach either value. This is the assertion that actually protects
+  // the column, and it survives the rule moving.
+  const valueBlock = ETC_PAGE.slice(
+    ETC_PAGE.indexOf("const leftToPurchaseValue ="),
+    ETC_PAGE.indexOf("const breakoutSum ="),
+  );
+  assert.ok(valueBlock.length > 0, "could not locate the cell-value block");
+  assert.ok(
+    !/suggest/i.test(valueBlock),
+    "a breakout cell may come from storage or from nothing — never from an upstream seed",
+  );
   // The one thing Left to Invoice MAY fall back to is a New ETC somebody typed before
   // these columns existed — a stored figure, and only while BOTH halves are empty. The
   // save applies the same rule against the same fields, so the cell and the write
   // cannot form different opinions about what that cell holds.
+  // The carry itself is now one tested function, so what these assert is that both
+  // sides REACH it — and, for the page, that it is handed the entry's own draft rather
+  // than anything upstream.
   assert.match(
     ETC_PAGE,
-    /partsCostEntry\.leftToInvoice == null &&\s*partsCostEntry\.leftToPurchase == null &&\s*partsCostEntry\.newEtcDraft != null/,
+    /shownLeftToInvoice\(\{[\s\S]{0,400}?newEtcDraft:[\s\S]{0,40}?partsCostEntry\.newEtcDraft != null/,
     "the page must carry a pre-existing New ETC into Left to Invoice",
   );
   assert.match(
     readFileSync(join(process.cwd(), "src", "lib", "etc-actions.ts"), "utf8"),
-    /storedInvoice === null && storedPurchase === null && entry\.newEtcDraft != null/,
+    /const carriedInvoice = shownLeftToInvoice\(\{/,
     "the save must apply the same carry rule as the page",
   );
   // And nothing upstream computes such a figure any more: the BOM half that used to

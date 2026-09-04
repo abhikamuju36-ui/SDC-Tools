@@ -231,3 +231,58 @@ export function explainLeftToInvoice(
     postedAfterCutoff,
   };
 }
+
+// ── What the CELL shows, as opposed to what the rows compute ─────────────────
+//
+// REPORTED 2026-09-04, with screenshots: Monthly ETC's Left to Invoice column showed
+// $10,000 against a Parts List reading $35,496, and "I want a root-cause fix, not a
+// display patch."
+//
+// The root cause is not in the arithmetic above — that was unified on 2026-09-03 and
+// tests/left-to-invoice-parity.test.ts holds it there. It is that the COLUMN does not
+// render the arithmetic. Left to Invoice became a manager-entered cell, so what it
+// displays is the stored figure, or — on a row from before the column existed — the
+// hand-typed New ETC that was already there. The computed figure reaches only the
+// tooltip of an empty cell. Every row in the report's screenshot is the carried case,
+// which is why each one equalled its own New ETC exactly and reconciled with nothing.
+//
+// That rule was written out twice, in etc/page.tsx and in etc-actions.ts, deliberately
+// mirrored by hand so a save could not drop the figure a manager was looking at. Two
+// hand-mirrored copies is what the report asked to stop doing, and a third was about
+// to be written for the reconciliation audit. This is that rule, once.
+
+/** The stored halves plus the draft, already rounded to cents by the caller. */
+export type PartsBreakoutStored = {
+  leftToInvoice: number | null;
+  leftToPurchase: number | null;
+  /** A pre-breakout hand-typed New ETC, when there is one. */
+  newEtcDraft: number | null;
+};
+
+/**
+ * What the Left to Invoice cell displays.
+ *
+ * The stored figure when there is one. Otherwise a pre-breakout New ETC, but ONLY
+ * while both halves are unanswered: once either is stored, the halves are the truth
+ * and the draft is merely their sum, so reading it back would double-count.
+ *
+ * Null means the cell is blank — which is the state that shows the computed figure as
+ * a hint, and the only state in which this column reconciles with the Parts List.
+ */
+export function shownLeftToInvoice(e: PartsBreakoutStored): number | null {
+  if (e.leftToInvoice !== null) return e.leftToInvoice;
+  if (e.leftToPurchase === null && e.newEtcDraft !== null) return e.newEtcDraft;
+  return null;
+}
+
+/**
+ * Where a displayed figure came from. The audit prints it, because "these two numbers
+ * differ" is only actionable once you know whether a person typed the one on screen.
+ */
+export type ShownSource = "stored" | "carried-new-etc" | "blank";
+
+export function shownLeftToInvoiceSource(e: PartsBreakoutStored): ShownSource {
+  if (e.leftToInvoice !== null) return "stored";
+  if (e.leftToPurchase === null && e.newEtcDraft !== null) return "carried-new-etc";
+  return "blank";
+}

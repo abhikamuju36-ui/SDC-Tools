@@ -10,6 +10,7 @@ import {
   parseNewEtcField,
   type NewEtcWriteIntent,
 } from "@/lib/etc";
+import { shownLeftToInvoice } from "@/lib/left-to-invoice";
 import { derivePriorEtcForMonth, cascadePriorEtcForward } from "@/lib/etc-prior-etc";
 import { seedMonthRows } from "@/lib/etc-seeding";
 import { etcActiveJobFilter } from "@/lib/job-filters";
@@ -324,10 +325,14 @@ export async function saveAllNewEtcDrafts(
     // the SAME stored fields, that etc/page.tsx renders the cell from. Both sides
     // derive it rather than one telling the other, so a payload that omits the cell
     // cannot silently drop the figure the manager was looking at.
-    const carriedInvoice =
-      storedInvoice === null && storedPurchase === null && entry.newEtcDraft != null
-        ? round2(Number(entry.newEtcDraft))
-        : null;
+    // The SAME function etc/page.tsx renders the cell from (lib/left-to-invoice.ts).
+    // It used to be this rule written out again here, mirrored by hand — which is
+    // exactly the duplication the 2026-09-04 reconciliation report asked to end.
+    const carriedInvoice = shownLeftToInvoice({
+      leftToInvoice: null,
+      leftToPurchase: storedPurchase,
+      newEtcDraft: entry.newEtcDraft != null ? round2(Number(entry.newEtcDraft)) : null,
+    });
     const halves = [
       // `shown` is what the manager's cell was displaying, which is what an incoming
       // value has to be compared against — otherwise clearing a carried figure looks

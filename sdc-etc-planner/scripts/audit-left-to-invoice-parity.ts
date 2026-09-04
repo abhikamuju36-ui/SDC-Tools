@@ -2,7 +2,13 @@ import "dotenv/config";
 import { prisma } from "../src/lib/prisma";
 import { getPartsCostForJobs, type PartsCostLine } from "../src/lib/sync-totaleto";
 import { PARTS_COST_SECTION } from "../src/lib/sections";
-import { leftToInvoiceForLines, monthEndCutoff, explainLeftToInvoice } from "../src/lib/left-to-invoice";
+import {
+  leftToInvoiceForLines,
+  monthEndCutoff,
+  explainLeftToInvoice,
+  shownLeftToInvoice,
+  shownLeftToInvoiceSource,
+} from "../src/lib/left-to-invoice";
 
 // ── Why Monthly ETC's Left to Invoice and the Parts List disagree ────────────
 //
@@ -54,7 +60,10 @@ const defs = {
 async function main() {
   const entries = await prisma.etcEntry.findMany({
     where: { month, section: PARTS_COST_SECTION },
-    select: { jobId: true },
+    // The three stored fields the CELL is rendered from. Added 2026-09-04: this audit
+    // compared computed-against-computed and so reported parity while the screen showed
+    // $10,000 against the Parts List's $35,496. See the DISPLAYED section below.
+    select: { jobId: true, leftToInvoice: true, leftToPurchase: true, newEtcDraft: true },
   });
   const jobs = await prisma.job.findMany({
     where: { id: { in: [...new Set(entries.map((e) => e.jobId))] } },
@@ -122,6 +131,95 @@ DRIFT: ${drifting.length} job(s) have GL postings dated after ${END}`);
     console.log(`  job ${r.job.padEnd(6)} shown ${usd(r.vals.etcShipped).padStart(14)}  frozen ${usd(Math.max(0, r.vals.asOfSnapshot)).padStart(14)}  late postings ${usd(r.late).padStart(13)}   ${r.name}`);
   }
   console.log("");
+
+  // ── DISPLAYED vs COMPUTED — the check this audit was missing ─────────────
+  //
+  // Everything above compares two CALCULATIONS. They agree, and have since
+  // 2026-09-03. What the 2026-09-04 report photographed is a different thing: the
+  // grid's Left to Invoice column does not render the calculation. It renders the
+  // manager's stored figure, or a pre-breakout hand-typed New ETC carried into the
+  // cell, and the computed figure appears only in an empty cell's tooltip.
+  //
+  // So an audit that measures rows against rows keeps reporting parity while the
+  // screen disagrees with the Parts List by any amount at all. This is the table the
+  // report asked for — Job / Parts List / Monthly ETC / Difference — read from what
+  // the column actually shows, plus the reason each figure is what it is.
+  const round2 = (n: number) => Math.round(n * 100) / 100;
+  const dec = (v: unknown) => (v == null ? null : round2(Number(v)));
+  const shownByJob = new Map<number, { shown: number | null; source: string }>();
+  for (const e of entries) {
+    const stored = {
+      leftToInvoice: dec(e.leftToInvoice),
+      leftToPurchase: dec(e.leftToPurchase),
+      newEtcDraft: dec(e.newEtcDraft),
+    };
+    // The SAME function the grid and the save render the cell from, so this cannot
+    // report a figure the screen does not show.
+    shownByJob.set(e.jobId, { shown: shownLeftToInvoice(stored), source: shownLeftToInvoiceSource(stored) });
+  }
+
+  console.log("");
+  console.log(`DISPLAYED: what the Monthly ETC column shows vs the Parts List through ${END}`);
+  console.log(`  ${"job".padEnd(7)}${"Parts List".padStart(15)}${"Monthly ETC".padStart(15)}${"difference".padStart(15)}  source`);
+  let shownTotal = 0;
+  let listTotalShown = 0;
+  const mismatches: { job: string; name: string; list: number; shown: number | null; source: string }[] = [];
+  for (const j of withNumbers) {
+    const list = Math.max(0, defs.purchaseCutoff(byJob.get(j.jobId) ?? []));
+    const s = shownByJob.get(j.id) ?? { shown: null, source: "no-entry" };
+    listTotalShown += list;
+    shownTotal += s.shown ?? 0;
+    const diff = (s.shown ?? 0) - list;
+    if (s.shown !== null && Math.abs(diff) > 0.005) {
+      mismatches.push({ job: j.jobId, name: (j.jobName ?? "").slice(0, 30), list, shown: s.shown, source: s.source });
+    }
+    console.log(
+      `  ${j.jobId.padEnd(7)}${usd(list).padStart(15)}` +
+        `${(s.shown === null ? "(blank)" : usd(s.shown)).padStart(15)}${usd(diff).padStart(15)}  ${s.source}`,
+    );
+  }
+  console.log(`  ${"TOTAL".padEnd(7)}${usd(listTotalShown).padStart(15)}${usd(shownTotal).padStart(15)}${usd(shownTotal - listTotalShown).padStart(15)}`);
+  console.log("");
+  // A blank cell is deliberately NOT counted as a mismatch: it reconciles by
+  // construction, because the computed figure is exactly what its tooltip offers.
+  console.log(`  ${mismatches.length} of ${withNumbers.length} jobs show a figure that does not reconcile`);
+  const bySource: Record<string, { n: number; amount: number }> = {};
+  for (const m of mismatches) {
+    const b = (bySource[m.source] ??= { n: 0, amount: 0 });
+    b.n++;
+    b.amount += (m.shown ?? 0) - m.list;
+  }
+  for (const [k, v] of Object.entries(bySource)) {
+    console.log(`    ${String(v.n).padStart(3)} ${k.padEnd(18)} ${usd(v.amount).padStart(16)}`);
+  }
+
+  // The contributing rows for the worst offender: part / PO / cost / posted / left /
+  // date / included, so a mismatch is traceable rather than re-derived by hand.
+  const worstShown = mismatches.sort((a, b) => Math.abs((b.shown ?? 0) - b.list) - Math.abs((a.shown ?? 0) - a.list))[0];
+  if (worstShown) {
+    console.log("");
+    console.log(
+      `  worst: job ${worstShown.job} ${worstShown.name} — shows ${usd(worstShown.shown ?? 0)} (${worstShown.source}), Parts List ${usd(worstShown.list)}`,
+    );
+    const ls = byJob.get(worstShown.job) ?? [];
+    const x = explainLeftToInvoice(ls, { asOf: monthEndCutoff(month) });
+    console.log(`    ${x.linesIncluded} lines included, ${x.linesExcluded} excluded by the cutoff, raw ${usd(x.raw)}`);
+    console.log(
+      `    ${"part".padEnd(20)}${"PO".padEnd(12)}${"total".padStart(13)}${"posted".padStart(13)}${"left".padStart(13)}  purchased   invoiced`,
+    );
+    for (const l of ls
+      .slice()
+      .sort((a, b) => Math.abs(b.totalPrice - b.actualAmount) - Math.abs(a.totalPrice - a.actualAmount))
+      .slice(0, 12)) {
+      const purchased = day(l.purchaseDate);
+      const included = purchased === null || purchased <= END;
+      console.log(
+        `    ${(l.partNumber ?? "-").slice(0, 19).padEnd(20)}${(l.poNumber ?? "-").slice(0, 11).padEnd(12)}` +
+          `${usd(l.totalPrice).padStart(13)}${usd(l.actualAmount).padStart(13)}${usd(l.totalPrice - l.actualAmount).padStart(13)}` +
+          `  ${(purchased ?? "-").padEnd(12)}${(day(l.invoicedDate) ?? "-").padEnd(11)}${included ? "" : "EXCLUDED (after cutoff)"}`,
+      );
+    }
+  }
 
   const gap = totals.etcToday - totals.purchaseCutoff;
   console.log(`\n  etcToday − purchaseCutoff = ${usd(gap)}`);
