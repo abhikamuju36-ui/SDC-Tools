@@ -1,4 +1,5 @@
 import { readinessBand, type ReadinessBand } from "@/lib/build-readiness-types";
+import { safePct } from "@/components/ui/format";
 import { StatusBadge } from "@/components/ui/StatusBadge";
 
 // One readiness-% visual for the whole Build Readiness tab — a small colored
@@ -50,7 +51,9 @@ export function ReadinessPill({
   return (
     <span className="inline-flex items-center gap-1.5 font-mono font-semibold tabular-nums">
       <span className={`inline-block h-2 w-2 shrink-0 rounded-full ${BAND_DOT[band]}`} aria-hidden />
-      <span className={BAND_TEXT[band]}>{pct}%</span>
+      {/* Clamped at the boundary — see safePct. A pill is handed a plain `number`,
+          which includes NaN, and interpolating it raw is how `NaN%` reached a screen. */}
+      <span className={BAND_TEXT[band]}>{safePct(pct)}%</span>
       {limitedScope && (
         <span
           className="text-note font-sans font-normal text-sdc-yellow-text"

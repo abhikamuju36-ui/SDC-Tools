@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { pct } from "@/components/ui/format";
 import { usd } from "@/components/ui/format";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { Stat } from "@/components/procurement/PoDetailPanel";
@@ -88,7 +89,7 @@ export function AssemblyDetailDrillView({
       <div className="grid grid-cols-2 gap-3 rounded-lg border border-sdc-border bg-sdc-gray-50 p-3 sm:grid-cols-3">
         <Stat label="Required Qty" value={num(merged.requiredQty)} />
         <Stat label="Buildable Now" value={merged.buildableQty == null ? "—" : `${num(merged.buildableQty)} (${merged.buildablePct}%)`} />
-        <Stat label="Readiness" value={`${merged.readinessPct}%`} />
+        <Stat label="Readiness" value={pct(merged.readinessPct)} />
         <Stat label="Material Value" value={usd(merged.materialValue)} />
         <Stat label="Next Delivery" value={fmtDate(merged.nextExpectedDelivery)} />
         <Stat label="Est. Buildable" value={fmtDate(merged.estimatedBuildableDate)} />

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, useTransition, type 
 import type { BomNode, BomPart, JobBom, PoLineGroup, Vendor } from "@/lib/job-bom";
 import { isUncoveredPart, quantityReadiness } from "@/lib/job-bom-rules";
 import type { PartsCostLine } from "@/lib/sync-totaleto";
-import { usd } from "@/components/ui/format";
+import { usd, safePct } from "@/components/ui/format";
 import { useToast } from "@/components/ui/Toast";
 import { DragScroll } from "@/components/DragScroll";
 import { normPn, attributeInvoicedWindow, type WindowAttribution } from "@/lib/parts-cost-window-attribution";
@@ -84,14 +84,29 @@ function barClasses(pct: number): { bar: string; text: string } {
 // thicker track and a headline-sized percentage rather than a scaled-up copy
 // of the row bar.
 function ReadinessBar({ pct, width = "w-full", size = "sm" }: { pct: number; width?: string; size?: "sm" | "lg" }) {
-  const { bar, text } = barClasses(pct);
+  // ── Nothing here may render `NaN%` (2026-09-04) ──────────────────────────
+  //
+  // The `NaN%` reported on this bar was caused upstream — a missing `receivedQty`
+  // poisoning the numerator, see lib/job-bom-rules.ts — and that is where it is fixed.
+  // This is the second line of defence, and it earns its place: `pct` is a plain
+  // `number`, which in TypeScript includes NaN and Infinity, so the type says nothing
+  // about whether this component can be trusted with it. The bar already clamped its
+  // WIDTH and printed the raw value beside it, which is exactly how a broken number
+  // reached the screen while the bar itself looked fine.
+  //
+  // `safePct` is shared (components/ui/format.ts) so every bar and pill in the app
+  // clamps identically — a second copy here is how one of them ends up not doing it.
+  const shown = safePct(pct);
+  const { bar, text } = barClasses(shown);
   const lg = size === "lg";
   return (
-    <div className={`flex items-center ${lg ? "gap-3" : "gap-2"} ${width}`} title={`${pct}% ready`}>
+    <div className={`flex items-center ${lg ? "gap-3" : "gap-2"} ${width}`} title={`${shown}% ready`}>
       <div className={`${lg ? "h-3" : "h-1.5"} flex-1 overflow-hidden rounded-full bg-sdc-gray-100`}>
-        <div className={`h-full rounded-full ${bar}`} style={{ width: `${Math.min(100, Math.max(0, pct))}%` }} />
+        <div className={`h-full rounded-full ${bar}`} style={{ width: `${shown}%` }} />
       </div>
-      <span className={`${lg ? "w-16 text-2xl" : "w-9 text-note"} shrink-0 text-right font-bold tabular-nums ${text}`}>{pct}%</span>
+      <span className={`${lg ? "w-16 text-2xl" : "w-9 text-note"} shrink-0 text-right font-bold tabular-nums ${text}`}>
+        {shown}%
+      </span>
     </div>
   );
 }
@@ -446,8 +461,31 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
     const received = parts.filter((p) => p.st.key === "received").length;
     const noPO = parts.filter(isUncoveredPart).length;
     const covered = parts.filter((p) => p.source === "stock" || p.source === "process").length;
-    const { pct } = quantityReadiness(parts);
-    return { total, received, noPO, covered, pct };
+    // ── Readiness is over BOM REQUIREMENTS, not over every row ────────────────
+    //
+    // Non-BOM rows are purchase lines with no BOM requirement behind them, so they are
+    // not something that can be "not ready" — they are already bought. Counting them as
+    // required-but-unreceived dragged the percentage down against a denominator that
+    // was never a requirement, and it also broke the agreement this figure is supposed
+    // to keep: Build Readiness's own project-level number comes from `statsForRoots`,
+    // which walks BOM rows only.
+    //
+    // Measured from the same `parts` array the counts beside it come from, so the
+    // percentage and the "628 parts · 4 uncovered" line can never be computed from
+    // different data.
+    const requirements = parts.filter((p) => !p.nonBom);
+    const readiness = quantityReadiness(requirements);
+    // `counted` is 0 when nothing carried a requirement — a job with only non-BOM
+    // purchases, or a BOM still loading. That is "nothing to measure", which the line
+    // says in words rather than reporting a confident 0%.
+    return {
+      total,
+      received,
+      noPO,
+      covered,
+      pct: readiness.pct,
+      measurable: readiness.counted > 0,
+    };
   }, [parts]);
 
   const assembliesCount = useMemo(
@@ -501,7 +539,15 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
       <div className="flex flex-wrap items-center gap-x-5 gap-y-3 rounded-lg border border-sdc-border bg-white px-5 py-4 shadow-sm">
         <span className="text-sm font-bold uppercase tracking-wider text-sdc-gray-400">Readiness</span>
         <div className="w-56">
-          <ReadinessBar pct={summary.pct} size="lg" />
+          {summary.measurable ? (
+            <ReadinessBar pct={summary.pct} size="lg" />
+          ) : (
+            // Nothing carried a BOM requirement, so there is no ratio to report. Saying
+            // so beats a confident 0%, which reads as "nothing is ready".
+            <span className="text-base text-sdc-muted" title="No BOM requirement on this job yet, so there is nothing to measure readiness against.">
+              Not yet measurable
+            </span>
+          )}
         </div>
         <span className="text-base text-sdc-gray-600">
           <span className="font-semibold text-sdc-navy tabular-nums" title="Unique procurement requirements. An assembly released as “Assembly Only” counts once, as itself — its subcomponents are bought with it and are not counted separately.">{num(summary.total)}</span> parts

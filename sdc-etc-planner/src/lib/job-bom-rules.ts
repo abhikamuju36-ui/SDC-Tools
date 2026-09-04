@@ -401,18 +401,52 @@ export function unitPriceFor(r: BomRow, ctx: BomContext): { price: number; basis
 // small-quantity shortfalls on an otherwise-finished job drag readiness down
 // far more than the real remaining work justified — confirmed against live
 // data (2026-08-17), not just reasoned about.
-export function quantityReadiness(parts: { qty: number; receivedQty: number }[]): {
+/**
+ * A quantity that can be divided by.
+ *
+ * REPORTED 2026-09-04: Job Details -> Procurement showed `NaN%`.
+ *
+ * The divisor was already guarded (`requiredQty > 0`), which is why this looked
+ * impossible — a NaN total fails that test and returns 0. The NUMERATOR was not:
+ * `Math.min(undefined, 5)` is NaN, so one row with no `receivedQty` poisoned
+ * `coveredQty`, and NaN over a perfectly good total is NaN. Guarding a division's
+ * bottom half and not its top is the whole bug.
+ *
+ * Negative is floored too, not just non-finite. Total ETO genuinely carries negative
+ * purchase quantities (see the note on job 1143 PO 103689, qty -1), and a negative
+ * required quantity would drag a percentage below zero or, summed against positives,
+ * cancel a real requirement out of the denominator.
+ */
+function safeQty(v: unknown): number {
+  const n = typeof v === "number" ? v : Number(v);
+  return Number.isFinite(n) && n > 0 ? n : 0;
+}
+
+export function quantityReadiness(parts: readonly { qty: number; receivedQty: number }[]): {
   requiredQty: number;
   coveredQty: number;
   pct: number;
+  /** How many rows actually carried a requirement. 0 means "nothing to measure", not "0% ready". */
+  counted: number;
 } {
   let requiredQty = 0;
   let coveredQty = 0;
+  let counted = 0;
   for (const p of parts) {
-    requiredQty += p.qty;
-    coveredQty += Math.min(p.receivedQty, p.qty);
+    // Normalized per ROW rather than once over the totals: a single bad row must cost
+    // that row, not the whole percentage.
+    const qty = safeQty(p?.qty);
+    if (qty <= 0) continue;
+    counted++;
+    requiredQty += qty;
+    coveredQty += Math.min(safeQty(p?.receivedQty), qty);
   }
-  return { requiredQty, coveredQty, pct: requiredQty > 0 ? Math.round((coveredQty / requiredQty) * 100) : 0 };
+  if (requiredQty <= 0) return { requiredQty: 0, coveredQty: 0, pct: 0, counted };
+  // Clamped as well as guarded. Both halves are now finite and non-negative, so this
+  // cannot exceed 100 — but a percentage is rendered directly into the UI, and the
+  // cheapest place to make `NaN%` unrepresentable is the function that produces it.
+  const pct = Math.round((coveredQty / requiredQty) * 100);
+  return { requiredQty, coveredQty, pct: Math.min(100, Math.max(0, pct)), counted };
 }
 
 // Readiness over UNIQUE requirements (deduped by ChildID), matching the

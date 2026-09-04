@@ -56,3 +56,38 @@ export function hoursCell(n: number): string {
 export function hoursExact(n: number): string {
   return n.toLocaleString(undefined, { maximumFractionDigits: 2 });
 }
+
+// ── Percentages ──────────────────────────────────────────────────────────────
+//
+// REPORTED 2026-09-04: the Procurement readiness bar showed `NaN%`.
+//
+// The cause was upstream and is fixed there (a missing `receivedQty` poisoning the
+// numerator — see lib/job-bom-rules.ts). This exists because the render boundary was
+// the only place that could have caught it and did not: every one of these bars and
+// pills took a plain `number` and interpolated it straight into the DOM, and in
+// TypeScript `number` includes NaN and Infinity, so the type promised nothing.
+//
+// A percentage in this app is always a whole number between 0 and 100. Anything else is
+// a bug somewhere else, and 0 is the honest way to render a figure we do not have —
+// "no percentage to report" is said in words instead, by the caller, when it matters
+// (see JobProcurement's "Not yet measurable").
+
+/**
+ * A whole percentage, clamped to 0..100.
+ *
+ * Non-finite reads as 0, deliberately, rather than clamping Infinity to 100. Clamping
+ * is the arithmetically tidy answer and the wrong one here: a readiness bar claiming
+ * "100% ready" off a corrupt number could let somebody ship a job. 0 is the safe
+ * direction on every percentage this app renders, and a caller with genuinely nothing
+ * to report says so in words instead (see JobProcurement's "Not yet measurable").
+ */
+export function safePct(n: unknown): number {
+  const v = typeof n === "number" ? n : Number(n);
+  if (!Number.isFinite(v)) return 0;
+  return Math.min(100, Math.max(0, Math.round(v)));
+}
+
+/** `safePct` with the sign on it, for direct interpolation. */
+export function pct(n: unknown): string {
+  return `${safePct(n)}%`;
+}

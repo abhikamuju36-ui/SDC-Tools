@@ -583,7 +583,8 @@ export function flattenBomParts(bom: JobBom, partsLines: PartsCostLine[], active
       qty: lines.reduce((s2, l) => s2 + l.quantity, 0),
       unitPrice: first.unitPrice,
       supplier: normalizeVendor(first.supplier),
-      manufacturer: normalizeVendor(first.manufacturer),
+      // BomPart.manufacturer is non-nullable; a purchase line's may be null.
+      manufacturer: normalizeVendor(first.manufacturer) ?? "",
       poId: first.poNumber,
       expectedDate: null,
       requiredDate: null,
@@ -598,6 +599,48 @@ export function flattenBomParts(bom: JobBom, partsLines: PartsCostLine[], active
       poNumber: first.poNumber,
       leadDays: null,
       st: NON_BOM_STATUS,
+      // ── The fourteen fields the `as FlatPart` cast used to hide ──────────────
+      //
+      // Removed 2026-09-04, chasing `NaN%` on the readiness bar. The cast silenced a
+      // missing-property check, and `receivedQty` was one of fourteen required BomPart
+      // fields these synthesized rows never set — so `Math.min(undefined, qty)` was NaN,
+      // `coveredQty` was NaN, and a NaN numerator over a perfectly good total printed
+      // `NaN%`. Every one of the other thirteen was the same accident waiting on a
+      // different consumer.
+      //
+      // A non-BOM row stands for purchase lines with NO BOM requirement, so these are
+      // not placeholders — they are what that actually means:
+      //
+      //   nothing was required, so nothing is outstanding and nothing was pulled
+      poQty: lines.reduce((s2, l) => s2 + l.quantity, 0),
+      receivedQty: 0,
+      pullQty: 0,
+      //   the money came from the purchase line itself, not from a BOM or a price list
+      costBasis: "po",
+      source: "po",
+      //   there is no BOM edge, so there is no release status to report. "assemblyOnly"
+      //   is the one that does not ask anything to be exploded into contents.
+      release: "assemblyOnly",
+      isAssembly: false,
+      //   dates the BOM would have carried; a purchase line has only its own
+      originalDate: null,
+      revisedDate: null,
+      poDate: first.purchaseDate,
+      //   "ordered", NOT "noPO", and this one is load-bearing. `isUncoveredPart` is
+      //   `status === "noPO" && !hold`, so "noPO" here would have turned every non-BOM
+      //   row into a procurement gap — on job 1101 that is 95 rows, taking the readiness
+      //   line's "4 uncovered" to 99. These rows are the opposite of a gap: each one
+      //   stands for a purchase that HAS been made and simply has no BOM requirement
+      //   behind it. `st` above still displays "Not on BOM", which is the fact a reader
+      //   needs; this is the fact the coverage rules need.
+      //
+      //   Before the cast was removed this field was `undefined`, so the count came out
+      //   right by accident — undefined is not "noPO". It is right by rule now.
+      status: "ordered",
+      hold: false,
+      //   change-packet tagging is a BOM-release concept
+      packetId: null,
+      packetLabel: null,
       totalPrice,
       invoicedAmount,
       pctInvoiced: activeAttribution ? null : totalPrice > 0 ? Math.round((invoicedAmount / totalPrice) * 100) : invoicedAmount > 0 ? 100 : 0,
@@ -607,7 +650,7 @@ export function flattenBomParts(bom: JobBom, partsLines: PartsCostLine[], active
       matchReason: reason,
       nonBom: true,
       lineCount: lines.length,
-    } as FlatPart);
+    });
   }
 
   return out;
