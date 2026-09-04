@@ -7,6 +7,20 @@ const processManager = require('./processManager');
 const auth           = require('./auth');
 const sdcSession     = require('./sdcSession');
 
+// ── Single instance lock ────────────────────────────────────────────────────
+const gotLock = app.requestSingleInstanceLock();
+if (!gotLock) {
+  app.quit();
+  return;
+}
+app.on('second-instance', () => {
+  if (mainWindow) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  }
+});
+
 // ── Auto-updater (production only) ──────────────────────────────────────────
 // Design (mirrors Dan's state_logic_builder approach):
 //   • autoDownload = true    — download silently in background, no prompt needed
