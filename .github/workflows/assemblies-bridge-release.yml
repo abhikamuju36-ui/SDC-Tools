@@ -64,12 +64,24 @@ name: Assemblies — bridging release (one-time)
 # ─────────────────────────────────────────────────────────────────────────────
 
 on:
+  # Two ways in, and both are a deliberate act:
+  #
+  #   workflow_dispatch  a person clicks Run and types "bridge"
+  #   push a tag         `assemblies-bridge-v*` — the tag itself is the confirmation,
+  #                      which is what lets this be triggered from a shell that has git
+  #                      but no API token
+  #
+  # Every guard below applies to both paths. Only the typed confirmation is skipped for
+  # the tag, because creating and pushing that tag is the same decision.
   workflow_dispatch:
     inputs:
       confirm:
         description: 'Type "bridge" to confirm you intend to publish to BOTH repos'
         required: true
         default: ""
+  push:
+    tags:
+      - "assemblies-bridge-v*"
 
 # Only the old repo needs the PAT; this repo's own release could use GITHUB_TOKEN.
 # electron-builder uses ONE GH_TOKEN for every target, so the PAT covers both and
@@ -84,12 +96,18 @@ jobs:
 
     steps:
       - name: Refuse an accidental run
+        if: github.event_name == 'workflow_dispatch'
         shell: bash
         run: |
           if [ "${{ inputs.confirm }}" != "bridge" ]; then
             echo "::error::Type 'bridge' in the confirm field. This publishes to two repos and reaches installed desktops."
             exit 1
           fi
+
+      - name: Say how this run was started
+        shell: bash
+        run: |
+          echo "event: ${{ github.event_name }}  ref: ${{ github.ref }}"
 
       - uses: actions/checkout@v4.2.2
 
