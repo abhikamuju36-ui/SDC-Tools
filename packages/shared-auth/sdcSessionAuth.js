@@ -1,15 +1,21 @@
 'use strict';
-// SDC Tools centralized session — shared verification, copied identically
-// into each of the 4 apps that have no login of their own. Minted by
-// SDC Scheduler (see its routes/ssoCentral.js) right after the shell's
-// Azure AD login; verified here with the same shared secret. This file only
-// verifies — it can't mint a session even if compromised, unlike
-// Scheduler's own copy which also holds the mint function.
+// SDC Tools centralized session — shared verification, canonical source for
+// the 4 apps that have no login of their own (imported as @sdc/shared-auth;
+// see packages/README.md). Minted by SDC Scheduler (see its
+// routes/ssoCentral.js) right after the shell's Azure AD login; verified
+// here with the same shared secret. This file only verifies — it can't mint
+// a session even if compromised, unlike Scheduler's own copy which also
+// holds the mint function.
 //
 // SDC_SSO_ENABLED gates whether requireSdcSession actually blocks anything,
 // mirroring the AUTH_ENABLED / SKIP_AUTH feature-flag convention already
 // used elsewhere in the SDC Tools suite — lets this be deployed and tested
 // before it's actually turned on in production.
+//
+// verifySdcSession/requireSdcSession must stay fully synchronous (no await,
+// no async I/O) — apps/state-logic/server.js's non-Express raw-http shim
+// (applySdcSessionGate) depends on both cookie-parser and this module
+// invoking their `next` callback synchronously.
 const jwt = require('jsonwebtoken');
 
 const SDC_SESSION_SECRET = process.env.SDC_SESSION_SECRET || '';

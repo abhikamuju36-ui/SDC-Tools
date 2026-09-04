@@ -1,14 +1,14 @@
 const jwt = require('jsonwebtoken');
 const db = require('../db');
+const { verifySdcSession } = require('@sdc/shared-auth');
 
 // ── SDC Tools centralized login (2026-08-20) ────────────────────────────────
 //
 // Real per-user identity, sourced from the shared `sdc_session` cookie the
 // Electron shell sets right after its own Azure AD login (see
-// SDC_Scheduler/routes/ssoCentral.js, which mints it, and the identical
-// verification copied into Assemblies Library / Build Readiness Report /
-// State Logic Builder's own sdcSessionAuth.js — this is the same check, not
-// a fourth reinvention of it).
+// SDC_Scheduler/routes/ssoCentral.js, which mints it, and the same
+// verification shared via packages/shared-auth — this is the same check,
+// not a fourth reinvention of it).
 //
 // Deliberately does NOT trust the token's `apps.calendar` value as the role.
 // That claim is only a coarse "is calendar in this person's app map at all"
@@ -19,13 +19,6 @@ const db = require('../db');
 // of truth (routes/admin.js), and it means a role change made here takes
 // effect on the person's very next request, with no separate sync/backfill
 // step to keep in step with a second copy of the same fact.
-const SDC_SESSION_SECRET = process.env.SDC_SESSION_SECRET || '';
-
-function verifySdcSession(token) {
-  if (!SDC_SESSION_SECRET || !token) return null;
-  try { return jwt.verify(token, SDC_SESSION_SECRET); }
-  catch { return null; }
-}
 
 async function resolveShellUser(claims) {
   const email = String(claims.email || '').trim().toLowerCase();

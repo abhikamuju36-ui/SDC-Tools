@@ -58,7 +58,7 @@ require('dotenv').config({ path: path.join(__dirname, '.env') });
 // wired into this file's raw http.createServer handler (there is no
 // Express `app` in this file to app.use() these onto).
 const cookieParser = require('cookie-parser');
-const { requireSdcSession } = require('./sdcSessionAuth');
+const { requireSdcSession } = require('@sdc/shared-auth');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8',

@@ -6,7 +6,8 @@
     "apps/assemblies",
     "apps/build-readiness",
     "apps/state-logic",
-    "SDC_Scheduler"
+    "SDC_Scheduler",
+    "packages/shared-auth"
   ],
   "scripts": {
     "dev": "npm run dev --prefix apps/shell",

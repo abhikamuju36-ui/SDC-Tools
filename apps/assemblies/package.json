@@ -60,6 +60,7 @@
     }
   },
   "dependencies": {
+    "@sdc/shared-auth": "^1.0.0",
     "concurrently": "^8.2.2",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.5",

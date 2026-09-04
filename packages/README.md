@@ -1,17 +1,14 @@
 # packages/
 
-Reserved for code genuinely shared across more than one SDC app — not a dumping ground for app-specific logic. Nothing lives here yet.
+Reserved for code genuinely shared across more than one SDC app — not a dumping ground for app-specific logic.
 
-## Known candidate: `sdcSessionAuth.js`
+## `shared-auth/`
 
-The SDC Tools centralized-login cookie verifier (`sdc_session`, minted by SDC Scheduler's `routes/ssoCentral.js`) is currently duplicated **verbatim** across four apps:
+The SDC Tools centralized-login cookie verifier (`sdc_session`, minted by SDC Scheduler's `routes/ssoCentral.js`). Canonical source for `requireSdcSession`/`verifySdcSession`, imported as `@sdc/shared-auth` by Assemblies Library, Build Readiness Report, and State Logic Builder (all three via the root npm workspace) and Calendar (via a `file:` dependency, since it isn't a workspace member). Previously duplicated verbatim across all four apps; Calendar's `server/middleware/requireAuth.js` still keeps its own bespoke wrapper (`resolveShellUser`, legacy bearer fallback, etc.) around the shared `verifySdcSession` import, since only that core piece was ever actually duplicated there.
 
-- `apps/assemblies/server/sdcSessionAuth.js`
-- `apps/build-readiness/server/...` (same pattern)
-- `apps/state-logic/...`
-- `apps/calendar/server/...`
+## `design-system/`
 
-It's a real extraction candidate — same file, four copies, one shared secret (`SDC_SESSION_SECRET`) read from each app's own `.env`. It was deliberately **not** extracted as part of the 2026-08 restructuring: the SSO feature is currently dormant everywhere (`SDC_SSO_ENABLED` defaults off in every app), and touching four live production apps' auth-verification code at the same time as moving their folders was judged unnecessary risk for a purely structural cleanup. Do this as its own small, low-risk follow-up once someone's ready to turn SSO on for real — extract to `packages/shared-auth/`, update each app's import, keep the verification logic byte-for-byt identical.
+Shared design tokens and CSS primitives, consumed via relative-path `@import`/static file serving (not npm resolution — see its own files for the pattern).
 
 ## Adding something else here later
 
