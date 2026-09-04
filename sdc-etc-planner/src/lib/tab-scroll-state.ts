@@ -188,3 +188,81 @@ export function parseScrollState(raw: string | null): TabScrollState {
     return {};
   }
 }
+
+// ── Telling a user's scroll apart from a layout reset ────────────────────────
+//
+// REPORTED AGAIN 2026-09-04, after the first fix: "the Monthly ETC tab is still losing
+// its internal grid viewport state." Two bugs, both provable by reading the code rather
+// than by clicking, and the first one is why saving values was never going to be enough.
+//
+//   1. The recorder trusted every scroll event. Anything that reset the grid to 0 fired
+//      a scroll event at 0, which OVERWROTE the remembered offset — so the memory was
+//      destroyed before the restore ever got a chance to use it. A save-and-restore
+//      pair cannot work if the save is the thing corrupting the value.
+//
+//   2. The restore was one-shot, on show. But `apply({navigate:true})` — opening a tab,
+//      duplicating one, re-routing one — goes through the router, so the server
+//      re-delivers EVERY pane's content and the grid DOM is replaced AFTER the restore
+//      has already run. Nothing re-applied it. That is the report's own second
+//      hypothesis, and it is correct.
+//
+// The rule below fixes the first. A scroll to zero that no user gesture preceded is not
+// a decision, it is a layout reset — so it is refused, and the caller re-restores
+// instead. The window is deliberate rather than a debounce: it asks "did a person do
+// this?", and a person scrolling genuinely back to the far left within the window is
+// still recorded, because the gesture is what admits it.
+
+/** How recently a real gesture must have happened for a scroll-to-zero to be believed. */
+export const USER_INTENT_MS = 700;
+
+/**
+ * Is this scroll event a decision to record, or a reset to refuse?
+ *
+ * Refused only in the one shape that a reset takes and a person almost never does: an
+ * axis snapping to exactly 0 from a remembered non-zero offset, in a container that
+ * still has room to scroll, with no gesture behind it.
+ */
+export function shouldRecordScroll(a: {
+  next: { left: number; top: number };
+  remembered: { left: number; top: number } | undefined;
+  /** Milliseconds since the last gesture in this pane, or null if there has never been one. */
+  sinceUserInputMs: number | null;
+  /** How far each axis can scroll right now. */
+  room: { left: number; top: number };
+}): boolean {
+  const byUser = a.sinceUserInputMs !== null && a.sinceUserInputMs <= USER_INTENT_MS;
+  if (byUser) return true;
+  const was = a.remembered;
+  if (!was) return true; // nothing to protect
+  const collapsedLeft = a.next.left === 0 && was.left > 0 && a.room.left > 0;
+  const collapsedTop = a.next.top === 0 && was.top > 0 && a.room.top > 0;
+  // Both axes intact, or a move that is not a collapse to zero: a real change.
+  return !(collapsedLeft || collapsedTop);
+}
+
+/**
+ * The keys whose DOM position no longer matches what we remember.
+ *
+ * Drives the re-restore: an observer notices the subtree changed, and this says whether
+ * anything actually needs putting back. Returning the keys rather than a boolean is what
+ * lets the caller reapply only those, so a pane the user has since scrolled by hand is
+ * left alone.
+ */
+export function driftedKeys(root: HTMLElement, state: TabScrollState): string[] {
+  const out: string[] = [];
+  for (const [key, want] of Object.entries(state)) {
+    if (want.left === 0 && want.top === 0) continue;
+    const el = elementForKey(root, key);
+    if (!el) continue;
+    if (Math.abs(el.scrollLeft - want.left) > 1 || Math.abs(el.scrollTop - want.top) > 1) out.push(key);
+  }
+  return out;
+}
+
+/** How far each axis of this element can scroll. */
+export function roomOf(el: HTMLElement): { left: number; top: number } {
+  return {
+    left: Math.max(0, el.scrollWidth - el.clientWidth),
+    top: Math.max(0, el.scrollHeight - el.clientHeight),
+  };
+}

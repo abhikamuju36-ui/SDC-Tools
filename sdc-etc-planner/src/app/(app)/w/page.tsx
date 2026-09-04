@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { EmptyState } from "@/components/ui/EmptyState";
 import { PaneView } from "@/components/PaneView";
 import { WorkspaceShell } from "@/components/WorkspaceShell";
+import { PaneLifecycleProbe } from "@/components/PaneLifecycleProbe";
 import { decodeWorkspace, tabHref, tabLabel, type RawParams } from "@/lib/workspace";
 import { pairingRefusal, splitRoute } from "@/lib/split-view";
 
@@ -115,6 +116,11 @@ export default async function WorkspacePage({ searchParams }: { searchParams: Pr
     // open tab" affordable, and it is the difference between max() and "everything".
     panes[id] = (
       <Suspense key={id} fallback={<PaneLoading />}>
+        {/* Inside the pane's CONTENT, so it is destroyed with it — which is what makes
+            it able to answer "is this remounting on every switch, or only hidden?".
+            Renders nothing and logs nothing unless ?tabdebug=1. See
+            components/PaneLifecycleProbe.tsx. */}
+        <PaneLifecycleProbe tabId={id} page={tab.path} />
         <PaneView pane={tab} />
       </Suspense>
     );

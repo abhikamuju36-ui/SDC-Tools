@@ -653,11 +653,16 @@ test("each pane streams on its own, so a hidden tab cannot hold up the active on
   // tab before showing the one you are looking at. This is what makes rendering every
   // open tab affordable.
   assert.match(WROUTE, /import \{ Suspense \} from "react";/);
-  assert.match(
-    WROUTE,
-    /<Suspense key=\{id\} fallback=\{<PaneLoading \/>\}>\s*<PaneView pane=\{tab\} \/>\s*<\/Suspense>/,
-    "every pane needs its own boundary",
+  // The boundary and its contents, matched separately: a lifecycle probe now sits inside
+  // it too (2026-09-04, for diagnosing the tab-switch scroll bug), and pinning the exact
+  // markup would fail on anything else legitimately joining it. What has to hold is that
+  // there is one boundary PER PANE and that PaneView renders inside it.
+  assert.match(WROUTE, /<Suspense key=\{id\} fallback=\{<PaneLoading \/>\}>/, "every pane needs its own boundary");
+  const boundary = WROUTE.slice(
+    WROUTE.indexOf("<Suspense key={id}"),
+    WROUTE.indexOf("</Suspense>", WROUTE.indexOf("<Suspense key={id}")),
   );
+  assert.match(boundary, /<PaneView pane=\{tab\} \/>/, "and the pane must render inside it");
 });
 
 // ── The sidebar/tab-strip interaction audit ─────────────────────────────────

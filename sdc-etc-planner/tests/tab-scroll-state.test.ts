@@ -13,6 +13,10 @@ import {
   scrollKeyOf,
   tabScrollStorageKey,
   type TabScrollState,
+  driftedKeys,
+  roomOf,
+  shouldRecordScroll,
+  USER_INTENT_MS,
 } from "../src/lib/tab-scroll-state";
 
 // ── The reported bug ────────────────────────────────────────────────────────
@@ -301,9 +305,9 @@ test("one CAPTURE-phase listener per pane, which is what makes this general", ()
 });
 
 test("the restore retries across frames instead of trusting the first attempt", () => {
-  assert.match(COMPONENT, /requestAnimationFrame\(restore\)/);
+  assert.match(COMPONENT, /raf = requestAnimationFrame\(step\)/);
   assert.match(COMPONENT, /const pending = applyScrollState\(root, state\.current\)/);
-  assert.match(COMPONENT, /pending\.length === 0 \|\| frame >= MAX_RESTORE_FRAMES/, "and gives up rather than spinning");
+  assert.match(COMPONENT, /frame >= MAX_RESTORE_FRAMES/, "and gives up rather than spinning");
   // In a LAYOUT effect, so the position is set before paint — a scroll set in a plain
   // effect is visible as a jump from the start.
   assert.match(COMPONENT, /useLayoutEffect\(\(\) => \{/);
@@ -367,4 +371,216 @@ test("no page keeps its own scroll-restore code beside this one", () => {
     .filter((f) => /\.\s*scrollLeft\s*=/.test(readFileSync(f, "utf8").replace(/^\s*\/\/.*$/gm, "")))
     .map((f) => f.replace(process.cwd(), "").split("\\").join("/"));
   assert.deepEqual(offenders, [], `these set scrollLeft themselves:\n  ${offenders.join("\n  ")}`);
+});
+
+// ── The two bugs the first fix had ─────────────────────────────────────────
+//
+// Reported again 2026-09-04: "still losing its internal grid viewport state". Both are
+// provable by reading, and the first is why saving values was never going to be enough.
+
+test("a scroll to zero with no gesture behind it is REFUSED, not recorded", () => {
+  // Bug 1, and the important one. Anything that reset the grid to 0 fired a scroll event
+  // at 0, and the recorder wrote it over the remembered offset — destroying the value
+  // before the restore could ever use it. A save/restore pair cannot work when the save
+  // is what corrupts the value.
+  const refused = shouldRecordScroll({
+    next: { left: 0, top: 0 },
+    remembered: { left: 5200, top: 1830 },
+    sinceUserInputMs: null,
+    room: { left: 6000, top: 1820 },
+  });
+  assert.equal(refused, false, "a reset must not overwrite the remembered position");
+});
+
+test("a person scrolling back to the far left IS recorded", () => {
+  // The same shape as a reset, and it must still be honoured — the gesture is what
+  // admits it. Anything else would leave a user unable to scroll back to the start.
+  const recorded = shouldRecordScroll({
+    next: { left: 0, top: 0 },
+    remembered: { left: 5200, top: 1830 },
+    sinceUserInputMs: 40,
+    room: { left: 6000, top: 1820 },
+  });
+  assert.equal(recorded, true);
+  // And just outside the window it is refused again.
+  assert.equal(
+    shouldRecordScroll({
+      next: { left: 0, top: 0 },
+      remembered: { left: 5200, top: 1830 },
+      sinceUserInputMs: USER_INTENT_MS + 1,
+      room: { left: 6000, top: 1820 },
+    }),
+    false,
+  );
+});
+
+test("only a collapse to zero is ever refused — every other move is recorded", () => {
+  const move = (next: { left: number; top: number }) =>
+    shouldRecordScroll({ next, remembered: { left: 5200, top: 1830 }, sinceUserInputMs: null, room: { left: 6000, top: 1820 } });
+  assert.equal(move({ left: 5400, top: 1830 }), true, "scrolling further right");
+  assert.equal(move({ left: 40, top: 1830 }), true, "nearly to the left, but not zero");
+  assert.equal(move({ left: 5200, top: 0 }), false, "one axis collapsing is still a reset");
+});
+
+test("with nothing remembered there is nothing to protect", () => {
+  assert.equal(
+    shouldRecordScroll({ next: { left: 0, top: 0 }, remembered: undefined, sinceUserInputMs: null, room: { left: 6000, top: 0 } }),
+    true,
+  );
+});
+
+test("a container with no room cannot be 'reset', so the guard stays out of the way", () => {
+  // No room means the 0 is simply the truth. Refusing it would leave a stale remembered
+  // offset for a scroller that has since become short.
+  assert.equal(
+    shouldRecordScroll({
+      next: { left: 0, top: 0 },
+      remembered: { left: 5200, top: 0 },
+      sinceUserInputMs: null,
+      room: { left: 0, top: 0 },
+    }),
+    true,
+  );
+});
+
+test("drift is what makes the restore a standing intent rather than an event", () => {
+  // Bug 2. The restore fired once, on show — but `apply({navigate:true})` re-delivers
+  // every pane from the server, so the grid DOM is REPLACED after that has run. Nothing
+  // put it back. driftedKeys is what notices.
+  const grid = el({ attrs: { "data-scroll-key": "etc-grid" }, scrollWidth: 7400, clientWidth: 1400 });
+  const pane = tree(el(), grid);
+  const state: TabScrollState = { "@etc-grid": { left: 5200, top: 0 } };
+
+  grid.scrollLeft = 5200;
+  assert.deepEqual(driftedKeys(as(pane), state), [], "in position, nothing to do");
+
+  grid.scrollLeft = 0; // something replaced the grid
+  assert.deepEqual(driftedKeys(as(pane), state), ["@etc-grid"], "out of position, put it back");
+});
+
+test("a position the user has since changed is not treated as drift", () => {
+  // The record moves with the user, so there is nothing to drift from — which is what
+  // stops the standing intent from fighting the person using it.
+  const grid = el({ attrs: { "data-scroll-key": "etc-grid" }, scrollWidth: 7400, clientWidth: 1400 });
+  const pane = tree(el(), grid);
+  grid.scrollLeft = 900;
+  const state: TabScrollState = { "@etc-grid": { left: 900, top: 0 } };
+  assert.deepEqual(driftedKeys(as(pane), state), []);
+});
+
+test("roomOf reports what each axis can actually do", () => {
+  assert.deepEqual(roomOf(as(el({ scrollWidth: 7400, clientWidth: 1400, scrollHeight: 2600, clientHeight: 780 }))), {
+    left: 6000,
+    top: 1820,
+  });
+  assert.deepEqual(roomOf(as(el({ scrollWidth: 100, clientWidth: 100, scrollHeight: 100, clientHeight: 100 }))), {
+    left: 0,
+    top: 0,
+  });
+});
+
+// ── The report's acceptance test, ten times over ───────────────────────────
+
+test("ten switches with a reset on every one, and no drift", () => {
+  // "Repeat the sequence 10 times. No gradual drift, no jump to column 1, no jump to
+  // row 1." Each round simulates the whole failure: the pane is hidden, something resets
+  // the grid to 0 and fires a scroll event with no gesture behind it, then the pane is
+  // shown again.
+  const grid = el({
+    attrs: { "data-scroll-key": "etc-grid" },
+    scrollWidth: 7400,
+    clientWidth: 1400,
+    scrollHeight: 2600,
+    clientHeight: 780,
+  });
+  const pane = tree(el(), tree(el(), grid));
+  const state: TabScrollState = {};
+
+  // The user scrolls to Parts Cost / Standard Sheet, down to around job 40.
+  grid.scrollLeft = 5200;
+  grid.scrollTop = 1830;
+  const key = scrollKeyOf(as(grid), as(pane));
+  state[key] = { left: grid.scrollLeft, top: grid.scrollTop };
+
+  for (let round = 1; round <= 10; round++) {
+    // Deactivate, then a reset fires a scroll event at 0 with no gesture.
+    grid.scrollLeft = 0;
+    grid.scrollTop = 0;
+    const record = shouldRecordScroll({
+      next: { left: 0, top: 0 },
+      remembered: state[key],
+      sinceUserInputMs: null,
+      room: roomOf(as(grid)),
+    });
+    assert.equal(record, false, `round ${round}: the reset must be refused`);
+
+    // Reactivate: drift is detected and the position goes back.
+    assert.deepEqual(driftedKeys(as(pane), state), [key], `round ${round}: drift must be seen`);
+    assert.deepEqual(applyScrollState(as(pane), state), [], `round ${round}: nothing should stay pending`);
+    assert.equal(grid.scrollLeft, 5200, `round ${round}: horizontal position`);
+    assert.equal(grid.scrollTop, 1830, `round ${round}: vertical position`);
+  }
+});
+
+// ── The lifecycle the report asked to be proven ────────────────────────────
+
+const SHELL = readFileSync(join(process.cwd(), "src", "components", "WorkspaceShell.tsx"), "utf8");
+const BAR = readFileSync(join(process.cwd(), "src", "components", "WorkspaceTabBar.tsx"), "utf8");
+
+test("a plain tab switch is local state — it must never navigate", () => {
+  // Steps 1, 2 and 5 of the report: an ordinary switch must not destroy the page, must
+  // not refetch, and must not rebuild the grid. That holds only because activating goes
+  // through `apply` WITHOUT `navigate`, so it is a setState plus history.replaceState —
+  // which deliberately does not notify the router.
+  assert.match(BAR, /const go = \(next: Workspace\) => apply\(next\);/);
+  assert.match(BAR, /const goOpen = \(next: Workspace\) => apply\(next, \{ navigate: true \}\);/);
+  // Activating uses the non-navigating one.
+  assert.match(BAR, /if \(!isActive\) go\(activateTab\(ws, id\)\);/);
+  // And `apply` only reaches the router when explicitly told to.
+  assert.match(SHELL, /if \(opts\?\.navigate\) \{\s*router\.replace\(href\);/);
+  assert.match(SHELL, /window\.history\.replaceState\(null, "", href\)/);
+});
+
+test("inactive tabs stay mounted behind <Activity>", () => {
+  assert.match(SHELL, /<Activity key=\{tab\.id\} mode=\{isVisible\(tab\.id\) \? "visible" : "hidden"\}>/);
+  // Keyed by the tab's own id, so a reorder, a close or a duplicate cannot reconcile one
+  // tab's pane into another's slot — which WOULD be a remount, and would look exactly
+  // like this bug.
+  assert.match(SHELL, /key is the tab's own id/);
+});
+
+test("the restore is a standing intent, watching for the DOM changing under it", () => {
+  const component = readFileSync(join(process.cwd(), "src", "components", "TabScrollMemory.tsx"), "utf8");
+  // The fix for bug 2: an observer, not a single pass on show.
+  assert.match(component, /new MutationObserver\(\(\) => reRestoreSoon\("mutation"\)\)/);
+  assert.match(component, /mo\.observe\(root, \{ childList: true, subtree: true \}\)/);
+  assert.match(component, /new ResizeObserver\(\(\) => reRestoreSoon\("resize"\)\)/);
+  // Named scrollers are observed individually, because the pane's own size does not
+  // change when a grid inside it finally measures its columns.
+  assert.match(component, /querySelectorAll<HTMLElement>\("\[data-scroll-key\]"\)\) ro\.observe\(el\)/);
+  // The fix for bug 1: gestures are tracked, and a refused reset triggers a re-restore
+  // rather than being silently dropped.
+  assert.match(component, /"pointerdown", "wheel", "keydown", "touchstart"/);
+  assert.match(component, /reRestoreSoon\("reset"\)/);
+  // No timers: the report ruled out arbitrary setTimeout as the permanent answer.
+  assert.ok(!/setTimeout/.test(component), "the restore must be driven by frames and observers, not delays");
+});
+
+test("the instrumentation the report asked for exists, and is off by default", () => {
+  const debug = readFileSync(join(process.cwd(), "src", "lib", "tab-debug.ts"), "utf8");
+  const probe = readFileSync(join(process.cwd(), "src", "components", "PaneLifecycleProbe.tsx"), "utf8");
+  const component = readFileSync(join(process.cwd(), "src", "components", "TabScrollMemory.tsx"), "utf8");
+  // The four events, in the report's own vocabulary.
+  assert.match(probe, /tabDebug\("MOUNT"/);
+  assert.match(probe, /tabDebug\("UNMOUNT"/);
+  assert.match(component, /tabDebug\("ACTIVATE"/);
+  assert.match(component, /tabDebug\("DEACTIVATE"/);
+  // Step 3: the real scroll container's numbers.
+  assert.match(debug, /scrollWidth: el\.scrollWidth/);
+  assert.match(debug, /canScrollX: el\.scrollWidth > el\.clientWidth/);
+  // Off unless asked for — a grid scroll fires hundreds of events.
+  assert.match(debug, /tabdebug/);
+  assert.match(debug, /if \(!enabled\) return;/);
+  // The mount counter has to outlive a remount, or it cannot measure one.
+  assert.match(probe, /^const mounts = new Map<string, number>\(\);$/m);
 });
