@@ -193,6 +193,33 @@ jobs:
           echo "client bundle present:"
           ls -la apps/assemblies/client/dist/index.html
 
+      # ── Package first, WITHOUT publishing, and inspect what got baked in ─────
+      #
+      # app-update.yml is generated during packaging from publish[0], and it is the
+      # entire point of this release: it is what tells an installed client to follow
+      # SDC-Tools from now on. If it were wrong, the release would still succeed, still
+      # install, and strand every client permanently on a dead feed.
+      #
+      # So the artifact is built and READ before anything is uploaded. Proven locally
+      # against this exact config — the file below is what a real 1.0.25 build produces.
+      - name: Package the installer (no publish yet)
+        working-directory: apps/assemblies
+        run: npx electron-builder --win --publish never
+
+      - name: Verify the baked update feed
+        shell: bash
+        run: |
+          f="apps/assemblies/dist-build/win-unpacked/resources/app-update.yml"
+          if [ ! -f "$f" ]; then
+            echo "::error::$f was not produced — electron-builder did not write an updater config."
+            exit 1
+          fi
+          echo "baked app-update.yml:"; cat "$f"
+          grep -q '^repo: SDC-Tools$'        "$f" || { echo "::error::baked repo is not SDC-Tools — clients would not migrate"; exit 1; }
+          grep -q '^channel: assemblies$'    "$f" || { echo "::error::baked channel is not 'assemblies' — this app would read the shell's latest.yml"; exit 1; }
+          grep -q '^provider: github$'       "$f" || { echo "::error::baked provider is not github"; exit 1; }
+          echo "OK: installed clients will follow SDC-Tools on the assemblies channel"
+
       - name: Build and publish to both repos
         working-directory: apps/assemblies
         env:

@@ -43,7 +43,6 @@
         "releaseType": "release"
       }
     ],
-    "updaterCacheDirName": "sdc-assemblies-updater",
     "asar": true,
     "asarUnpack": [
       "server/**/*",
@@ -84,7 +83,7 @@
     "@vitejs/plugin-react": "^4.3.1",
     "autoprefixer": "^10.4.19",
     "cross-env": "^10.1.0",
-    "electron": "^41.3.0",
+    "electron": "41.10.7",
     "electron-builder": "^26.8.1",
     "postcss": "^8.4.38",
     "supertest": "^7.2.2",
