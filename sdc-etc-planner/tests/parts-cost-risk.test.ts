@@ -2,117 +2,16 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { readFileSync, readdirSync } from "node:fs";
 import { join } from "node:path";
-import { partsCostRisk, partsCostRiskTitle, suggestNewEtc, calcHoursLeft, redrivenDraft } from "../src/lib/etc";
+import { suggestNewEtc, calcHoursLeft, redrivenDraft } from "../src/lib/etc";
 import { isDerivedPartsDraft } from "../src/lib/parts-breakout-scope";
 import { PARTS_COST_SECTION } from "../src/lib/sections";
 
-// ── The Parts Cost under-planning warning (2026-09-03) ──────────────────────
+// ── Parts Cost: the column set, the two typed halves, and what New ETC needs ─
 //
-// "If there is still positive parts cost left to invoice and the manager enters a
-// New ETC below that amount, flag it." The rule is one pure function so the
-// server's first paint and the client's live repaint cannot disagree; these tests
-// are what make the edge cases (the reported overspent row, a blank cell, an exact
-// match) claims rather than hopes.
-
-const decided = (moneyLeft: number, newEtc: number) => partsCostRisk({ moneyLeft, newEtc, decided: true });
-
-test("the headline case: entered ETC below the money left is flagged", () => {
-  const r = decided(10_000, 7_500);
-  assert.equal(r.atRisk, true);
-  assert.equal(r.shortfall, 2_500);
-});
-
-test("covering it exactly is right, not marginal", () => {
-  // Strict comparison: entering exactly Money Left covers it.
-  assert.equal(decided(10_000, 10_000).atRisk, false);
-  assert.equal(decided(10_000, 12_000).atRisk, false);
-});
-
-test("a blank cell is an unanswered question, not a wrong answer", () => {
-  // It already has its own yellow "needs attention" state. Red here would flag
-  // every unplanned row on load, and the manager could not tell "you got this
-  // wrong" from "you haven't done this yet".
-  assert.equal(partsCostRisk({ moneyLeft: 10_000, newEtc: 0, decided: false }).atRisk, false);
-  assert.equal(partsCostRisk({ moneyLeft: 10_000, newEtc: 7_500, decided: false }).atRisk, false);
-});
-
-test("an overspent row is never flagged — the reported example", () => {
-  // Prior $1,653, Spent $3,357, so Money Left is -$1,704 and New ETC is $0.
-  // Every value including 0 is "greater than" -1,704; there is no remaining
-  // liability to be short of. Flagging it would paint a correct row red.
-  const moneyLeft = calcHoursLeft(1_653, 3_357);
-  assert.equal(moneyLeft, -1_704);
-  assert.equal(decided(moneyLeft, 0).atRisk, false);
-  // Not even a value below it, which is the case a naive `newEtc < moneyLeft`
-  // would still catch.
-  assert.equal(decided(moneyLeft, -5_000).atRisk, false);
-});
-
-test("a fully-invoiced row is not flagged by a zero ETC", () => {
-  // Money Left $0 and New ETC $0 is exactly right.
-  assert.equal(decided(0, 0).atRisk, false);
-  assert.equal(decided(0, 100).atRisk, false);
-});
-
-test("a month with NO spend carries forward and cannot flag itself", () => {
-  // The blank-but-decided case. isNewEtcCellDecided treats spend 0 as answered
-  // (the balance carries forward automatically), so `decided` is true with an empty
-  // box — and the figure the cell publishes is then the SUGGESTION. This only stays
-  // un-flagged because suggestNewEtc returns exactly Money Left when spend is 0, so
-  // the gate is arithmetic rather than a special case. If that ever stops being
-  // true, every no-spend row on the grid turns red, so it is pinned here.
-  const prior = 25_000;
-  const spent = 0;
-  const moneyLeft = calcHoursLeft(prior, spent);
-  const suggested = suggestNewEtc(prior, spent);
-  assert.equal(suggested, moneyLeft, "suggestNewEtc must equal Money Left at zero spend, or no-spend rows flag");
-  assert.equal(decided(moneyLeft, suggested).atRisk, false);
-});
-
-test("cents are respected — no tolerance band", () => {
-  // Parts Cost is precision "exact" (money, unlike the hours columns), so a small
-  // shortfall is real and must not be rounded away: the cell would then disagree
-  // with the Diff printed beside it.
-  const r = decided(10_000, 9_999.99);
-  assert.equal(r.atRisk, true);
-  assert.equal(r.shortfall, 0.01);
-});
-
-test("bad data reads as bad data, not as a pass", () => {
-  // Both figures come from Number() over a form value or a Prisma Decimal. NaN
-  // comparisons are all false, so without the explicit guard a NaN would look
-  // exactly like "not at risk".
-  assert.equal(partsCostRisk({ moneyLeft: NaN, newEtc: 7_500, decided: true }).atRisk, false);
-  assert.equal(partsCostRisk({ moneyLeft: 10_000, newEtc: NaN, decided: true }).atRisk, false);
-  assert.equal(partsCostRisk({ moneyLeft: 10_000, newEtc: Infinity, decided: true }).atRisk, false);
-});
-
-test("shortfall is 0 whenever there is no risk, so callers can print it unconditionally", () => {
-  for (const r of [decided(10_000, 10_000), decided(-500, 0), decided(0, 0), partsCostRisk({ moneyLeft: 1, newEtc: 0, decided: false })]) {
-    assert.equal(r.shortfall, 0);
-  }
-});
-
-test("the tooltip states the rule and the arithmetic behind it", () => {
-  const usd = (n: number) => `$${n.toLocaleString("en-US")}`;
-  const t = partsCostRiskTitle(10_000, 7_500, 2_500, usd);
-  assert.match(t, /New ETC is lower than the remaining parts cost to be invoiced/);
-  assert.match(t, /Money Left: \$10,000/);
-  assert.match(t, /New ETC: \$7,500/);
-  assert.match(t, /Shortfall: \$2,500/);
-});
-
-// ── Scope: the four Parts Cost cells and nothing else ───────────────────────
-
-test("the warning is wired to the Parts Cost cells only, not the hours columns", () => {
-  // Requirement 7: "Other hours/department columns are not affected." The hours
-  // cells are rendered by EtcSectionCells; it must know nothing about this rule.
-  const sectionCells = readFileSync(join(process.cwd(), "src", "components", "EtcSectionCells.tsx"), "utf8");
-  assert.ok(
-    !/partsCostRisk|parts-risk/.test(sectionCells),
-    "the hours cells must not consult the Parts Cost risk rule",
-  );
-});
+// This file used to be about a red under-planned warning. That feature was removed on
+// 2026-09-04 by request ("do not use row-level red backgrounds for Parts Cost"), and its
+// tests went with it — what remains is the row SHAPE, which is the thing that silently
+// breaks, plus the rules the columns actually have now.
 
 // ── The Parts Cost column set and its cells must stay in step ───────────────
 //
@@ -210,78 +109,7 @@ test("before August 2026 the Parts Cost rows shrink by exactly the two breakout 
   }
 });
 
-test("Left to Invoice is computed and read-only; Left to Purchase is the typed half", () => {
-  // REWRITTEN 2026-09-04. The premise this test used to assert — "both breakout columns
-  // are typed cells, and neither is ever seeded" — was the 2026-09-03 design, and it is
-  // exactly what the reconciliation decision reversed: "Monthly ETC Left to Invoice =
-  // Parts List Left to Invoice … exact reconciliation every time." A typed figure cannot
-  // equal a computed one.
-  //
-  // So the halves are now asymmetric, and that asymmetry is the thing worth pinning:
-  // Left to Invoice is a fact (the Parts List figure at this month's cutoff), Left to
-  // Purchase is a judgement nobody can compute — a BOM part with no purchase line does
-  // not appear in the parts rows at all.
-  assert.match(ETC_PAGE, /<PartsBreakoutCell[\s\S]{0,400}?which="invoice"/);
-  assert.match(ETC_PAGE, /<PartsBreakoutCell[\s\S]{0,400}?which="purchase"/);
 
-  // The invoice cell renders, and cannot accept, a figure.
-  assert.match(ETC_PAGE, /which="invoice"[\s\S]{0,400}?readOnly/, "Left to Invoice must be read-only");
-  assert.match(
-    ETC_PAGE,
-    /const resolvedInvoice = resolveLeftToInvoice\(\{[\s\S]{0,700}?\}\);/,
-    "and must resolve through the shared rule",
-  );
-  // Computed on an open row, frozen on a submitted one — never a stored manual entry
-  // winning over the upstream figure while the month is still open.
-  assert.match(ETC_PAGE, /submitted: !partsCostEntry\.needsReview/);
-
-  // The purchase half is still typed, and still starts blank.
-  assert.match(
-    ETC_PAGE,
-    /const leftToPurchaseValue =\s*partsCostEntry\.leftToPurchase != null \? round2\(Number\(partsCostEntry\.leftToPurchase\)\) : null;/,
-    "Left to Purchase comes from storage or from nothing",
-  );
-  assert.match(ETC_PAGE, /which="purchase"[\s\S]{0,300}?name=\{`partsLeftToPurchase__/);
-  assert.ok(
-    !/which="purchase"[\s\S]{0,300}?readOnly/.test(ETC_PAGE),
-    "Left to Purchase must stay editable — nothing upstream can compute it",
-  );
-
-  // A New ETC typed before these columns existed is no longer shown as Left to Invoice
-  // (that cell is computed now), but it is not discarded either: it moves to the
-  // tooltip so a manager can see the figure their row used to carry.
-  assert.match(ETC_PAGE, /const supersededNewEtc =/);
-  assert.match(ETC_PAGE, /previously carried a hand-typed New ETC/);
-
-  // And nothing upstream computes a Left to PURCHASE figure: the BOM half that used to
-  // fill that column was removed on 2026-09-03.
-  const breakoutLib = readFileSync(join(process.cwd(), "src", "lib", "parts-etc-breakout.ts"), "utf8");
-  // The IMPORTS, not the prose: the file explains at length what it used to do, and
-  // matching on the names alone would fail on its own history.
-  assert.ok(
-    !/^import .*(job-bom|po-detail)/m.test(breakoutLib),
-    "nothing may compute a Left to Purchase figure",
-  );
-  assert.ok(!/leftToPurchase/.test(breakoutLib.replace(/\/\/.*$/gm, "")), "no upstream Left to Purchase value");
-});
-
-test("New ETC is the sum of the two typed cells, and is not itself typed", () => {
-  // One authoritative value, in both halves of the app: the cell renders as TEXT from
-  // the live breakout store, and the SERVER derives what it stores rather than
-  // trusting the figure the browser posts.
-  const cell = readFileSync(join(process.cwd(), "src", "components", "PartsCostNewEtcCell.tsx"), "utf8");
-  assert.match(cell, /readPartsBreakoutSum\(jobId\)/);
-  assert.match(cell, /\{derived \? \(/, "a derived cell must render text, not an input");
-  assert.match(ETC_PAGE, /derived=\{showBreakout\}/);
-
-  const actions = readFileSync(join(process.cwd(), "src", "lib", "etc-actions.ts"), "utf8");
-  assert.match(actions, /round2\(\(next\.invoice \?\? 0\) \+ \(next\.purchase \?\? 0\)\)/);
-  assert.match(
-    actions,
-    /if \(breakoutInScope && entry\.section === PARTS_COST_SECTION\) \{\s*handlePartsBreakoutEntry\(entry\);/,
-    "a breakout month's Parts Cost New ETC must never be taken from the posted field",
-  );
-});
 
 test("a Total ETO outage costs two columns, not the month-end page", () => {
   // This is the page managers close the month on, and these columns are the only
@@ -297,6 +125,128 @@ test("a Total ETO outage costs two columns, not the month-end page", () => {
 // export, next month's Prior ETC — reads that column, while the grid renders the sum
 // of the two halves. The moment a writer moves one without the other they disagree,
 // and nothing on screen says so.
+
+test("Left to Invoice is editable, with the computed figure as its DEFAULT", () => {
+  // Third revision of this cell, and the tests move with it. 2026-09-03 made it
+  // editable, 2026-09-04 made it computed and read-only, and this request settles it:
+  // editable, defaulted from the Parts List figure, and HIGHLIGHTED when overridden.
+  // Reconciliation is the default state rather than an enforced one.
+  assert.match(withoutComments(ETC_PAGE), /<PartsBreakoutCell[\s\S]{0,200}?which="invoice"/);
+  assert.match(withoutComments(ETC_PAGE), /<PartsBreakoutCell[\s\S]{0,200}?which="purchase"/);
+
+  // Both halves post a field, so both can be saved. Matched against the page with
+  // comments stripped: the props carry long explanatory blocks between them, and a
+  // character window over the raw source measures prose rather than structure.
+  const page = withoutComments(ETC_PAGE);
+  assert.match(page, /which="invoice"[\s\S]{0,300}?name=\{`partsLeftToInvoice__/);
+  assert.match(page, /which="purchase"[\s\S]{0,300}?name=\{`partsLeftToPurchase__/);
+  // And neither is read-only any more — the prop is gone from the component entirely.
+  const cell = readFileSync(join(process.cwd(), "src", "components", "PartsBreakoutCell.tsx"), "utf8");
+  assert.ok(!/readOnly/.test(cell), "the read-only mode must be gone, not left as dead code");
+
+  // The value is the override when there is one, else the computed default.
+  assert.match(ETC_PAGE, /const resolvedInvoice = resolveLeftToInvoice\(\{[\s\S]{0,400}?\}\);/);
+  assert.match(ETC_PAGE, /const leftToInvoiceValue = resolvedInvoice\.value;/);
+});
+
+test("an overridden Left to Invoice is highlighted, at CELL level", () => {
+  // "Highlight that individual cell… without making the whole row look like an error."
+  assert.match(ETC_PAGE, /overridden=\{resolvedInvoice\.overridden\}/);
+  const cell = readFileSync(join(process.cwd(), "src", "components", "PartsBreakoutCell.tsx"), "utf8");
+  assert.match(cell, /style=\{overridden \? manualOverrideStyle\(\) : undefined\}/);
+  // Amber, not red, and an edge rather than a full repaint — it has to read as an
+  // annotation and stay distinct from the Diff column's red/green scale beside it.
+  const colors = readFileSync(join(process.cwd(), "src", "components", "ui", "etc-diff-colors.ts"), "utf8");
+  assert.match(colors, /export function manualOverrideStyle\(\)/);
+  assert.match(colors, /boxShadow: `inset 3px 0 0 0 \$\{OVERRIDE_EDGE\}`/);
+  // And it survives a refresh, because it is derived from stored-vs-default rather than
+  // held in component state.
+  assert.match(ETC_PAGE, /stored:\s*\r?\n?\s*partsCostEntry\.leftToInvoice != null/);
+});
+
+test("typing the default back removes the highlight", () => {
+  // "If the value is restored back to the original/default amount, remove the
+  // manual-change highlight." The save stores NULL for a value equal to the default,
+  // so there is nothing left to differ from — reversible with no flag to get stale.
+  const actions = readFileSync(join(process.cwd(), "src", "lib", "etc-actions.ts"), "utf8");
+  assert.match(
+    actions,
+    /next\.invoice !== null && defaultInvoice !== null && Math\.abs\(next\.invoice - defaultInvoice\) <= 0\.004/,
+  );
+  assert.match(actions, /\? null\s*\r?\n?\s*: next\.invoice,/);
+});
+
+test("New ETC stays blank until BOTH halves have a value", () => {
+  // The headline change. A blank half used to count as 0 the moment the other had a
+  // figure, which displayed and STORED a forecast nobody had made.
+  assert.match(ETC_PAGE, /const breakoutSum = partsNewEtc\(leftToInvoiceValue, leftToPurchaseValue\);/);
+
+  // Every consumer asks the same function, which is the only way the four of them
+  // cannot disagree about what a blank means.
+  for (const [file, path] of [
+    ["the save", ["src", "lib", "etc-actions.ts"]],
+    ["the submission", ["src", "lib", "monthly-report.ts"]],
+    ["the live client sum", ["src", "lib", "etc-live-totals.ts"]],
+  ] as const) {
+    const src = readFileSync(join(process.cwd(), ...path), "utf8");
+    assert.match(src, /partsNewEtc\(/, `${file} must use the shared rule`);
+  }
+  // And none of them may reconstruct the old blank-is-zero sum.
+  for (const path of [
+    ["src", "lib", "etc-actions.ts"],
+    ["src", "lib", "etc-live-totals.ts"],
+    ["src", "app", "(app)", "etc", "page.tsx"],
+  ] as const) {
+    const code = readFileSync(join(process.cwd(), ...path), "utf8").replace(/^\s*\/\/.*$/gm, "");
+    assert.ok(
+      !/\(\s*\w*[Ii]nvoice\s*\?\?\s*0\s*\)\s*\+\s*\(\s*\w*[Pp]urchase\s*\?\?\s*0\s*\)/.test(code),
+      `${path.join("/")} still treats a blank half as 0`,
+    );
+  }
+});
+
+test("New ETC is calculated, never typed, on a breakout month", () => {
+  // Unchanged by this revision, and still load-bearing: one authoritative value. The
+  // cell renders as text from the live breakout store, and the SERVER derives what it
+  // stores rather than trusting a figure the browser posts.
+  const cell = readFileSync(join(process.cwd(), "src", "components", "PartsCostNewEtcCell.tsx"), "utf8");
+  assert.match(cell, /readPartsBreakoutSum\(jobId\)/);
+  assert.match(cell, /\{derived \? \(/, "a derived cell must render text, not an input");
+  assert.match(ETC_PAGE, /derived=\{showBreakout\}/);
+
+  const actions = readFileSync(join(process.cwd(), "src", "lib", "etc-actions.ts"), "utf8");
+  assert.match(
+    actions,
+    /if \(breakoutInScope && entry\.section === PARTS_COST_SECTION\) \{\s*handlePartsBreakoutEntry\(entry\);/,
+    "a breakout month's Parts Cost New ETC must never be taken from the posted field",
+  );
+});
+
+test("the row-wide red warning is gone, everywhere", () => {
+  // "Remove the existing feature that highlights an entire row red. Do not use
+  // row-level red backgrounds for Parts Cost validation/differences."
+  //
+  // Both halves had to go together — a live repaint with no first paint, or the
+  // reverse, is worse than either — so this checks the whole chain rather than the one
+  // file where the bug would first be noticed.
+  const gone = [
+    ["the rule", ["src", "lib", "etc.ts"], /partsCostRisk|partsCostRiskTitle/],
+    ["the style", ["src", "components", "ui", "etc-diff-colors.ts"], /partsRiskStyle|paintPartsRisk|PARTS_RISK_BG/],
+    ["the first paint", ["src", "app", "(app)", "etc", "page.tsx"], /partsRiskCss|partsRiskTip|data-parts-risk/],
+    ["the New ETC cell", ["src", "components", "PartsCostNewEtcCell.tsx"], /partsCostRisk|riskTip|risk\.atRisk/],
+    ["the live repaint", ["src", "components", "EtcLiveTotals.tsx"], /writePartsRisk|paintPartsRisk|data-parts-risk/],
+  ] as const;
+  for (const [what, path, pattern] of gone) {
+    const code = readFileSync(join(process.cwd(), ...path), "utf8")
+      .replace(/\{\/\*[\s\S]*?\*\/\}/g, "")
+      .replace(/\/\*[\s\S]*?\*\//g, "")
+      .replace(/^\s*\/\/.*$/gm, "");
+    assert.ok(!pattern.test(code), `${what} still references the removed red-row warning`);
+  }
+  // The hours cells never knew about it and still must not.
+  const sectionCells = readFileSync(join(process.cwd(), "src", "components", "EtcSectionCells.tsx"), "utf8");
+  assert.ok(!/partsCostRisk|parts-risk/.test(sectionCells), "the hours cells must stay out of it");
+});
 
 test("isDerivedPartsDraft names exactly the rows whose New ETC is a sum", () => {
   // Parts Cost from August 2026 on, and nothing else. Hours sections type their New

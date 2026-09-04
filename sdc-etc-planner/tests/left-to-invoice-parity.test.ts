@@ -12,6 +12,7 @@ import {
   explainLeftToInvoice,
   monthEndLabel,
   resolveLeftToInvoice,
+  partsNewEtc,
 } from "../src/lib/left-to-invoice";
 import type { PartsCostLine } from "../src/lib/sync-totaleto";
 
@@ -377,27 +378,27 @@ test("a job with no late postings reports no caveat at all", () => {
 // quote a moving number at all.
 
 
-test("the upstream figure reaches exactly one place: an empty cell's tooltip", () => {
-  // Point 2. A second consumer would mean a drifting number somewhere that matters.
+test("the upstream figure is read once, and never bypasses the resolution rule", () => {
+  // It IS the cell's default now rather than a tooltip-only hint, but it must still reach
+  // the cell only THROUGH resolveLeftToInvoice — a second consumer would be a figure that
+  // ignores an override.
   const page = readFileSync(join(process.cwd(), "src", "app", "(app)", "etc", "page.tsx"), "utf8");
   const code = page.replace(/\/\/.*$/gm, "").replace(/\{\/\*[\s\S]*?\*\/\}/g, "");
-  // The suggestion is read once and used only to build seedHint.
+  // Read once.
   assert.equal((code.match(/partsBreakout\?\.byJobPk\.get/g) ?? []).length, 1);
   assert.ok(!/leftToInvoiceValue = [^;]*suggest/.test(code), "the suggestion must never become the cell's value");
   assert.ok(
     !/partsCostGrandTotal\.leftToInvoice \+= [^;]*suggest/.test(code),
     "the suggestion must never enter the footer total",
   );
-  // And the cell only shows a hint while it is empty (PartsBreakoutCell).
-  const cell = readFileSync(join(process.cwd(), "src", "components", "PartsBreakoutCell.tsx"), "utf8");
-  assert.match(cell, /value\.trim\(\) === "" && seedHint/);
+  // And it reaches the value only via the resolution rule.
+  assert.match(code, /const leftToInvoiceValue = resolvedInvoice\.value;/);
 });
 
 test("the grid carries the drift caveat out of the data layer", () => {
-  // Structural: a figure the page cannot explain is a figure that will be re-reported
-  // as a bug. Rewritten 2026-09-04 — the FLOOR caveat is gone because the cell now
-  // shows the signed figure, so there is nothing left to explain away. The drift is
-  // still real and still disclosed.
+  // Structural: a figure the page cannot explain is a figure that will be re-reported as
+  // a bug. The FLOOR caveat went when the cell started showing the signed figure; the
+  // drift is still real and still disclosed.
   const breakout = readFileSync(join(process.cwd(), "src", "lib", "parts-etc-breakout.ts"), "utf8");
   assert.match(breakout, /rawLeftToInvoice: number \| null;/);
   assert.match(breakout, /postedAfterCutoff: number;/);
@@ -407,45 +408,89 @@ test("the grid carries the drift caveat out of the data layer", () => {
   assert.match(page, /const cutoffLabel = monthEndLabel\(month\);/, "the page must use the shared label");
   assert.ok(!/const monthEndLabel = \(\(\) =>/.test(page), "the untestable inline copy must be gone");
   assert.match(page, /suggestionLatePostings/, "the drift must reach the tooltip");
-  // The tooltip states the cutoff date, which is what makes the figure self-describing.
-  assert.match(page, /not yet invoiced as of \$\{cutoffLabel\}/);
-  // And it says the figure cannot be edited, because that is now the surprising part.
-  assert.match(page, /Computed, not typed/);
+  assert.match(page, /not yet invoiced as of \$\{cutoffLabel\}/, "and the tooltip must name the cutoff");
+  // The cell is editable again, so the tooltip has to say the figure is a DEFAULT rather
+  // than claim it cannot be changed.
+  assert.match(page, /This is the default and you can type over it/);
+  assert.ok(!/Computed, not typed/.test(page), "the read-only wording must be gone");
 });
 
-test("the submission derives Parts Cost New ETC from the two halves, and freezes one", () => {
-  // REVERSED 2026-09-04, deliberately. This test used to assert the opposite — that the
-  // submission must NOT touch the upstream figure — and that was right while Left to
-  // Invoice was a typed cell whose stored value the draft already carried.
-  //
-  // The decision "Monthly ETC Left to Invoice = Parts List Left to Invoice … exact
-  // reconciliation every time" makes that impossible: the half is computed, the save
-  // only writes newEtcDraft when somebody edits the OTHER half, so a row nobody touched
-  // has a null draft. Confirming it at the carry-forward suggestion would sign off a
-  // figure that was never on screen.
+test("the submission derives Parts Cost New ETC from the two halves — and freezes nothing into them", () => {
+  // Revised twice. The read-only version froze the computed figure into
+  // `leftToInvoice` so a closed month could not drift. It cannot any more: that column
+  // means "the manager's override" and nothing else, so a frozen default would light up
+  // the manually-adjusted highlight on rows nobody had touched.
   const report = readFileSync(join(process.cwd(), "src", "lib", "monthly-report.ts"), "utf8");
+  assert.match(report, /const breakoutSum = partsNewEtc\(resolvedInvoice, purchase\);/, "both halves, or nothing");
   assert.match(report, /const newEtc = breakoutSum \?\? draft \?\? round2\(suggestNewEtc\(priorEtc, hoursWorked\)\);/);
   assert.match(report, /resolveLeftToInvoice\(\{/, "through the shared rule, not a private copy");
-  // Frozen, so a closed month cannot drift as later invoices post.
-  assert.match(report, /leftToInvoice: resolvedInvoice/);
-  // And an upstream outage must not be able to block closing a month.
+  // `newEtc` is the frozen figure, as it always was — and the override column is left
+  // exactly as the manager left it.
+  const code = report.replace(/\/\*[\s\S]*?\*\//g, "").replace(/^\s*\/\/.*$/gm, "");
+  assert.ok(!/leftToInvoice: resolvedInvoice/.test(code), "the submission must not write the override column");
+  // An upstream outage must not be able to block closing a month.
   assert.match(report, /Left to Invoice unavailable at submission/);
-  assert.match(report, /return null;/);
 });
 
-test("a closed month shows the frozen figure, not a live one", () => {
-  // Rewritten 2026-09-04. The old rule — say nothing on a closed month — existed
-  // because the only available number was live and therefore wrong for a submitted
-  // month. There is a frozen one now, so the cell shows it and the tooltip says it is
-  // frozen. That is strictly more informative and cannot go stale.
-  const page = readFileSync(join(process.cwd(), "src", "app", "(app)", "etc", "page.tsx"), "utf8");
-  assert.match(page, /resolvedInvoice\.source === "frozen"/, "the tooltip must distinguish frozen from computed");
-  assert.match(page, /frozen when this month was submitted/);
-  // The reason, stated where somebody will read it.
-  assert.match(page, /so a closed month cannot rewrite itself/);
-  // The resolution itself is gated on the ROW's needsReview, not on cellsReadOnly —
-  // that folds in the monthly-etc:edit permission, and a viewer without it looking at
-  // an open month must still see the computed figure.
-  assert.match(page, /submitted: !partsCostEntry\.needsReview/);
-  assert.ok(!/submitted: cellsReadOnly/.test(page), "must not gate on the permission-bearing flag");
+test("New ETC needs BOTH halves, and a blank is never $0", () => {
+  // The headline rule, as a unit test rather than only as a source guard.
+  assert.equal(partsNewEtc(10_000, null), null, "one half filled is still blank");
+  assert.equal(partsNewEtc(null, 2_500), null);
+  assert.equal(partsNewEtc(null, null), null);
+  assert.equal(partsNewEtc(10_000, 2_500), 12_500, "the report's own example");
+  // Zero IS an answer: a manager who types 0 into Left to Purchase has said there is
+  // nothing more to buy. Only null is blank — the distinction the old `?? 0` destroyed.
+  assert.equal(partsNewEtc(10_000, 0), 10_000);
+  assert.equal(partsNewEtc(0, 0), 0);
+  // Cents survive, because this figure is money and the Diff beside it is exact.
+  assert.equal(partsNewEtc(1_000.01, 2_000.02), 3_000.03);
+  // A negative half is legitimate — an over-invoiced job's Left to Invoice is negative,
+  // matching the Parts List column — and must not be clamped on the way into the sum.
+  assert.equal(partsNewEtc(-427.54, 1_000), 572.46);
+});
+
+test("the cell shows the override when there is one, else the computed default", () => {
+  const dflt = resolveLeftToInvoice({ computed: 35_496.12, stored: null });
+  assert.equal(dflt.value, 35_496.12);
+  assert.equal(dflt.source, "default");
+  assert.equal(dflt.overridden, false, "an untouched cell is not an adjustment");
+
+  const over = resolveLeftToInvoice({ computed: 35_496.12, stored: 10_000 });
+  assert.equal(over.value, 10_000);
+  assert.equal(over.source, "override");
+  assert.equal(over.overridden, true, "this is the state that gets highlighted");
+  assert.equal(over.defaultValue, 35_496.12, "and the tooltip can name what it replaced");
+});
+
+test("a stored value equal to the default is not an adjustment", () => {
+  // "If the value is restored back to the original amount, remove the highlight."
+  const same = resolveLeftToInvoice({ computed: 35_496.12, stored: 35_496.12 });
+  assert.equal(same.overridden, false);
+  assert.equal(same.source, "default");
+  // To the cent, and no wider: a $0.01 difference IS an adjustment on a money column
+  // whose Diff is exact.
+  assert.equal(resolveLeftToInvoice({ computed: 100, stored: 100.01 }).overridden, true);
+  // But floating-point noise is not. 0.1 + 0.2 is the canonical case.
+  assert.equal(resolveLeftToInvoice({ computed: 0.1 + 0.2, stored: 0.3 }).overridden, false);
+});
+
+test("with no default to compare against, nothing is highlighted", () => {
+  // Upstream down. A highlight that appeared during an outage and vanished afterwards
+  // would be worse than none, so the value shows and the marker does not.
+  const r = resolveLeftToInvoice({ computed: null, stored: 12_345 });
+  assert.equal(r.value, 12_345);
+  assert.equal(r.overridden, false);
+  assert.equal(r.defaultValue, null);
+  // And with neither, the cell is genuinely empty — not $0.
+  const none = resolveLeftToInvoice({ computed: null, stored: null });
+  assert.equal(none.value, null);
+  assert.equal(none.source, "unavailable");
+});
+
+test("zero is a real override, not an absence", () => {
+  // A manager who types 0 has said "nothing left to invoice", which on a job whose
+  // default is $35,496 is very much an adjustment.
+  const r = resolveLeftToInvoice({ computed: 35_496.12, stored: 0 });
+  assert.equal(r.value, 0);
+  assert.equal(r.overridden, true);
 });

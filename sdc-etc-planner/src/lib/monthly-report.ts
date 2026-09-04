@@ -1,7 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import { showsPartsBreakout } from "@/lib/parts-breakout-scope";
 import { readPartsEtcBreakout } from "@/lib/parts-etc-breakout";
-import { resolveLeftToInvoice } from "@/lib/left-to-invoice";
+import { resolveLeftToInvoice, partsNewEtc } from "@/lib/left-to-invoice";
 import { APP_VERSION } from "@/lib/app-version";
 import { createHash, randomUUID } from "crypto";
 import { calcHoursLeft, isMonthLocked, isValidMonth, newEtcSeedText, round2, suggestNewEtc, type NewEtcCellState } from "@/lib/etc";
@@ -552,22 +552,34 @@ export async function submitEtcEntriesInTx(tx: Tx, month: string, userId: number
     // is the same function the grid renders by, so the confirmed figure is the one
     // that was on screen. A blank Left to Purchase counts as 0 — the grid shows the
     // sum that way too.
-    const resolvedInvoice = partsInvoice.size > 0 && entry.section === PARTS_COST_SECTION
-      ? resolveLeftToInvoice({
-          computed: partsInvoice.get(entry.jobId) ?? null,
-          stored: entry.leftToInvoice != null ? round2(Number(entry.leftToInvoice)) : null,
-          submitted: false,
-        }).value
-      : null;
+    const resolvedInvoice =
+      partsInvoice.size > 0 && entry.section === PARTS_COST_SECTION
+        ? resolveLeftToInvoice({
+            computed: partsInvoice.get(entry.jobId) ?? null,
+            stored: entry.leftToInvoice != null ? round2(Number(entry.leftToInvoice)) : null,
+          }).value
+        : null;
     const purchase = entry.leftToPurchase != null ? round2(Number(entry.leftToPurchase)) : null;
-    const breakoutSum =
-      resolvedInvoice === null && purchase === null ? null : resolvedInvoice === null ? null : round2(resolvedInvoice + (purchase ?? 0));
+    // BOTH halves, or nothing — the same rule the grid renders by. A row with only one
+    // half answered has NO valid New ETC, so it falls through to the stored draft and
+    // then to the carry-forward suggestion, exactly as a row did before these columns
+    // existed. "Keep submissions using New ETC only after it becomes valid."
+    const breakoutSum = partsNewEtc(resolvedInvoice, purchase);
     const newEtc = breakoutSum ?? draft ?? round2(suggestNewEtc(priorEtc, hoursWorked));
     await tx.etcEntry.update({
       where: { id: entry.id },
       data: {
-        // Frozen, so a closed month cannot drift. Only for the rows this applies to.
-        ...(resolvedInvoice !== null ? { leftToInvoice: resolvedInvoice } : {}),
+        // ── NOT frozen into leftToInvoice (2026-09-04) ────────────────────────
+        //
+        // The read-only revision wrote the computed figure into that column at
+        // submission, to stop a closed month drifting. It cannot any more: the column
+        // means "the manager's override" and nothing else, so a frozen default there
+        // would be indistinguishable from a deliberate adjustment the next time anyone
+        // opened the row — and would light up the manually-adjusted highlight on rows
+        // nobody had touched.
+        //
+        // `newEtc` below IS the frozen figure, as it always was. That is what the
+        // export, next month's Prior ETC and every downstream reader use.
         hoursLeftCalc: round2(calcHoursLeft(priorEtc, hoursWorked)),
         newEtc,
         newEtcDraft: null, // consumed by the submission

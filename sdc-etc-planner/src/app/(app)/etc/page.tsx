@@ -26,7 +26,7 @@ import { PartsBreakoutCell } from "@/components/PartsBreakoutCell";
 import { readPartsEtcBreakout } from "@/lib/parts-etc-breakout";
 import { monthEndLabel } from "@/lib/left-to-invoice";
 import { showsPartsBreakout } from "@/lib/parts-breakout-scope";
-import { resolveLeftToInvoice } from "@/lib/left-to-invoice";
+import { resolveLeftToInvoice, partsNewEtc } from "@/lib/left-to-invoice";
 import { EtcSectionCells } from "@/components/EtcSectionCells";
 import {
   StandardRatesProvider,
@@ -47,7 +47,7 @@ import { savePools } from "@/lib/standard-sheet-actions";
 // ONE submission and ONE reopen for the whole month — see lib/monthly-report.ts.
 import { reopenMonthlyReport, checkMonthlyReport } from "@/lib/monthly-report-actions";
 import { ETC_SECTIONS, PARTS_COST_SECTION } from "@/lib/sections";
-import { partsCostRisk, partsCostRiskTitle, calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, currentMonth, round2, workingDaysInMonth, effectiveNewEtc, newEtcDiff, newEtcSeedText, isNewEtcCellDecided, rollupNewEtc, type NewEtcCellState, type NewEtcRollupCell } from "@/lib/etc";
+import { calcHoursLeft, suggestNewEtc, isMonthLocked, isValidMonth, nextMonth, currentMonth, round2, workingDaysInMonth, effectiveNewEtc, newEtcDiff, newEtcSeedText, isNewEtcCellDecided, rollupNewEtc, type NewEtcCellState, type NewEtcRollupCell } from "@/lib/etc";
 import { ReopenMonthButton } from "@/components/ReopenMonthButton";
 import { EtcAutosave } from "@/components/EtcAutosave";
 import { EtcLiveTotals } from "@/components/EtcLiveTotals";
@@ -61,7 +61,7 @@ import { JobCellMenuHost } from "@/components/JobCellMenuHost";
 import { jobCellMenuProps } from "@/lib/job-cell-menu";
 import { getSchedulerLinkContext, schedulerScheduleUrl } from "@/lib/scheduler-link";
 import { BUTTON_SECONDARY, ETC_COL_W, GRID_SCROLLER, PAGE_SHELL, PARTS_COL_W, TABLE_GRID, TABLE_HEADER_ROW, TOOLBAR_MIN_W } from "@/components/ui/classnames";
-import { diffCellStyle, diffTotalStyle, DIFF_CEILING, partsRiskStyle } from "@/components/ui/etc-diff-colors";
+import { diffCellStyle, diffTotalStyle, DIFF_CEILING } from "@/components/ui/etc-diff-colors";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { DragScroll } from "@/components/DragScroll";
 
@@ -76,15 +76,25 @@ const SUB_COLUMNS = ["Prior ETC", "Hours Worked Month", "Hours Left", "New ETC",
 //
 //     Left to Invoice  +  Left to Purchase  =  New ETC
 //
-// Both are manager-typed, both start empty, and New ETC is calculated from them — it
-// is no longer an input at all on a month that has these columns. There is one
-// authoritative value: the two halves are stored per EtcEntry and the save derives
-// New ETC from them, so nothing can hold a manual figure that disagrees with the sum
-// beside it. See components/PartsBreakoutCell.tsx.
+// Both are manager-editable and New ETC is CALCULATED from them — it is not an input at
+// all on a month that has these columns. There is one authoritative value: the halves
+// are stored per EtcEntry and the save derives New ETC from them, so nothing can hold a
+// manual figure that disagrees with the sum beside it.
 //
-// Total ETO is still consulted, for ONE thing: the figure on an empty Left to
-// Invoice's tooltip. That makes it the only upstream call this page makes — a single
-// batched query, see lib/parts-etc-breakout.ts.
+// The two halves are not symmetrical, though (2026-09-04):
+//
+//   Left to Invoice   defaults to the Parts List figure at this month's cutoff, so the
+//                     two surfaces reconcile unless somebody says otherwise. An
+//                     override is stored and the cell is HIGHLIGHTED.
+//   Left to Purchase  starts empty. Nothing upstream can compute it — a BOM part with
+//                     no purchase line does not appear in the parts rows at all.
+//
+// And New ETC stays BLANK until both have a value. A blank half is not $0: treating it
+// as one displayed a forecast nobody had made the moment one cell was filled in.
+//
+// So Total ETO is consulted for one thing — Left to Invoice's default — which makes it
+// the only upstream call this page makes: a single batched query, see
+// lib/parts-etc-breakout.ts.
 // Not every month has all seven — see lib/parts-breakout-scope.ts. The two breakout
 // columns start at August 2026, so the grid derives its own list from this one and
 // EVERY consumer must use that derived list: the header colSpans, the body cells, the
@@ -1979,7 +1989,6 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                           computed: suggestion?.rawLeftToInvoice == null ? null : round2(suggestion.rawLeftToInvoice),
                           stored:
                             partsCostEntry.leftToInvoice != null ? round2(Number(partsCostEntry.leftToInvoice)) : null,
-                          submitted: !partsCostEntry.needsReview,
                         });
                         const leftToInvoiceValue = resolvedInvoice.value;
                         // A New ETC typed before these columns existed. No longer shown
@@ -2009,10 +2018,11 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                         // hydrate — and, worse, leave the cell permanently dirty: its
                         // value would differ from its baseline with no edit behind it and
                         // nothing a save could do about it.
-                        const breakoutSum =
-                          leftToInvoiceValue === null && leftToPurchaseValue === null
-                            ? null
-                            : round2((leftToInvoiceValue ?? 0) + (leftToPurchaseValue ?? 0));
+                        // BOTH, or blank. `partsNewEtc` is the one rule — the grid, the
+                        // save, the submission and the live client sum all ask it, because
+                        // a blank that means 0 in one of them and blank in another is the
+                        // shape of bug this replaces.
+                        const breakoutSum = partsNewEtc(leftToInvoiceValue, leftToPurchaseValue);
                         // Undecided still falls back to the carry-forward suggestion,
                         // exactly as it does on a month without these columns — that is
                         // what Submit would write, and next month's Prior ETC depends on
@@ -2064,29 +2074,6 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                         // Diff beside it. See the note on the cell below and the matching
                         // change in PartsCostNewEtcCell (the client half of this cell).
                         const diffCost = decidedCost ? moneyLeft - Math.max(effectiveNewEtcCost, 0) : 0;
-                        // ── Under-planned Parts Cost, flagged red (2026-09-03, by request) ──
-                        //
-                        // "If there is still positive parts cost left to invoice and the
-                        // manager enters a New ETC below that amount, flag it." The rule
-                        // itself is lib/etc.ts's partsCostRisk (with its own tests) so that
-                        // THIS first paint and the client's live repaint cannot disagree —
-                        // they are separate code paths, and a warning that showed on one
-                        // and not the other would be worse than none.
-                        //
-                        // The compared figure is Math.max(effective, 0), the SAME expression
-                        // diffCost uses one line above, so the red state and the Diff printed
-                        // beside it always tell the same story: at-risk is exactly
-                        // "Diff > 0 with money still left", never a second opinion about it.
-                        const partsRisk = partsCostRisk({
-                          moneyLeft,
-                          newEtc: Math.max(effectiveNewEtcCost, 0),
-                          decided: decidedCost,
-                        });
-                        const partsRiskCss = partsRisk.atRisk ? partsRiskStyle() : undefined;
-                        const partsRiskTip = partsRisk.atRisk
-                          ? partsCostRiskTitle(moneyLeft, Math.max(effectiveNewEtcCost, 0), partsRisk.shortfall, currencyExact)
-                          : null;
-
                         partsCostGrandTotal.prior += prior;
                         partsCostGrandTotal.worked += spent;
                         partsCostGrandTotal.newEtc += effectiveNewEtcCost;
@@ -2101,32 +2088,21 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                             {/* PARTS_COL_W on every cell in this block: these are seven-figure
                                 money columns and the hours width clipped them ("$1,065,7…").
                                 See components/ui/classnames.ts. */}
-                            {/* `data-parts-risk` + `data-job` on all three read-only cells:
-                                that is how EtcLiveTotals finds them to repaint when the New
-                                ETC box changes, the same querySelector approach the row's
-                                own Diff cell already uses. The style is applied here too so
-                                the FIRST paint is already correct — a warning that only
-                                appeared after hydration would miss exactly the case it is
-                                for, a manager scanning a freshly loaded grid. */}
+                            {/* The row-wide red wash these three carried is gone (2026-09-04,
+                                by request): "do not use row-level red backgrounds for Parts
+                                Cost validation/differences. Any status/difference indication
+                                should stay at the specific cell level only." So no
+                                `data-parts-risk`, no injected style, and no live repaint —
+                                Diff still carries the same information in its own cell, and
+                                Left to Invoice carries its own override highlight. */}
                             <td
-                              data-parts-risk
-                              data-job={job.id}
                               className={`${PHASE_EDGE} ${PARTS_COL_W} overflow-hidden bg-[#5E91D3] px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`}
-                              style={partsRiskCss}
-                              // The cell's OWN tooltip, kept so the live repaint can put it
-                              // back when a row stops being at risk (see writePartsRisk).
-                              data-title-was={currencyExact(prior)}
-                              title={partsRiskTip ?? currencyExact(prior)}
+                              title={currencyExact(prior)}
                             >
                               {currency(prior)}
                             </td>
                             <td
-                              data-parts-risk
-                              data-job={job.id}
                               className={`border-l border-sdc-border ${HOURS_WORKED_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle whitespace-nowrap`}
-                              style={partsRiskCss}
-                              data-title-was={currencyExact(spent)}
-                              title={partsRiskTip ?? undefined}
                             >
                               {/* Not manager-editable — always Power BI's actual, passed through as a
                                   hidden field so submitMonth's generic per-entry loop still works. */}
@@ -2135,24 +2111,15 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                                   column, so the figure should use all of it rather than being cut
                                   to 64px inside a wider box. */}
                               <span
-                                className={`block w-full text-center text-label ${partsRisk.atRisk ? "" : "text-sdc-gray-600"}`}
-                                title={partsRiskTip ?? currencyExact(spent)}
+                                className="block w-full text-center text-label text-sdc-gray-600"
+                                title={currencyExact(spent)}
                               >
                                 {currency(spent)}
                               </span>
                             </td>
                             <td
-                              data-parts-risk
-                              data-job={job.id}
-                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap ${
-                                partsRisk.atRisk ? "" : "text-sdc-muted"
-                              }`}
-                              style={partsRiskCss}
-                              data-title-was={`${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(prior)}) − Money Spent (${currencyExact(spent)})`}
-                              title={
-                                partsRiskTip ??
-                                `${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(prior)}) − Money Spent (${currencyExact(spent)})`
-                              }
+                              className={`border-l border-sdc-border ${HOURS_LEFT_BG} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-muted`}
+                              title={`${currencyExact(moneyLeft)} = Prior ETC (${currencyExact(prior)}) − Money Spent (${currencyExact(spent)})`}
                             >
                               {currency(moneyLeft)}
                             </td>
@@ -2167,30 +2134,34 @@ export async function MonthlyEtcView({ params }: { params: { month?: string; dep
                             <>
                             <PartsBreakoutCell
                               which="invoice"
-                              // COMPUTED, not entered. `name` is still passed for the
-                              // aria label and the publish key; readOnly means it puts
-                              // no field in the form, so no save can write it.
-                              readOnly
+                              // EDITABLE again (2026-09-04, by request), and the computed
+                              // Parts List figure is its DEFAULT rather than a suggestion
+                              // on a tooltip. `overridden` is what draws the
+                              // manually-adjusted highlight — see lib/left-to-invoice.ts
+                              // for why that is derived from stored-vs-default rather than
+                              // stored as a flag (it makes "put it back" reversible with no
+                              // second write).
+                              overridden={resolvedInvoice.overridden}
                               name={`partsLeftToInvoice__${partsCostEntry.id}`}
                               initialValue={leftToInvoiceValue == null ? "" : String(leftToInvoiceValue)}
                               jobId={job.id}
                               jobName={job.jobName}
                               seedHint={
-                                // The tooltip now explains a figure that is ON SCREEN,
-                                // rather than offering one nobody had entered. Three
-                                // things a manager needs in order to trust it: where it
-                                // came from, that it matches the Parts List filtered
-                                // through the same day, and the one way it keeps moving.
+                                // Explains a figure that is ON SCREEN and editable. What a
+                                // manager needs to trust it: where it came from, that it
+                                // matches the Parts List filtered to the same day, that
+                                // typing over it is allowed, and — once they have — what
+                                // the number they replaced was.
                                 leftToInvoiceValue == null
-                                  ? `Total ETO could not be reached for this job, so Left to Invoice is unknown and New ETC cannot include it. It is not zero — it is unmeasured.`
-                                  : resolvedInvoice.source === "frozen"
-                                  ? `${currencyExact(leftToInvoiceValue)}, frozen when this month was submitted. Held rather than recomputed so a closed month cannot rewrite itself as later invoices post.`
-                                  : `${currencyExact(leftToInvoiceValue)} on purchase orders and not yet invoiced as of ${cutoffLabel} — the same figure this job’s Parts List shows filtered through that date, from the same rows and the same formula (lib/left-to-invoice.ts). Computed, not typed: it cannot be edited here.` +
+                                  ? `Total ETO could not be reached for this job, so there is no default here. Type what is on order and not yet invoiced — New ETC stays blank until both this and Left to Purchase have a value.`
+                                  : resolvedInvoice.overridden
+                                  ? `Manually adjusted. Total ETO’s figure as of ${cutoffLabel} is ${currencyExact(resolvedInvoice.defaultValue ?? 0)}; this cell has been set to ${currencyExact(leftToInvoiceValue)} instead. Clear it or type the original figure back to remove the highlight.`
+                                  : `${currencyExact(leftToInvoiceValue)} on purchase orders and not yet invoiced as of ${cutoffLabel} — the same figure this job’s Parts List shows filtered through that date. This is the default and you can type over it; an adjusted cell is highlighted.` +
                                     (suggestionLatePostings > 0
                                       ? ` ${currencyExact(suggestionLatePostings)} has posted after ${cutoffLabel} against orders placed on or before it, and is already deducted — so this figure keeps falling as later invoices post. The Parts List moves with it.`
                                       : "") +
                                     (supersededNewEtc != null
-                                      ? ` This row previously carried a hand-typed New ETC of ${currencyExact(supersededNewEtc)}; New ETC is now this figure plus Left to Purchase, so enter what is still to be bought.`
+                                      ? ` This row previously carried a hand-typed New ETC of ${currencyExact(supersededNewEtc)}; New ETC is now this figure plus Left to Purchase.`
                                       : "")
                               }
                               bg={newEtcBg(true)}

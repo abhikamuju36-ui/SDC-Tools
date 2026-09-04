@@ -232,71 +232,98 @@ export function explainLeftToInvoice(
   };
 }
 
-// ── What the CELL shows — computed, not entered (2026-09-04) ─────────────────
+// ── The cell: a computed DEFAULT that a manager may override ─────────────────
 //
-// The reconciliation report was answered with a decision: "Monthly ETC Left to
-// Invoice = Parts List Left to Invoice … exact reconciliation every time." That
-// settles a conflict rather than adding a feature, so it is worth writing down what
-// it overrides.
+// Third revision of this rule, and the one that resolves the tension in the first two.
 //
-// On 2026-09-03 this column was made a manager-entered cell, with New ETC as the sum
-// of it and Left to Purchase. A typed figure cannot equal a computed one, so the
-// column disagreed with the Parts List by whatever a manager had typed — $10,000
-// against $35,496 in the report's screenshots — and no change to the arithmetic
-// above could have closed that gap. Editable and always-equal-to-upstream are
-// different things, and always-equal won.
+//   2026-09-03  editable, so it could disagree with the Parts List by any amount.
+//   2026-09-04  computed and read-only, so it always agreed — and a manager who knew
+//               better than Total ETO had nowhere to say so.
+//   2026-09-04  this: the computed figure is the DEFAULT, the cell is editable, and an
+//               override is HIGHLIGHTED. Reconciliation is the default state rather
+//               than an enforced one, and a divergence is visible rather than
+//               impossible — which is what both requests were actually asking for.
 //
-// So Left to Invoice is now COMPUTED and read-only. `rawLeftToInvoice` is what it
-// shows: the signed per-line sum through the month-end cutoff, which is exactly what
-// the Parts List's own column sums. Not the floored figure — flooring at zero is the
-// one place the two legitimately disagreed (two August jobs, $521.28 together), and
-// "exact" leaves no room for it. An over-invoiced job now reads negative here, as it
-// already does there, because that is true and it is the reason to look.
+// So `EtcEntry.leftToInvoice` has exactly one meaning: the manager's override. NULL
+// means "use the computed default", not "nothing here". That matters for reading
+// existing rows — every stored value is an override and stays one, which is the
+// "existing manual overrides must not be lost" requirement.
 //
-// Left to Purchase stays manager-entered. It always was the half nobody can compute:
-// a BOM part with no purchase line does not appear in the parts rows at all.
+// It also means the submission must NOT write the computed figure into that column.
+// Freezing it there (which the read-only revision did) would make a frozen default
+// indistinguishable from a deliberate override the moment anyone looked at the row
+// again. `newEtc` is the frozen figure, as it always was.
 
-/** Where a displayed Left to Invoice came from. The audit prints it. */
+/** Where a displayed Left to Invoice came from. */
 export type LeftToInvoiceSource =
-  /** Live from Total ETO through the month-end cutoff — an open month. */
-  | "computed"
-  /** Frozen when the row was submitted, so a closed month cannot drift. */
-  | "frozen"
-  /** A closed row with nothing frozen (submitted before this change), recomputed. */
-  | "recomputed"
-  /** Upstream is unreachable and nothing was frozen. Renders as an em dash. */
+  /** The computed Parts List figure at this month's cutoff — nobody has overridden it. */
+  | "default"
+  /** A manager typed something else. This is the state that gets highlighted. */
+  | "override"
+  /** Upstream is unreachable and nothing was stored. Renders as an em dash. */
   | "unavailable";
 
 export type LeftToInvoiceInputs = {
   /** The Parts List figure at this month's cutoff, or null when upstream failed. */
   computed: number | null;
-  /** What was written to EtcEntry.leftToInvoice when the row was submitted. */
+  /** `EtcEntry.leftToInvoice` — the override, or null for "use the default". */
   stored: number | null;
-  /** The row has been submitted — `!needsReview`. */
-  submitted: boolean;
 };
 
-/**
- * The figure the cell shows, and why.
- *
- * A SUBMITTED row prefers what was frozen at submission. Two reasons, and both
- * matter: a closed month's numbers are history and must not move, and this figure
- * genuinely does drift — the Parts List's rule pairs a purchase-date cutoff with
- * lifetime invoicing, so a September posting against an August PO keeps reducing
- * August. Freezing is what stops a signed-off month rewriting itself.
- *
- * An OPEN row prefers the computed figure, and that is the whole point of the change:
- * whatever is stored on an open row is a superseded manual entry, so it must not win.
- * It is still used as a fallback when upstream is unreachable, because a stale number
- * that says where it came from beats an em dash on the column New ETC is built from.
- */
-export function resolveLeftToInvoice(x: LeftToInvoiceInputs): { value: number | null; source: LeftToInvoiceSource } {
-  if (x.submitted) {
-    if (x.stored !== null) return { value: x.stored, source: "frozen" };
-    if (x.computed !== null) return { value: x.computed, source: "recomputed" };
-    return { value: null, source: "unavailable" };
+export type ResolvedLeftToInvoice = {
+  value: number | null;
+  source: LeftToInvoiceSource;
+  /**
+   * Show the manually-adjusted highlight.
+   *
+   * False when the stored value EQUALS the computed default — "if the value is restored
+   * back to the original amount, remove the manual-change highlight". Comparing rather
+   * than clearing the column keeps that reversible without a second write.
+   *
+   * Also false when the default is unknown: with upstream down there is nothing to
+   * differ FROM, and a highlight that appears during an outage and vanishes afterwards
+   * would be worse than none.
+   */
+  overridden: boolean;
+  /** The figure the override replaced, for the tooltip. Null when there is no override. */
+  defaultValue: number | null;
+};
+
+export function resolveLeftToInvoice(x: LeftToInvoiceInputs): ResolvedLeftToInvoice {
+  if (x.stored !== null) {
+    const differs = x.computed !== null && Math.abs(x.stored - x.computed) > 0.004;
+    return {
+      value: x.stored,
+      source: differs ? "override" : "default",
+      overridden: differs,
+      defaultValue: x.computed,
+    };
   }
-  if (x.computed !== null) return { value: x.computed, source: "computed" };
-  if (x.stored !== null) return { value: x.stored, source: "frozen" };
-  return { value: null, source: "unavailable" };
+  if (x.computed !== null) {
+    return { value: x.computed, source: "default", overridden: false, defaultValue: x.computed };
+  }
+  return { value: null, source: "unavailable", overridden: false, defaultValue: null };
+}
+
+// ── New ETC needs BOTH halves ────────────────────────────────────────────────
+//
+// "New ETC should remain empty until both Left to Invoice and Left to Purchase have
+// values entered. Do not treat blanks as 0."
+//
+// The previous rule counted a blank half as 0 as soon as the other had a figure, which
+// meant a row with only Left to Invoice filled displayed a New ETC that asserted
+// "nothing left to buy" — a forecast nobody had made, on the field the submission, the
+// export and next month's Prior ETC all read. Blank now means blank all the way
+// through, and every consumer asks this one function.
+
+/**
+ * New ETC for a Parts Cost row, or null while either half is unanswered.
+ *
+ * Zero IS a value: a manager who enters 0 in Left to Purchase has said there is nothing
+ * more to buy, and that is an answer. Only null is blank — which is exactly the
+ * distinction the old `?? 0` destroyed.
+ */
+export function partsNewEtc(leftToInvoice: number | null, leftToPurchase: number | null): number | null {
+  if (leftToInvoice === null || leftToPurchase === null) return null;
+  return Math.round((leftToInvoice + leftToPurchase) * 100) / 100;
 }

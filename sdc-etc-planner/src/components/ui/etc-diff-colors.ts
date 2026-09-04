@@ -150,50 +150,28 @@ export function diffTotalStyle(diff: number | null, ceiling: number): { color?: 
   return { color: mix(faint, vivid, t), fontWeight: 700 };
 }
 
-// ── The Parts Cost under-planning warning (2026-09-03) ──────────────────────
+// ── "Manually adjusted", at CELL level ─────────────────────────────────────
 //
-// One definition of the colour, used by BOTH the server's first paint
-// (etc/page.tsx applies it as a `style`) and the client's live repaint
-// (EtcLiveTotals sets `cell.style.backgroundColor`, PartsCostNewEtcCell styles
-// itself). Three call sites, one colour — the alternative is a warning that is a
-// slightly different red depending on whether you loaded the page or typed.
+// Replaces the row-wide red wash removed on 2026-09-04 (see lib/etc.ts). The brief for
+// this one was explicit: it must "clearly indicate manually adjusted without making the
+// whole row look like an error".
 //
-// ── Why an inline style rather than a class ─────────────────────────────────
-//
-// The requirement is that the red "overrides the existing yellow input styling
-// while the condition is active". Those yellows are Tailwind utility classes on
-// the cells, so a competing class of equal specificity would be decided by
-// stylesheet order — which is not something a component should be betting on. An
-// inline style always wins, needs no `!important`, and clears to "" exactly like
-// paintDiffColor's own tints, which is the pattern this grid already uses for
-// every live-recoloured cell.
-//
-// #f6d7d7 rather than the lighter --sdc-red-bg (#fbeded): this has to read as a
-// warning across four cells that already carry their own strong column tints
-// (Prior ETC is on #5E91D3 blue, Money Spent and Money Left on their own washes),
-// and the lighter token disappeared against them. It is still light enough to keep
-// --sdc-red-text legible on top, which is the stated constraint — the numbers must
-// stay readable.
-const PARTS_RISK_BG = "#f6d7d7";
+// So it is amber rather than red — an annotation, not a fault — and it is a left edge
+// plus a wash rather than a full repaint, which keeps it legible on top of the strong
+// column tints these cells already carry and keeps it visibly DIFFERENT from the Diff
+// column’s red/green scale beside it.
+const OVERRIDE_BG = "#fdf3d7";
+const OVERRIDE_EDGE = "#c8880a";
 
-export function partsRiskStyle(): { backgroundColor: string; color: string; fontWeight: number } {
-  return { backgroundColor: PARTS_RISK_BG, color: "var(--sdc-red-text)", fontWeight: 700 };
-}
-
-/**
- * Paint or clear the warning on one cell. `on: false` restores whatever the cell's
- * own classes say, so a row that stops being at risk goes back to its normal column
- * tint rather than to white.
- */
-export function paintPartsRisk(cell: HTMLElement, on: boolean): void {
-  if (!on) {
-    cell.style.backgroundColor = "";
-    cell.style.color = "";
-    cell.style.fontWeight = "";
-    return;
-  }
-  const s = partsRiskStyle();
-  cell.style.backgroundColor = s.backgroundColor;
-  cell.style.color = s.color;
-  cell.style.fontWeight = String(s.fontWeight);
+export function manualOverrideStyle(): {
+  backgroundColor: string;
+  boxShadow: string;
+  fontWeight: number;
+} {
+  return {
+    backgroundColor: OVERRIDE_BG,
+    // Inset, so it costs no layout and cannot shift a 450-cell grid by a pixel.
+    boxShadow: `inset 3px 0 0 0 ${OVERRIDE_EDGE}`,
+    fontWeight: 700,
+  };
 }

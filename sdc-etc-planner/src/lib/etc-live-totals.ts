@@ -1,6 +1,7 @@
 "use client";
 
 import { useSyncExternalStore } from "react";
+import { partsNewEtc } from "@/lib/left-to-invoice";
 // The rollup rule, shared with the server render so the block cannot paint one
 // figure on load and a different one on the first keystroke (§51).
 import { rollupNewEtc, type NewEtcRollup, type NewEtcRollupCell } from "@/lib/etc";
@@ -429,8 +430,11 @@ export function forgetPartsBreakout(jobId: number, which: PartsBreakoutHalf): vo
  */
 export function readPartsBreakoutSum(jobId: number): number | null {
   const b = breakout.get(jobId);
-  if (!b || (b.invoice === null && b.purchase === null)) return null;
-  return (b.invoice ?? 0) + (b.purchase ?? 0);
+  if (!b) return null;
+  // BOTH halves, or blank. The same rule the server renders by and the save writes by
+  // (lib/left-to-invoice.ts's partsNewEtc). This used to treat a blank half as 0, which
+  // showed a New ETC nobody had forecast the moment one of the two cells was filled in.
+  return partsNewEtc(b.invoice, b.purchase);
 }
 
 /** Every job with at least one half entered, for the footer total. */

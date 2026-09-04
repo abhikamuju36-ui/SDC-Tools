@@ -178,7 +178,6 @@ DRIFT: ${drifting.length} job(s) have GL postings dated after ${END}`);
           // on order — not "unknown". Null is reserved for an upstream failure.
           computed: list,
           stored: stored.leftToInvoice,
-          submitted: submittedByJob.get(j.id) ?? false,
         })
       : { value: null, source: "no-entry" as const };
     const s = { shown: r.value, source: r.source };

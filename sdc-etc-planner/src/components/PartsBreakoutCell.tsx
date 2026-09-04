@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { registerEtcField, forgetEtcField, updateEtcField, adoptEtcFieldBaseline } from "@/lib/etc-dirty-tracker";
 import { PARTS_COL_W } from "@/components/ui/classnames";
+import { manualOverrideStyle } from "@/components/ui/etc-diff-colors";
 import { usd } from "@/components/ui/format";
 import { publishPartsBreakout, forgetPartsBreakout } from "@/lib/etc-live-totals";
 import { useEffect } from "react";
@@ -54,7 +55,7 @@ export function PartsBreakoutCell({
   locked,
   jobId,
   which,
-  readOnly = false,
+  overridden = false,
   jobName,
   seedHint,
   bg,
@@ -76,15 +77,18 @@ export function PartsBreakoutCell({
   jobId: number;
   which: "invoice" | "purchase";
   /**
-   * Render the figure; do not accept one.
+   * Draw the "manually adjusted" highlight.
    *
-   * Left to Invoice became COMPUTED on 2026-09-04 — "Monthly ETC Left to Invoice =
-   * Parts List Left to Invoice … exact reconciliation every time" — so it has no
-   * caret, no hidden input and no dirty-tracker registration: there is nothing for a
-   * save to write. It still PUBLISHES, because New ETC is the live sum of the two
-   * halves and the client cannot see a server-rendered number.
+   * Left to Invoice only, and derived rather than stored: the page compares what is in
+   * the database against the computed Parts List default, so typing the original figure
+   * back removes the highlight with no second write and no flag to get out of step.
+   * See lib/left-to-invoice.ts.
+   *
+   * The style is amber and cell-level on purpose. It replaced a row-wide red wash that
+   * "made the whole row look like an error", and it has to stay distinct from the Diff
+   * column’s red/green scale sitting beside it.
    */
-  readOnly?: boolean;
+  overridden?: boolean;
   jobName: string;
   /**
    * The tooltip for an EMPTY cell: that nothing is auto-filled here, plus whatever
@@ -111,20 +115,15 @@ export function PartsBreakoutCell({
   // month switch self-cleaning. Without this the autosave debounce never sees these
   // cells and a typed value would only persist via the Save button.
   useEffect(() => {
-    // A read-only cell has nothing to save, so registering it would leave a
-    // permanently clean field in the tracker and hand the unsaved-changes guard a name
-    // no save could ever resolve.
-    if (readOnly) return;
     registerEtcField(name, initialValue);
     return () => forgetEtcField(name);
     // initialValue is the mount-time baseline by design — see EtcSectionCells.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [name, readOnly]);
+  }, [name]);
 
   useEffect(() => {
-    if (readOnly) return;
     if (value === serverValue) adoptEtcFieldBaseline(name, serverValue);
-  }, [name, serverValue, value, readOnly]);
+  }, [name, serverValue, value]);
 
   // Publish for the live New ETC sum. New ETC is a read-only cell rendered by the
   // page, so it cannot see this state — the same reason the Parts Cost row's Diff is
@@ -140,23 +139,16 @@ export function PartsBreakoutCell({
   // thousands separator.
   const display = focused ? value : value.trim() === "" ? "" : usd(Number(value));
 
-  if (readOnly) {
-    // No input, no hidden field, no `name` in the form at all — so a save cannot write
-    // this column even by accident, and the tab order skips a cell nobody can answer.
-    // An em dash rather than $0 when the figure is unknown: a zero here would assert
-    // "nothing outstanding", which is the opposite of not having been able to ask.
-    return (
-      <td
-        className={`motion-cell relative border-l border-sdc-border ${bg} ${PARTS_COL_W} overflow-hidden px-1 py-1 text-center align-middle text-label whitespace-nowrap text-sdc-gray-700`}
-        title={seedHint}
-      >
-        {value.trim() === "" ? <span className="text-sdc-muted">—</span> : usd(Number(value))}
-      </td>
-    );
-  }
-
   return (
-    <td className={`motion-cell relative border-l border-sdc-border ${bg} ${PARTS_COL_W} px-1 py-1 text-center`}>
+    <td
+      className={`motion-cell relative border-l border-sdc-border ${bg} ${PARTS_COL_W} px-1 py-1 text-center`}
+      // Inline rather than a class: the highlight has to win over the column tint this
+      // cell already carries, and an inline style is the one thing that reliably does
+      // without a specificity fight in a 450-cell grid.
+      style={overridden ? manualOverrideStyle() : undefined}
+      // So the live client sum can repaint it without re-deriving the rule.
+      data-parts-override={overridden ? "1" : undefined}
+    >
       <input type="hidden" name={name} value={value} disabled={locked} />
       <input
         type="text"

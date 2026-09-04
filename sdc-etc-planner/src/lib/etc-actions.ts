@@ -10,7 +10,7 @@ import {
   parseNewEtcField,
   type NewEtcWriteIntent,
 } from "@/lib/etc";
-import { resolveLeftToInvoice } from "@/lib/left-to-invoice";
+import { resolveLeftToInvoice, partsNewEtc } from "@/lib/left-to-invoice";
 import { readPartsEtcBreakout } from "@/lib/parts-etc-breakout";
 import { derivePriorEtcForMonth, cascadePriorEtcForward } from "@/lib/etc-prior-etc";
 import { seedMonthRows } from "@/lib/etc-seeding";
@@ -379,15 +379,24 @@ export async function saveAllNewEtcDrafts(
     // while the row is open, whatever was frozen once it is submitted). Falling back to
     // the stored figure when upstream is unreachable is what stops an outage silently
     // rewriting New ETC to just the purchase half.
-    const resolvedInvoice = resolveLeftToInvoice({
-      computed: computedInvoice.get(entry.jobId) ?? null,
-      stored: storedInvoice,
-      submitted: !entry.needsReview,
-    }).value;
+    // ── Both halves are typed again (2026-09-04) ─────────────────────────────
+    //
+    // Left to Invoice is editable, and the computed Parts List figure is its DEFAULT
+    // rather than its value. So the payload may carry either half, and `shown` — what
+    // the manager's cell was actually displaying — is what an incoming value has to be
+    // compared against, or a clear of an unstored default would look like "null,
+    // unchanged" and do nothing.
+    //
+    // `stored` stays separate for the stale-write guard, which asks about the DATABASE.
+    const defaultInvoice = computedInvoice.get(entry.jobId) ?? null;
+    const resolvedInvoice = resolveLeftToInvoice({ computed: defaultInvoice, stored: storedInvoice }).value;
     const halves = [
-      // `shown` is what the manager's cell was displaying, which is what an incoming
-      // value has to be compared against. `stored` stays separate for the stale-write
-      // guard, which asks about the DATABASE.
+      {
+        key: "invoice" as const,
+        field: `partsLeftToInvoice__${entry.id}`,
+        stored: storedInvoice,
+        shown: resolvedInvoice,
+      },
       {
         key: "purchase" as const,
         field: `partsLeftToPurchase__${entry.id}`,
@@ -395,7 +404,6 @@ export async function saveAllNewEtcDrafts(
         shown: storedPurchase,
       },
     ];
-    // The computed half is not negotiable; only the typed one comes from the payload.
     const next: { invoice: number | null; purchase: number | null } = {
       invoice: resolvedInvoice,
       purchase: storedPurchase,
@@ -458,8 +466,11 @@ export async function saveAllNewEtcDrafts(
     // said something about the total and the cell must show it. Both blank is a cell
     // nobody has answered — null, and marked as a deliberate blank so the carry-forward
     // seed cannot put a number back into a New ETC whose inputs are empty.
-    const sum =
-      next.invoice === null && next.purchase === null ? null : round2((next.invoice ?? 0) + (next.purchase ?? 0));
+    // BOTH halves, or blank — the one rule, from lib/left-to-invoice.ts. This used to
+    // count a blank half as 0 as soon as the other had a figure, which stored a New ETC
+    // asserting "nothing left to buy" that nobody had forecast, into the field the
+    // submission, the export and next month's Prior ETC all read.
+    const sum = partsNewEtc(next.invoice, next.purchase);
     const currentDraft = entry.newEtcDraft != null ? round2(Number(entry.newEtcDraft)) : null;
     if (sum !== currentDraft) {
       changes.push({ entryId: entry.id, field: `newEtcOverride__${entry.id}`, from: currentDraft, to: sum });
@@ -468,7 +479,14 @@ export async function saveAllNewEtcDrafts(
       prisma.etcEntry.update({
         where: { id: entry.id },
         data: {
-          leftToInvoice: next.invoice,
+          // An entry equal to the computed default is stored as NULL, not as itself:
+          // null means "use the default", so typing the original figure back is what
+          // removes the manual-adjustment highlight. Storing the number instead would
+          // leave a row permanently marked as adjusted to the value it already had.
+          leftToInvoice:
+            next.invoice !== null && defaultInvoice !== null && Math.abs(next.invoice - defaultInvoice) <= 0.004
+              ? null
+              : next.invoice,
           leftToPurchase: next.purchase,
           newEtcDraft: sum,
           newEtcClearedAt: sum === null ? new Date() : null,
