@@ -249,25 +249,28 @@ test("a failed batch read reports every job failed, never a confident zero", () 
   assert.match(FIN, /const lines: PartsCostLine\[\] = byJob \? jobs\.flatMap\(\(j\) => byJob\.get\(j\.jobId\) \?\? \[\]\) : \[\];/);
 });
 
-// ── Paging draws less, counts the same (2026-09-03) ─────────────────────────
+// ── The window draws less, counts the same (2026-09-04) ─────────────────────
 //
-// The Parts List pages at 50 rows, requested because job 1101 put 628 rows in one
-// scroll container. The hazard is the one this file's footer already exists to
-// prevent: a total that quietly covers only the visible page while the strip above
-// it says 628. These guards pin the separation.
+// The Parts List is one continuous scroll over every filtered row, with only the rows
+// near the viewport in the DOM. It paged at 50 for one day (2026-09-03) and was
+// replaced by request: "I do not want page-by-page navigation."
 //
-// Asserted against PROC, which has comments stripped — so every match below is on
-// real code, not on a comment describing it.
+// The hazard is unchanged and is the one this file's footer exists to prevent: a total
+// that quietly covers only what is on screen while the strip above it says 628. It is
+// now WORSE if got wrong, because the visible set moves as you scroll — a footer
+// summing it would change while the user did nothing but drag a scrollbar.
+//
+// Asserted against PROC, which has comments stripped — so every match below is on real
+// code, not on a comment describing it.
 
-test("the page slice is what renders; the totals still cover every filtered row", () => {
-  assert.match(PROC, /const PARTS_PAGE_SIZE = 50;/);
-  // Sorted first, then sliced — otherwise page 1 is the first 50 rows re-sorted
-  // among themselves rather than the top of the sort.
-  assert.match(PROC, /const pageParts = sortedParts\.slice\(pager\.from, pager\.to\)/);
-  assert.match(PROC, /\{pageParts\.map\(\(p, i\) => \{/, "the tbody must render the page slice");
+test("the rendered window is a slice; the totals still cover every filtered row", () => {
+  // Sorted first, then windowed — otherwise the visible rows are an arbitrary 60 of
+  // the set re-sorted among themselves rather than a piece of the real order.
+  assert.match(PROC, /const visibleParts = sortedParts\.slice\(win\.start, win\.end\)/);
+  assert.match(PROC, /\{visibleParts\.map\(\(p, i\) => \{/, "the tbody renders the window");
 
   // The column totals and the row counts must still reduce over `parts` — the whole
-  // filtered set — never over the page.
+  // filtered set — never over what happens to be on screen.
   assert.match(PROC, /const tot = parts\.reduce\(/, "column totals stay over every filtered row");
   assert.match(
     PROC,
@@ -275,28 +278,69 @@ test("the page slice is what renders; the totals still cover every filtered row"
     "row counts stay over every filtered row",
   );
   assert.ok(
-    !/pageParts\.reduce\(/.test(PROC),
-    "nothing may be summed from the page slice — that is the scope bug this footer exists to prevent",
+    !/visibleParts\.reduce\(/.test(PROC),
+    "nothing may be summed from the window — it changes as the user scrolls",
   );
 });
 
-test("the footer says how many of the counted rows are actually drawn", () => {
-  // Paging is a third scope on the strip, alongside "filtered" and "whole job", and
-  // it has to be stated for the same reason: otherwise "628 rows" sits directly
-  // above a table showing 50.
-  assert.match(PROC, /on this page/);
-  assert.match(PROC, /\{num\(pager\.from \+ 1\)\}–\{num\(pager\.to\)\}/);
+test("page-by-page navigation is gone, not merely hidden", () => {
+  // The request was explicit about the controls AND the logic: "remove any page-based
+  // navigation logic from the UI."
+  for (const gone of ["PARTS_PAGE_SIZE", "usePartsPage", "PartsPager", "pageParts", "pageCount", "setPage("]) {
+    assert.ok(!PROC.includes(gone), `${gone} must be gone with the pager`);
+  }
+  assert.ok(!/on this page/.test(PROC), "and the footer note that explained paging");
 });
 
-test("the page resets when the row set changes underneath it", () => {
-  // Filtering 628 rows down to 12 while sitting on page 4 would otherwise leave an
-  // empty table and no obvious way back. The signature carries the filter count, the
-  // sort and the scope chip — re-sorting makes the current page's contents arbitrary.
-  assert.match(PROC, /function usePartsPage\(total: number, signature: string\)/);
-  assert.match(PROC, /if \(seenSignature !== signature\) \{/);
-  // Reset during render, not in an effect: `set-state-in-effect` is an error in this
-  // repo's lint config, and an effect would paint the stale page for a frame first.
-  assert.ok(!/useEffect\(\(\) => \{\s*setPage\(0\)/.test(PROC));
-  // And the page is clamped, because `total` can shrink between renders.
-  assert.match(PROC, /const current = Math\.min\(page, pageCount - 1\)/);
+test("spacer rows keep the scrollbar honest without rendering every row", () => {
+  // The two <tr>s carrying the height of the rows above and below the window. Without
+  // them the scrollbar would describe 60 rows while the table claims 628, and the
+  // rendered rows would sit at the top instead of at their real offset.
+  assert.match(PROC, /const padTop = win\.start \* ROW_H;/);
+  assert.match(PROC, /const padBottom = Math\.max\(0, \(sortedParts\.length - win\.end\) \* ROW_H\);/);
+  assert.match(PROC, /style=\{\{ height: padTop \}\}/);
+  assert.match(PROC, /style=\{\{ height: padBottom \}\}/);
+  // Windowing arithmetic needs a known row height, so the rows carry one.
+  assert.match(PROC, /style=\{\{ height: ROW_H \}\}/);
+});
+
+test("the container is a FIXED height, so the card does not resize with the row count", () => {
+  // "Keep the card/table height consistent regardless of how many parts exist."
+  assert.match(PROC, /const TABLE_H = "calc\(var\(--app-vh\) \* 0\.62\)";/);
+  assert.match(PROC, /style=\{\{ height: TABLE_H \}\}/);
+  // Scoped to the TABLE's own scroll container: the Card view is a separate view mode
+  // that never had a pager and keeps its max-height, so a file-wide match would be
+  // asserting something about the wrong element.
+  const at = PROC.indexOf("scrollRef={scrollRef}");
+  assert.ok(at > 0, "the table's own container is the one with the window's ref on it");
+  const tableScroller = PROC.slice(PROC.lastIndexOf("<DragScroll", at), PROC.indexOf("<table", at));
+  assert.ok(!tableScroller.includes("max-h-"), "the old max-height must be gone from it");
+});
+
+test("headers and totals stay put; only the rows scroll", () => {
+  // Sticky <thead> and a sticky totals row, both INSIDE the one scroll container —
+  // which is also what keeps horizontal scrolling working for the wide columns, since
+  // the element that scrolls is unchanged.
+  assert.match(PROC, /<thead className="sticky top-0 z-\[2\]">/);
+  assert.match(PROC, /className="overflow-auto styled-scrollbar"/);
+  assert.match(PROC, /<table className="table-fixed border-collapse text-left"/,
+    "table-fixed + colgroup is what makes windowing safe: columns do not resize with the rendered rows");
+});
+
+test("a drilled-to row is scrolled into the window before it is looked for", () => {
+  // PartsListTab finds its target with querySelector and treats a miss as "hidden by a
+  // filter". With ~60 rows in the DOM, a perfectly visible row 400 down would miss and
+  // report itself as filtered out — so the table puts it in the window first.
+  assert.match(PROC, /const i = sortedParts\.findIndex\(\(p\) => String\(p\.id\) === drillKey\);/);
+  assert.match(PROC, /el\.scrollTop = Math\.max\(0, i \* ROW_H - el\.clientHeight \/ 2\);/);
+  assert.match(PROC, /drillKey=\{drill\.key\}/, "and the key has to reach the table");
+});
+
+test("the totals row stays pinned to the bottom while the rows scroll", () => {
+  // "Keep the bottom totals/footer fixed if practical." It is: the totals are a
+  // <tfoot> inside the same scroll container as the rows, so sticky does the work and
+  // the reconciliation strip is never 600 rows away from the top of the list — which
+  // is the complaint that produced the pager in the first place, now solved without
+  // taking rows away.
+  assert.match(PROC, /<tfoot className="sticky bottom-0 z-\[2\]">/);
 });

@@ -1603,7 +1603,7 @@ function PartsListTab({
           No parts match the current filters.
         </p>
       ) : view === "list" ? (
-        <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} colWidths={colWidths} setColWidths={setColWidths} windowStatus={windowStatus} rangeLabel={windowedRangeLabel} reconcile={reconcile} scope={scope} setScope={setScope} />
+        <PartsTableView parts={filtered} cols={visibleCols} onPartClick={onPartClick} onOpenPo={onOpenPo} now={now} colWidths={colWidths} setColWidths={setColWidths} windowStatus={windowStatus} rangeLabel={windowedRangeLabel} reconcile={reconcile} scope={scope} setScope={setScope} drillKey={drill.key} />
       ) : (
         <PartsCardView parts={filtered} vendors={vendors} onCopy={onCopy} onOpenPo={onOpenPo} />
       )}
@@ -1612,114 +1612,98 @@ function PartsListTab({
 }
 
 
-// ── Paging, so a 628-row job is not one endless scroll (2026-09-03, by request) ──
+// ── One continuous scroll, windowed (2026-09-04, by request) ─────────────────
 //
-// Reported on job 1101: 628 rows in a single scroll container, and the sticky footer
-// totals are 600 rows away from the top of the list. A page of 50 rows is the ask.
+// This was Prev/Next paging over 50 rows at a time, added 2026-09-03 for job 1101's
+// 628 rows. Replaced by request: "I do not want page-by-page navigation... the user
+// should be able to continuously scroll through all matching parts without ever
+// clicking Next."
 //
-// The rule that matters here, and the one this whole file has had to relearn twice
-// already: **paging changes what is DRAWN, never what is COUNTED.** The column
-// totals, the row counts and the reconciliation strip all stay over every filtered
-// row, because they answer questions about the job rather than about the page. A
-// footer that silently summed only the visible page would be the same
-// scope-mixing bug the reconciliation strip was rewritten to remove.
-const PARTS_PAGE_SIZE = 50;
+// The rule the paging version established survives verbatim, because it was never
+// about paging: **what is DRAWN is not what is COUNTED.** The column totals, the row
+// counts and the reconciliation strip are all computed over every filtered row, and
+// windowing changes only which <tr> elements exist. A footer that summed the visible
+// window would be the same scope-mixing bug the reconciliation strip was rewritten to
+// remove — and it would now be worse, because the window moves as you scroll.
+//
+// ── Why spacer rows rather than a virtualization library ────────────────────
+//
+// The table is `table-fixed` with an explicit <colgroup>, so column widths come from
+// the colgroup and NOT from the rendered cells. That is what makes windowing safe
+// here: rows can come and go without the columns resizing under the user, which is
+// the usual reason a virtualized <table> looks broken. Two spacer <tr>s carrying the
+// height of the rows above and below keep the scrollbar honest, the sticky <thead>
+// and <tfoot> keep working because the table is still one table, and horizontal
+// scrolling is untouched because the element that scrolls is unchanged.
+//
+// A library would add a dependency and, to work inside a real table, would want the
+// rows re-parented into absolutely-positioned divs — losing the colgroup, the sticky
+// header and the resize handles in the process.
+//
+// ── Row height is fixed, deliberately ──────────────────────────────────────
+//
+// Windowing arithmetic needs to know where row N is without measuring it. Every cell
+// in this table already truncates to one line (PartRowCells), so the rows were
+// uniform in practice; ROW_H makes that a guarantee rather than an observation. A row
+// that grew to two lines would otherwise drift the window against the scrollbar.
+const ROW_H = 21;
+/** Rows rendered beyond each edge, so a fast scroll does not show a blank band. */
+const OVERSCAN = 12;
+/**
+ * The table's own height. Fixed rather than `max-h` so the card does not change size
+ * with the row count — 12 parts and 628 parts get the same table, which is what was
+ * asked for.
+ */
+const TABLE_H = "calc(var(--app-vh) * 0.62)";
 
 /**
- * The page slice, with the page clamped and reset when the row set changes
- * underneath it.
+ * Which slice of `total` rows to render for the current scroll offset.
  *
- * `signature` is what detects that change — filters, the scope chip, a different
- * job. Without it, filtering 628 rows down to 12 while sitting on page 4 leaves an
- * empty table and no obvious way back.
- *
- * Reset during render rather than in an effect: an effect would paint the stale page
- * for one frame first, and `set-state-in-effect` is an error in this codebase's lint
- * config (two pre-existing violations already fail CI). This is the same
- * derive-state-from-props pattern PartsCostNewEtcCell uses for `serverValue`.
+ * Height is measured rather than derived from TABLE_H: the pane can be half a split
+ * view, and a window sized from a CSS expression the element does not actually have
+ * would render too few rows and leave a gap under the last one.
  */
-function usePartsPage(total: number, signature: string) {
-  const [page, setPage] = useState(0);
-  const [seenSignature, setSeenSignature] = useState(signature);
-  if (seenSignature !== signature) {
-    setSeenSignature(signature);
-    setPage(0);
-  }
-  const pageCount = Math.max(1, Math.ceil(total / PARTS_PAGE_SIZE));
-  // Clamp rather than trust: `total` can shrink between renders.
-  const current = Math.min(page, pageCount - 1);
-  const from = current * PARTS_PAGE_SIZE;
-  const to = Math.min(from + PARTS_PAGE_SIZE, total);
-  return {
-    page: current,
-    pageCount,
-    from,
-    to,
-    setPage,
-    /** Below one page there is nothing to page through, so the controls hide. */
-    needed: total > PARTS_PAGE_SIZE,
-  };
-}
+function useRowWindow(total: number, scrollRef: React.RefObject<HTMLDivElement | null>) {
+  const [range, setRange] = useState({ start: 0, end: Math.min(total, 60) });
 
-function PartsPager({
-  from,
-  to,
-  total,
-  page,
-  pageCount,
-  setPage,
-  label,
-}: {
-  from: number;
-  to: number;
-  total: number;
-  page: number;
-  pageCount: number;
-  setPage: (n: number) => void;
-  /** What the rows are, so the count reads as a sentence rather than a bare number. */
-  label: string;
-}) {
-  const btn =
-    "motion-interactive rounded border border-sdc-border px-2 py-0.5 text-label font-medium text-sdc-gray-600 hover:bg-sdc-blue-light/50 hover:text-sdc-navy disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent";
-  return (
-    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 border-b border-sdc-border bg-sdc-gray-50 px-2 py-1.5">
-      <span className="text-label text-sdc-gray-600">
-        Rows{" "}
-        <span className="font-mono font-semibold tabular-nums text-sdc-navy">
-          {num(from + 1)}–{num(to)}
-        </span>{" "}
-        of <span className="font-mono font-semibold tabular-nums text-sdc-navy">{num(total)}</span> {label}
-      </span>
-      <span className="ml-auto flex items-center gap-1">
-        <button type="button" className={btn} onClick={() => setPage(0)} disabled={page === 0} title="First page">
-          ‹‹
-        </button>
-        <button type="button" className={btn} onClick={() => setPage(page - 1)} disabled={page === 0}>
-          Prev
-        </button>
-        <span className="px-1 font-mono text-label tabular-nums text-sdc-gray-600">
-          {page + 1} / {pageCount}
-        </span>
-        <button
-          type="button"
-          className={btn}
-          onClick={() => setPage(page + 1)}
-          disabled={page >= pageCount - 1}
-        >
-          Next
-        </button>
-        <button
-          type="button"
-          className={btn}
-          onClick={() => setPage(pageCount - 1)}
-          disabled={page >= pageCount - 1}
-          title="Last page"
-        >
-          ››
-        </button>
-      </span>
-    </div>
-  );
+  useEffect(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+
+    const measure = () => {
+      const first = Math.floor(el.scrollTop / ROW_H);
+      const visible = Math.ceil(el.clientHeight / ROW_H);
+      const start = Math.max(0, first - OVERSCAN);
+      const end = Math.min(total, first + visible + OVERSCAN);
+      // Only commit a real change: scroll fires per frame and a new object every time
+      // would re-render the whole table on every pixel.
+      setRange((prev) => (prev.start === start && prev.end === end ? prev : { start, end }));
+    };
+
+    measure();
+    let raf = 0;
+    const onScroll = () => {
+      if (raf) return;
+      raf = requestAnimationFrame(() => {
+        raf = 0;
+        measure();
+      });
+    };
+    el.addEventListener("scroll", onScroll, { passive: true });
+    const ro = new ResizeObserver(measure);
+    ro.observe(el);
+    return () => {
+      el.removeEventListener("scroll", onScroll);
+      ro.disconnect();
+      if (raf) cancelAnimationFrame(raf);
+    };
+  }, [total, scrollRef]);
+
+  // Clamped on every render, not only in the effect: `total` can drop when a filter
+  // narrows the set, and a stale window past the new end renders nothing at all.
+  const start = Math.min(range.start, Math.max(0, total - 1));
+  const end = Math.min(range.end, total);
+  return { start, end: Math.max(end, Math.min(total, start + 1)) };
 }
 
 function PartsTableView({
@@ -1735,6 +1719,7 @@ function PartsTableView({
   reconcile,
   scope,
   setScope,
+  drillKey,
 }: {
   parts: FlatPart[];
   cols: { key: ColKey; label: string; align?: "right"; title?: string }[];
@@ -1750,6 +1735,16 @@ function PartsTableView({
   reconcile: JobReconcile;
   scope: "all" | "bom" | "nonbom";
   setScope: (s: "all" | "bom" | "nonbom") => void;
+  /**
+   * The part id PartsListTab wants scrolled into view, or "".
+   *
+   * Needed because of the windowing: the drill effect above finds its row with
+   * `querySelector('[data-part-key=...]')` and treats a miss as "hidden by a filter".
+   * With only ~60 rows in the DOM, a row that is perfectly visible to the filters but
+   * 400 rows down would miss and report itself as filtered out. So the table scrolls
+   * the row into the window first, and the parent's own timeout then finds it.
+   */
+  drillKey: string;
 }) {
   const widthOf = (key: ColKey) => colWidths[key] ?? DEFAULT_COL_WIDTH[key];
   const totalWidth = cols.reduce((s, c) => s + widthOf(c.key), 0);
@@ -1766,8 +1761,31 @@ function PartsTableView({
   // first fifty rows re-sorted among themselves. The signature resets the page
   // whenever the filtered set changes; the sort key is in it too, since re-sorting
   // makes the current page's contents arbitrary.
-  const pager = usePartsPage(sortedParts.length, `${parts.length}|${sort.sort?.key ?? ""}|${sort.sort?.direction ?? ""}|${scope}`);
-  const pageParts = sortedParts.slice(pager.from, pager.to);
+  // ── The scroll container, and the slice of rows it needs ──────────────────
+  const scrollRef = useRef<HTMLDivElement>(null);
+  const win = useRowWindow(sortedParts.length, scrollRef);
+  const visibleParts = sortedParts.slice(win.start, win.end);
+  // Spacer heights: the rows that exist but are not rendered. These are what keep the
+  // scrollbar the right length and the rendered rows at the right offset.
+  const padTop = win.start * ROW_H;
+  const padBottom = Math.max(0, (sortedParts.length - win.end) * ROW_H);
+
+  // ── Scrolling a drilled-to row into the window ────────────────────────────
+  //
+  // PartsListTab finds its target with querySelector and treats a miss as "hidden by
+  // a filter". Only ~60 rows are in the DOM now, so a perfectly visible row 400 down
+  // would miss. Putting it in the window first makes that lookup mean what it did
+  // before windowing: found = present, missing = genuinely filtered out.
+  useEffect(() => {
+    if (!drillKey) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    const i = sortedParts.findIndex((p) => String(p.id) === drillKey);
+    if (i < 0) return; // genuinely not in the filtered set — the parent says so
+    // Centred, matching the scrollIntoView({ block: "center" }) the parent then does,
+    // so the row does not jump twice.
+    el.scrollTop = Math.max(0, i * ROW_H - el.clientHeight / 2);
+  }, [drillKey, sortedParts]);
 
   // Drag-to-resize: listeners are added on mousedown and torn down on mouseup;
   // stopPropagation keeps a drag from also triggering the row click.
@@ -1859,22 +1877,15 @@ function PartsTableView({
     // 0.96, up from 0.74 (2026-08-14, by request — "increase vertical height
     // ~30%") — kept in step with the Card view below (view === "card") and the
     // Assemblies tab above, so switching between them doesn't visibly jump.
-    /* The pager sits OUTSIDE the scroll container so it stays visible while the rows
-       move. The border and rounding move out with it; DragScroll keeps only the
-       scrolling, which is what it is for. */
     <div className="overflow-hidden rounded-xl border border-sdc-border bg-white shadow-sm">
-      {pager.needed && (
-        <PartsPager
-          from={pager.from}
-          to={pager.to}
-          total={sortedParts.length}
-          page={pager.page}
-          pageCount={pager.pageCount}
-          setPage={pager.setPage}
-          label={scope === "all" ? "in this view" : scope === "bom" ? "BOM rows in this view" : "non-BOM rows in this view"}
-        />
-      )}
-      <DragScroll className="max-h-[calc(var(--app-vh)_*_0.96)] overflow-auto styled-scrollbar">
+      {/* A FIXED height, not max-h: the card must not change size with the row count.
+          The filters sit above this element and the totals are a sticky <tfoot> inside
+          it, so the only thing that moves is the rows. */}
+      <DragScroll
+        scrollRef={scrollRef}
+        className="overflow-auto styled-scrollbar"
+        style={{ height: TABLE_H }}
+      >
       <table className="table-fixed border-collapse text-left" style={{ width: totalWidth, minWidth: "100%" }}>
         <colgroup>
             {cols.map((c) => (
@@ -1910,7 +1921,14 @@ function PartsTableView({
             </tr>
           </thead>
           <tbody>
-            {pageParts.map((p, i) => {
+            {/* Spacer for the rows above the window. `aria-hidden` because it is
+                scrollbar arithmetic, not content. */}
+            {padTop > 0 && (
+              <tr aria-hidden style={{ height: padTop }}>
+                <td colSpan={cols.length} className="p-0" />
+              </tr>
+            )}
+            {visibleParts.map((p, i) => {
               // Row tint by status (STATUS_ROW_BG) so each row reads by its
               // status at a glance. Precedence: drill-flash (inline style, set
               // imperatively) > the status tint's hover > the status tint.
@@ -1923,12 +1941,20 @@ function PartsTableView({
                   data-part-id={p.id}
                   onClick={() => onPartClick(p)}
                   title="Copy part # · locate row"
+                  // The height the windowing arithmetic assumes. Every cell already
+                  // truncates to one line, so this fixes what was true by convention.
+                  style={{ height: ROW_H }}
                   className={`group cursor-pointer ${rowBg}`}
                 >
                   <PartRowCells p={p} cols={cols} now={now} onOpenPo={onOpenPo} />
                 </tr>
               );
             })}
+            {padBottom > 0 && (
+              <tr aria-hidden style={{ height: padBottom }}>
+                <td colSpan={cols.length} className="p-0" />
+              </tr>
+            )}
           </tbody>
           {/* ── One row high, always (2026-09-02) ────────────────────────────
               `whitespace-nowrap` and a fixed `h-7` on the totals row, because a
@@ -2038,18 +2064,12 @@ function PartsTableView({
                           {num(visible.bomRows)} BOM, {num(visible.nonBomRows)} non-BOM
                         </>
                       )}
-                      {/* Paging is a THIRD scope on this strip, and it has to say so
-                          for the same reason the other two do (2026-09-03). The
-                          counts either side of this are over every filtered row; only
-                          50 of them are drawn. Leaving that unsaid would put "628
-                          rows" directly beneath a table showing 50 — the exact
-                          confusion the two labelled lines exist to prevent. */}
-                      {pager.needed && (
-                        <span className="text-white/55">
-                          {" · "}
-                          {num(pager.from + 1)}–{num(pager.to)} on this page
-                        </span>
-                      )}
+                      {/* The paging note that used to sit here is gone with the
+                          pager (2026-09-04). It existed because the counts either side
+                          of it were over every filtered row while the table drew only
+                          50 — a discrepancy the user could see. Scrolling reaches every
+                          one of those rows, so there is no longer two scopes to
+                          reconcile and saying "1–50 on this page" would now be false. */}
                     </span>
                     {/* The scope chip's own state in words, rather than left to be
                         inferred from a count that is merely smaller than expected. */}

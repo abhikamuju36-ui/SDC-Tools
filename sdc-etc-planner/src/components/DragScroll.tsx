@@ -118,8 +118,27 @@ export function pressKindFor(opts: {
   return "pan";
 }
 
-export function DragScroll({ className, children }: { className?: string; children: ReactNode }) {
-  const ref = useRef<HTMLDivElement>(null);
+export function DragScroll({
+  className,
+  children,
+  scrollRef,
+  style,
+}: {
+  className?: string;
+  children: ReactNode;
+  /**
+   * The element that actually scrolls, handed back to the caller.
+   *
+   * Added 2026-09-04 for the Parts List's row windowing, which has to read scrollTop
+   * and clientHeight off this exact element. A wrapper ref would not do: the overflow
+   * lives here, so a parent's scrollTop is always 0.
+   */
+  scrollRef?: React.RefObject<HTMLDivElement | null>;
+  /** Inline styles for the scroll element — the Parts List sets a fixed height here. */
+  style?: React.CSSProperties;
+}) {
+  const own = useRef<HTMLDivElement>(null);
+  const ref = scrollRef ?? own;
   const moved = useRef(false);
 
   const scrollable = (el: HTMLElement) => el.scrollWidth > el.clientWidth || el.scrollHeight > el.clientHeight;
@@ -254,6 +273,7 @@ export function DragScroll({ className, children }: { className?: string; childr
     <div
       ref={ref}
       className={className}
+      style={style}
       onMouseEnter={onMouseEnter}
       onMouseDown={onMouseDown}
       onClickCapture={onClickCapture}
