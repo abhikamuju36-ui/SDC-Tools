@@ -97,11 +97,32 @@ jobs:
         with:
           node-version: 20
 
-      # Not `npm ci`: this app has no package-lock.json committed, and the shell's
-      # own release workflow uses `npm install` here for the same reason.
-      - name: Install dependencies
-        working-directory: apps/assemblies
+      # ── Install from the ROOT, not from apps/assemblies ─────────────────────
+      #
+      # This app IS a root workspace member (root package.json: workspaces =
+      # apps/assemblies, apps/build-readiness, apps/state-logic, SDC_Scheduler), so its
+      # dependencies hoist to the root node_modules. Installing inside the member
+      # directory is the wrong invocation for a workspace and can leave a half-linked
+      # tree.
+      #
+      # This is the one place this workflow deliberately differs from the shell's
+      # release.yml, which installs inside apps/shell — the shell was REMOVED from the
+      # workspace list precisely so electron-builder would find electron locally. This
+      # app was not, so it gets the workspace-correct treatment instead.
+      #
+      # Not `npm ci`: there is no committed package-lock.json.
+      - name: Install dependencies (workspace root)
         run: npm install
+
+      # electron-builder reads the electron version from the resolved `electron` package
+      # to pick the binary to bundle. With hoisting that resolves to the ROOT
+      # node_modules, which is fine — Node walks up — but if it ever does not resolve,
+      # electron-builder fails with a message about the electron version that does not
+      # mention hoisting at all. Printing the resolved path makes that five seconds to
+      # diagnose instead of an afternoon.
+      - name: Show where electron resolves from
+        working-directory: apps/assemblies
+        run: node -p "require.resolve('electron') + ' (v' + require('electron/package.json').version + ')'"
 
       # Proves the two publish targets and the version are what this workflow's
       # header describes, BEFORE anything is built or uploaded. A silent reorder of
@@ -129,6 +150,30 @@ jobs:
 
             console.log("OK: 1.0.25, app-update.yml -> SDC-Tools/assemblies, bridge -> sdc-assemblies-library/latest.yml");
           '
+
+      # `client/dist/` is GITIGNORED — nothing of it is committed — and
+      # electron-builder's `files` glob includes `client/dist/**/*`. Without this step a
+      # fresh CI checkout has no client bundle, the glob matches nothing, and the
+      # installer ships with NO UI. It would publish and install perfectly happily.
+      #
+      # Same order as the shell's release.yml: install, build the Vite UI, then package.
+      - name: Build the client UI
+        working-directory: apps/assemblies
+        run: npm run build
+
+      # The bundle has to exist before anything is published. A missing UI is invisible
+      # to electron-builder — an empty glob is not an error — so this is the only place
+      # it can be caught, and it is worth catching: the artifact reaches installed
+      # desktops automatically.
+      - name: Verify the client bundle exists
+        shell: bash
+        run: |
+          if [ ! -f apps/assemblies/client/dist/index.html ]; then
+            echo "::error::client/dist/index.html is missing — the Vite build did not produce a bundle. Refusing to publish a UI-less installer."
+            exit 1
+          fi
+          echo "client bundle present:"
+          ls -la apps/assemblies/client/dist/index.html
 
       - name: Build and publish to both repos
         working-directory: apps/assemblies
