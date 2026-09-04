@@ -385,12 +385,10 @@ export function JobProcurement({ bom, partsLines }: { bom: JobBom; partsLines: P
       jobTotal += l.totalPrice;
       jobInvoiced += l.actualAmount;
     }
+    // Only the total is needed here; the invoiced side of the same loop was
+    // accumulated and never read, which is what the unused-var warning was about.
     let matchedTotal = 0;
-    let matchedInvoiced = 0;
-    for (const p of parts) {
-      matchedTotal += p.totalPrice;
-      matchedInvoiced += p.invoicedAmount;
-    }
+    for (const p of parts) matchedTotal += p.totalPrice;
     const nonBom = parts.filter((p) => p.nonBom);
     // BOM parts with nothing bought against them yet are priced from the BOM
     // (unit x qty), not from a purchase line — so they must come OUT before the

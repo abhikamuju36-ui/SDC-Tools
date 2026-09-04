@@ -330,14 +330,31 @@ export function PartRowCells({
         switch (cell.kind) {
           case "po":
             return (
-              <button
-                type="button"
-                onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poNumber); }}
-                title="View PO"
-                className="block truncate text-left font-mono text-note font-medium text-sdc-blue hover:underline"
-              >
-                {cell.po}
-              </button>
+              <span className="flex min-w-0 items-baseline gap-1">
+                <button
+                  type="button"
+                  onClick={(e) => { e.stopPropagation(); onOpenPo(p.supplier, p.poNumber); }}
+                  title={p.lineCount > 1 ? `View ${cell.po} — the newest of ${p.lineCount} purchases on this row` : "View PO"}
+                  className="min-w-0 truncate text-left font-mono text-note font-medium text-sdc-blue hover:underline"
+                >
+                  {cell.po}
+                </button>
+                {/* ── "+5" (2026-09-03) ────────────────────────────────────
+                    Without this the row reads as ONE purchase order whose total
+                    is the sum of several. Job 1101's card row showed PO
+                    `07.26 CC` against $9,840 that was actually six monthly
+                    invoices — which is what prompted the question this exists to
+                    answer. The PO shown is the newest; the badge says how many
+                    others are behind it. */}
+                {p.lineCount > 1 && (
+                  <span
+                    title={`This row sums ${p.lineCount} purchase lines. The PO number, date and unit price shown are the newest one's; Total $ and Invoiced $ cover all ${p.lineCount}.`}
+                    className="shrink-0 rounded bg-sdc-blue/10 px-1 text-micro font-semibold tabular-nums text-sdc-blue-dark"
+                  >
+                    +{p.lineCount - 1}
+                  </span>
+                )}
+              </span>
             );
           case "stock":
             return <span className="text-label font-semibold text-sdc-green-text" title={`Pulled from inventory (${num(p.pullQty)} issued) — no purchase order needed`}>STOCK</span>;
@@ -359,7 +376,18 @@ export function PartRowCells({
         }
       }
       case "purchased":
-        return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.purchasedDate)}</span>;
+        // The newest of the group, flagged as such rather than presented as the date
+        // the whole row was bought — job 1101's six card invoices span Aug 2025 to
+        // Jul 2026 and the row showed only "Jul 30".
+        return (
+          <span
+            className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy"
+            title={p.lineCount > 1 ? `Newest of ${p.lineCount} purchases on this row` : undefined}
+          >
+            {fmtDate(p.purchasedDate)}
+            {p.lineCount > 1 && <span className="ml-0.5 text-sdc-gray-400" aria-hidden>*</span>}
+          </span>
+        );
       case "invoiceddate":
         return <span className="whitespace-nowrap font-mono text-label font-medium text-sdc-navy">{fmtDate(p.invoicedDate)}</span>;
       case "req":
@@ -370,13 +398,31 @@ export function PartRowCells({
         return <LeadChip ordered={p.purchasedDate} expected={p.expectedDate} />;
       case "due":
         return <DueChip expected={p.expectedDate} received={p.st.key === "received"} now={now} />;
-      case "unit":
+      case "unit": {
+        // ── A grouped row has no single unit price ──────────────────────────
+        //
+        // It used to print the newest line's, beside a Total $ covering the whole
+        // group — so `Qty 6 x $210.36` visibly failed to make `$9,840` and the row
+        // looked wrong even though every figure in it was right. An em dash is the
+        // honest answer: the row has a total, not a price. Same convention the
+        // windowed-invoiced columns already use for "no coherent single value".
+        const grouped = p.lineCount > 1;
         return (
-          <span className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy" title={COST_BASIS_NOTE[p.costBasis]}>
-            {p.unitPrice > 0 ? usd(p.unitPrice) : "—"}
-            {p.unitPrice > 0 && isEstimatedCost(p.costBasis) ? <span className="ml-0.5 text-sdc-gray-400" aria-hidden>*</span> : null}
+          <span
+            className="whitespace-nowrap font-mono text-note font-medium tabular-nums text-sdc-navy"
+            title={
+              grouped
+                ? `${p.lineCount} purchase lines at different prices — see Total $. The newest was ${usd(p.unitPrice)}.`
+                : COST_BASIS_NOTE[p.costBasis]
+            }
+          >
+            {grouped ? "—" : p.unitPrice > 0 ? usd(p.unitPrice) : "—"}
+            {!grouped && p.unitPrice > 0 && isEstimatedCost(p.costBasis) ? (
+              <span className="ml-0.5 text-sdc-gray-400" aria-hidden>*</span>
+            ) : null}
           </span>
         );
+      }
       case "total":
         return <span className="whitespace-nowrap font-mono text-note font-semibold tabular-nums text-sdc-navy">{p.totalPrice > 0 ? usd(p.totalPrice) : "—"}</span>;
       case "invoiced":

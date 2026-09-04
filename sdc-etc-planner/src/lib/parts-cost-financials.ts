@@ -101,7 +101,7 @@ export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate
   if (jobIds.length === 0) {
     return {
       budget: null, invoiced: 0, leftToInvoice: 0, etc: null, totalSpent: 0, projection: 0,
-      purchased: 0, priorEtc: null, priorEtcSource: "none", partsSpentThisMonth: 0,
+      purchased: 0, billedNotPosted: 0, priorEtc: null, priorEtcSource: "none", partsSpentThisMonth: 0,
       adjustedEtcRaw: null, adjustedEtc: 0, openBalance: 0, externalOpen: 0,
       inHouseExcluded: 0, inHouseRows: 0, additionalExposure: 0, coverageLine: null,
       etcUnknown: true, etcMonth: null,
@@ -145,6 +145,10 @@ export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate
   const projection = await computePartsBudgetProjection(jobs.map((j) => j.id), lines, etcMonth).catch(() => null);
 
   const invoiced = actualTotal(lines);
+  // Billed but not GL-posted. Signed on purpose — a flagged refund makes it negative,
+  // and clamping would hide exactly the case worth seeing (job 1148's -$31,765
+  // BlackHawk credit). See the field's own note in parts-cost-financials-shared.ts.
+  const billedNotPosted = lines.reduce((a, l) => a + (l.invoicedAmount - l.actualAmount), 0);
   // `toComplete` in the spec's vocabulary: the remaining open parts exposure, which
   // is the same figure the card has always shown as "Left to be invoiced". One
   // quantity, two names — never two addends (spec §8).
@@ -203,6 +207,7 @@ export async function getPartsCostFinancials(jobIds: number[], opts?: { asOfDate
     totalSpent,
     projection: projectionTotal,
     purchased: purchasedTotal(lines),
+    billedNotPosted,
     priorEtc: projected.priorEtc,
     priorEtcSource: priorEtc.source,
     partsSpentThisMonth: projected.partsSpentThisMonth,

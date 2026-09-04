@@ -29,7 +29,15 @@ import { leftToInvoiceForLines } from "@/lib/left-to-invoice";
 // `hoursWorked` on the PARTS_COST EtcEntry — the "money spent this month" that
 // draws `priorEtc` down into New ETC — comes from `getPartsCostBookedByJob`,
 // the AP-document/GL-posted basis (see sync-actuals.ts §41), the exact same
-// basis as `actual`/"Invoiced". It is NEVER reduced by an open PO until that
+// basis as `actual`/"Invoiced".
+//
+// TRUE AS OF 2026-09-04, AND NOT BEFORE. This paragraph asserted that shared basis
+// while getPartsCostBookedByJob carried no GL-posted test at all — $56,740.45 of
+// August 2026 counted as money spent this month and NOT as Parts Actual. Both now
+// route through the one `glPostedAp` predicate, so the sentence describes the code
+// rather than the intention. See that function's own header.
+//
+// It is NEVER reduced by an open PO until that
 // PO is actually invoiced. So a PO opened this month raises `committedNotPosted`
 // immediately, but does nothing to New ETC until the invoice posts — possibly
 // a different month, possibly never before a manager revises their estimate.

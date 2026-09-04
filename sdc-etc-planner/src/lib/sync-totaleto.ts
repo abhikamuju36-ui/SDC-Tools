@@ -290,12 +290,110 @@ const SAGE_FIRST_VENDORS = "'SDC Credit Card'";
  * containing an aggregate or a subquery", error 130). A joined column is a plain
  * comparison and is legal everywhere, so all three sites can share one predicate.
  */
+/**
+ * The raw flag, named once.
+ *
+ * Both the posted test below and the unclassified-vendor diagnostic need it, in
+ * opposite directions, and a second hand-written copy is precisely how the extra-costs
+ * branch escaped the 2026-09-04 correction. One spelling, two readers.
+ */
+const AP_DOC_FLAGGED = "ISNULL(APBD.APDocDoNotExport, 0) = 1";
+
 const glPostedAp = (companyAlias: string) =>
-  `(ISNULL(APBD.APDocDoNotExport, 0) = 0 OR ${companyAlias}.CName IN (${SAGE_FIRST_VENDORS}))`;
+  `(NOT ${AP_DOC_FLAGGED} OR ${companyAlias}.CName IN (${SAGE_FIRST_VENDORS}))`;
 
 /** The join `glPostedAp` needs, for the sites that do not already have the vendor. */
 const sageFirstJoin = (alias: string) =>
   `LEFT JOIN tblCompany ${alias} WITH(NOLOCK) ON ${alias}.CompanyID = APBD.CompanyID`;
+
+// ── Money Spent Month is on the SAME basis as Parts Actual (2026-09-04) ─────
+//
+// It was not, and nothing said so. This query carried no GL-posted test at all while
+// getPartsActualByJob carried one, so two figures that sit next to each other on the
+// Monthly ETC row — "money spent this month", which draws Prior ETC down into New
+// ETC, and Parts Actual — were computed on different bases.
+//
+// Worse, parts-budget-projection.ts states the opposite in as many words: that
+// `hoursWorked` on the PARTS_COST entry comes from "the AP-document/GL-posted basis
+// ... the exact same basis as `actual`". It did not. Measured on August 2026: 170 of
+// 2,494 lines, $56,740.45, counted as money spent this month and NOT as Parts Actual.
+//
+// That is the same class of defect as the Do Not Export misreading itself — a comment
+// asserting a property the code did not have, believed because it was written down.
+//
+// Both now go through glPostedAp, so the allow-list is the ONLY thing that decides
+// what counts, and a change to it moves both figures together. That is the property
+// the variance report asked for in its closing line: "both columns should then be
+// defined the same way, or this variance reappears every month."
+//
+// ── The direction is NOT predictable, and August moves UP ───────────────────
+//
+// The obvious assumption is that removing lines lowers the total. It does not, because
+// AP_LINE_AMOUNT is refund-signed: a credit is negative, and flagged documents include
+// refunds. Measured on August 2026 by running this function with and without the
+// predicate:
+//
+//     unfiltered   $790,193.05   across 106 jobs
+//     filtered     $803,574.94   across 105 jobs   (+$13,381.89)
+//
+// It rose, because the biggest single flagged line in the month is BlackHawk Supply's
+// -$31,765.20 refund (2026-08-18) and dropping a negative raises a sum. One job also
+// leaves the map entirely: its only booked activity that month was a flagged document.
+//
+// Money spent RISING lowers the New ETC the grid suggests (New ETC = prior − spent),
+// so this is not a uniformly "more conservative" change and must not be described as
+// one. What it is: both figures now answer the same question. An ETO-side correction
+// whose purpose is to make ETO agree with Sage is not new spend on the job, and job
+// 1106's five adjustment entries are what force that reading.
+/**
+ * Flagged spend in a month from a vendor NOT on the Sage-first allow-list.
+ *
+ * ── Why the sync asks this every run ────────────────────────────────────────
+ *
+ * SAGE_FIRST_VENDORS is an allow-list, and an allow-list rots silently. A new company
+ * card, a renamed vendor, or a second Sage-first arrangement would simply keep today's
+ * behaviour — excluded, understating cost — with nothing anywhere to say a decision was
+ * never made about it. The failure mode is a number that is quietly wrong for months
+ * and then turns up in a variance review, which is exactly how the 2026-09-03 report
+ * came to be written.
+ *
+ * So the hourly refresh names them. Reported, never acted on: whether a flagged vendor
+ * is a Sage-first purchase (should count) or an ETO-side reconciling adjustment (must
+ * never count) is a question for accounting, and guessing it in code is how a quarter
+ * of a million dollars of corrections becomes reported job cost. See
+ * scripts/audit-sage-first-vendors.ts for the whole-history view.
+ */
+export async function getUnclassifiedFlaggedSpend(
+  monthStart: Date,
+  monthEndExclusive: Date,
+): Promise<{ vendor: string; lines: number; amount: number }[]> {
+  return withTotalEto(async (pool) => {
+    const amt = AP_LINE_AMOUNT;
+    const result = await pool
+      .request()
+      .input("start", sql.DateTime, monthStart)
+      .input("end", sql.DateTime, monthEndExclusive)
+      .query(
+        `SELECT ISNULL(SFC.CName, '(no vendor)') AS Vendor,
+                COUNT(*) AS Lines,
+                SUM(${amt}) AS Amount
+           FROM tblAPDocumentDetails APDD WITH(NOLOCK)
+                INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID
+                ${sageFirstJoin("SFC")}
+          WHERE APBD.APDocDate >= @start AND APBD.APDocDate < @end
+            AND APDD.ProjectID IS NOT NULL
+            AND ${AP_DOC_FLAGGED}
+            AND ISNULL(SFC.CName, '') NOT IN (${SAGE_FIRST_VENDORS})
+          GROUP BY SFC.CName
+          ORDER BY SUM(ABS(${amt})) DESC`,
+      );
+    return result.recordset.map((r: Record<string, unknown>) => ({
+      vendor: String(r.Vendor),
+      lines: Number(r.Lines) || 0,
+      amount: Number(r.Amount) || 0,
+    }));
+  });
+}
 
 export async function getPartsCostBookedByJob(
   monthStart: Date,
@@ -314,8 +412,10 @@ export async function getPartsCostBookedByJob(
                 SUM(${amt}) AS NetAmt
            FROM tblAPDocumentDetails APDD WITH(NOLOCK)
                 INNER JOIN tblAPBatchDocument APBD WITH(NOLOCK) ON APBD.APDocID = APDD.APDocID
+                ${sageFirstJoin("SFC")}
           WHERE APBD.APDocDate >= @start AND APBD.APDocDate < @end
             AND APDD.ProjectID IS NOT NULL
+            AND ${glPostedAp("SFC")}
           GROUP BY APDD.ProjectID`,
       );
     const net = new Map<string, number>();

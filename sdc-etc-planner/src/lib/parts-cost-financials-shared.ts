@@ -52,6 +52,26 @@ export type PartsCostFinancials = {
   // the bar (spec §14).
   /** Purchased / committed — every line's total cost. Shown in the drill-through. */
   purchased: number;
+  /**
+   * Billed but NOT posted to the general ledger — `invoicedAmount − actualAmount`.
+   *
+   * ── Why this is on the card and not left to an audit ────────────────────
+   *
+   * `APDocDoNotExport` marks a document that must not be exported to Sage again. Some
+   * are Sage-first purchases, already paid and already on the job ledger; those count
+   * as spend (SAGE_FIRST_VENDORS in lib/sync-totaleto.ts). The rest do not, and their
+   * dollars therefore sit in "Left to invoice" indefinitely even though nobody is
+   * waiting on an invoice for them.
+   *
+   * That was invisible until somebody compared eight jobs by hand and wrote
+   * docs/PARTS-COST-VARIANCE-2026-09.md. Job 1106 alone carries $253,015 of it — five
+   * ETO-side corrections. A figure that large should not need an audit to notice, so
+   * it is stated on the card whenever it is non-zero.
+   *
+   * Reported, never subtracted: it is a component OF Left to invoice, not a separate
+   * bucket, and adding it anywhere would double-count.
+   */
+  billedNotPosted: number;
   /** The previous month's confirmed New ETC: the forecast this month starts from. */
   priorEtc: number | null;
   /** Whether `priorEtc` was carried forward or, on a first ETC month, taken from the quote. */

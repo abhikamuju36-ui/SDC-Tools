@@ -260,7 +260,12 @@ test("Invoiced + the open balance is still stated, now as the table's Purchased 
 
 test("the GL-posted rule tests the DoNotExport flag, not the export date", () => {
   const src = SYNC_TOTALETO();
-  assert.match(src, /ISNULL\(APBD\.APDocDoNotExport, 0\) = 0/, "the flag is the rule");
+  // Spelled `= 1` and negated since 2026-09-04: the diagnostic that names unclassified
+  // flagged vendors needs the flag in the POSITIVE direction, and two hand-written
+  // copies is how the extra-costs branch escaped that correction. One constant, two
+  // readers. The rule this test is about — the flag, not the export date — is unchanged.
+  assert.match(src, /const AP_DOC_FLAGGED = "ISNULL\(APBD\.APDocDoNotExport, 0\) = 1";/, "the flag is the rule");
+  assert.match(src, /`\(NOT \$\{AP_DOC_FLAGGED\} OR \$\{companyAlias\}\.CName IN/, "and posted is its negation");
   // Measured 2026-08-10: 45 job-attributed AP lines / $41,352.47 had no export
   // date while NOT being flagged, every one of them dated within the previous
   // week — real invoices merely queued for the next export run. Filtering on the
@@ -453,12 +458,22 @@ test("the flag is tested in exactly ONE place, and every site calls it", () => {
     "APDocDoNotExport may appear once, inside glPostedAp",
   );
   assert.match(totalEtoCode, /const glPostedAp = \(companyAlias: string\) =>/);
-  // Four call sites: getPartsActualByJob, the per-PO-line invoiced/posted split, the
-  // AP drill, and the extra-costs branch. The arrow definition does not self-match.
+  // Five call sites: getPartsActualByJob, the per-PO-line invoiced/posted split, the
+  // AP drill, the extra-costs branch, and — added 2026-09-04 —
+  // getPartsCostBookedByJob, which produces "money spent this month" and carried no
+  // GL-posted test at all while parts-budget-projection.ts asserted it shared a basis
+  // with Parts Actual. $56,740.45 of August was counted by one and not the other.
+  // The arrow definition does not self-match.
   assert.equal(
     (totalEtoCode.match(/glPostedAp\(/g) ?? []).length,
-    4,
+    5,
     "every site that decides posted-vs-billed must call the shared predicate",
+  );
+  // Money Spent Month specifically, because it is the one that drives the forecast.
+  assert.match(
+    TOTALETO,
+    /AND \$\{glPostedAp\("SFC"\)\}[\s\S]{0,40}?GROUP BY APDD\.ProjectID/,
+    "getPartsCostBookedByJob must share the basis it claims to share",
   );
   // The extra-costs branch specifically, because it is the one that decides the
   // credit-card charges and the one that was missed.

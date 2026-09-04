@@ -220,6 +220,23 @@ export type FlatPart = BomPart & {
   matchReason: MatchReason;
   /** True for a synthesized row standing for purchase lines with no BOM part. */
   nonBom: boolean;
+  /**
+   * How many purchase lines this ONE row is summing.
+   *
+   * REPORTED 2026-09-03, and it is the whole reason that report happened. Job 1101's
+   * credit-card row read PO `07.26 CC`, purchased `Jul 30`, unit `$210`, total
+   * `$9,840` — so it looked like a single $9,840 invoice, and it did not even
+   * self-add (6 x $210.36 is not $9,840). It was in fact SIX monthly card invoices
+   * grouped into one row, because non-BOM lines with no part number group by
+   * description and every one of them is described "MISC CC".
+   *
+   * The money was always right. The row just presented one member's PO number, date
+   * and unit price as if they described the whole group. Carrying the count lets the
+   * cells say "+5 more" instead of quietly picking one.
+   *
+   * 1 for an ordinary row, so `> 1` is the only test any renderer needs.
+   */
+  lineCount: number;
   parentPN: string;
   parentDesc: string;
   sectionId: string;
@@ -501,6 +518,8 @@ export function flattenBomParts(bom: JobBom, partsLines: PartsCostLine[], active
       leftToSpend: activeAttribution ? null : pnLines ? splitSum((l) => lineLeftToInvoice(l)) : totalPrice - invoicedAmount,
       matchReason,
       nonBom: false,
+      // A BOM part bought three times is three lines under one row, same as below.
+      lineCount: pnLines?.length ?? 1,
     };
     out.push(flat);
   };
@@ -587,6 +606,7 @@ export function flattenBomParts(bom: JobBom, partsLines: PartsCostLine[], active
       leftToSpend: activeAttribution ? null : lines.reduce((s2, l) => s2 + lineLeftToInvoice(l), 0),
       matchReason: reason,
       nonBom: true,
+      lineCount: lines.length,
     } as FlatPart);
   }
 

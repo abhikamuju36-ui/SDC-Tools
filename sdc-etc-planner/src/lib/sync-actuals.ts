@@ -14,7 +14,7 @@ import { prisma } from "@/lib/prisma";
 import { VALID_JOB_TYPES, etcActiveJobFilter } from "@/lib/job-filters";
 import { ETC_TRACKED_CODES, PARTS_COST_SECTION, JOB_DASHBOARD_HOURS_CODES, mapPunchToColumns } from "@/lib/sections";
 import { calcHoursLeft, round2, isMonthLocked, latestPriorEtcByKey, priorEtcForMonth, redrivenDraft, monthWindowUtc, startsInMonth } from "@/lib/etc";
-import { getPartsCostBookedByJob } from "@/lib/sync-totaleto";
+import { getPartsCostBookedByJob, getUnclassifiedFlaggedSpend } from "@/lib/sync-totaleto";
 import { isDerivedPartsDraft } from "@/lib/parts-breakout-scope";
 import {
   hoursByJobSection,
@@ -829,6 +829,37 @@ export async function syncPartsCost(month: string): Promise<{ rowsUpserted: numb
       `[parts-cost] ${month}: ${booked.unmatchedLines} AP line(s) totalling ` +
         `${booked.unmatchedAmount.toFixed(2)} carry no ProjectID and are in NO job's Money Spent.`,
     );
+  }
+
+  // ── Flagged spend nobody has classified (2026-09-04) ──────────────────────
+  //
+  // `APDocDoNotExport` means "do not export to Sage again", and it covers both
+  // Sage-first purchases (already paid, should count) and ETO-side corrections (must
+  // never count). Only vendors on SAGE_FIRST_VENDORS count; everything else keeps the
+  // old behaviour of being excluded.
+  //
+  // That default is safe and it is also invisible, which is the problem: a new company
+  // card would understate cost indefinitely with nothing to say a decision was never
+  // made. Naming them every refresh is what turns "quietly wrong for months" into a
+  // line in the sync log. Reported only — the classification is accounting's call.
+  //
+  // Wrapped: this is a diagnostic, and a diagnostic must never be what fails a sync.
+  try {
+    const unclassified = await getUnclassifiedFlaggedSpend(monthStart, monthEndExclusive);
+    if (unclassified.length > 0) {
+      const total = unclassified.reduce((a, u) => a + u.amount, 0);
+      console.warn(
+        `[parts-cost] ${month}: ${unclassified.length} vendor(s) bill on never-exported AP ` +
+          `documents and are NOT counted as spend (${total.toFixed(2)} net). Each is either a ` +
+          `Sage-first purchase or an ETO-side correction — see SAGE_FIRST_VENDORS in ` +
+          `lib/sync-totaleto.ts and scripts/audit-sage-first-vendors.ts:`,
+      );
+      for (const u of unclassified) {
+        console.warn(`[parts-cost]   ${u.amount.toFixed(2).padStart(14)}  ${String(u.lines).padStart(4)} lines  ${u.vendor}`);
+      }
+    }
+  } catch (e) {
+    console.warn(`[parts-cost] ${month}: could not check for unclassified flagged vendors:`, e);
   }
 
   // costQuoted comes along now: it is the Parts Cost Quoted column on the

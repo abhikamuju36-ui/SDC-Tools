@@ -147,7 +147,7 @@ export async function JobHoursView({ params }: { params: { jobs?: string; job?: 
       ? getPartsCostFinancials(data.jobRefs.map((r) => r.id))
       : Promise.resolve({
           budget: null, invoiced: 0, leftToInvoice: 0, etc: null, totalSpent: 0,
-          projection: 0,
+          projection: 0, billedNotPosted: 0,
           // Nothing selected, so there is nothing to project. `etcUnknown: true`
           // rather than false: there is no prior ETC to report here, and claiming one
           // of 0 would be a forecast nobody made.

@@ -2,7 +2,10 @@
 
 import { usd } from "@/components/ui/format";
 import { card } from "@/components/ui/classnames";
-import { reconcilePartsCostRounding, sharedBarMax, scaleToPct, type PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
+// reconcilePartsCostRounding dropped from this import 2026-09-04 — line 341 already
+// explains why it is no longer used here, and the unused binding was the file's only
+// lint warning.
+import { sharedBarMax, scaleToPct, type PartsCostFinancials } from "@/lib/parts-cost-financials-shared";
 import type { PartsDrillMode } from "@/components/PartsCostDrill";
 
 // Fixed palette (2026-08-11, by request) — no longer the SDC-blue ramp, but
@@ -516,6 +519,29 @@ export function PartsCostSummary({
       value: Math.round(openBalanceAmount),
       kind: hasAdditional ? "segment" : "reference",
     },
+    // ── Billed, not posted (2026-09-04) ─────────────────────────────────────
+    //
+    // A COMPONENT of the row above, indented under it, never an addend — adding it
+    // anywhere would double-count. Shown only when it is non-zero, which on most jobs
+    // it is: a job with no Sage-first-but-unclassified spend should not carry a row
+    // explaining that it has none.
+    //
+    // It exists because this figure was invisible until somebody compared eight jobs by
+    // hand (docs/PARTS-COST-VARIANCE-2026-09.md). Job 1106 carries $253,015 of it, all
+    // five of them ETO-side corrections rather than anything awaiting an invoice.
+    ...(Math.abs(financials.billedNotPosted) >= 1
+      ? [
+          {
+            key: "billednotposted",
+            swatch: null,
+            label: "· billed, not GL-posted",
+            derivation:
+              "already invoiced on a document flagged never-to-export, so it stays in Left to invoice — see docs/PARTS-COST-VARIANCE-2026-09.md",
+            value: Math.round(financials.billedNotPosted),
+            kind: "reference" as const,
+          },
+        ]
+      : []),
     {
       key: "etc",
       swatch: adjustedEtcAmount > 0.5 ? BAR_PROJECTED : null,
