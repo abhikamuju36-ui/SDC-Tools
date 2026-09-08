@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import type { TmPartsDrillKey, TmPartsDrillRow } from "@/lib/tm-report";
 import { loadTmPartsLines, tmDrillRowsFrom } from "@/lib/tm-parts-source";
 import { getTmHoursDrillRows, resolveTmJobPks, type TmHoursDrillKey, type TmHoursDrillRow } from "@/lib/tm-hours";
+import { TM_HOURS_KEYS } from "@/lib/tm-hours-classify";
 import { sanitizeJobIds, isValidDateRange } from "@/lib/tm-drill-validate";
 import { withDrillErrors } from "@/lib/drill-error";
 
@@ -35,7 +36,19 @@ import { withDrillErrors } from "@/lib/drill-error";
 // only a generic message plus that request id for correlating a support
 // report to this exact log line.
 
-const HOURS_KEYS: TmHoursDrillKey[] = ["engineeringHours", "shopHours", "pmHours", "manufacturingHours"];
+// DERIVED from TM_HOURS_KEYS, not written out again (2026-09-08). This was a
+// hand-maintained list of four, and it silently outlived the fifth card:
+// `otherHours` was added 2026-09-01 and the type, TM_HOURS_KEYS and
+// TmReportClient.tsx's HOURS_DRILL_KEYS were all updated with it — this
+// fourth copy was not. So the Other Hours card rendered and was clickable,
+// and every click threw `Invalid drill key "otherHours"` from the guard
+// below, even though getTmHoursDrillRows handles that key correctly.
+//
+// The hours/parts boundary this list enforces is unchanged and still a
+// runtime-checked fact; it just can no longer disagree with the classifier
+// about which keys exist. Same reason HOURS_CODES_BY_KEY was deleted on
+// 2026-09-01 — a second definition of one mapping is a thing that drifts.
+const HOURS_KEYS: readonly TmHoursDrillKey[] = TM_HOURS_KEYS;
 const PARTS_KEYS: TmPartsDrillKey[] = ["partInvoicedAmount", "sdcManufacturedPartsSalesPrice", "expenseReports"];
 
 function requireDateRange(startDate: string, endDate: string): void {
