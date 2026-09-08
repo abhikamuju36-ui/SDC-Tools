@@ -41,6 +41,11 @@ function phase10Section(functionId: (typeof _PHASE_10_FUNCTIONS)[number]): { nam
   return { name, group };
 }
 
+// Named rather than a bare literal so callers that need to single out this one
+// phase (JobHoursDashboard's default-hidden phases, e.g.) reference the same
+// string SECTIONS does instead of retyping "Warranty" and risking drift.
+export const WARRANTY_PHASE = "Warranty";
+
 export const SECTIONS: { code: string; name: string; phase: string; group: string }[] = [
   { code: "10-111", ...phase10Section("111"), phase: "Complete Design & Build" },
   { code: "10-211", ...phase10Section("211"), phase: "Complete Design & Build" },
@@ -57,8 +62,8 @@ export const SECTIONS: { code: string; name: string; phase: string; group: strin
   { code: "40-411", name: "MB & EB", phase: "Machine Testing", group: "Shop" },
   { code: "50-211", name: "ME & CE", phase: "Teardown & Install", group: "Engineering" },
   { code: "50-411", name: "MB & EB", phase: "Teardown & Install", group: "Shop" },
-  { code: "70-211", name: "ME & CE", phase: "Warranty", group: "Engineering" },
-  { code: "70-411", name: "MB & EB", phase: "Warranty", group: "Shop" },
+  { code: "70-211", name: "ME & CE", phase: WARRANTY_PHASE, group: "Engineering" },
+  { code: "70-411", name: "MB & EB", phase: WARRANTY_PHASE, group: "Shop" },
 ];
 
 // Consecutive runs of the same phase, for a grouped header row's colSpans.

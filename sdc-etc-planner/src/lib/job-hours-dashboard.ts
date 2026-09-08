@@ -35,12 +35,12 @@ export type SectionHours = {
 // from the real one with no compiler warning — exactly the "signed-off number
 // disagrees across screens" failure class this app has hit before).
 /** Phase band for punch codes with no ETC/Quoted column of their own. */
-const OFF_GRID_PHASE = "Service & Spare Parts";
+export const OFF_GRID_PHASE = "Service & Spare Parts";
 // Phase band for codes the approved rule book has no entry for at all — in
 // practice malformed Section-Function pairs from the Paylocity export. Separate
 // from OFF_GRID_PHASE because "we do not know what this is" and "this is Service
 // work" are different statements, and only one of them is true here.
-const UNMAPPED_PHASE = "Unmapped";
+export const UNMAPPED_PHASE = "Unmapped";
 
 const BILLING_GROUP_BY_CODE = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]));
 // NOTE the fallback: "Shop" is correct only for the 17 SECTIONS codes, every one

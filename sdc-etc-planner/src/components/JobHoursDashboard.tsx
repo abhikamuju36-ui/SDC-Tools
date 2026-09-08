@@ -4,9 +4,9 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { card } from "@/components/ui/classnames";
 import { abbreviateLabel } from "@/lib/abbrev";
 import { SERIES } from "@/components/charts/theme";
-import type { JobHoursDashboard as DashData, HoursType } from "@/lib/job-hours-dashboard";
+import { OFF_GRID_PHASE, UNMAPPED_PHASE, type JobHoursDashboard as DashData, type HoursType } from "@/lib/job-hours-dashboard";
 import type { JobHoursDetail as JobHoursDetailData } from "@/lib/job-hours-detail";
-import { POOL_QUOTED_SECTION, RESTRICTED_SECTION_CODES } from "@/lib/sections";
+import { POOL_QUOTED_SECTION, RESTRICTED_SECTION_CODES, WARRANTY_PHASE } from "@/lib/sections";
 import { HoursDetailPanel } from "@/components/HoursDetailPanel";
 import { PartsCostSummary } from "@/components/PartsCostSummary";
 import { PartsCostDrill, type PartsDrillMode } from "@/components/PartsCostDrill";
@@ -16,6 +16,14 @@ import { barDomains, barHeightPct } from "@/lib/bar-scale";
 
 // Project Management, the one section this chart never draws (see executionSections).
 const PM_CODE = POOL_QUOTED_SECTION.ENGINEERING_PM;
+
+// Warranty, Service & Spare Parts and Unmapped default OFF (2026-09-08, by
+// request) — these three are "standard"/off-grid bands rather than the
+// Complete Design & Build / Machine Testing work a job's hours are normally
+// read against, and reference the same phase-name constants SECTIONS and
+// job-hours-dashboard.ts define so a rename there can't silently desync this
+// default from the chip it's meant to hide.
+const DEFAULT_HIDDEN_PHASES = [WARRANTY_PHASE, OFF_GRID_PHASE, UNMAPPED_PHASE];
 
 // The Parts Cost bullet bar (§52) joins the two hours charts in one row, so
 // its inputs travel as one prop rather than a second top-level component the
@@ -274,12 +282,17 @@ export function JobHoursDashboard({
   // ── Hidden, not active (§72) ───────────────────────────────────────────────
   //
   // The filter tracks which phases are switched OFF rather than which are on, and that
-  // is deliberate: "everything is shown" is then the empty set, which stays correct
-  // however many phases the payload has. The previous `useState(() => new Set(
-  // TEMPLATE_PHASES))` seeded itself once from a fixed list, so a phase that appeared
-  // later could never be active — and re-seeding it from `phases` in an effect is the
-  // set-state-in-effect pattern this codebase has already been bitten by (§36.4).
-  const [hiddenPhases, setHiddenPhases] = useState<Set<string>>(() => new Set());
+  // is deliberate: "show everything except the defaults" is then just
+  // DEFAULT_HIDDEN_PHASES, which stays correct however many phases the payload has —
+  // a phase not in that list is on with no further bookkeeping. The previous
+  // `useState(() => new Set(TEMPLATE_PHASES))` seeded itself once from a fixed
+  // *allow*-list, so a phase that appeared later could never be active at all; this is
+  // a fixed *default-off* list instead, which only ever suppresses phases named in it
+  // and never hides one the payload adds. Seeded directly in the initializer (not via
+  // an effect that re-seeds off `phases`) so there is no flicker and no
+  // set-state-in-effect violation, the pattern this codebase has already been bitten
+  // by (§36.4).
+  const [hiddenPhases, setHiddenPhases] = useState<Set<string>>(() => new Set(DEFAULT_HIDDEN_PHASES));
 
   // Drill-through target: the section code whose monthly detail is open, or null.
   // Parts already had a drill (JobProcurement's drillToPart); the hours charts
