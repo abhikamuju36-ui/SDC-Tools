@@ -2,6 +2,7 @@ import { NextRequest } from "next/server";
 import { auth } from "@/lib/auth";
 import { logAudit } from "@/lib/audit";
 import { APP_VERSION } from "@/lib/app-version";
+import { buildTmHoursExport } from "@/lib/export/tm-hours-export";
 import { buildCsv } from "@/lib/export/csv";
 import { buildXlsx } from "@/lib/export/xlsx";
 import { exportFileName, todayStamp, type SheetSpec } from "@/lib/export/sheet";
@@ -70,7 +71,7 @@ import type { Permission } from "@/lib/permissions";
 
 export const dynamic = "force-dynamic";
 
-const REPORTS = new Set(["projects", "etc", "hours"]);
+const REPORTS = new Set(["projects", "etc", "hours", "tm-hours"]);
 
 // Same permission the corresponding page itself requires (requirePagePermission
 // in each page.tsx) — the export must not be a back door around the page guard.
@@ -78,6 +79,7 @@ const REPORT_PERMISSION: Record<string, Permission> = {
   projects: "projects:view",
   etc: "monthly-etc:view",
   hours: "hours:view",
+  "tm-hours": "tm:view",
 };
 
 export async function GET(req: NextRequest, ctx: { params: Promise<{ report: string }> }) {
@@ -115,11 +117,26 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ report: str
             },
             now,
           )
-        : report === "hours"
-          ? // The page's OWN query string, verbatim — same guarantee as Projects
-            // above: the filter/sort/group-by rules live in hours-filters.ts,
-            // which the page uses too, so there is no second copy of "what does
-            // this URL mean" to drift from it.
+        : report === "tm-hours"
+          ? // One Hours card's drill, including its search box (`q`). Unlike the
+            // three reports below, the narrowing text is NOT in the page URL —
+            // it is client state in the drill panel — so the panel sends it and
+            // lib/tm-drill-search.ts applies the same predicate on both sides.
+            await buildTmHoursExport(
+              {
+                key: searchParams.get("key") ?? undefined,
+                jobs: searchParams.get("jobs") ?? undefined,
+                from: searchParams.get("from") ?? undefined,
+                to: searchParams.get("to") ?? undefined,
+                q: searchParams.get("q") ?? undefined,
+              },
+              now,
+            )
+          : report === "hours"
+            ? // The page's OWN query string, verbatim — same guarantee as Projects
+              // above: the filter/sort/group-by rules live in hours-filters.ts,
+              // which the page uses too, so there is no second copy of "what does
+              // this URL mean" to drift from it.
             await buildHoursExport(
               {
                 jobs: searchParams.get("jobs") ?? undefined,
@@ -134,11 +151,11 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ report: str
               },
               now,
             )
-          : await buildEtcExport(
-              searchParams.get("month") ?? "",
-              searchParams.get("billables") ?? undefined,
-              now,
-            );
+            : await buildEtcExport(
+                searchParams.get("month") ?? "",
+                searchParams.get("billables") ?? undefined,
+                now,
+              );
 
     // The protected sheets ride along in the same file, and only for a request that
     // proves it is unlocked. buildEtcExport has already rejected an invalid month by
@@ -151,13 +168,18 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ report: str
     }
 
     const fileName =
-      report === "projects"
+      report === "tm-hours"
+        ? // The card's own name in the file name — a folder of these is otherwise
+          // five identical "T&M" files. Spaces out, so it is a clean download name.
+          exportFileName(["T&M", (built as unknown as { cardLabel: string }).cardLabel.replace(/ /g, "_"), todayStamp(now)], format)
+        : report === "projects"
         ? exportFileName(["Projects", (built as unknown as { filterLabel: string }).filterLabel, todayStamp(now)], format)
         : report === "hours"
           ? exportFileName(["Hours", todayStamp(now)], format)
           : exportFileName(["Monthly_ETC", (built as unknown as { monthLabel: string }).monthLabel.replace(" ", "_"), todayStamp(now)], format);
 
-    const reportLabel = report === "projects" ? "Projects" : report === "hours" ? "Hours" : "Monthly ETC";
+    const reportLabel =
+      report === "projects" ? "Projects" : report === "hours" ? "Hours" : report === "tm-hours" ? `T&M ${(built as unknown as { cardLabel: string }).cardLabel}` : "Monthly ETC";
 
     // The audit record §24.11 asks for: who, what, which format, which filters, when,
     // how many rows, which app version. Awaited rather than fired-and-forgotten — an
@@ -166,7 +188,7 @@ export async function GET(req: NextRequest, ctx: { params: Promise<{ report: str
     // one that did not.
     await logAudit({
       action: "export.download",
-      entityType: report === "projects" ? "Job" : report === "hours" ? "JobHoursDetail" : "EtcMonth",
+      entityType: report === "projects" ? "Job" : report === "hours" || report === "tm-hours" ? "JobHoursDetail" : "EtcMonth",
       entityId: report === "etc" ? (searchParams.get("month") ?? "") : undefined,
       summary: `Exported ${reportLabel} as ${format.toUpperCase()} — ${built.rowCount} row(s)` + (includedStandards ? " (including Standards)" : ""),
       metadata: {

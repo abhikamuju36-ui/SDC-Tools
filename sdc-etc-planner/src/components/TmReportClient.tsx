@@ -351,6 +351,11 @@ export function TmReportClient({
               <TmHoursDrillPanel
                 rows={drawer.status === "success" ? (drawer.rows as TmHoursDrillRow[]) : drawer.status === "empty" ? [] : null}
                 error={drawer.status === "error" ? drawer.message : null}
+                // The same three inputs this drill was fetched with (see the
+                // loadTmHoursDrill call above), so the export cannot describe a
+                // different selection than the table it sits on. The panel adds
+                // its own search box to these at click time.
+                exportParams={{ key: openDrill, jobs: selectedJobIds, from: startDate, to: endDate }}
               />
             ) : (
               <TmPartsDrillPanel
