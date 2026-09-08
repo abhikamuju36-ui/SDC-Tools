@@ -1,5 +1,5 @@
 import { prisma } from "@/lib/prisma";
-import { SECTIONS, ETC_SECTIONS, PHASE_GROUPS, PARTS_COST_SECTION, SERVICE_AND_SPARE_PARTS_CODES } from "@/lib/sections";
+import { SECTIONS, ETC_SECTIONS, PHASE_GROUPS, PARTS_COST_SECTION, SERVICE_AND_SPARE_PARTS_CODES, OFF_GRID_PHASE, UNMAPPED_PHASE } from "@/lib/sections";
 import { suggestNewEtc } from "@/lib/etc";
 import { validJobTypeFilter, compareJobIds } from "@/lib/job-filters";
 import { loadActualHoursBySection, loadMonthlyWorkedBySection } from "@/lib/actual-hours";
@@ -34,13 +34,9 @@ export type SectionHours = {
 // re-type sections.ts's private ENGINEERING_CODES set, which could silently drift
 // from the real one with no compiler warning — exactly the "signed-off number
 // disagrees across screens" failure class this app has hit before).
-/** Phase band for punch codes with no ETC/Quoted column of their own. */
-export const OFF_GRID_PHASE = "Service & Spare Parts";
-// Phase band for codes the approved rule book has no entry for at all — in
-// practice malformed Section-Function pairs from the Paylocity export. Separate
-// from OFF_GRID_PHASE because "we do not know what this is" and "this is Service
-// work" are different statements, and only one of them is true here.
-export const UNMAPPED_PHASE = "Unmapped";
+// OFF_GRID_PHASE / UNMAPPED_PHASE moved to @/lib/sections (client-safe);
+// re-exported here so existing importers keep working.
+export { OFF_GRID_PHASE, UNMAPPED_PHASE } from "@/lib/sections";
 
 const BILLING_GROUP_BY_CODE = new Map(ETC_SECTIONS.map((s) => [s.code, s.billingGroup]));
 // NOTE the fallback: "Shop" is correct only for the 17 SECTIONS codes, every one
