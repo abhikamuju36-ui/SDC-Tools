@@ -110,11 +110,27 @@ jobs:
         working-directory: apps/shell
         run: npm run build
 
-      # Package and publish to GitHub Releases
+      # Package, then publish to THIS repo's GitHub Releases.
       # Installer is now ~100 MB (shell only — backends run on server PC)
-      - name: Package & publish installer to GitHub Releases
+      #
+      # ── Bridge release (2.0.2) ────────────────────────────────────────────
+      # electron-builder.yml's publish owner is now steven-douglas-corporation,
+      # so the installer's update feed (app-update.yml) points at the new repo.
+      # `--publish always` would try to upload there with this repo's token and
+      # fail, so build with `--publish never` and upload here with gh instead.
+      # Installed copies polling this repo pick up 2.0.2, then follow the new repo.
+      - name: Package installer
         working-directory: apps/shell
-        run: npx electron-builder --win --publish always
+        run: npx electron-builder --win --publish never
+
+      - name: Publish installer to GitHub Releases
+        working-directory: apps/shell/dist-electron
+        shell: bash
+        run: |
+          VER="${{ needs.check-version.outputs.version }}"
+          gh release create "v$VER" -R "${{ github.repository }}" --title "$VER" \
+            --notes "Moves the SDC Tools update feed to steven-douglas-corporation/SDC-Tools." \
+            latest.yml "SDC-Tools-Setup-$VER.exe" "SDC-Tools-Setup-$VER.exe.blockmap"
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
